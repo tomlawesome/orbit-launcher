@@ -1,0 +1,60 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - preview
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - preview
+      - "hotfix/**"
+  schedule:
+    - cron: "37 2 * * 6"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.number || github.sha }}
+  # Cancel only a superseded pull-request commit. A push must never cancel the
+  # validation of an earlier merge: the delivery model requires trusted evidence
+  # for that exact merge SHA, and a cancelled run leaves it permanently without.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+          - actions
+          - go
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          build-mode: autobuild
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          category: "/language:${{ matrix.language }}"
