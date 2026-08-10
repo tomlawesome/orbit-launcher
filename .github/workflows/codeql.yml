@@ -39,9 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language:
-          - actions
-          - go
+        include:
+          # The GitHub Actions extractor only supports build-mode: none —
+          # there is nothing to compile. Go is a compiled language and
+          # needs autobuild to produce anything CodeQL can analyze.
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: autobuild
 
     steps:
       - name: Check out repository
@@ -50,7 +55,7 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
         with:
-          build-mode: autobuild
+          build-mode: ${{ matrix.build-mode }}
           languages: ${{ matrix.language }}
           queries: security-extended
 
