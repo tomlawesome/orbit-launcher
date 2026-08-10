@@ -52,6 +52,17 @@ jobs:
       - name: Vet
         run: go build ./... && go vet ./...
 
+      - name: Shellcheck bootstrap script
+        run: shellcheck scripts/get-orbit-launcher.sh
+
+      - name: Set up bats
+        run: |
+          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats-core
+          echo "/tmp/bats-core/bin" >> "$GITHUB_PATH"
+
+      - name: Test bootstrap script
+        run: bats scripts/test/get-orbit-launcher.bats
+
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
 
