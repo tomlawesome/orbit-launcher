@@ -2,4 +2,25 @@
 // installing, updating, repairing and removing an Orbit personal server.
 package main
 
-func main() {}
+import (
+	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/tomlawesome/orbit-launcher/internal/release"
+	"github.com/tomlawesome/orbit-launcher/internal/ui"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Printf("orbit-launcher %s (%s)\n", release.Version, release.Revision)
+		return
+	}
+
+	program := tea.NewProgram(ui.NewPlaceholderModel(), tea.WithAltScreen())
+	if _, err := program.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "orbit-launcher:", err)
+		os.Exit(1)
+	}
+}
