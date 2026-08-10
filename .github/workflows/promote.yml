@@ -1,0 +1,89 @@
+name: Promote tested orbit-launcher preview
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote accepted preview to a stable release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Approval-gated: configure required reviewers on the "production"
+    # environment so this can't run unattended. Deployments are restricted
+    # to main by the environment's branch policy.
+    environment: production
+    permissions:
+      contents: write
+      attestations: read
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Download preview release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download preview-latest \
+            --repo "${{ github.repository }}" \
+            --dir preview-release \
+            --pattern "orbit-launcher_linux_amd64.tar.gz" \
+            --pattern "orbit-launcher_linux_arm64.tar.gz" \
+            --pattern "checksums.txt"
+
+      - name: Verify checksums
+        run: |
+          cd preview-release
+          sha256sum -c checksums.txt
+
+      - name: Verify build provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify preview-release/orbit-launcher_linux_amd64.tar.gz --repo "${{ github.repository }}"
+          gh attestation verify preview-release/orbit-launcher_linux_arm64.tar.gz --repo "${{ github.repository }}"
+
+      - name: Read accepted version and revision
+        id: identity
+        run: |
+          tar -xzf preview-release/orbit-launcher_linux_amd64.tar.gz -C preview-release orbit-launcher
+          chmod +x preview-release/orbit-launcher
+          output="$(preview-release/orbit-launcher --version)"
+          version="$(echo "$output" | awk '{print $2}')"
+          revision="$(echo "$output" | sed -n 's/.*(\(.*\))/\1/p')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "Accepted: orbit-launcher $version ($revision)"
+
+      - name: Verify accepted revision is on protected main
+        run: |
+          git merge-base --is-ancestor "${{ steps.identity.outputs.revision }}" HEAD \
+            || { echo "::error::accepted revision ${{ steps.identity.outputs.revision }} is not on main — refusing to promote"; exit 1; }
+
+      - name: Refuse an existing stable tag
+        run: |
+          tag="v${{ steps.identity.outputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::error::tag $tag already exists — refusing to overwrite a published stable release"
+            exit 1
+          fi
+
+      - name: Create the stable tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.identity.outputs.version }}"
+          git tag "$tag" "${{ steps.identity.outputs.revision }}"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --repo "${{ github.repository }}" \
+            --title "orbit-launcher $tag" \
+            --notes "Promoted from the accepted preview build at ${{ steps.identity.outputs.revision }}. These are the exact bytes tested on the preview lane — nothing was rebuilt." \
+            preview-release/orbit-launcher_linux_amd64.tar.gz \
+            preview-release/orbit-launcher_linux_arm64.tar.gz \
+            preview-release/checksums.txt

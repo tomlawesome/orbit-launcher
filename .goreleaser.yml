@@ -1,0 +1,51 @@
+version: 2
+
+project_name: orbit-launcher
+
+builds:
+  - id: orbit-launcher
+    main: ./cmd/orbit-launcher
+    binary: orbit-launcher
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/tomlawesome/orbit-launcher/internal/release.Version={{ .Version }}
+      - -X github.com/tomlawesome/orbit-launcher/internal/release.Revision={{ .FullCommit }}
+
+archives:
+  - id: orbit-launcher
+    ids:
+      - orbit-launcher
+    formats:
+      - tar.gz
+    name_template: "orbit-launcher_{{ .Os }}_{{ .Arch }}"
+    # Just the binary — scripts/get-orbit-launcher.sh extracts a single
+    # named member from this archive; keep it to exactly that.
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+
+# Preview builds never create a real git tag (only stable promotion does),
+# so goreleaser runs in --snapshot mode there; this makes the snapshot
+# embed the version tools/calculateversion actually calculated, instead of
+# goreleaser's default "0.0.0-SNAPSHOT-<commit>".
+snapshot:
+  version_template: "{{ .Env.ORBIT_LAUNCHER_VERSION }}"
+
+# Publishing is handled explicitly in the release workflows (mutable
+# "preview" pre-release vs. real stable release), not by goreleaser's own
+# release step — this repo's promotion model doesn't map cleanly onto
+# goreleaser's "one immutable release per tag" default.
+release:
+  disable: true
+
+changelog:
+  disable: true
