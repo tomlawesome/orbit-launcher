@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,6 +34,14 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // Cancel out of Remove
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+func TestAppModel_WithUpdateCheckSetsItOnTheSplashScreenOnly(t *testing.T) {
+	m := NewAppModel()
+	m = m.WithUpdateCheck(func(context.Context) (string, bool, error) { return "", false, nil })
+	if m.splash.checkForUpdate == nil {
+		t.Error("expected WithUpdateCheck to set the splash screen's checkForUpdate")
 	}
 }
 
