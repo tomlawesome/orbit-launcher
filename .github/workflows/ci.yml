@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - preview
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - preview
+      - "hotfix/**"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    name: Static and unit checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Verify formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go build ./... && go vet ./...
+
+      - name: Shellcheck bootstrap script
+        run: shellcheck scripts/get-orbit-launcher.sh
+
+      - name: Set up bats
+        run: |
+          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats-core
+          echo "/tmp/bats-core/bin" >> "$GITHUB_PATH"
+
+      - name: Test bootstrap script
+        run: bats scripts/test/get-orbit-launcher.bats
+
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+
+      - name: Run staticcheck
+        run: staticcheck ./...
+
+      - name: Planning governance
+        if: github.event_name == 'pull_request'
+        env:
+          ORBIT_LAUNCHER_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ORBIT_LAUNCHER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ORBIT_LAUNCHER_PR_BODY: ${{ github.event.pull_request.body }}
+        run: go run ./tools/checkgovernance
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Upload diagnostic coverage
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 14
+
+  verify_preview_for_stable:
+    name: Verify tested preview for stable merge
+    # Job-level skip (not a workflow path filter) so branch protection still
+    # receives a terminal check result on every PR, matching orbit's own
+    # documented reason for the same pattern in its quality strategy.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download preview release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download preview-latest \
+            --repo "${{ github.repository }}" \
+            --dir preview-release \
+            --pattern "orbit-launcher_linux_amd64.tar.gz" \
+            --pattern "checksums.txt"
+
+      - name: Verify checksum
+        run: |
+          cd preview-release
+          sha256sum -c <(grep amd64 checksums.txt)
+
+      - name: Verify embedded revision matches this pull request's head
+        run: |
+          tar -xzf preview-release/orbit-launcher_linux_amd64.tar.gz -C preview-release orbit-launcher
+          chmod +x preview-release/orbit-launcher
+          actual="$(preview-release/orbit-launcher --version | sed -n 's/.*(\(.*\))/\1/p')"
+          expected="${{ github.event.pull_request.head.sha }}"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::preview-latest release was built from $actual, but this PR's head is $expected — the preview release is stale relative to this merge"
+            exit 1
+          fi
+          echo "Verified: preview-latest release matches this PR's exact head commit."
+
+      - name: Verify build provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify preview-release/orbit-launcher_linux_amd64.tar.gz \
+            --repo "${{ github.repository }}"
