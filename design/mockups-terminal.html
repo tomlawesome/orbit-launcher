@@ -60,14 +60,19 @@
       Every panel on this page is rendered the way the shipped app renders:
       an 80×26 grid of character cells, 10 frames per second, integer
       positions, brightness as a stepped glyph ramp with 24-bit colour.
-      No blur, no easing, no subpixels. What looks good here ships; what
-      doesn't, doesn't — regardless of how it looked in v2/v3, which are
-      retained as the reference for a future Orbit web UI rebrand.
+      No blur, no easing, no subpixels.
+      <br/><br/>
+      <b>Verdict (2026-08-11): the orbital-system visuals failed this bar and
+      are scrapped for the TUI.</b> The shipped v1 splash is the final TUI
+      aesthetic. The panels below marked SCRAPPED are kept as the evidence
+      that drove that decision. The mission-console and success-screen
+      panels survive — they are text, and text is what terminals do well.
+      v2/v3 remain solely as reference for a future Orbit web UI rebrand.
     </p>
   </header>
 
   <section>
-    <h2><span>01</span> Splash — the orbital system, in cells</h2>
+    <h2><span>01</span> Splash orbital system — SCRAPPED (kept for the record)</h2>
     <div class="frame-row">
       <div class="term">
         <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher</span></div>
@@ -93,7 +98,7 @@
   </section>
 
   <section>
-    <h2><span>01b</span> Splash — same renderer, a real fullscreen terminal (160×44)</h2>
+    <h2><span>01b</span> Splash orbital system at 160×44 — SCRAPPED (kept for the record)</h2>
     <div class="frame-row">
       <div class="term wide">
         <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — maximized</span></div>
@@ -156,7 +161,7 @@
   </section>
 
   <section>
-    <h2><span>04</span> Ignition — in cells</h2>
+    <h2><span>04</span> Ignition corona — SCRAPPED (kept for the record)</h2>
     <div class="frame-row">
       <div class="term">
         <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — ready</span></div>
@@ -176,9 +181,11 @@
 
   <footer class="end">
     v4 — the acceptance spec for all TUI implementation work. A motion or
-    lighting idea exists only if it reads at 80×26/10fps in this renderer.
-    design/mockups-v2.html and design/mockups-v3-flows.html are preserved
-    as the visual-direction reference for a future Orbit web UI rebrand.
+    lighting idea exists only if it reads at 80×26/10fps in this renderer —
+    the orbital-system panels above are the record of one that didn't.
+    Surviving scope lives in design/handovers/. design/mockups-v2.html and
+    design/mockups-v3-flows.html are preserved solely as the
+    visual-direction reference for a future Orbit web UI rebrand.
   </footer>
 
 </div>

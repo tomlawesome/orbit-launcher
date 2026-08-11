@@ -1,46 +1,57 @@
-# Handover 02 — Status line + version footer
+# Handover 02 — Status line, status vocabulary, and version corner
 
 **Model: Haiku 4.5 · no dependencies · read design/handovers/README.md first**
 
 ## Problem
 
-The splash currently shows a keybind hint footer (`↑↓ navigate · ↵ select · esc
-quit`). The approved v2 design (design/mockups-v2.html, sections 02 and
-suggestion 3) replaces it: keybind hints are dropped entirely; the bottom-right
-corner shows the version (`v0.1.0` style); the bottom-left shows **one quiet
-status line, only when there is something true to say**.
+The splash knows things it doesn't say: whether a deployment exists, and (from
+the health data the repair/remove paths already query) whether it's healthy.
+The owner has fixed the vocabulary and wants it surfaced quietly — without any
+change to the splash's existing look (starfield, ⟡ mark, wordmark, menu, and
+keybind footer hint all stay exactly as shipped).
+
+## The vocabulary (fixed, do not invent alternatives)
+
+| State | When | Mark ⟡ colour | Status line text |
+|-------|------|---------------|------------------|
+| dormant | no deployment detected | current accent (unchanged) | *(none — silence is the normal state)* |
+| alive | deployment detected, health passes | success green #4ade80 | `mail.example.com · alive` |
+| degraded | deployment detected, ≥1 health probe failing | deep amber #fb923c | `mail.example.com · degraded` |
+
+- Amber means *up but wrong* — never red (red = stopped/failed elsewhere).
+- Any failing probe → degraded. Exactly three states, no gradients.
+- degraded preselects the Repair menu item; alive preselects Update; dormant
+  preselects Install (the preselection mechanism already exists).
 
 ## Scope
 
-- Remove the keybind hint footer from the splash.
-- Bottom-right: the launcher's own version string, faint style (reuse the same
-  faint/dim lipgloss style the footer used). The version is already embedded in
-  the binary (`--version` works) — render the same value, without the commit hash.
-- Bottom-left, same row, same faint style, exactly one of (first match wins):
-  1. a detected deployment's address (e.g. `mail.example.com · installed 2026-06-14`) —
-     the splash already runs deployment detection to preselect Install vs Update;
-  2. a waiting self-update (e.g. `update available · v0.2.0`) — the update check
-     already runs at startup behind `ORBIT_LAUNCHER_NO_UPDATE_CHECK`;
-  3. nothing (empty left side is the normal case).
-- The row must never wrap: if width is too small for both sides, drop the left
-  side first, then the version.
+- Bottom-right corner, all screens: the launcher version (`v0.1.0` style),
+  faint, matching the footer hint's weight. Never wraps; drop the status line
+  first on narrow terminals, version second.
+- Bottom-left corner, splash only: the status line per the table, faint, only
+  when a deployment exists. A waiting self-update may appear instead
+  (`update available · v0.2.0`) when there is no deployment status to show.
+- The ⟡ mark takes the state colour. Nothing else on the splash changes.
+- Health probing: reuse whatever `internal/deploy` exposes; if the honest
+  available signal is coarser than per-service probes, implement the
+  three states from what exists and note the simplification in the PR body.
+  Do **not** build new probing machinery.
 
 ## Out of scope
 
-Changing what the update check or deployment detection do; adding new detections;
-flow screens (they get their version corner in the tier task, not here).
+Removing the keybind footer (it stays), any sphere/ring/planet visuals (all
+scrapped), polling while the splash is open (state computed once at startup).
 
 ## Acceptance criteria
 
-1. No keybind hints anywhere on the splash.
-2. Version bottom-right at 120×40 and 80×24.
-3. With a seeded fake deployment (`.env-orbit` fixture — see how
-   `test/visual` seeds one), the address line appears bottom-left.
-4. With no deployment and no update, bottom-left is empty.
-5. Narrow-terminal fallback order verified by a unit test.
-6. Visual snapshots updated; whole suite green.
+1. Three states unit-tested at model level (fake inputs → colour + text +
+   preselection).
+2. `ORBIT_LAUNCHER_NO_ANIMATION=1` static frame reflects the state.
+3. Narrow-terminal drop order unit-tested.
+4. Visual suite gains one snapshot per state (seeded fixtures); suite green.
 
 ## Verification
 
-`go test -race ./...`; run the binary against an empty target dir and against a
-seeded fixture dir; attach both screenshots to the PR.
+`go test -race ./...`, visual suite, plus run the real binary against no
+deployment / healthy seeded deployment / seeded deployment with a stopped
+container; attach all three screenshots to the PR.
