@@ -47,11 +47,11 @@ func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *test
 	if _, err := console.ExpectString("Install"); err != nil {
 		t.Fatalf("did not see the menu: %v", err)
 	}
-	if _, err := console.Send("\x1b[B"); err != nil { // Down to Update
-		t.Fatalf("send Down: %v", err)
-	}
+	// A detected deployment preselects Update — no navigation needed, and
+	// the identity block shows the deployment's FQDN with no status word
+	// (the health probe is env-gated off in these tests).
 	if _, err := console.ExpectString("▸ Update"); err != nil {
-		t.Fatalf("caret did not reach Update: %v", err)
+		t.Fatalf("caret was not preselected on Update: %v", err)
 	}
 	if _, err := console.Send("\r"); err != nil { // Enter
 		t.Fatalf("send Enter: %v", err)

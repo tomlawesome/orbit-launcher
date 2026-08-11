@@ -43,7 +43,15 @@ test.beforeAll(async () => {
     // NO_UPDATE_CHECK: an "update available" banner popping in mid-test
     // (or not) would make every screenshot comparison flaky by
     // construction, same reason as the animation freeze above.
-    env: { ...process.env, ORBIT_LAUNCHER_NO_ANIMATION: "1", ORBIT_LAUNCHER_NO_UPDATE_CHECK: "1" },
+    // NO_HEALTH_PROBE: the splash would otherwise probe any .env-orbit
+    // deployment it detects near the working directory — same hermeticity
+    // rule as the update check.
+    env: {
+      ...process.env,
+      ORBIT_LAUNCHER_NO_ANIMATION: "1",
+      ORBIT_LAUNCHER_NO_UPDATE_CHECK: "1",
+      ORBIT_LAUNCHER_NO_HEALTH_PROBE: "1",
+    },
   });
 
   // ttyd has no "ready" signal on stdout we can reliably parse across
