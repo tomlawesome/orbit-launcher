@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"net/url"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -59,6 +60,46 @@ func NewAppModelNoAnimation() AppModel {
 func (m AppModel) WithUpdateCheck(fn func(context.Context) (version string, hasUpdate bool, err error)) AppModel {
 	m.splash.checkForUpdate = fn
 	return m
+}
+
+// WithVersion sets the version string rendered bottom-right on the
+// splash, e.g. "v0.1.0".
+func (m AppModel) WithVersion(v string) AppModel {
+	m.splash.version = v
+	return m
+}
+
+// WithDeploymentStatus detects an existing deployment and populates the
+// splash's identity block. Detection is deliberately synchronous — one
+// small file read — so the caret's preselection is settled before the
+// first frame, with no race against the user's first keypress. probe,
+// when non-nil, resolves alive-vs-degraded asynchronously from the
+// splash's Init (see SplashModel.probeHealthCmd); nil leaves the state
+// at "deployment exists, health unknown", which renders as the FQDN
+// with no status word.
+func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) bool) AppModel {
+	d, err := deploy.Detect(m.resolvedTargetDir())
+	if err != nil || d == nil {
+		return m
+	}
+	m.splash.fqdn = displayHost(d.AppURL)
+	m.splash.appURL = d.AppURL
+	m.splash.state = stateUnknown
+	m.splash.selected = menuUpdate // a deployment's most likely next act
+	m.splash.healthProbe = probe
+	return m
+}
+
+// displayHost reduces an APP_URL to the bare FQDN the identity block
+// shows — scheme and path are launcher noise at a glance.
+func displayHost(appURL string) string {
+	if u, err := url.Parse(appURL); err == nil && u.Host != "" {
+		return u.Host
+	}
+	if appURL != "" {
+		return appURL
+	}
+	return "deployment detected"
 }
 
 func (m AppModel) resolvedTargetDir() string {

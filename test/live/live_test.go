@@ -265,8 +265,13 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		}
 
 		must("Install")
-		for i := 0; i < 3; i++ {
-			send("\x1b[B") // Install, Update, Repair, Remove
+		// A detected deployment preselects Update, so Remove is two rows
+		// down (Update, Repair, Remove). The health probe (enabled here —
+		// this is a real deployment) resolves alive and never moves the
+		// caret; the first keypress pins it regardless.
+		must("▸ Update")
+		for i := 0; i < 2; i++ {
+			send("\x1b[B") // Repair, Remove
 		}
 		send("\r") // select Remove
 		must("This stops Orbit and removes its containers")
