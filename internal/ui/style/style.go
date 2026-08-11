@@ -71,4 +71,5 @@ var (
 	SuccessText = lipgloss.NewStyle().Foreground(Success)
 	ErrorText   = lipgloss.NewStyle().Foreground(Error)
 	WarmText    = lipgloss.NewStyle().Foreground(Warm)
+	AccentText  = lipgloss.NewStyle().Foreground(Accent)
 )
