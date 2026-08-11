@@ -1,0 +1,14 @@
+{
+  "planningAuthorities": ["Human"],
+  "acceptedAttestations": ["Planning-Model: Human"],
+  "protectedFiles": [
+    ".github/planning-governance.json",
+    ".github/dependency-review-config.yml",
+    ".github/pull_request_template.md",
+    "docs/implementation-plan.md"
+  ],
+  "protectedPrefixes": [
+    ".github/workflows/",
+    "docs/adr/"
+  ]
+}
