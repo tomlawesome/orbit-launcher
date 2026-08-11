@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -126,6 +129,96 @@ func TestSplashModel_ViewIsEmptyBeforeFirstWindowSize(t *testing.T) {
 	m := NewSplashModel()
 	if view := m.View(); view != "" {
 		t.Errorf("View() before any WindowSizeMsg = %q, want empty", view)
+	}
+}
+
+func TestSplashModel_DefaultConstructorNeverChecksForUpdates(t *testing.T) {
+	m := NewSplashModel()
+	if m.checkForUpdate != nil {
+		t.Error("expected checkForUpdate to be nil by default — no constructor should opt into a network side effect on render")
+	}
+	// Init() must therefore issue no update-check command either — the
+	// only remaining possible command is the animation tick.
+	if cmd := m.Init(); cmd == nil {
+		t.Error("expected the tick command still to run") // sanity: Init isn't just returning nil for an unrelated reason
+	}
+}
+
+func TestSplashModel_InitIssuesNoCommandsWhenAnimationAndUpdateCheckAreBothOff(t *testing.T) {
+	m := NewSplashModelNoAnimation()
+	m.checkForUpdate = nil
+	if cmd := m.Init(); cmd != nil {
+		t.Error("expected Init() to issue no command with animation and the update check both off")
+	}
+}
+
+func TestSplashModel_InitIssuesAnUpdateCheckCommandWhenConfigured(t *testing.T) {
+	m := NewSplashModelNoAnimation()
+	called := false
+	m.checkForUpdate = func(context.Context) (string, bool, error) {
+		called = true
+		return "v9.9.9", true, nil
+	}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("expected Init() to issue the update-check command")
+	}
+	msg := cmd()
+	if !called {
+		t.Error("expected checkForUpdate to have been invoked")
+	}
+	got, ok := msg.(updateAvailableMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want updateAvailableMsg", msg)
+	}
+	if got.version != "v9.9.9" {
+		t.Errorf("version = %q, want v9.9.9", got.version)
+	}
+}
+
+func TestSplashModel_UpdateCheckErrorProducesNoMessage(t *testing.T) {
+	m := NewSplashModelNoAnimation()
+	m.checkForUpdate = func(context.Context) (string, bool, error) {
+		return "", false, errors.New("network unreachable")
+	}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("expected Init() to issue the update-check command")
+	}
+	if msg := cmd(); msg != nil {
+		t.Errorf("msg = %#v, want nil on error — an update check failure must never surface as a user-facing error", msg)
+	}
+}
+
+func TestSplashModel_UpdateCheckNoUpdateProducesNoMessage(t *testing.T) {
+	m := NewSplashModelNoAnimation()
+	m.checkForUpdate = func(context.Context) (string, bool, error) {
+		return "", false, nil
+	}
+
+	cmd := m.Init()
+	if msg := cmd(); msg != nil {
+		t.Errorf("msg = %#v, want nil when already current", msg)
+	}
+}
+
+func TestSplashModel_UpdateAvailableMsgIsShownOnScreen(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(SplashModel)
+
+	if strings.Contains(m.View(), "update available") {
+		t.Fatal("did not expect an update notice before one is received")
+	}
+
+	updated, _ = m.Update(updateAvailableMsg{version: "v9.9.9"})
+	m = updated.(SplashModel)
+
+	view := m.View()
+	if !strings.Contains(view, "update available") || !strings.Contains(view, "v9.9.9") {
+		t.Errorf("expected the view to show the update notice, got:\n%s", view)
 	}
 }
 
