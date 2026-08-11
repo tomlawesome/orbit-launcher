@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -82,7 +83,12 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 	// real Docker before trusting the number.
 	opts := []expect.ConsoleOpt{expect.WithDefaultTimeout(420 * time.Second)}
 	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
-		rawLog, err := os.Create(rawLogPath)
+		// Suffixed per (sub)test — Install and Remove each call startLive
+		// once, and os.Create truncates, so a single shared path would
+		// silently let Remove's log erase Install's, exactly the run
+		// that matters most when Install is the one hanging or failing.
+		suffix := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+		rawLog, err := os.Create(rawLogPath + "." + suffix)
 		if err != nil {
 			t.Fatalf("create raw log: %v", err)
 		}

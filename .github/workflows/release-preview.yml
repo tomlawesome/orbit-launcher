@@ -137,6 +137,8 @@ jobs:
           echo "ORBIT_LAUNCHER_LIVE_BINARY=$HOME/.cache/orbit-launcher/orbit-launcher" >> "$GITHUB_ENV"
 
       - name: Run the live test
+        env:
+          ORBIT_LAUNCHER_LIVE_RAW_LOG: ${{ runner.temp }}/live-raw.log
         run: go test -tags live -count=1 -v ./test/live/...
 
       - name: Docker state (always, for debugging)
@@ -144,3 +146,12 @@ jobs:
         run: |
           docker ps -a || true
           docker volume ls || true
+
+      - name: Upload raw pty transcript (always, for debugging)
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: live-raw-log-${{ matrix.name }}
+          path: ${{ runner.temp }}/live-raw.log.*
+          if-no-files-found: ignore
+          retention-days: 7
