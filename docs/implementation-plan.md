@@ -440,49 +440,69 @@ on Linux and confirms the splash renders and responds to input.
 **Goal**: the core value proposition — profile → configuration → final
 review → live progress → completion/failure — wired to real Docker.
 
-**Architecture decision, superseding an earlier draft of this section**:
-`internal/deploy` does not reimplement Docker/Compose orchestration from
-scratch. `orbit`'s `install.sh` already has that logic, hard-won and
-tested across many PRs (profile selection, OIDC discovery, compose
-generation, config staging with real rollback, image-digest verification,
-upgrade/rollback safety) — reimplementing it natively in Go would mean
-re-earning correctness `orbit` already paid for. Instead:
+**Architecture decision, superseding two earlier drafts of this
+section**:
+`internal/deploy` does not reimplement Docker/Compose orchestration, or
+orbit's configuration schema, from scratch. `orbit`'s `install.sh` (and
+the `scripts/configure.sh` it calls) already has that logic, hard-won
+and tested across many PRs — reimplementing any of it natively in Go
+would mean re-earning correctness `orbit` already paid for, and worse,
+would tie orbit-launcher's correctness to orbit's exact config schema:
+every time `configure.sh`'s required fields changed, orbit-launcher
+would need a matching Go code change and a recompiled release just to
+keep working. Two things follow from that:
 
-- Vendor a stripped copy of `install.sh` (and only the parts of
-  `installer-ui.sh` that aren't pure terminal-UI — orbit-launcher's own
-  screens replace that role entirely) into this repo, with the
-  interactive command-centre code removed: orbit-launcher is now that
-  layer.
-- `internal/deploy` shells out to `bash install.sh --plain [flags]` as a
-  background process and parses its existing structured event stream —
-  `phase=... component=... state=... reason=... action=... elapsed=...`
-  — line by line, in real time, to drive the live-progress screen. This
-  is exactly the semantic event format `install.sh --plain` already
-  emits for scriptability; orbit-launcher's job is to render it well, not
-  to reinvent it.
-- The vendored script stays synced with `orbit`'s own installer as that
-  project evolves — a real maintenance cost, tracked as its own concern,
-  not assumed away.
+- **No vendoring.** `internal/deploy.FetchInstallScript` downloads the
+  current `install.sh` fresh from orbit's stable branch at the moment
+  Install or Update is confirmed — not a copy checked into this repo,
+  not a pinned revision. `install.sh` itself resolves every other asset
+  it needs (compose files, `configure.sh`, `configuration.sh`) from the
+  exact source revision recorded in the Docker image's own OCI labels,
+  so fetching only this one file is sufficient.
+- **No config collection, and no field knowledge at all.** Earlier
+  drafts of Install had orbit-launcher collect `APP_URL`/OIDC fields
+  itself via Go text inputs and write `.env-orbit` directly, running
+  `install.sh` detached from the controlling terminal (`Setsid`) so its
+  own guided config never triggered. That shipped, then was corrected
+  (issue #51) after review: it's exactly the schema-coupling problem
+  above, and it also meant install.sh's own
+  `scripts/configure.sh --set-oidc-secret` — which has no
+  non-interactive form at all, by design, since it reads a secret from
+  a real terminal with echo disabled — could never run. The fix:
+  `internal/ui` hands the *real* terminal to `install.sh` for the whole
+  run, via bubbletea's `tea.ExecProcess` (the same primitive used to
+  wrap `$EDITOR`/`git commit`-style interactive subprocesses — see
+  `internal/ui/handoff.go`). `install.sh`'s own
+  `prepare_configuration()` already does the right thing end to end
+  once it has a controlling terminal: it detects missing fields, runs
+  `configure.sh --init` for guided prompts, and collects the secret,
+  all natively. orbit-launcher's own screens stop at "which profile"
+  and "confirm the handoff" — everything past that is `install.sh`
+  running exactly as it would if a person had piped it into `bash`
+  themselves, and Update reuses the identical mechanism (see
+  `internal/deploy.BuildInstallCommand`).
 
 Screens from `design/mockups.html` sections 03–08, implemented against
-this: profile → compose-file selection maps to `install.sh` flags; config
-staging (no writes until Final Review commit — the "nothing installed
-yet" claim must be literally true, proven by a test, not just stated in
-copy) maps to `install.sh`'s existing staged-config behaviour;
-failure-path fidelity (real dependency-kill scenarios, 3.5) means the
-exact reason/action text `install.sh --plain` already emits reaching the
-Failure screen unchanged.
+this: profile selection (Standard only, for now — AI/Full are honest
+"not available yet" stubs); a confirm screen explaining the handoff (no
+config-collection screen at all, per the above); completion/failure
+based on `install.sh`'s own exit code.
 
-**Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step;
-live-matrix install-to-healthy-endpoint scenario passes on Linux; at least
-one proven failure-path scenario with verified rollback.
+**Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step
+up to the handoff; a live-matrix install-to-healthy-endpoint scenario
+passes on Linux (still open — no Docker/OIDC available in this working
+session, tracked as issue #19); at least one proven failure-path
+scenario.
 
 ### Wave 3 — Update & Repair
 
 **Goal**: the other two "manage" flows.
 
-- Update: detect an existing deployment, preserve valid config by default
-  (same principle `orbit`'s current installer already has).
+- Update: detect an existing deployment, then reuse the exact same
+  terminal-handoff mechanism as Install (see Wave 2's architecture
+  decision) — `install.sh` is idempotent and its own `configure.sh`
+  preserves existing values on rerun, so Update never collects or
+  duplicates any config either.
 - Repair: can ship as a **non-mutating stub** for v1 if the underlying
   repair engine isn't ready yet — same honest seam `orbit`'s own
   `install.sh` uses today for issue #261 ("Repair remains a non-mutating
