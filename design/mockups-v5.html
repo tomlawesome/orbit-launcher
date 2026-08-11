@@ -55,12 +55,11 @@
     <h1>The shipped splash, plus what survived.</h1>
     <p class="lede">
       Every panel renders under real terminal constraints — cell grid, 10fps,
-      integer positions, glyph ramps. The base is the splash that ships today,
-      untouched in layout. Two additions from the design work, both proven in
-      cells: the starfield now rotates rigidly with two-layer parallax
-      (instead of random per-star drift), and small planetary systems live out
-      in the field — a binary pair circling each other, and a planet with a
-      moon. No central ring, no corona.
+      integer positions, glyph ramps. Changes this revision: the starfield
+      moves as one locked body (every star shifts in the same instant), the
+      wordmark is a large half-block pixel ORBIT, the tagline is replaced by the
+      deployment's FQDN with the status word beneath it, and the success
+      screen's URL sits where the splash puts its FQDN.
     </p>
   </header>
 
@@ -74,24 +73,28 @@
       <div class="frame-notes">
         <h3>Watch it for thirty seconds</h3>
         <ul>
-          <li><b>Layout is the shipped splash, exactly</b> — ⟡ mark, wordmark,
-          tagline, five menu items with the group gap, keybind hint at the
-          bottom. Nothing moved.</li>
-          <li><b>The starfield is now a rigid, rotating body</b> — one slow
-          revolution (~6 min near layer, ~8.5 min far layer). Stars twinkle
-          in place; no star ever wanders on its own. At cell resolution the
-          rotation is nearly subliminal — you sense it more than see it.</li>
-          <li><b>Two small systems live in the field:</b> a binary pair
-          (ice + rose) circling each other upper-right, and a pale planet
-          with an ember moon lower-left. Single-cell bodies, slow periods,
-          placed clear of the text column. Company, not spectacle.</li>
-          <li><b>This panel cycles the three states every ten seconds</b> so
-          you can see the surviving vocabulary: <b>dormant</b> (accent mark,
-          silence), <b>alive</b> (green mark, status line bottom-left, caret
-          preselects Update), <b>degraded</b> (amber mark, status line, caret
-          preselects Repair). The real app computes its state once at
-          startup — no cycling.</li>
-          <li><b>Version bottom-right, always.</b></li>
+          <li><b>The sky moves as one.</b> The rotation is quantized: the whole
+          field re-renders in a single synchronized step every 2.5s (near
+          layer steps a little further than the far layer — parallax kept).
+          Between steps nothing moves but twinkle. No star ever shifts on
+          its own; they are locked in their permanence, and it's your head
+          that turned.</li>
+          <li><b>ORBIT is a proper wordmark now</b> — a half-block pixel
+          font (5×6 pixel letters rendered with <code>▀▄█</code>, two pixel
+          rows per cell), the standard TUI big-text technique. Three cell
+          rows tall, genuinely bold. The ⟡ mark sits above it and carries
+          the state colour.</li>
+          <li><b>The tagline is gone.</b> In its place: the deployment's
+          FQDN in the same quiet grey, with the status word — <b>alive</b>
+          (green) or <b>degraded</b> (amber) — beneath it. With no
+          deployment, just <b>dormant</b> (faint) sits under the wordmark.
+          No bottom-left status line anymore; identity lives in one place.</li>
+          <li><b>Two small systems in the field:</b> the binary pair
+          (ice + rose) upper-right, the pale planet with its ember moon
+          lower-left. Single-cell bodies, clear of the text column.</li>
+          <li><b>This panel cycles the three states every ten seconds</b>
+          (demo only — the real app computes state once at startup). The
+          caret preselects Install / Update / Repair to match.</li>
         </ul>
       </div>
     </div>
@@ -108,15 +111,15 @@
         <h3>How it usually looks</h3>
         <ul>
           <li>Same scene at the size a maximized terminal actually is. The
-          systems sit further out, the field is denser, the rotation reads
-          more clearly. Text is identical — it never scales.</li>
+          systems sit further out, the field is denser, the locked steps of
+          the rotation read more clearly. Text never scales.</li>
         </ul>
       </div>
     </div>
   </section>
 
   <section>
-    <h2><span>02</span> Install — mission console (unchanged from v4, it passed)</h2>
+    <h2><span>02</span> Install — mission console (unchanged, it passed)</h2>
     <div class="frame-row">
       <div class="term">
         <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — install</span></div>
@@ -126,43 +129,41 @@
         <h3>Already earned its place</h3>
         <ul>
           <li>install.sh streaming inside a launcher-owned frame, stage bar
-          with no percentage, elapsed clock, stage in words. Text screens
-          lose nothing in cells — this is the same panel that passed review
-          in v4.</li>
+          with no percentage, elapsed clock, stage in words.</li>
         </ul>
       </div>
     </div>
   </section>
 
   <section>
-    <h2><span>03</span> Success — plain, per the surviving copy decisions</h2>
+    <h2><span>03</span> Success — URL in the splash's identity slot</h2>
     <div class="frame-row">
       <div class="term">
         <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — ready</span></div>
         <div class="body"><pre class="cells" id="v5-success"></pre></div>
       </div>
       <div class="frame-notes">
-        <h3>Quiet, and part of the same sky</h3>
+        <h3>Same identity block as the splash</h3>
         <ul>
-          <li><b>No sphere, no corona, no ignition</b> — the celebration is
-          the state change: the ⟡ mark turns green, <code>alive</code> takes
-          the tagline slot, the URL is the hero line.</li>
-          <li><b>Stacked actions, splash grammar:</b> Get into Orbit /
-          Terminal / Menu.</li>
-          <li><b>"Orbit achieved in 3m 42s"</b> bottom-left, version
-          bottom-right — the moment named where the chrome lives.</li>
-          <li><b>The same binary pair is still out there</b> — success is the
-          same universe as the splash, just a better day in it.</li>
+          <li><b>The URL sits exactly where the splash puts its FQDN</b> —
+          directly under the wordmark, with <b>alive</b> beneath it. Arriving
+          here and returning to the splash later shows the same block in the
+          same place; the app has one idea of identity.</li>
+          <li>URL keeps the accent colour here — it's the thing you came
+          for — and is OSC 52 copyable.</li>
+          <li>Stacked actions in splash grammar: Get into Orbit / Terminal /
+          Menu. Footer: "Orbit achieved in 3m 42s" left, version right.</li>
+          <li>The binary pair is still out there — success is the same
+          universe as the splash, just a better day in it.</li>
         </ul>
       </div>
     </div>
   </section>
 
   <footer class="end">
-    v5 — the hybrid: shipped splash layout + rotating parallax starfield +
-    free planetary systems + the four surviving UX decisions. All panels are
-    cell-truth renders; nothing here needs blur or 60fps to exist. Implementation
-    briefs: design/handovers/.
+    v5 — the hybrid: shipped-splash restraint + locked-step parallax rotation +
+    free planetary systems + box-drawing wordmark + unified identity block.
+    All panels are cell-truth renders. Implementation briefs: design/handovers/.
   </footer>
 
 </div>
@@ -176,11 +177,9 @@ function mkScreen(id,W,H){
   S.reset=function(){S.buf=[];for(let r=0;r<H;r++)S.buf.push(new Array(W).fill(null));};
   S.put=function(r,c,ch,f,o){
     if(r<0||r>=H||c<0||c>=W)return;
-    o=o||{};
-    if(o.keep){const ex=S.buf[r][c];if(ex&&ex.bg)o.bg=ex.bg;delete o.keep;}
-    S.buf[r][c]=Object.assign({c:ch,f:f},o);
+    S.buf[r][c]=Object.assign({c:ch,f:f},o||{});
   };
-  S.str=function(r,c,s,f,o){for(let i=0;i<s.length;i++)S.put(r,c+i,s[i],f,o);};
+  S.str=function(r,c,s,f,o){for(let i=0;i<s.length;i++)if(s[i]!==" ")S.put(r,c+i,s[i],f,o);};
   S.render=function(){
     let h="";
     for(let r=0;r<H;r++){for(let c=0;c<W;c++){const x=S.buf[r][c];
@@ -195,9 +194,18 @@ function mkStars(n,rmin,rmax){
   for(let i=0;i<n;i++)a.push({r:rmin+(i*17.23)%(rmax-rmin),a0:i*2.399963,layer:i%2,tp:5+(i%7),tph:i*1.7});
   return a;
 }
+// The sky moves as ONE. Rotation is quantized: every STEP_S seconds the whole
+// field advances in a single synchronized step (near layer by a larger angle
+// than the far layer — parallax preserved). Between steps, only twinkle.
+// Continuous rotation + per-star rounding made stars cross cell boundaries
+// one at a time, which read as stars wandering individually — wrong.
+const STEP_S=2.5;
 function drawStars(S,stars,t,CX,CY,dim){
+  const step=Math.floor(t/STEP_S);
+  const angNear=step*2*Math.PI*STEP_S/360;
+  const angFar =step*2*Math.PI*STEP_S/520;
   stars.forEach(function(st){
-    const ang=st.a0+2*Math.PI*t/(st.layer?520:360);
+    const ang=st.a0+(st.layer?angFar:angNear);
     const col=Math.round(CX+st.r*Math.cos(ang)), row=Math.round(CY+st.r*Math.sin(ang)/2);
     const b=(dim?0.3:0.5)*(0.55+0.45*Math.sin(2*Math.PI*t/st.tp+st.tph));
     if(b>0.1)S.put(row,col,"·","rgba(231,233,238,"+b.toFixed(2)+")");
@@ -207,23 +215,63 @@ function drawStars(S,stars,t,CX,CY,dim){
 // free planetary systems: a binary pair orbiting a shared centre, and a
 // planet with a moon — single-cell bodies on slow clocks, no central body
 function drawSystems(S,t,ps){
-  // binary pair, upper-right: two bodies opposite each other on one ellipse
   const bx=Math.round(S.W*0.78), by=Math.round(S.H*0.2);
-  const ba=2*Math.PI*t/34;
-  const brx=6*ps, bry=3*ps;
-  S.put(Math.round(by+bry*Math.sin(ba)/1), Math.round(bx+brx*Math.cos(ba)),"●","#60a5fa");
+  const ba=2*Math.PI*t/34, brx=6*ps, bry=3*ps;
+  S.put(Math.round(by+bry*Math.sin(ba)), Math.round(bx+brx*Math.cos(ba)),"●","#60a5fa");
   S.put(Math.round(by+bry*Math.sin(ba+Math.PI)), Math.round(bx+brx*Math.cos(ba+Math.PI)),"●","#e879f9");
-  // planet + moon, lower-left: planet fixed, small moon circling it
   const px=Math.round(S.W*0.16), py=Math.round(S.H*0.78);
   S.put(py,px,"●","#cbd5e1");
   const ma=2*Math.PI*t/13;
   S.put(Math.round(py+1.6*ps*Math.sin(ma)), Math.round(px+3.5*ps*Math.cos(ma)),"·","#fb7185");
 }
 
+// the wordmark: half-block pixel font — each letter on a 5×6 pixel grid,
+// two pixel rows per cell row via ▀▄█, the standard TUI big-text technique
+const PIXFONT={
+  O:["·###·","#···#","#···#","#···#","#···#","·###·"],
+  R:["####·","#···#","####·","#·#··","#··#·","#···#"],
+  B:["####·","#···#","####·","#···#","#···#","####·"],
+  I:["###","·#·","·#·","·#·","·#·","###"],
+  T:["#####","··#··","··#··","··#··","··#··","··#··"],
+};
+function bigText(word){
+  const rows=["","",""];
+  for(const ch of word){
+    const g=PIXFONT[ch];
+    for(let r=0;r<3;r++){
+      for(let c=0;c<g[0].length;c++){
+        const topOn=g[r*2][c]==="#", botOn=g[r*2+1][c]==="#";
+        rows[r]+= topOn&&botOn?"█":topOn?"▀":botOn?"▄":" ";
+      }
+      rows[r]+=" ";
+    }
+  }
+  return rows;
+}
+const BIG_ORBIT=bigText("ORBIT");
+function drawWordmark(S,topRow,CX,markCol){
+  S.str(topRow,CX,"⟡",markCol);
+  const off=Math.floor(BIG_ORBIT[0].length/2);
+  for(let i=0;i<3;i++)S.str(topRow+2+i,CX-off,BIG_ORBIT[i],"#e7e9ee",{b:1});
+}
+
+// the identity block: FQDN (grey, tagline slot) + status word in its colour;
+// with no deployment, just the status word sits under the wordmark
+function drawIdentity(S,row,CX,fqdn,st){
+  const stCol=st==="alive"?"#4ade80":st==="degraded"?"#fb923c":"#4a5468";
+  if(fqdn){
+    S.str(row,CX-Math.floor(fqdn.length/2),fqdn,"#7c8699");
+    S.str(row+1,CX-Math.floor(st.length/2),st,stCol);
+    return row+1;
+  }
+  S.str(row,CX-Math.floor(st.length/2),st,stCol);
+  return row;
+}
+
 // ==== 01 splash (cycling states) + 01b maximized ============================
 function splashScreen(id,W,H,ps,cycle){
   const S=mkScreen(id,W,H); if(!S)return;
-  const CX=Math.floor(W/2), CY=Math.floor(H/2)-2;
+  const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
   const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
   const HINT="↑↓ navigate · ↵ select · esc quit";
   let t=0;
@@ -231,24 +279,20 @@ function splashScreen(id,W,H,ps,cycle){
     t+=.1; S.reset();
     drawStars(S,stars,t,CX,CY,false);
     drawSystems(S,t,ps);
-    // state cycle: dormant -> alive -> degraded, 10s each (demo only)
     const st=cycle?["dormant","alive","degraded"][Math.floor(t/10)%3]:"dormant";
     const markCol=st==="alive"?"#4ade80":st==="degraded"?"#fb923c":"#7dd3fc";
-    const sel=st==="alive"?1:st==="degraded"?2:0;   // Install / Update / Repair
-    S.str(CY-4,CX,"⟡",markCol);
-    S.str(CY-3,CX-4,"O R B I T","#e7e9ee",{b:1});
-    S.str(CY-2,CX-12,"personal server launcher","#4a5468");
+    const fqdn=st==="dormant"?null:"mail.example.com";
+    const sel=st==="alive"?1:st==="degraded"?2:0;
+    const top=CY-7;
+    drawWordmark(S,top,CX,markCol);
+    drawIdentity(S,top+6,CX,fqdn,st);
     const items=["Install","Update","Repair","Remove","Exit"];
     items.forEach(function(label,i){
-      const row=CY+i+(i>=3?1:0);
+      const row=top+9+i+(i>=3?1:0);
       if(i===sel){S.str(row,CX-4,"▸","#7dd3fc");S.str(row,CX-2,label,"#e7e9ee");}
       else S.str(row,CX-2,label,"#7c8699");
     });
-    const status=st==="alive"?"mail.example.com · alive":st==="degraded"?"mail.example.com · degraded":"";
-    // hint centres, but never closer than two cells to the status line
-    const hintStart=Math.max(CX-Math.floor(HINT.length/2), status.length+3);
-    S.str(H-1,hintStart,HINT,"#4a5468");
-    if(status)S.str(H-1,1,status,st==="alive"?"#4ade80":"#fb923c");
+    S.str(H-1,CX-Math.floor(HINT.length/2),HINT,"#4a5468");
     S.str(H-1,W-7,"v0.1.0","#4a5468");
     S.render();
   }
@@ -335,24 +379,25 @@ consoleScreen("v5-install",{
   ],
 });
 
-// ==== 03 success ============================================================
+// ==== 03 success — identity block matches the splash ========================
 (function(){
   const S=mkScreen("v5-success",80,26); if(!S)return;
-  const CX=40, CY=9;
+  const CX=40;
   const stars=mkStars(40,6,46);
   let t=0;
   function frame(){
     t+=.1; S.reset();
     drawStars(S,stars,t,CX,13,false);
     drawSystems(S,t,1);
-    S.str(CY-2,CX,"⟡","#4ade80");
-    S.str(CY-1,CX-4,"O R B I T","#e7e9ee",{b:1});
-    S.str(CY,CX-2,"alive","#4ade80");
-    S.str(CY+3,CX-12,"https://mail.example.com","#7dd3fc");
-    S.str(CY+6,CX-8,"▸ Get into Orbit","#e7e9ee");
-    S.put(CY+6,CX-8,"▸","#7dd3fc");
-    S.str(CY+7,CX-4,"Terminal","#7c8699");
-    S.str(CY+8,CX-2,"Menu","#7c8699");
+    const top=5;
+    drawWordmark(S,top,CX,"#4ade80");
+    // URL takes the splash's FQDN slot, accent because it's the hero
+    S.str(top+6,CX-12,"https://mail.example.com","#7dd3fc");
+    S.str(top+7,CX-2,"alive","#4ade80");
+    S.str(top+10,CX-8,"▸","#7dd3fc");
+    S.str(top+10,CX-6,"Get into Orbit","#e7e9ee");
+    S.str(top+11,CX-4,"Terminal","#7c8699");
+    S.str(top+12,CX-2,"Menu","#7c8699");
     S.str(25,1,"Orbit achieved in 3m 42s","#4a5468");
     S.str(25,73,"v0.1.0","#4a5468");
     S.render();
