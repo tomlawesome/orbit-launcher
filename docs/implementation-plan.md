@@ -350,11 +350,12 @@ change lands through a reviewed pull request under branch protection, the
 machinery attested *authorship* rather than verifying *correctness*, and its
 maintenance cost exceeded the risk it retired.
 
-**Decision (owner-approved in #71):** orbit-launcher does not build it. The
-required human approving review on every lane (§4.1) is the sole planning
-gate — already a stricter real gate than the attestation line provided. The
-`Observability-Impact` PR-body declaration is likewise not adopted; PR review
-covers operational impact directly. If multi-author governance is ever
+**Decision (owner-approved in #71):** orbit-launcher does not carry the
+mechanism. The Wave 0 build of it (`tools/checkgovernance`, its CI step,
+`.github/planning-governance.json`, and the PR-template attestation and
+`Observability-Impact` sections) is removed by the PR recording this
+decision; PR review covers operational impact directly. Owner direction per
+change (§4.1) is the sole planning gate. If multi-author governance is ever
 needed, design it against the situation that exists then rather than
 reviving this mechanism.
 
