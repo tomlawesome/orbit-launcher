@@ -433,26 +433,49 @@ clean VM.
 **Promotion gate**: `teatest` suite covers every keybinding and cancel path
 on the splash/menu; visual-regression screenshot matches the approved
 mockup within an agreed tolerance; live-matrix job launches the real binary
-on Linux and macOS runners and confirms the splash renders and responds to
-input.
+on Linux and confirms the splash renders and responds to input.
 
 ### Wave 2 — Install flow
 
 **Goal**: the core value proposition — profile → configuration → final
 review → live progress → completion/failure — wired to real Docker.
 
-- Screens from `design/mockups.html` sections 03–08, implemented.
-- `internal/deploy`: profile → compose-file selection, config staging
-  (no writes until Final Review commit — the "nothing installed yet" claim
-  must be literally true, proven by a test, not just stated in copy),
-  health-probe orchestration feeding the live progress screen.
-- Failure-path fidelity: real dependency-kill scenarios (3.5) produce the
-  exact reason/action text shown, and rollback leaves the target
-  genuinely untouched.
+**Architecture decision, superseding an earlier draft of this section**:
+`internal/deploy` does not reimplement Docker/Compose orchestration from
+scratch. `orbit`'s `install.sh` already has that logic, hard-won and
+tested across many PRs (profile selection, OIDC discovery, compose
+generation, config staging with real rollback, image-digest verification,
+upgrade/rollback safety) — reimplementing it natively in Go would mean
+re-earning correctness `orbit` already paid for. Instead:
+
+- Vendor a stripped copy of `install.sh` (and only the parts of
+  `installer-ui.sh` that aren't pure terminal-UI — orbit-launcher's own
+  screens replace that role entirely) into this repo, with the
+  interactive command-centre code removed: orbit-launcher is now that
+  layer.
+- `internal/deploy` shells out to `bash install.sh --plain [flags]` as a
+  background process and parses its existing structured event stream —
+  `phase=... component=... state=... reason=... action=... elapsed=...`
+  — line by line, in real time, to drive the live-progress screen. This
+  is exactly the semantic event format `install.sh --plain` already
+  emits for scriptability; orbit-launcher's job is to render it well, not
+  to reinvent it.
+- The vendored script stays synced with `orbit`'s own installer as that
+  project evolves — a real maintenance cost, tracked as its own concern,
+  not assumed away.
+
+Screens from `design/mockups.html` sections 03–08, implemented against
+this: profile → compose-file selection maps to `install.sh` flags; config
+staging (no writes until Final Review commit — the "nothing installed
+yet" claim must be literally true, proven by a test, not just stated in
+copy) maps to `install.sh`'s existing staged-config behaviour;
+failure-path fidelity (real dependency-kill scenarios, 3.5) means the
+exact reason/action text `install.sh --plain` already emits reaching the
+Failure screen unchanged.
 
 **Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step;
-live-matrix install-to-healthy-endpoint scenario passes on Linux and macOS;
-at least one proven failure-path scenario with verified rollback.
+live-matrix install-to-healthy-endpoint scenario passes on Linux; at least
+one proven failure-path scenario with verified rollback.
 
 ### Wave 3 — Update & Repair
 
