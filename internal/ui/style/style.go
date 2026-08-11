@@ -60,3 +60,7 @@ var (
 	MenuUnselected = lipgloss.NewStyle().Foreground(TextMuted)
 	MenuCaret      = lipgloss.NewStyle().Foreground(Accent)
 )
+
+// StarField styles the animated background dots — faint, never competing
+// with foreground text.
+var StarField = lipgloss.NewStyle().Foreground(TextFaint)
