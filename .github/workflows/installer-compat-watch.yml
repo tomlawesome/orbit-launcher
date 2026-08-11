@@ -1,0 +1,103 @@
+name: Installer compatibility watch
+
+# orbit-launcher fetches install.sh live from orbit's own repository at
+# runtime (see internal/deploy/fetch.go) rather than vendoring it, so any
+# change to that script's prompts, flags, or behavior takes effect for
+# every user immediately, with no orbit-launcher release in between. This
+# job is the early-warning system for that: it runs orbit-launcher's real
+# PTY-driven live test suite against the *changing* install.sh (develop,
+# then preview, then main) instead of only the stable script it ships
+# against in production, and files an issue the moment a change breaks
+# something orbit-launcher relies on.
+#
+# Two triggers, deliberately redundant:
+#   - repository_dispatch from orbit's own "notify launcher on installer
+#     change" workflow, for a fast, targeted signal right after a real
+#     change lands.
+#   - a weekly schedule, as a backstop in case the dispatch token expires,
+#     the source workflow is disabled, or a push is missed — see
+#     docs/implementation-plan.md section 3.5.
+
+on:
+  repository_dispatch:
+    types: [orbit-installer-scripts-changed]
+  schedule:
+    - cron: "17 6 * * 1" # Monday mornings, backstop only
+  workflow_dispatch:
+    inputs:
+      orbit_branch:
+        description: "orbit branch to test install.sh from"
+        required: false
+        default: develop
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  compat-check:
+    name: Live test against orbit@${{ github.event.client_payload.branch || inputs.orbit_branch || 'develop' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve target branch and install.sh URL
+        run: |
+          branch="${{ github.event.client_payload.branch || inputs.orbit_branch || 'develop' }}"
+          sha="${{ github.event.client_payload.sha || '' }}"
+          echo "ORBIT_BRANCH=$branch" >> "$GITHUB_ENV"
+          echo "ORBIT_SHA=$sha" >> "$GITHUB_ENV"
+          echo "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=https://raw.githubusercontent.com/tomlawesome/orbit/$branch/scripts/install.sh" >> "$GITHUB_ENV"
+
+      - name: Build orbit-launcher from source
+        run: |
+          go build -o "$RUNNER_TEMP/orbit-launcher" ./cmd/orbit-launcher
+          echo "ORBIT_LAUNCHER_LIVE_BINARY=$RUNNER_TEMP/orbit-launcher" >> "$GITHUB_ENV"
+
+      - name: Run the live test against orbit's install.sh
+        id: live_test
+        env:
+          ORBIT_LAUNCHER_LIVE_RAW_LOG: ${{ runner.temp }}/live-raw.log
+        run: go test -tags live -count=1 -v ./test/live/...
+
+      - name: Docker state (always, for debugging)
+        if: always()
+        run: |
+          docker ps -a || true
+          docker volume ls || true
+
+      - name: Upload raw pty transcript (always, for debugging)
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: live-raw-log
+          path: ${{ runner.temp }}/live-raw.log.*
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: File an issue on failure
+        if: failure() && steps.live_test.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Installer compatibility check failed against orbit@${ORBIT_BRANCH}"
+          existing="$(gh issue list --repo "${{ github.repository }}" --label installer-compat --state open --search "in:title \"$title\"" --json number --jq '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "Still failing as of this run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Commented on existing issue #$existing instead of filing a duplicate."
+            exit 0
+          fi
+          body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
+            "orbit-launcher's live install/remove test failed running against orbit's \`${ORBIT_BRANCH}\` branch install.sh${ORBIT_SHA:+ (${ORBIT_SHA})}, instead of the \`main\` script it ships against in production." \
+            "This means a pending change to install.sh's prompts, flags, or behavior on \`${ORBIT_BRANCH}\` is incompatible with orbit-launcher's current handoff logic. If this reaches \`main\` before it's fixed, real installs will break immediately — orbit-launcher fetches install.sh live at runtime, not a pinned/vendored copy." \
+            "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "Raw pty transcript is attached to the run as the \`live-raw-log\` artifact.")
+          gh issue create --repo "${{ github.repository }}" --title "$title" --label installer-compat --body "$body"
