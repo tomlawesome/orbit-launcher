@@ -126,7 +126,14 @@ func acceptMenusUntil(t *testing.T, console *expect.Console, target string) {
 	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(target))
 	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
 	for {
-		result, err := console.Expect(expect.Regexp(pattern), expect.WithTimeout(60*time.Second))
+		// No explicit per-call timeout here — this falls back to the
+		// console's own configured default (see startLive), which is
+		// generous specifically because a real image pull plus health
+		// checks can genuinely take minutes. An earlier draft hardcoded
+		// 60s here, silently shadowing that default and causing a real
+		// CI failure on a resource-constrained runner even though the
+		// install had, in fact, not failed — just hadn't finished yet.
+		result, err := console.Expect(expect.Regexp(pattern))
 		if err != nil {
 			t.Fatalf("waiting for %q or a menu: %v", target, err)
 		}
