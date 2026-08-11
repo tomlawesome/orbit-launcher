@@ -71,3 +71,61 @@ jobs:
             dist/orbit-launcher_linux_amd64.tar.gz \
             dist/orbit-launcher_linux_arm64.tar.gz \
             dist/checksums.txt
+
+  live_test:
+    name: Live test (${{ matrix.name }})
+    needs: build_and_publish
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Empty container: runs directly on the ubuntu-latest runner.
+          - name: ubuntu-latest
+            container: ""
+          # install.sh runs strictly under bash + coreutils, whichever
+          # distro it's invoked from — Debian's aren't Ubuntu's, and
+          # assuming Ubuntu-only behaviour is universal is exactly the
+          # distro-difference lesson from the orbit#281 CI investigation
+          # this repo's own implementation plan calls out (section 3.5).
+          # Docker-outside-of-Docker: the container talks to the
+          # runner's real Docker daemon over the mounted socket (at the
+          # same path, so the Docker CLI's default connection just
+          # works), rather than needing its own nested daemon.
+          - name: debian-12
+            container:
+              image: debian:12
+              options: -v /var/run/docker.sock:/var/run/docker.sock
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Docker CLI (container jobs only)
+        if: matrix.container != ''
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends docker.io ca-certificates curl
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Get the just-published preview binary via the real bootstrap script
+        run: |
+          ORBIT_LAUNCHER_VERSION=preview-latest bash scripts/get-orbit-launcher.sh --version
+          echo "ORBIT_LAUNCHER_LIVE_BINARY=$HOME/.cache/orbit-launcher/orbit-launcher" >> "$GITHUB_ENV"
+
+      - name: Run the live test
+        run: go test -tags live -count=1 -v ./test/live/...
+
+      - name: Docker state (always, for debugging)
+        if: always()
+        run: |
+          docker ps -a || true
+          docker volume ls || true
