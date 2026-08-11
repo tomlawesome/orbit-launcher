@@ -14,20 +14,22 @@ const (
 	appStateSplash appState = iota
 	appStateRemove
 	appStateRepair
+	appStateInstall
 )
 
 // AppModel is the root model: it starts at the splash screen and, once a
-// choice is made, hands control to that flow. Remove and Repair (a
-// deliberate non-mutating stub) are wired to real flows — Install/Update
-// land in a later wave (see docs/implementation-plan.md section 5);
-// choosing them for now just exits, rather than pretending to do
-// something they don't yet do.
+// choice is made, hands control to that flow. Install (Standard profile
+// only), Remove and Repair (a deliberate non-mutating stub) are wired to
+// real flows — Update lands in a later wave (see
+// docs/implementation-plan.md section 5); choosing it for now just
+// exits, rather than pretending to do something it doesn't yet do.
 type AppModel struct {
 	width, height int
 	state         appState
 	splash        SplashModel
 	remove        RemoveModel
 	repair        RepairModel
+	install       InstallModel
 
 	// targetDir is where an existing deployment, if any, would be found.
 	// Overridable in tests; production code leaves it empty and gets the
@@ -77,6 +79,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.repair.Update(msg)
 		m.repair = updated.(RepairModel)
 		return m, cmd
+	case appStateInstall:
+		updated, cmd := m.install.Update(msg)
+		m.install = updated.(InstallModel)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -107,8 +113,12 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repair = NewRepairModel()
 		m.state = appStateRepair
 		return m, sizeCmd
+	case "Install":
+		m.install = NewInstallModel(m.resolvedTargetDir())
+		m.state = appStateInstall
+		return m, sizeCmd
 	default:
-		// Install/Update aren't wired to a real flow yet.
+		// Update isn't wired to a real flow yet.
 		return m, tea.Quit
 	}
 }
@@ -122,6 +132,8 @@ func (m AppModel) View() string {
 		return m.remove.View()
 	case appStateRepair:
 		return m.repair.View()
+	case appStateInstall:
+		return m.install.View()
 	}
 	return ""
 }
