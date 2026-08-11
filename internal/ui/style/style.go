@@ -20,6 +20,17 @@ var (
 	Warm       = lipgloss.Color("#f0b429")
 	Success    = lipgloss.Color("#4ade80")
 	Error      = lipgloss.Color("#f87171")
+
+	// Degraded is deep amber: the deployment is up, but wrong — never
+	// red, which means stopped/failed (design/mockups-v5.html).
+	Degraded = lipgloss.Color("#fb923c")
+
+	// Planet palette for the splash's free planetary systems
+	// (design/mockups-v5.html section 01).
+	PlanetIce   = lipgloss.Color("#60a5fa")
+	PlanetRose  = lipgloss.Color("#e879f9")
+	PlanetPale  = lipgloss.Color("#cbd5e1")
+	PlanetEmber = lipgloss.Color("#fb7185")
 )
 
 // Symbol glossary — see design/mockups.html section 01.
@@ -68,8 +79,18 @@ var StarField = lipgloss.NewStyle().Foreground(TextFaint)
 // SuccessText, ErrorText and WarmText style status glyphs and messages —
 // success/error/in-progress, matching the mockup's symbol glossary.
 var (
-	SuccessText = lipgloss.NewStyle().Foreground(Success)
-	ErrorText   = lipgloss.NewStyle().Foreground(Error)
-	WarmText    = lipgloss.NewStyle().Foreground(Warm)
-	AccentText  = lipgloss.NewStyle().Foreground(Accent)
+	SuccessText  = lipgloss.NewStyle().Foreground(Success)
+	ErrorText    = lipgloss.NewStyle().Foreground(Error)
+	WarmText     = lipgloss.NewStyle().Foreground(Warm)
+	AccentText   = lipgloss.NewStyle().Foreground(Accent)
+	DegradedText = lipgloss.NewStyle().Foreground(Degraded)
+	MutedText    = lipgloss.NewStyle().Foreground(TextMuted)
+)
+
+// Planet styles, one per starfield planet kind.
+var (
+	PlanetIceText   = lipgloss.NewStyle().Foreground(PlanetIce)
+	PlanetRoseText  = lipgloss.NewStyle().Foreground(PlanetRose)
+	PlanetPaleText  = lipgloss.NewStyle().Foreground(PlanetPale)
+	PlanetEmberText = lipgloss.NewStyle().Foreground(PlanetEmber)
 )

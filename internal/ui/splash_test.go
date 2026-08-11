@@ -233,3 +233,104 @@ func TestSplashModel_ViewIsEmptyAfterQuitting(t *testing.T) {
 		t.Errorf("View() after quitting = %q, want empty", view)
 	}
 }
+
+func seedDeployment(m SplashModel) SplashModel {
+	m.fqdn = "mail.example.com"
+	m.appURL = "https://mail.example.com"
+	m.state = stateUnknown
+	m.selected = menuUpdate
+	return m
+}
+
+func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
+	m := seedDeployment(NewSplashModel())
+
+	updated, _ := m.Update(healthResultMsg{healthy: true})
+	m = updated.(SplashModel)
+
+	if m.state != stateAlive {
+		t.Errorf("state = %v, want stateAlive", m.state)
+	}
+	if m.selected != menuUpdate {
+		t.Errorf("selected = %d, want Update to stay preselected", m.selected)
+	}
+}
+
+func TestSplashModel_HealthResultDegradedPreselectsRepair(t *testing.T) {
+	m := seedDeployment(NewSplashModel())
+
+	updated, _ := m.Update(healthResultMsg{healthy: false})
+	m = updated.(SplashModel)
+
+	if m.state != stateDegraded {
+		t.Errorf("state = %v, want stateDegraded", m.state)
+	}
+	if m.selected != menuRepair {
+		t.Errorf("selected = %d, want Repair preselected on a degraded deployment", m.selected)
+	}
+}
+
+func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.T) {
+	m := seedDeployment(NewSplashModel())
+
+	updated, _ := m.Update(key(tea.KeyDown)) // the user takes over
+	m = updated.(SplashModel)
+	navigatedTo := m.selected
+
+	updated, _ = m.Update(healthResultMsg{healthy: false})
+	m = updated.(SplashModel)
+
+	if m.state != stateDegraded {
+		t.Errorf("state = %v, want stateDegraded (display still updates)", m.state)
+	}
+	if m.selected != navigatedTo {
+		t.Errorf("selected = %d, want %d — the probe must never fight the user's hands", m.selected, navigatedTo)
+	}
+}
+
+func TestSplashModel_ViewShowsIdentityBlockPerState(t *testing.T) {
+	base := NewSplashModel()
+	updated, _ := base.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	base = updated.(SplashModel)
+
+	if view := base.View(); !strings.Contains(view, "dormant") {
+		t.Error("dormant view must show the status word under the wordmark")
+	}
+
+	m := seedDeployment(base)
+	if view := m.View(); !strings.Contains(view, "mail.example.com") {
+		t.Error("unknown-health view must show the FQDN")
+	} else if strings.Contains(view, "alive") || strings.Contains(view, "degraded") {
+		t.Error("unknown-health view must never guess a status word")
+	}
+
+	updated, _ = m.Update(healthResultMsg{healthy: true})
+	if view := updated.(SplashModel).View(); !strings.Contains(view, "alive") {
+		t.Error("alive view must show the status word")
+	}
+
+	updated, _ = m.Update(healthResultMsg{healthy: false})
+	if view := updated.(SplashModel).View(); !strings.Contains(view, "degraded") {
+		t.Error("degraded view must show the status word")
+	}
+}
+
+func TestSplashModel_ViewShowsVersionBottomRightAndNoTagline(t *testing.T) {
+	m := NewSplashModel()
+	m.version = "v0.1.0"
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+
+	view := m.View()
+	if !strings.Contains(view, "v0.1.0") {
+		t.Error("view must include the version")
+	}
+	if strings.Contains(view, "personal server launcher") {
+		t.Error("the old tagline must be gone")
+	}
+	lines := strings.Split(view, "\n")
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "v0.1.0") || !strings.Contains(last, "navigate") {
+		t.Errorf("footer must carry both the hint and the version, got %q", last)
+	}
+}
