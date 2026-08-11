@@ -15,14 +15,13 @@ const (
 	appStateRemove
 	appStateRepair
 	appStateInstall
+	appStateUpdate
 )
 
 // AppModel is the root model: it starts at the splash screen and, once a
 // choice is made, hands control to that flow. Install (Standard profile
-// only), Remove and Repair (a deliberate non-mutating stub) are wired to
-// real flows — Update lands in a later wave (see
-// docs/implementation-plan.md section 5); choosing it for now just
-// exits, rather than pretending to do something it doesn't yet do.
+// only), Update, Remove and Repair (a deliberate non-mutating stub) are
+// all wired to real flows.
 type AppModel struct {
 	width, height int
 	state         appState
@@ -30,6 +29,7 @@ type AppModel struct {
 	remove        RemoveModel
 	repair        RepairModel
 	install       InstallModel
+	update        UpdateModel
 
 	// targetDir is where an existing deployment, if any, would be found.
 	// Overridable in tests; production code leaves it empty and gets the
@@ -83,6 +83,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.install.Update(msg)
 		m.install = updated.(InstallModel)
 		return m, cmd
+	case appStateUpdate:
+		updated, cmd := m.update.Update(msg)
+		m.update = updated.(UpdateModel)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -117,8 +121,12 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.install = NewInstallModel(m.resolvedTargetDir())
 		m.state = appStateInstall
 		return m, sizeCmd
+	case "Update":
+		deployment, _ := deploy.Detect(m.resolvedTargetDir())
+		m.update = NewUpdateModel(deployment)
+		m.state = appStateUpdate
+		return m, sizeCmd
 	default:
-		// Update isn't wired to a real flow yet.
 		return m, tea.Quit
 	}
 }
@@ -134,6 +142,8 @@ func (m AppModel) View() string {
 		return m.repair.View()
 	case appStateInstall:
 		return m.install.View()
+	case appStateUpdate:
+		return m.update.View()
 	}
 	return ""
 }
