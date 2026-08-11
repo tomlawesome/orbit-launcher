@@ -38,6 +38,15 @@ func buildBinary(t *testing.T) string {
 
 func startUnderPTY(t *testing.T, binPath string) (*expect.Console, *exec.Cmd) {
 	t.Helper()
+	return startUnderPTYInDir(t, binPath, "")
+}
+
+// startUnderPTYInDir is startUnderPTY, but runs the binary with its
+// working directory set to dir — needed to exercise flows (like Update)
+// whose behaviour depends on what's already at the target directory. An
+// empty dir inherits the test process's own working directory.
+func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *exec.Cmd) {
+	t.Helper()
 
 	console, err := expect.NewConsole(expect.WithDefaultTimeout(5 * time.Second))
 	if err != nil {
@@ -54,6 +63,7 @@ func startUnderPTY(t *testing.T, binPath string) (*expect.Console, *exec.Cmd) {
 	}
 
 	cmd := exec.Command(binPath)
+	cmd.Dir = dir
 	cmd.Stdin = console.Tty()
 	cmd.Stdout = console.Tty()
 	cmd.Stderr = console.Tty()
