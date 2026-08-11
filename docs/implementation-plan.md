@@ -279,17 +279,17 @@ does).
 
 Same ruleset shape as `orbit`'s four rulesets (`deletion` and
 `non_fast_forward` blocked, `required_review_thread_resolution: true`,
-merge-commit only). One deliberate difference from `orbit`: all four
-rulesets here set `required_approving_review_count: 1` (confirmed) —
-`orbit` runs at `0` because its delivery model routes planning authority
-through its own AI-orchestration system; orbit-launcher doesn't have that
-yet, so a human approval is the real gate.
+merge-commit only). All four rulesets set
+`required_approving_review_count: 0`, matching `orbit` — deliberately, not
+as a gap: on a single-account repository the account that opens a pull
+request cannot approve it, so a non-zero count is unsatisfiable rather
+than protective.
 
-**Standing rule, not just for this setting**: any time I'm given
-permission to skip this gate for a specific piece of work, that permission
-covers only that work — it is never read as a standing exception, and the
-required-approval rule applies again on the next PR unless re-authorized
-for that one too.
+**The human gate is explicit owner direction, not a web-UI review.** An
+assistant merges a pull request only when the owner has approved that
+specific change — conversationally, on the issue, or on the PR; the record
+of that direction is the approval. Permission covers only the work it was
+given for and is never read as a standing exception for the next PR.
 
 ### 4.2 Release pipeline (preview push → main → tag)
 
@@ -341,40 +341,23 @@ in the Wave 0 CI skeleton below rather than hand-rolled build scripts.
   worth closing in both repos, flagging separately rather than silently
   fixing `orbit`'s).
 
-### 4.4 Planning governance — adapted, needs your decision
+### 4.4 Planning governance — decided: no attestation machinery (#71)
 
-`orbit` requires every PR touching a curated "protected planning" file list
-(architecture docs, workflows, governance configs) to carry a
-`Planning-Model: Sol Extra High` or `Planning-Model: Human` attestation
-line, enforced by a CI script. The *mechanism* (protected-path list +
-required attestation line + CI enforcement) is worth carrying over — it's a
-genuinely good discipline independent of which specific AI orchestration
-exists behind it. The *authority list* is not, because orbit-launcher has
-no "Sol Extra High" equivalent yet.
+An earlier draft proposed carrying over `orbit`'s protected-path +
+`Planning-Model` attestation mechanism. Since then `orbit` retired that
+mechanism entirely (orbit ADR-0011): for a single-owner project where every
+change lands through a reviewed pull request under branch protection, the
+machinery attested *authorship* rather than verifying *correctness*, and its
+maintenance cost exceeded the risk it retired.
 
-**Proposed for Wave 0, pending your confirmation:**
-```json
-{
-  "planningAuthorities": ["Human"],
-  "acceptedAttestations": ["Planning-Model: Human"],
-  "protectedFiles": [
-    ".github/workflows/*.yml",
-    ".github/planning-governance.json",
-    ".github/dependency-review-config.yml",
-    "docs/implementation-plan.md",
-    "docs/architecture.md",
-    "docs/quality-strategy.md",
-    "docs/releasing.md",
-    "docs/adr/*"
-  ]
-}
-```
-Same `Observability-Impact` PR-body declaration mechanism as `orbit`
-(`changed` with four evidence fields, or `none — <specific reason>`),
-enforced the same way. If later you want to name Claude (or another model)
-as an accepted planning authority for this repo specifically, that's a
-one-line policy change — flagging it as a deliberate future option, not
-assuming it now.
+**Decision (owner-approved in #71):** orbit-launcher does not carry the
+mechanism. The Wave 0 build of it (`tools/checkgovernance`, its CI step,
+`.github/planning-governance.json`, and the PR-template attestation and
+`Observability-Impact` sections) is removed by the PR recording this
+decision; PR review covers operational impact directly. Owner direction per
+change (§4.1) is the sole planning gate. If multi-author governance is ever
+needed, design it against the situation that exists then rather than
+reviving this mechanism.
 
 ---
 
