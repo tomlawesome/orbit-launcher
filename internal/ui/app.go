@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,6 +48,17 @@ func NewAppModel() AppModel {
 // splash screen's starfield frozen — see NewSplashModelNoAnimation.
 func NewAppModelNoAnimation() AppModel {
 	return AppModel{splash: NewSplashModelNoAnimation(), state: appStateSplash}
+}
+
+// WithUpdateCheck opts the splash screen into a non-blocking self-update
+// check against GitHub Releases, using fn (in production,
+// internal/release.CheckForUpdate). No constructor enables this by
+// default — see SplashModel.checkForUpdate — so only a caller that
+// explicitly wants it (cmd/orbit-launcher's real entry point) has to
+// ask.
+func (m AppModel) WithUpdateCheck(fn func(context.Context) (version string, hasUpdate bool, err error)) AppModel {
+	m.splash.checkForUpdate = fn
+	return m
 }
 
 func (m AppModel) resolvedTargetDir() string {
