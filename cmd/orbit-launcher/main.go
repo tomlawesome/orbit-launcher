@@ -22,6 +22,9 @@ func main() {
 	if os.Getenv("ORBIT_LAUNCHER_NO_ANIMATION") != "" {
 		app = ui.NewAppModelNoAnimation()
 	}
+	if os.Getenv("ORBIT_LAUNCHER_NO_UPDATE_CHECK") == "" {
+		app = app.WithUpdateCheck(release.CheckForUpdate)
+	}
 
 	program := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {

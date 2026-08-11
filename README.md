@@ -35,6 +35,11 @@ the first time, **Update** pulls the latest image into an existing
 deployment, **Remove** stands the containers down, **Repair** isn't
 built yet.
 
+On launch, orbit-launcher makes one non-blocking check against GitHub
+for a newer stable release, showing a small notice on the splash
+screen if one exists — it never fetches or changes anything itself, it
+just tells you. Set `ORBIT_LAUNCHER_NO_UPDATE_CHECK=1` to disable it.
+
 ## Status
 
 Early development (Wave 0-3 of [`docs/implementation-plan.md`](docs/implementation-plan.md)):
