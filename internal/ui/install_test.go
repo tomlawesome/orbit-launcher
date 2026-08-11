@@ -3,46 +3,45 @@ package ui
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
-func newTestInstallModel(writeConfig func(string, deploy.Config) error, install func(context.Context, string, func(string)) error) InstallModel {
+// fakeHandoff returns a runHandoff stand-in that never touches a real
+// terminal or process — it just synchronously reports the given error,
+// so Install/Update tests can exercise the full prepare -> handoff ->
+// done/failed state machine deterministically.
+func fakeHandoff(err error) func(*exec.Cmd) tea.Cmd {
+	return func(*exec.Cmd) tea.Cmd {
+		return func() tea.Msg { return installFinishedMsg{err: err} }
+	}
+}
+
+func newTestInstallModel(prepare func(context.Context, string) (*exec.Cmd, func() error, error), handoff func(*exec.Cmd) tea.Cmd) InstallModel {
 	m := NewInstallModel("/opt/orbit")
-	m.writeConfig = writeConfig
-	m.install = install
+	m.prepareInstall = prepare
+	m.runHandoff = handoff
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return updated.(InstallModel)
 }
 
-// fillConfigFields types each value into its field and leaves focus on
-// the last field — so a caller's subsequent Enter exercises the
-// last-field "continue" path, not a focus-advance.
-func fillConfigFields(t *testing.T, m InstallModel) InstallModel {
-	t.Helper()
-	values := []string{"https://mail.example.com", "https://auth.example.com/o/orbit/", "orbit-client", "s3cr3t"}
-	for i, v := range values {
-		for _, r := range v {
-			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-			m = updated.(InstallModel)
+func fakePrepare(cmd *exec.Cmd, cleanupCalled *bool, err error) func(context.Context, string) (*exec.Cmd, func() error, error) {
+	return func(context.Context, string) (*exec.Cmd, func() error, error) {
+		if err != nil {
+			return nil, nil, err
 		}
-		if i < len(values)-1 {
-			updated, _ := m.Update(key(tea.KeyTab))
-			m = updated.(InstallModel)
-		}
+		return cmd, func() error { *cleanupCalled = true; return nil }, nil
 	}
-	return m
 }
 
-func TestInstallModel_SelectingStandardMovesToConfig(t *testing.T) {
+func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
 	m := newTestInstallModel(nil, nil)
 	updated, _ := m.Update(key(tea.KeyEnter))
 	m = updated.(InstallModel)
-	if m.state != installStateConfig {
-		t.Errorf("state = %v, want installStateConfig", m.state)
+	if m.state != installStateConfirm {
+		t.Errorf("state = %v, want installStateConfirm", m.state)
 	}
 }
 
@@ -58,153 +57,91 @@ func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testin
 	}
 }
 
-func TestInstallModel_CannotProceedFromConfigUntilAllFieldsFilled(t *testing.T) {
+func TestInstallModel_EscapeFromConfirmReturnsToProfile(t *testing.T) {
 	m := newTestInstallModel(nil, nil)
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> config
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
-
-	// Tab through all fields without typing anything, then try to
-	// continue from the last field.
-	for i := 0; i < fieldCount; i++ {
-		updated, _ = m.Update(key(tea.KeyEnter))
-		m = updated.(InstallModel)
-	}
-	if m.state != installStateConfig {
-		t.Errorf("state = %v, want to still be on installStateConfig with empty fields", m.state)
+	updated, _ = m.Update(key(tea.KeyEsc))
+	m = updated.(InstallModel)
+	if m.state != installStateProfile {
+		t.Errorf("state = %v, want installStateProfile", m.state)
 	}
 }
 
-func TestInstallModel_CompleteConfigReachesReview(t *testing.T) {
-	m := newTestInstallModel(nil, nil)
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> config
-	m = updated.(InstallModel)
-	m = fillConfigFields(t, m)
-
-	updated, _ = m.Update(key(tea.KeyEnter)) // continue from the last field
-	m = updated.(InstallModel)
-
-	if m.state != installStateReview {
-		t.Fatalf("state = %v, want installStateReview", m.state)
+func TestInstallModel_ConfirmNeverPreparesOrHandsOffAutomatically(t *testing.T) {
+	prepareCalled := false
+	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
+		prepareCalled = true
+		return nil, nil, errors.New("should not be called")
 	}
-	cfg := m.config()
-	if cfg.AppURL != "https://mail.example.com" {
-		t.Errorf("AppURL = %q", cfg.AppURL)
-	}
-	if cfg.OIDCClientSecret != "s3cr3t" {
-		t.Errorf("OIDCClientSecret = %q", cfg.OIDCClientSecret)
+	m := newTestInstallModel(prepare, nil)
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
+	m = updated.(InstallModel)
+	_ = m.View() // rendering alone must never trigger a side effect
+
+	if prepareCalled {
+		t.Error("prepareInstall must only run after an explicit confirm, never as a side effect of rendering")
 	}
 }
 
-func TestInstallModel_ReviewNeverShowsTheSecretInPlainText(t *testing.T) {
-	m := newTestInstallModel(nil, nil)
-	updated, _ := m.Update(key(tea.KeyEnter))
+func TestInstallModel_ConfirmEnterPreparesThenHandsOffAndReachesDone(t *testing.T) {
+	cleanupCalled := false
+	fakeCmd := exec.Command("true")
+	prepare := fakePrepare(fakeCmd, &cleanupCalled, nil)
+	m := newTestInstallModel(prepare, fakeHandoff(nil))
+
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
-	m = fillConfigFields(t, m)
-	updated, _ = m.Update(key(tea.KeyEnter))
+	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
 	m = updated.(InstallModel)
-
-	if containsSubstring(m.viewReview(), "s3cr3t") {
-		t.Error("the review screen must never render the OIDC client secret in plain text")
-	}
-}
-
-func containsSubstring(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func TestInstallModel_ReviewToInstallWritesConfigThenInstalls(t *testing.T) {
-	var writtenCfg deploy.Config
-	var writeCalled, installCalled bool
-	var installTargetDir string
-
-	writeConfig := func(dir string, cfg deploy.Config) error {
-		writeCalled = true
-		writtenCfg = cfg
-		return nil
-	}
-	install := func(_ context.Context, dir string, onLine func(string)) error {
-		installCalled = true
-		installTargetDir = dir
-		onLine("resolving image")
-		onLine("starting services")
-		return nil
-	}
-
-	m := newTestInstallModel(writeConfig, install)
-	updated, _ := m.Update(key(tea.KeyEnter))
-	m = updated.(InstallModel)
-	m = fillConfigFields(t, m)
-	updated, _ = m.Update(key(tea.KeyEnter))
-	m = updated.(InstallModel)
-
-	updated, cmd := m.Update(key(tea.KeyEnter)) // Install now
-	m = updated.(InstallModel)
-	if m.state != installStateProgress {
-		t.Fatalf("state = %v, want installStateProgress", m.state)
+	if m.state != installStateRunning {
+		t.Fatalf("state = %v, want installStateRunning", m.state)
 	}
 	if cmd == nil {
-		t.Fatal("expected a command to start waiting for install events")
+		t.Fatal("expected a command to prepare install.sh")
 	}
 
-	// Drain events until Done, feeding each back through Update exactly
-	// as the real bubbletea loop would.
-	for i := 0; i < 10; i++ {
-		msg := cmd()
-		updated, cmd = m.Update(msg)
-		m = updated.(InstallModel)
-		if m.state != installStateProgress {
-			break
-		}
+	msg := cmd() // installPreparedMsg
+	updated, cmd = m.Update(msg)
+	m = updated.(InstallModel)
+	if cmd == nil {
+		t.Fatal("expected a command to run the handoff after preparing")
 	}
 
-	if !writeCalled {
-		t.Error("expected writeConfig to be called")
-	}
-	if !installCalled {
-		t.Error("expected install to be called")
-	}
-	if installTargetDir != "/opt/orbit" {
-		t.Errorf("install called with targetDir = %q, want /opt/orbit", installTargetDir)
-	}
-	if writtenCfg.AppURL != "https://mail.example.com" {
-		t.Errorf("writeConfig called with AppURL = %q", writtenCfg.AppURL)
-	}
+	msg = cmd() // installFinishedMsg
+	updated, _ = m.Update(msg)
+	m = updated.(InstallModel)
+
 	if m.state != installStateDone {
 		t.Errorf("state = %v, want installStateDone", m.state)
 	}
-	if len(m.lines) == 0 {
-		t.Error("expected streamed lines to have been recorded")
+	if !cleanupCalled {
+		t.Error("expected cleanup to be called after the handoff finished")
 	}
 }
 
-func TestInstallModel_WriteConfigFailureReachesFailedWithoutCallingInstall(t *testing.T) {
-	installCalled := false
-	writeConfig := func(string, deploy.Config) error { return errors.New("disk full") }
-	install := func(context.Context, string, func(string)) error {
-		installCalled = true
+func TestInstallModel_PrepareFailureReachesFailedWithoutHandoff(t *testing.T) {
+	handoffCalled := false
+	handoff := func(*exec.Cmd) tea.Cmd {
+		handoffCalled = true
 		return nil
 	}
+	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
+		return nil, nil, errors.New("could not fetch install.sh")
+	}
+	m := newTestInstallModel(prepare, handoff)
 
-	m := newTestInstallModel(writeConfig, install)
-	updated, _ := m.Update(key(tea.KeyEnter))
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
-	m = fillConfigFields(t, m)
-	updated, _ = m.Update(key(tea.KeyEnter))
-	m = updated.(InstallModel)
-	updated, cmd := m.Update(key(tea.KeyEnter))
+	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
 	m = updated.(InstallModel)
 
 	msg := cmd()
 	updated, _ = m.Update(msg)
 	m = updated.(InstallModel)
 
-	if installCalled {
-		t.Error("install must not run when writeConfig fails")
+	if handoffCalled {
+		t.Error("the handoff must never run when preparing install.sh fails")
 	}
 	if m.state != installStateFailed {
 		t.Errorf("state = %v, want installStateFailed", m.state)
@@ -214,26 +151,29 @@ func TestInstallModel_WriteConfigFailureReachesFailedWithoutCallingInstall(t *te
 	}
 }
 
-func TestInstallModel_InstallFailureReachesFailedState(t *testing.T) {
-	writeConfig := func(string, deploy.Config) error { return nil }
-	install := func(context.Context, string, func(string)) error {
-		return errors.New("docker compose up failed")
-	}
+func TestInstallModel_HandoffFailureReachesFailedAndStillCleansUp(t *testing.T) {
+	cleanupCalled := false
+	fakeCmd := exec.Command("false")
+	prepare := fakePrepare(fakeCmd, &cleanupCalled, nil)
+	m := newTestInstallModel(prepare, fakeHandoff(errors.New("install.sh exited 1")))
 
-	m := newTestInstallModel(writeConfig, install)
-	updated, _ := m.Update(key(tea.KeyEnter))
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
-	m = fillConfigFields(t, m)
-	updated, _ = m.Update(key(tea.KeyEnter))
-	m = updated.(InstallModel)
-	updated, cmd := m.Update(key(tea.KeyEnter))
+	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
 	m = updated.(InstallModel)
 
 	msg := cmd()
+	updated, cmd = m.Update(msg)
+	m = updated.(InstallModel)
+
+	msg = cmd()
 	updated, _ = m.Update(msg)
 	m = updated.(InstallModel)
 
 	if m.state != installStateFailed {
 		t.Errorf("state = %v, want installStateFailed", m.state)
+	}
+	if !cleanupCalled {
+		t.Error("expected cleanup to still be called after a handoff failure")
 	}
 }
