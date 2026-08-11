@@ -145,3 +145,38 @@ func TestAppModel_SelectingRepairShowsTheHonestStub(t *testing.T) {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
 }
+
+func TestAppModel_WithDeploymentStatusPreselectsUpdateAndSetsFQDN(t *testing.T) {
+	dir := t.TempDir()
+	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	m := NewAppModel()
+	m.targetDir = dir
+	m = m.WithDeploymentStatus(nil)
+
+	if m.splash.selected != menuUpdate {
+		t.Errorf("selected = %d, want Update preselected for a detected deployment", m.splash.selected)
+	}
+	if m.splash.fqdn != "mail.example.com" {
+		t.Errorf("fqdn = %q, want the bare host", m.splash.fqdn)
+	}
+	if m.splash.state != stateUnknown {
+		t.Errorf("state = %v, want stateUnknown until a probe resolves", m.splash.state)
+	}
+}
+
+func TestAppModel_WithDeploymentStatusIsANoOpWithoutADeployment(t *testing.T) {
+	m := NewAppModel()
+	m.targetDir = t.TempDir()
+	m = m.WithDeploymentStatus(nil)
+
+	if m.splash.selected != menuInstall {
+		t.Errorf("selected = %d, want Install for a dormant machine", m.splash.selected)
+	}
+	if m.splash.state != stateDormant {
+		t.Errorf("state = %v, want stateDormant", m.splash.state)
+	}
+}

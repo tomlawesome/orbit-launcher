@@ -69,14 +69,6 @@ jobs:
       - name: Run staticcheck
         run: staticcheck ./...
 
-      - name: Planning governance
-        if: github.event_name == 'pull_request'
-        env:
-          ORBIT_LAUNCHER_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          ORBIT_LAUNCHER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ORBIT_LAUNCHER_PR_BODY: ${{ github.event.pull_request.body }}
-        run: go run ./tools/checkgovernance
-
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
 

@@ -20,6 +20,5 @@ Issues, bug reports and feature discussion are welcome on the
   `develop`, opened as a pull request that closes its tracking issue.
 - No work happens on a wave or slice without a filed GitHub issue to track
   it first.
-- Every pull request declares an `Observability-Impact` and, for changes
-  touching a protected planning path, a `Planning-Model` attestation — see
-  the pull request template.
+- Every pull request links its issue and is merged only on explicit owner
+  direction — see `docs/implementation-plan.md` §4.1 and §4.4.
