@@ -48,3 +48,26 @@ func TestAppModel_UnwiredChoicesJustQuit(t *testing.T) {
 		t.Fatalf("expected an unwired choice to quit cleanly, got: %v", err)
 	}
 }
+
+func TestAppModel_SelectingRepairShowsTheHonestStub(t *testing.T) {
+	m := NewAppModel()
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Install"))
+	}, teatest.WithDuration(2*time.Second))
+
+	for i := 0; i < 2; i++ { // Install, Update, Repair
+		tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repair isn't available yet"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
