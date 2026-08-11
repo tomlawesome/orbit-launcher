@@ -40,7 +40,10 @@ test.beforeAll(async () => {
     // The starfield otherwise advances every 120ms — a moving background
     // would make every screenshot comparison flaky by construction. See
     // internal/ui.NewSplashModelNoAnimation.
-    env: { ...process.env, ORBIT_LAUNCHER_NO_ANIMATION: "1" },
+    // NO_UPDATE_CHECK: an "update available" banner popping in mid-test
+    // (or not) would make every screenshot comparison flaky by
+    // construction, same reason as the animation freeze above.
+    env: { ...process.env, ORBIT_LAUNCHER_NO_ANIMATION: "1", ORBIT_LAUNCHER_NO_UPDATE_CHECK: "1" },
   });
 
   // ttyd has no "ready" signal on stdout we can reliably parse across

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,18 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
+
+// updateCheckTimeout bounds how long the splash screen's optional
+// self-update check may run before it's abandoned — the check is
+// entirely non-blocking (a background tea.Cmd; the screen renders
+// immediately either way), but a hung request should still eventually
+// give up rather than leak forever.
+const updateCheckTimeout = 3 * time.Second
+
+// updateAvailableMsg carries a newer stable release's tag back into the
+// bubbletea event loop once checkForUpdate resolves. It is never sent
+// on error or when already current — see SplashModel.checkForUpdateCmd.
+type updateAvailableMsg struct{ version string }
 
 // MenuItem is one row of the splash screen's main menu. Gap requests a
 // blank line before this item, used once (before Remove) to visually
@@ -47,12 +60,21 @@ type SplashModel struct {
 	starReady     bool
 	quitting      bool
 	noAnimation   bool
+	updateNotice  string
 
 	// Chosen is set to the selected MenuItem's Label once Enter picks one,
 	// and stays "" while the user is still navigating or after quitting
 	// via Escape/Ctrl-C. A caller (once other screens exist) reads this
 	// after the program exits to decide what to launch next.
 	Chosen string
+
+	// checkForUpdate is nil by default — every existing constructor
+	// leaves the splash screen free of network side effects, matching
+	// every other flow in this program (fetches only ever happen after
+	// an explicit user confirmation, never automatically on render).
+	// Only cmd/orbit-launcher's real entry point opts in, via
+	// AppModel.WithUpdateCheck — see internal/release.CheckForUpdate.
+	checkForUpdate func(context.Context) (version string, hasUpdate bool, err error)
 }
 
 // NewSplashModel constructs the splash/main-menu screen.
@@ -73,10 +95,33 @@ func NewSplashModelNoAnimation() SplashModel {
 
 // Init implements tea.Model.
 func (m SplashModel) Init() tea.Cmd {
-	if m.noAnimation {
-		return nil
+	var cmds []tea.Cmd
+	if !m.noAnimation {
+		cmds = append(cmds, tick())
 	}
-	return tick()
+	if m.checkForUpdate != nil {
+		cmds = append(cmds, m.checkForUpdateCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+// checkForUpdateCmd runs checkForUpdate in the background and reports a
+// newer stable release, if any. Any error (network failure, GitHub
+// unreachable, no stable release published yet) is silently treated as
+// "nothing to report" — a failed update check must never surface as a
+// user-facing error on the one screen that renders unconditionally on
+// every launch.
+func (m SplashModel) checkForUpdateCmd() tea.Cmd {
+	check := m.checkForUpdate
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
+		defer cancel()
+		version, hasUpdate, err := check(ctx)
+		if err != nil || !hasUpdate {
+			return nil
+		}
+		return updateAvailableMsg{version: version}
+	}
 }
 
 // Update implements tea.Model.
@@ -93,6 +138,10 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.star = m.star.Advance()
 		}
 		return m, tick()
+
+	case updateAvailableMsg:
+		m.updateNotice = msg.version
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -210,6 +259,9 @@ func (m SplashModel) renderCentreBlock() string {
 	fmt.Fprintln(&b, style.MarkStyle.Render(style.SymbolMark))
 	fmt.Fprintln(&b, style.Wordmark("ORBIT"))
 	fmt.Fprintln(&b, style.Tagline.Render("personal server launcher"))
+	if m.updateNotice != "" {
+		fmt.Fprintln(&b, style.WarmText.Render("update available: "+m.updateNotice))
+	}
 	fmt.Fprintln(&b)
 
 	for i, item := range MainMenu {

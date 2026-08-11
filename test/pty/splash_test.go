@@ -70,7 +70,11 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 	// NO_COLOR keeps assertions to plain text: this layer proves
 	// behaviour (does navigation work, does the terminal restore), not
 	// appearance — that's test/visual's job.
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1")
+	// These tests assert on rendered output and navigation, not on
+	// whether GitHub happens to be reachable from the test runner — same
+	// reason every other test in this repo mocks its network calls
+	// (see internal/deploy/fetch_test.go, internal/release/update_test.go).
+	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1")
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
