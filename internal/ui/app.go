@@ -13,18 +13,21 @@ type appState int
 const (
 	appStateSplash appState = iota
 	appStateRemove
+	appStateRepair
 )
 
 // AppModel is the root model: it starts at the splash screen and, once a
-// choice is made, hands control to that flow. Only Remove is wired to a
-// real flow so far — Install/Update/Repair land in later waves (see
-// docs/implementation-plan.md section 5); choosing them for now just
-// exits, rather than pretending to do something they don't yet do.
+// choice is made, hands control to that flow. Remove and Repair (a
+// deliberate non-mutating stub) are wired to real flows — Install/Update
+// land in a later wave (see docs/implementation-plan.md section 5);
+// choosing them for now just exits, rather than pretending to do
+// something they don't yet do.
 type AppModel struct {
 	width, height int
 	state         appState
 	splash        SplashModel
 	remove        RemoveModel
+	repair        RepairModel
 
 	// targetDir is where an existing deployment, if any, would be found.
 	// Overridable in tests; production code leaves it empty and gets the
@@ -70,6 +73,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.remove.Update(msg)
 		m.remove = updated.(RemoveModel)
 		return m, cmd
+	case appStateRepair:
+		updated, cmd := m.repair.Update(msg)
+		m.repair = updated.(RepairModel)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -82,22 +89,28 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if m.splash.Chosen != "Remove" {
-		// Install/Update/Repair aren't wired to a real flow yet.
+	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+
+	switch m.splash.Chosen {
+	case "Remove":
+		// deploy.Detect's error return only ever reflects a real I/O
+		// failure reading an existing .env-orbit, never "not installed"
+		// (that's a nil Deployment, nil error) — the Remove confirm
+		// screen already renders sensibly for a nil Deployment, so
+		// there's nothing actionable to do with an error here beyond
+		// proceeding with what we have.
+		deployment, _ := deploy.Detect(m.resolvedTargetDir())
+		m.remove = NewRemoveModel(deployment)
+		m.state = appStateRemove
+		return m, sizeCmd
+	case "Repair":
+		m.repair = NewRepairModel()
+		m.state = appStateRepair
+		return m, sizeCmd
+	default:
+		// Install/Update aren't wired to a real flow yet.
 		return m, tea.Quit
 	}
-
-	// deploy.Detect's error return only ever reflects a real I/O failure
-	// reading an existing .env-orbit, never "not installed" (that's a nil
-	// Deployment, nil error) — the Remove confirm screen already renders
-	// sensibly for a nil Deployment, so there's nothing actionable to do
-	// with an error here beyond proceeding with what we have.
-	deployment, _ := deploy.Detect(m.resolvedTargetDir())
-	m.remove = NewRemoveModel(deployment)
-	m.state = appStateRemove
-
-	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
-	return m, sizeCmd
 }
 
 // View implements tea.Model.
@@ -107,6 +120,8 @@ func (m AppModel) View() string {
 		return m.splash.View()
 	case appStateRemove:
 		return m.remove.View()
+	case appStateRepair:
+		return m.repair.View()
 	}
 	return ""
 }
