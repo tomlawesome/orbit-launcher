@@ -1,0 +1,71 @@
+package pty
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
+	binPath := buildBinary(t)
+	console, cmd := startUnderPTYInDir(t, binPath, t.TempDir())
+
+	if _, err := console.ExpectString("Install"); err != nil {
+		t.Fatalf("did not see the menu: %v", err)
+	}
+	if _, err := console.Send("\x1b[B"); err != nil { // Down to Update
+		t.Fatalf("send Down: %v", err)
+	}
+	if _, err := console.ExpectString("▸ Update"); err != nil {
+		t.Fatalf("caret did not reach Update: %v", err)
+	}
+	if _, err := console.Send("\r"); err != nil { // Enter
+		t.Fatalf("send Enter: %v", err)
+	}
+	if _, err := console.ExpectString("No existing Orbit deployment found here"); err != nil {
+		t.Fatalf("did not reach the Update not-found screen: %v", err)
+	}
+
+	if _, err := console.Send("\r"); err != nil { // any key quits
+		t.Fatalf("send Enter: %v", err)
+	}
+
+	waitForExit(t, cmd)
+}
+
+func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *testing.T) {
+	dir := t.TempDir()
+	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:" +
+		"0000000000000000000000000000000000000000000000000000000000000000\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
+		t.Fatalf("write fixture .env-orbit: %v", err)
+	}
+
+	binPath := buildBinary(t)
+	console, cmd := startUnderPTYInDir(t, binPath, dir)
+
+	if _, err := console.ExpectString("Install"); err != nil {
+		t.Fatalf("did not see the menu: %v", err)
+	}
+	if _, err := console.Send("\x1b[B"); err != nil { // Down to Update
+		t.Fatalf("send Down: %v", err)
+	}
+	if _, err := console.ExpectString("▸ Update"); err != nil {
+		t.Fatalf("caret did not reach Update: %v", err)
+	}
+	if _, err := console.Send("\r"); err != nil { // Enter
+		t.Fatalf("send Enter: %v", err)
+	}
+	if _, err := console.ExpectString("This pulls the latest Orbit image and updates your deployment"); err != nil {
+		t.Fatalf("did not reach the Update confirm screen: %v", err)
+	}
+	if _, err := console.ExpectString("https://mail.example.com"); err != nil {
+		t.Fatalf("did not see the detected deployment's app URL: %v", err)
+	}
+
+	if _, err := console.Send("\x1b"); err != nil { // Escape cancels, never touches Docker
+		t.Fatalf("send Escape: %v", err)
+	}
+
+	waitForExit(t, cmd)
+}

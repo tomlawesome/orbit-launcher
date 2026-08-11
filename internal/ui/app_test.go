@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,19 +36,25 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 	}
 }
 
-func TestAppModel_UnwiredChoicesJustQuit(t *testing.T) {
+func TestAppModel_SelectingUpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 	m := NewAppModel()
+	m.targetDir = t.TempDir() // no .env-orbit here
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Update — the one remaining unwired choice
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Update
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("No existing Orbit deployment found here"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
-		t.Fatalf("expected an unwired choice to quit cleanly, got: %v", err)
+		t.Fatalf("model did not quit cleanly: %v", err)
 	}
 }
 
@@ -73,6 +81,34 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // config -> profile
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // profile -> quit
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *testing.T) {
+	dir := t.TempDir()
+	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
+		t.Fatalf("failed to write fixture .env-orbit: %v", err)
+	}
+
+	m := NewAppModel()
+	m.targetDir = dir
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Install"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Update
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("This pulls the latest Orbit image and updates your deployment"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // Cancel out without ever touching Docker
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
