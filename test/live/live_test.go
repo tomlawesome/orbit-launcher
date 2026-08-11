@@ -80,8 +80,11 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 	// caused a false failure on an install that had, in fact, fully
 	// succeeded (confirmed by Remove finding a real, complete
 	// deployment afterward) — verified by actually running this against
-	// real Docker before trusting the number.
-	opts := []expect.ConsoleOpt{expect.WithDefaultTimeout(420 * time.Second)}
+	// real Docker before trusting the number. The mission console's
+	// piped first attempt (which, on a fresh target, does the image
+	// pull and asset staging before its configuration refusal) front-
+	// loads more of that work, so the budget is higher still.
+	opts := []expect.ConsoleOpt{expect.WithDefaultTimeout(600 * time.Second)}
 	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
 		// Suffixed per (sub)test — Install and Remove each call startLive
 		// once, and os.Create truncates, so a single shared path would
@@ -203,7 +206,22 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		must("Choose a deployment profile")
 		sendLine("") // Standard selected by default
 		must("Ready to install")
-		sendLine("") // confirm the handoff to install.sh
+		sendLine("") // confirm — the mission console's piped engine run starts
+
+		// The piped, terminal-less first attempt cannot prompt, so on a
+		// fresh target it ends in the engine's non-interactive
+		// configuration refusal (target rolled back). A contract-era
+		// engine (orbit develop) reports it as an event and lands on
+		// the styled configuration prompt; a legacy engine (orbit main)
+		// reports nothing and lands on the failure screen. Both
+		// screens' default option is the same guided interactive
+		// installer, so this test — which runs against whichever
+		// install.sh the job points at — accepts either.
+		if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
+			`Orbit needs your configuration|Installation stopped`))); err != nil {
+			t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
+		}
+		sendLine("") // Continue — guided configuration / Open the guided installer
 
 		acceptMenusUntil(t, console, "Public Orbit origin")
 		sendLine(appURL)
@@ -214,15 +232,11 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		must("OIDC client secret (input hidden)")
 		sendLine("ci-live-test-fake-secret-value")
 
-		// install.sh's own plain "Orbit is ready." and orbit-launcher's
-		// resumed Done screen (which says the same thing) both land in
-		// the same buffered read within milliseconds of each other —
-		// waiting for this text a second time here is redundant (and,
-		// discovered by actually running this, unreliable: nothing
-		// guarantees a second distinct match event across that boundary)
-		// and the resumed-screen rendering is already covered by
-		// internal/ui's own InstallModel tests.
 		acceptMenusUntil(t, console, "Orbit is ready")
+
+		// The resumed launcher concludes on the success screen: the
+		// deployment URL as the hero line, the stacked menu beneath.
+		must("Get into Orbit")
 
 		var lastStatus int
 		var lastErr error
@@ -245,7 +259,8 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 			t.Fatalf("deployed Orbit app never answered 200 on :3000 (last status %d, last error %v)", lastStatus, lastErr)
 		}
 
-		send("\r") // Exit — quits this orbit-launcher instance
+		send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
+		send("\r")     // quits this orbit-launcher instance cleanly
 	})
 
 	t.Run("Remove", func(t *testing.T) {
