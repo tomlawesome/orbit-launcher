@@ -120,6 +120,12 @@ jobs:
             https://github.com/docker/compose/releases/download/v5.4.0/docker-compose-linux-x86_64
           chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
+      - name: Verify Docker daemon reachability (container jobs only)
+        if: matrix.container != ''
+        run: |
+          docker info
+          docker run --rm hello-world
+
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
