@@ -7,15 +7,21 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 func TestSplashModel_TeaTest_RendersMarkAndMenu(t *testing.T) {
 	tm := teatest.NewTestModel(t, NewSplashModel(), teatest.WithInitialTermSize(80, 24))
 
+	// The wordmark is the half-block pixel rendering of ORBIT, not a
+	// plain-text substring — assert on its deterministic top row (see
+	// style.BigText), plus the menu and the dormant status word.
+	wordmarkTopRow := []byte(style.BigText("ORBIT")[0])
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		// The wordmark is deliberately letter-spaced ("O R B I T"), not a
-		// literal "ORBIT" substring — see style.Wordmark.
-		return bytes.Contains(out, []byte("O R B I T")) && bytes.Contains(out, []byte("Install"))
+		return bytes.Contains(out, wordmarkTopRow) &&
+			bytes.Contains(out, []byte("Install")) &&
+			bytes.Contains(out, []byte("dormant"))
 	}, teatest.WithDuration(2*time.Second))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
