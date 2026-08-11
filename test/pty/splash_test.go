@@ -6,6 +6,8 @@
 package pty
 
 import (
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
+
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,7 +76,8 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 	// whether GitHub happens to be reachable from the test runner — same
 	// reason every other test in this repo mocks its network calls
 	// (see internal/deploy/fetch_test.go, internal/release/update_test.go).
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1")
+	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
+		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1")
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
@@ -103,8 +106,9 @@ func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
 	binPath := buildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 
-	// The wordmark is deliberately letter-spaced — see style.Wordmark.
-	if _, err := console.ExpectString("O R B I T"); err != nil {
+	// The wordmark is the half-block pixel rendering of ORBIT — assert on
+	// its deterministic top row (see style.BigText).
+	if _, err := console.ExpectString(style.BigText("ORBIT")[0]); err != nil {
 		t.Fatalf("did not see the wordmark: %v", err)
 	}
 	if _, err := console.ExpectString("Install"); err != nil {
