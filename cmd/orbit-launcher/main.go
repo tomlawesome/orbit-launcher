@@ -18,7 +18,12 @@ func main() {
 		return
 	}
 
-	program := tea.NewProgram(ui.NewPlaceholderModel(), tea.WithAltScreen())
+	splash := ui.NewSplashModel()
+	if os.Getenv("ORBIT_LAUNCHER_NO_ANIMATION") != "" {
+		splash = ui.NewSplashModelNoAnimation()
+	}
+
+	program := tea.NewProgram(splash, tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "orbit-launcher:", err)
 		os.Exit(1)
