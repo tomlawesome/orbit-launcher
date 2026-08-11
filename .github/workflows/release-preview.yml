@@ -73,58 +73,27 @@ jobs:
             dist/checksums.txt
 
   live_test:
-    name: Live test (${{ matrix.name }})
+    name: Live test
     needs: build_and_publish
     runs-on: ubuntu-latest
-    container: ${{ matrix.container }}
     timeout-minutes: 20
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Empty container: runs directly on the ubuntu-latest runner.
-          - name: ubuntu-latest
-            container: ""
-          # install.sh runs strictly under bash + coreutils, whichever
-          # distro it's invoked from — Debian's aren't Ubuntu's, and
-          # assuming Ubuntu-only behaviour is universal is exactly the
-          # distro-difference lesson from the orbit#281 CI investigation
-          # this repo's own implementation plan calls out (section 3.5).
-          # Docker-outside-of-Docker: the container talks to the
-          # runner's real Docker daemon over the mounted socket (at the
-          # same path, so the Docker CLI's default connection just
-          # works), rather than needing its own nested daemon.
-          - name: debian-12
-            container:
-              image: debian:12
-              options: -v /var/run/docker.sock:/var/run/docker.sock
+    # ubuntu-latest only — a debian:12 container leg was tried and
+    # dropped (see issue #59): docker-compose.yml's bind-mounted
+    # volumes (.orbit-secrets etc.) resolve relative to the calling
+    # process's own filesystem, which inside a Docker-outside-of-Docker
+    # container is the wrapper container's filesystem, not the host's
+    # — so the host daemon actually creating the containers can't see
+    # them, and "docker compose up" fails outright before creating
+    # anything. Confirmed with a real raw pty transcript, not a guess.
+    # Real Debian coverage for now comes from having actually run this
+    # test suite directly, repeatedly, on a real Debian machine during
+    # development — no container involved at all.
 
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Install Docker CLI and Compose v2 (container jobs only)
-        if: matrix.container != ''
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends docker.io ca-certificates curl
-          # Debian's own docker.io package doesn't include the Compose v2
-          # CLI plugin at all ("docker: 'compose' is not a docker
-          # command") — confirmed by actually running this locally before
-          # trusting it. Fetch the plugin binary directly rather than
-          # adding Docker's own apt repository just for one binary.
-          mkdir -p /usr/local/lib/docker/cli-plugins
-          curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
-            https://github.com/docker/compose/releases/download/v5.4.0/docker-compose-linux-x86_64
-          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-
-      - name: Verify Docker daemon reachability (container jobs only)
-        if: matrix.container != ''
-        run: |
-          docker info
-          docker run --rm hello-world
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -151,7 +120,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: live-raw-log-${{ matrix.name }}
+          name: live-raw-log
           path: ${{ runner.temp }}/live-raw.log.*
           if-no-files-found: ignore
           retention-days: 7
