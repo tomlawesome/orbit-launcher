@@ -279,17 +279,17 @@ does).
 
 Same ruleset shape as `orbit`'s four rulesets (`deletion` and
 `non_fast_forward` blocked, `required_review_thread_resolution: true`,
-merge-commit only). One deliberate difference from `orbit`: all four
-rulesets here set `required_approving_review_count: 1` (confirmed) —
-`orbit` runs at `0` because its delivery model routes planning authority
-through its own AI-orchestration system; orbit-launcher doesn't have that
-yet, so a human approval is the real gate.
+merge-commit only). All four rulesets set
+`required_approving_review_count: 0`, matching `orbit` — deliberately, not
+as a gap: on a single-account repository the account that opens a pull
+request cannot approve it, so a non-zero count is unsatisfiable rather
+than protective.
 
-**Standing rule, not just for this setting**: any time I'm given
-permission to skip this gate for a specific piece of work, that permission
-covers only that work — it is never read as a standing exception, and the
-required-approval rule applies again on the next PR unless re-authorized
-for that one too.
+**The human gate is explicit owner direction, not a web-UI review.** An
+assistant merges a pull request only when the owner has approved that
+specific change — conversationally, on the issue, or on the PR; the record
+of that direction is the approval. Permission covers only the work it was
+given for and is never read as a standing exception for the next PR.
 
 ### 4.2 Release pipeline (preview push → main → tag)
 
