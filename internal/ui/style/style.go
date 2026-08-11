@@ -64,3 +64,11 @@ var (
 // StarField styles the animated background dots — faint, never competing
 // with foreground text.
 var StarField = lipgloss.NewStyle().Foreground(TextFaint)
+
+// SuccessText, ErrorText and WarmText style status glyphs and messages —
+// success/error/in-progress, matching the mockup's symbol glossary.
+var (
+	SuccessText = lipgloss.NewStyle().Foreground(Success)
+	ErrorText   = lipgloss.NewStyle().Foreground(Error)
+	WarmText    = lipgloss.NewStyle().Foreground(Warm)
+)
