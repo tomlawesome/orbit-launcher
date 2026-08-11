@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,33 +18,34 @@ type updateState int
 const (
 	updateStateNotFound updateState = iota
 	updateStateConfirm
-	updateStateUpdating
+	updateStateRunning
 	updateStateDone
 	updateStateFailed
 )
 
-// UpdateModel is the Update flow: confirm, live progress, completion/failure.
-// It shells out to the same install.sh as Install — see
-// docs/implementation-plan.md section 5 Wave 3 — because install.sh is
-// itself idempotent: run against a directory that already holds a
-// recognised deployment, it pulls the latest image, refreshes deployment
-// assets, and runs its own configuration migration, all while preserving
-// the existing .env-orbit values. Update therefore never writes config
-// itself; that would defeat the "preserve config by default" contract.
+// UpdateModel is the Update flow: confirm, then the same full terminal
+// handoff to install.sh that Install uses — see internal/ui/install.go
+// and internal/deploy.BuildInstallCommand for why. install.sh is
+// idempotent: run again against a directory that already holds a
+// recognised deployment, it pulls the latest image, refreshes
+// deployment assets, and runs its own configuration migration, all
+// while preserving the existing .env-orbit values (configure.sh's own
+// "Existing values were preserved" behaviour, verified directly
+// against orbit's develop branch).
 type UpdateModel struct {
 	width, height int
 	deployment    *deploy.Deployment
 	state         updateState
 	confirmSel    int // 0 = Update Orbit, 1 = Cancel
 
-	lines     []string
 	updateErr error
-	events    <-chan installEvent
+	cleanup   func() error
 
-	// install is overridable in tests so they don't need a real
-	// network/Docker daemon; production code leaves it nil and gets
-	// deploy.Install.
-	install func(ctx context.Context, targetDir string, onLine func(string)) error
+	// Overridable in tests so they don't need real network/terminal
+	// access; production code leaves these nil and gets the real
+	// implementations.
+	prepareInstall func(ctx context.Context, targetDir string) (*exec.Cmd, func() error, error)
+	runHandoff     func(cmd *exec.Cmd) tea.Cmd
 }
 
 // NewUpdateModel constructs the Update flow for a detected deployment. A
@@ -55,14 +57,12 @@ func NewUpdateModel(d *deploy.Deployment) UpdateModel {
 	if d == nil {
 		state = updateStateNotFound
 	}
-	return UpdateModel{deployment: d, state: state, install: deploy.Install}
-}
-
-func (m UpdateModel) installFunc() func(context.Context, string, func(string)) error {
-	if m.install != nil {
-		return m.install
+	return UpdateModel{
+		deployment:     d,
+		state:          state,
+		prepareInstall: defaultPrepareInstall,
+		runHandoff:     defaultRunHandoff,
 	}
-	return deploy.Install
 }
 
 // Init implements tea.Model.
@@ -75,21 +75,27 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
-	case installEventMsg:
-		if msg.Done {
-			if msg.Err != nil {
-				m.updateErr = msg.Err
-				m.state = updateStateFailed
-			} else {
-				m.state = updateStateDone
-			}
+	case installPreparedMsg:
+		if msg.err != nil {
+			m.updateErr = msg.err
+			m.state = updateStateFailed
 			return m, nil
 		}
-		m.lines = append(m.lines, msg.Line)
-		if len(m.lines) > installProgressLinesShown {
-			m.lines = m.lines[len(m.lines)-installProgressLinesShown:]
+		m.cleanup = msg.cleanup
+		return m, m.runHandoff(msg.cmd)
+
+	case installFinishedMsg:
+		if m.cleanup != nil {
+			m.cleanup()
+			m.cleanup = nil
 		}
-		return m, waitForInstallEvent(m.events)
+		if msg.err != nil {
+			m.updateErr = msg.err
+			m.state = updateStateFailed
+		} else {
+			m.state = updateStateDone
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -123,27 +129,10 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.confirmSel == 1 {
 			return m, tea.Quit
 		}
-		m.state = updateStateUpdating
-		m.events = startUpdate(targetDirOrPlaceholder(m.deployment), m.installFunc())
-		return m, waitForInstallEvent(m.events)
+		m.state = updateStateRunning
+		return m, prepareInstallCmd(m.prepareInstall, targetDirOrPlaceholder(m.deployment))
 	}
 	return m, nil
-}
-
-// startUpdate runs install against targetDir in a background goroutine,
-// emitting one installEvent per output line plus a final Done event —
-// the same streaming shape startInstall uses, minus the config-writing
-// step Update deliberately never performs.
-func startUpdate(targetDir string, install func(context.Context, string, func(string)) error) <-chan installEvent {
-	ch := make(chan installEvent, 32)
-	go func() {
-		defer close(ch)
-		err := install(context.Background(), targetDir, func(line string) {
-			ch <- installEvent{Line: line}
-		})
-		ch <- installEvent{Done: true, Err: err}
-	}()
-	return ch
 }
 
 // View implements tea.Model.
@@ -156,8 +145,8 @@ func (m UpdateModel) View() string {
 		return m.viewNotFound()
 	case updateStateConfirm:
 		return m.viewConfirm()
-	case updateStateUpdating:
-		return m.viewUpdating()
+	case updateStateRunning:
+		return m.viewRunning()
 	case updateStateDone:
 		return m.viewDone()
 	case updateStateFailed:
@@ -202,6 +191,7 @@ func (m UpdateModel) viewConfirm() string {
 	fmt.Fprintf(&b, "  %s   %s\n", style.MenuUnselected.Render("Installed"), installed)
 	fmt.Fprintf(&b, "  %s       %s\n", style.MenuUnselected.Render("Image"), image)
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, style.Tagline.Render("This hands control of your terminal to Orbit's own installer."))
 	fmt.Fprintln(&b, style.Tagline.Render("Your existing configuration is preserved. Nothing is deleted."))
 	fmt.Fprintln(&b)
 
@@ -216,15 +206,11 @@ func (m UpdateModel) viewConfirm() string {
 	return m.frame(b.String())
 }
 
-func (m UpdateModel) viewUpdating() string {
+func (m UpdateModel) viewRunning() string {
 	var b strings.Builder
 	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Updating"))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.WarmText.Render("⠋")+" Running install.sh…")
-	fmt.Fprintln(&b)
-	for _, line := range m.lines {
-		fmt.Fprintln(&b, style.Tagline.Render(line))
-	}
+	fmt.Fprintln(&b, style.WarmText.Render("⠋")+" Handing off to install.sh…")
 	return m.frame(b.String())
 }
 
@@ -246,10 +232,6 @@ func (m UpdateModel) viewFailed() string {
 	fmt.Fprintln(&b)
 	if m.updateErr != nil {
 		fmt.Fprintln(&b, style.Tagline.Render(m.updateErr.Error()))
-	}
-	fmt.Fprintln(&b)
-	for _, line := range m.lines {
-		fmt.Fprintln(&b, style.Tagline.Render(line))
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
