@@ -35,7 +35,13 @@ test.beforeAll(async () => {
   const binPath = buildBinary();
   port = await findFreePort();
 
-  ttyd = spawn("ttyd", ["-p", String(port), "-W", binPath], { stdio: "pipe" });
+  ttyd = spawn("ttyd", ["-p", String(port), "-W", binPath], {
+    stdio: "pipe",
+    // The starfield otherwise advances every 120ms — a moving background
+    // would make every screenshot comparison flaky by construction. See
+    // internal/ui.NewSplashModelNoAnimation.
+    env: { ...process.env, ORBIT_LAUNCHER_NO_ANIMATION: "1" },
+  });
 
   // ttyd has no "ready" signal on stdout we can reliably parse across
   // versions; poll the port instead of guessing a fixed sleep.
@@ -56,7 +62,7 @@ test.afterAll(() => {
   ttyd?.kill();
 });
 
-test("placeholder screen renders in a real browser terminal", async ({ page }) => {
+test("splash screen renders in a real browser terminal", async ({ page }) => {
   await page.goto(`http://127.0.0.1:${port}`);
 
   // xterm.js renders to <canvas>, not text DOM — there's no reliable text
@@ -67,5 +73,5 @@ test("placeholder screen renders in a real browser terminal", async ({ page }) =
   // investigation: wait on real state, not a clock).
   await expect(page.locator(".xterm-screen")).toBeVisible();
 
-  await expect(page).toHaveScreenshot("placeholder.png", { timeout: 10_000 });
+  await expect(page).toHaveScreenshot("splash.png", { timeout: 10_000 });
 });
