@@ -145,8 +145,7 @@ much this project's value is in *looking* right, not just working right.
 | Black-box PTY (Go's equivalent of `pexpect`) | `github.com/Netflix/go-expect` + `github.com/creack/pty` | spawn the **real compiled binary** under a real pty, send real keystrokes, assert on real terminal output | before merge to `develop` |
 | Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `develop`, gated to changes touching `internal/ui` or `internal/ui/style` |
 | Compose/deploy integration | Go `testing` + a disposable Docker context | prove profile selection produces a valid, `docker compose config`-verified compose file; prove stand-down actually stops what install started | before preview publication |
-| Real virtualized live install | matrix VM/container jobs, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end, on the Linux distros orbit-launcher actually targets | preview push (authoritative), release acceptance |
-| Multi-distro smoke | GitHub Actions matrix: `ubuntu-latest` plus a Debian container job (see 3.5) | binary actually runs, splash renders, `--version` correct | preview push |
+| Real virtualized live install | `ubuntu-latest` GitHub Actions job, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end | preview push (authoritative), release acceptance |
 
 ### 3.1 Unit tests
 
@@ -209,31 +208,46 @@ orbit-launcher runs *on the Linux server being managed* (SSH in, run it
 there — the same way `orbit`'s current installer is used today), not as a
 cross-platform desktop tool that reaches out to a remote host. It has no
 reason to run on Windows or macOS, because nobody deploys Orbit itself on
-those. Scope is Linux only:
+those. Scope is Linux only.
 
-- **Matrix**: `ubuntu-latest` (GitHub-hosted, Docker preinstalled) plus a
-  containerized Debian job (`debian:12`/`debian:13`, matching `orbit`'s own
-  CI-vs-Ubuntu distro-difference lesson from the #281 investigation —
-  don't assume Ubuntu-only behaviour is universal), running the **actual
-  bootstrap script** end-to-end against the **actual latest build artifact**
-  from that CI run (not a stub) — `curl`-equivalent, `Install` with a real
-  synthetic profile, wait for real health checks, assert the real HTTP
-  endpoint responds, then `Remove` and assert the containers are gone.
+**On a distro matrix, corrected from an earlier draft of this
+section**: a `ubuntu-latest` → `debian:12` container leg was built to
+also cover Debian in CI, matching `orbit`'s own CI-vs-Ubuntu
+distro-difference lesson from the #281 investigation. It was dropped
+(see issue #59, not wanted going forward): Docker-outside-of-Docker
+from inside a nested container hit a structural problem — bind-mounted
+volume paths resolve relative to the wrapper container's own
+filesystem, which the *host* daemon actually creating the containers
+can't see, so `docker compose up` failed before creating anything.
+Real Debian coverage doesn't need a second CI leg fighting
+container-nesting plumbing to prove: the mechanism was verified
+directly on a real Debian host, and via a locally-launched Ubuntu
+container on that same host with paths and networking aligned — a
+faster, cheaper, more direct answer than automating a second CI leg.
+`ubuntu-latest` alone is the CI-automated leg (Docker preinstalled, no
+nesting):
+
+- Runs the **actual bootstrap script** end-to-end against the **actual
+  latest build artifact** from that CI run (not a stub) —
+  `curl`-equivalent, `Install` with a real synthetic profile, wait for
+  real health checks, assert the real HTTP endpoint responds, then
+  `Remove` and assert the containers are gone.
 - Go still cross-compiles Linux `amd64` and `arm64` trivially (arm64
   matters for Raspberry Pi / NAS-class self-hosting, a real segment of
   Orbit's likely audience) — that's a build-target decision (4.2), separate
   from which platforms get live-tested here.
-- **Failure-path proof, not just happy-path**: at least one scenario per
-  wave that kills a dependency mid-install (stop Postgres between health
-  probes) and asserts the Failure screen's stated reason/action is accurate
-  and the rollback claim ("nothing on disk changed") is literally true —
-  same discipline as `orbit`'s negative-authorization-matrix and
+- **Failure-path proof, not just happy-path** (tracked as issue #57,
+  not yet built): at least one scenario that kills a dependency
+  mid-install (stop Postgres between health probes) and asserts the
+  Failure screen's stated reason/action is accurate and the rollback
+  claim ("nothing on disk changed") is literally true — same
+  discipline as `orbit`'s negative-authorization-matrix and
   recoverable-restore acceptance tests.
 
 This layer runs on every push to the protected `preview` branch
 (authoritative, matches `orbit`'s "protected preview push" gate exactly) and
 is available on-demand for pull requests via a label
-(`run-live-matrix`) to avoid burning the full matrix on every commit.
+(`run-live-matrix`) to avoid burning it on every commit.
 
 ### 3.6 Coverage policy
 
