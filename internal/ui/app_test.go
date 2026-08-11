@@ -85,10 +85,10 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Standard profile is selected by default
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Core configuration"))
+		return bytes.Contains(out, []byte("Ready to install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // config -> profile
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // confirm -> profile
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // profile -> quit
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)

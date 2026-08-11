@@ -1,102 +1,127 @@
 package deploy
 
 import (
-	"context"
+	"bytes"
+	"os"
 	"strings"
-	"sync"
 	"testing"
 )
 
-func TestRunInstallScript_StreamsStdoutAndStderrLines(t *testing.T) {
-	script := []byte("#!/usr/bin/env bash\necho 'from stdout'\necho 'from stderr' >&2\n")
-
-	var mu sync.Mutex
-	var lines []string
-	onLine := func(line string) {
-		mu.Lock()
-		defer mu.Unlock()
-		lines = append(lines, line)
-	}
-
-	if err := RunInstallScript(context.Background(), script, t.TempDir(), onLine); err != nil {
-		t.Fatalf("RunInstallScript: %v", err)
-	}
-
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "from stdout") {
-		t.Errorf("missing stdout line; got: %v", lines)
-	}
-	if !strings.Contains(joined, "from stderr") {
-		t.Errorf("missing stderr line; got: %v", lines)
-	}
-}
-
-func TestRunInstallScript_ReturnsErrorOnNonZeroExit(t *testing.T) {
-	script := []byte("#!/usr/bin/env bash\necho 'about to fail'\nexit 3\n")
-
-	err := RunInstallScript(context.Background(), script, t.TempDir(), func(string) {})
-	if err == nil {
-		t.Fatal("expected an error for a non-zero exit")
-	}
-}
-
-func TestRunInstallScript_RunsInTargetDir(t *testing.T) {
+func TestBuildInstallCommand_StagesScriptAndReturnsARunnableCommand(t *testing.T) {
+	script := []byte("#!/usr/bin/env bash\necho 'from stdout'\n")
 	dir := t.TempDir()
-	script := []byte("#!/usr/bin/env bash\npwd\n")
 
-	var lines []string
-	err := RunInstallScript(context.Background(), script, dir, func(line string) {
-		lines = append(lines, line)
-	})
+	cmd, cleanup, err := BuildInstallCommand(script, dir)
 	if err != nil {
-		t.Fatalf("RunInstallScript: %v", err)
+		t.Fatalf("BuildInstallCommand: %v", err)
 	}
+	defer cleanup()
 
-	found := false
-	for _, l := range lines {
-		if l == dir {
-			found = true
-		}
+	if cmd.Dir != dir {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, dir)
 	}
-	if !found {
-		t.Errorf("expected pwd output to equal target dir %q; got %v", dir, lines)
+	if len(cmd.Args) != 2 {
+		t.Fatalf("cmd.Args = %v, want exactly [bash, <script path>]", cmd.Args)
+	}
+	staged, err := os.ReadFile(cmd.Args[1])
+	if err != nil {
+		t.Fatalf("read staged script: %v", err)
+	}
+	if !bytes.Equal(staged, script) {
+		t.Errorf("staged script content = %q, want %q", staged, script)
 	}
 }
 
-// TestRunInstallScript_DetachesFromTheControllingTerminal is the load-
-// bearing test for this package's whole approach to non-interactive
-// operation: install.sh's has_controlling_terminal check (verified by
-// reading scripts/install.sh directly) opens /dev/tty, not stdin — so
-// only detaching the child into its own session (no controlling terminal
-// at all) reliably makes that check fail, forcing the non-interactive
-// path. This proves that property against the real mechanism (a script
-// that itself tries to open /dev/tty, exactly like install.sh does),
-// not just against the reasoning for why it should work.
-func TestRunInstallScript_DetachesFromTheControllingTerminal(t *testing.T) {
-	script := []byte(`#!/usr/bin/env bash
-if { exec 3<>/dev/tty; } 2>/dev/null; then
-  echo "HAS_CONTROLLING_TERMINAL"
-else
-  echo "NO_CONTROLLING_TERMINAL"
-fi
-`)
-
-	var lines []string
-	var mu sync.Mutex
-	err := RunInstallScript(context.Background(), script, t.TempDir(), func(line string) {
-		mu.Lock()
-		defer mu.Unlock()
-		lines = append(lines, line)
-	})
+// TestBuildInstallCommand_NeverDetachesOrRedirectsStdio is the load-
+// bearing test for issue #51's whole point: install.sh must see a real
+// controlling terminal so its own scripts/configure.sh — the single
+// source of truth for what configuration it needs — can run its
+// guided prompts. Any SysProcAttr detachment, or any Stdin/Stdout/Stderr
+// already set here, would prevent tea.ExecProcess (see internal/ui)
+// from wiring the real terminal in, since it only fills in fields that
+// are still nil.
+func TestBuildInstallCommand_NeverDetachesOrRedirectsStdio(t *testing.T) {
+	cmd, cleanup, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir())
 	if err != nil {
-		t.Fatalf("RunInstallScript: %v", err)
+		t.Fatalf("BuildInstallCommand: %v", err)
+	}
+	defer cleanup()
+
+	if cmd.SysProcAttr != nil {
+		t.Error("expected SysProcAttr to be nil — install.sh must not be detached from a controlling terminal")
+	}
+	if cmd.Stdin != nil {
+		t.Error("expected Stdin to be left nil for tea.ExecProcess to wire up")
+	}
+	if cmd.Stdout != nil {
+		t.Error("expected Stdout to be left nil for tea.ExecProcess to wire up")
+	}
+	if cmd.Stderr != nil {
+		t.Error("expected Stderr to be left nil for tea.ExecProcess to wire up")
+	}
+}
+
+func TestBuildInstallCommand_RunsInTargetDirAndPropagatesExitCode(t *testing.T) {
+	dir := t.TempDir()
+	script := []byte("#!/usr/bin/env bash\n[[ \"$(pwd)\" == \"$1\" ]] || exit 7\n")
+
+	cmd, cleanup, err := BuildInstallCommand(script, dir)
+	if err != nil {
+		t.Fatalf("BuildInstallCommand: %v", err)
+	}
+	defer cleanup()
+
+	// Bare exec.Cmd.Run() (not tea.ExecProcess) connects unset streams to
+	// /dev/null, which is fine for this pure exit-code check.
+	cmd.Args = append(cmd.Args, dir)
+	if err := cmd.Run(); err != nil {
+		t.Errorf("expected the script to see its own cmd.Dir as pwd, got: %v", err)
+	}
+}
+
+func TestBuildInstallCommand_NonZeroExitIsAnError(t *testing.T) {
+	script := []byte("#!/usr/bin/env bash\nexit 3\n")
+	cmd, cleanup, err := BuildInstallCommand(script, t.TempDir())
+	if err != nil {
+		t.Fatalf("BuildInstallCommand: %v", err)
+	}
+	defer cleanup()
+
+	if err := cmd.Run(); err == nil {
+		t.Error("expected a non-zero exit to be reported as an error")
+	}
+}
+
+func TestBuildInstallCommand_CleanupRemovesTheStagedFile(t *testing.T) {
+	cmd, cleanup, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir())
+	if err != nil {
+		t.Fatalf("BuildInstallCommand: %v", err)
+	}
+	path := cmd.Args[1]
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected the staged script to exist before cleanup: %v", err)
 	}
 
-	joined := strings.Join(lines, "\n")
-	if strings.Contains(joined, "HAS_CONTROLLING_TERMINAL") {
-		t.Errorf("child process retained access to /dev/tty — Setsid detachment did not work; got: %v", lines)
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
 	}
-	if !strings.Contains(joined, "NO_CONTROLLING_TERMINAL") {
-		t.Errorf("expected the child to report no controlling terminal; got: %v", lines)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("expected the staged script to be removed after cleanup, stat err = %v", err)
+	}
+}
+
+func TestBuildInstallCommand_ErrorsIfTargetDirDoesNotExist(t *testing.T) {
+	cmd, cleanup, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), "/nonexistent/orbit-launcher-test-dir")
+	if err != nil {
+		t.Fatalf("BuildInstallCommand: %v", err)
+	}
+	defer cleanup()
+
+	err = cmd.Run()
+	if err == nil {
+		t.Error("expected running against a nonexistent directory to fail")
+	}
+	if !strings.Contains(err.Error(), "chdir") && !strings.Contains(err.Error(), "no such file") {
+		t.Logf("got error (informational, not asserting exact wording): %v", err)
 	}
 }
