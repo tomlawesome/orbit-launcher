@@ -1,0 +1,76 @@
+name: Live install/remove test (on demand)
+
+# The real virtualized live test — see docs/implementation-plan.md
+# section 3.5 — run on demand against a pull request, building
+# orbit-launcher fresh from that PR's source (not a published
+# artifact; that authoritative run happens as part of
+# release-preview.yml, right after a preview build actually publishes,
+# testing that exact artifact via the real bootstrap script). Opt-in
+# via the run-live-matrix label, since it's slow — real image pulls,
+# real health checks, minutes not seconds — and shouldn't burn CI time
+# on every commit.
+#
+# Runs on ubuntu-latest only. A debian:12 container leg was tried and
+# dropped (see issue #59): docker-compose.yml's bind-mounted volumes
+# (.orbit-secrets etc.) resolve relative to the calling process's own
+# filesystem, which inside a Docker-outside-of-Docker container is the
+# wrapper container's filesystem, not the host's — so the host daemon
+# actually creating the containers can't see them, and "docker compose
+# up" fails outright before creating anything. Confirmed with a real
+# raw pty transcript, not a guess. Fixing this properly means aligning
+# host and container paths throughout the job, tracked as its own
+# follow-up rather than blocking this on it — real Debian coverage for
+# now comes from having actually run this test suite directly,
+# repeatedly, on a real Debian machine during development (no
+# container involved at all).
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  live-test:
+    name: Live test
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-live-matrix')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build orbit-launcher from source
+        run: |
+          go build -o "$RUNNER_TEMP/orbit-launcher" ./cmd/orbit-launcher
+          echo "ORBIT_LAUNCHER_LIVE_BINARY=$RUNNER_TEMP/orbit-launcher" >> "$GITHUB_ENV"
+
+      - name: Run the live test
+        env:
+          ORBIT_LAUNCHER_LIVE_RAW_LOG: ${{ runner.temp }}/live-raw.log
+        run: go test -tags live -count=1 -v ./test/live/...
+
+      - name: Docker state (always, for debugging)
+        if: always()
+        run: |
+          docker ps -a || true
+          docker volume ls || true
+
+      - name: Upload raw pty transcript (always, for debugging)
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: live-raw-log
+          path: ${{ runner.temp }}/live-raw.log.*
+          if-no-files-found: ignore
+          retention-days: 7
