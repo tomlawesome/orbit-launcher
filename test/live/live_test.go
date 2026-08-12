@@ -121,6 +121,17 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
+
+	// Skip the splash's arrival animation with one benign key (any key
+	// skips and is swallowed). Load-bearing twice over, learned from a
+	// real 20-minute release-gate hang: menu text appears mid-cascade,
+	// so an Enter sent right after matching it lands while the arrival
+	// is still playing and gets swallowed as the skip — and because the
+	// splash animates continuously, go-expect's read timeout never goes
+	// idle, so the next expectation waits forever, not five seconds.
+	if _, err := console.Send("s"); err != nil {
+		t.Fatalf("send arrival-skip key: %v", err)
+	}
 	return console
 }
 
