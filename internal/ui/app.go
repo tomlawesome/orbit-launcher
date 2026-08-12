@@ -109,6 +109,7 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	}
 	s.fqdn = displayHost(d.AppURL)
 	s.appURL = d.AppURL
+	s.orbitVersion = d.Version
 	s.state = stateUnknown
 	s.selected = menuUpdate // a deployment's most likely next act
 	s.healthProbe = m.healthProbe
@@ -125,6 +126,9 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 	if m.splash.noAnimation {
 		s = NewSplashModelNoAnimation()
 	}
+	// The arrival plays once per process launch — a return to the menu
+	// goes straight to the lit room.
+	s.introDone = true
 	s.version = m.version
 	s.checkForUpdate = m.updateCheck
 	if m.detectOnStart {

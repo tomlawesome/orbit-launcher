@@ -12,8 +12,12 @@ import (
 func key(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
 func runeKey(r rune) tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
+// settled skips the arrival, as any keypress would — behaviour and view
+// tests exercise the lit room unless they are about the arrival itself.
+func settled(m SplashModel) SplashModel { m.introDone = true; return m }
+
 func TestSplashModel_ArrowNavigationWraps(t *testing.T) {
-	m := NewSplashModel()
+	m := settled(NewSplashModel())
 
 	if m.selected != 0 {
 		t.Fatalf("initial selection = %d, want 0", m.selected)
@@ -33,7 +37,7 @@ func TestSplashModel_ArrowNavigationWraps(t *testing.T) {
 }
 
 func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
-	m := NewSplashModel()
+	m := settled(NewSplashModel())
 	m.selected = 2 // Repair
 
 	updated, cmd := m.Update(key(tea.KeyEnter))
@@ -48,7 +52,7 @@ func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
 }
 
 func TestSplashModel_NumberKeyJumpsAndChooses(t *testing.T) {
-	m := NewSplashModel()
+	m := settled(NewSplashModel())
 
 	updated, cmd := m.Update(runeKey('4')) // 1-indexed: Remove
 	m = updated.(SplashModel)
@@ -65,7 +69,7 @@ func TestSplashModel_NumberKeyJumpsAndChooses(t *testing.T) {
 }
 
 func TestSplashModel_NumberKeyBeyondMenuLengthIsIgnored(t *testing.T) {
-	m := NewSplashModel()
+	m := settled(NewSplashModel())
 
 	updated, cmd := m.Update(runeKey('9'))
 	m = updated.(SplashModel)
@@ -80,7 +84,7 @@ func TestSplashModel_NumberKeyBeyondMenuLengthIsIgnored(t *testing.T) {
 
 func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
 	for _, k := range []tea.KeyType{tea.KeyEsc, tea.KeyCtrlC} {
-		m := NewSplashModel()
+		m := settled(NewSplashModel())
 		m.selected = 1
 
 		updated, cmd := m.Update(key(k))
@@ -99,7 +103,7 @@ func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
 }
 
 func TestSplashModel_QLowercaseQuitsWithoutChoosing(t *testing.T) {
-	m := NewSplashModel()
+	m := settled(NewSplashModel())
 	updated, cmd := m.Update(runeKey('q'))
 	m = updated.(SplashModel)
 
@@ -205,7 +209,7 @@ func TestSplashModel_UpdateCheckNoUpdateProducesNoMessage(t *testing.T) {
 }
 
 func TestSplashModel_UpdateAvailableMsgIsShownOnScreen(t *testing.T) {
-	m := NewSplashModel()
+	m := settled(NewSplashModel())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(SplashModel)
 
@@ -235,6 +239,7 @@ func TestSplashModel_ViewIsEmptyAfterQuitting(t *testing.T) {
 }
 
 func seedDeployment(m SplashModel) SplashModel {
+	m.introDone = true
 	m.fqdn = "mail.example.com"
 	m.appURL = "https://mail.example.com"
 	m.state = stateUnknown
@@ -289,7 +294,7 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 }
 
 func TestSplashModel_ViewShowsIdentityBlockPerState(t *testing.T) {
-	base := NewSplashModel()
+	base := settled(NewSplashModel())
 	updated, _ := base.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	base = updated.(SplashModel)
 
@@ -315,22 +320,107 @@ func TestSplashModel_ViewShowsIdentityBlockPerState(t *testing.T) {
 	}
 }
 
-func TestSplashModel_ViewShowsVersionBottomRightAndNoTagline(t *testing.T) {
-	m := NewSplashModel()
+func TestSplashModel_FootIsOneCentredVersionLineAndNothingElse(t *testing.T) {
+	m := settled(NewSplashModel())
 	m.version = "v0.1.0"
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	m = updated.(SplashModel)
 
 	view := m.View()
-	if !strings.Contains(view, "v0.1.0") {
-		t.Error("view must include the version")
+	lines := strings.Split(view, "\n")
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "orbit-launcher v0.1.0") {
+		t.Errorf("foot must carry the launcher version, got %q", last)
+	}
+	if strings.Contains(view, "navigate") || strings.Contains(view, "esc quit") {
+		t.Error("the keybind hint is gone for good — no navigation instructions anywhere")
 	}
 	if strings.Contains(view, "personal server launcher") {
 		t.Error("the old tagline must be gone")
 	}
-	lines := strings.Split(view, "\n")
-	last := lines[len(lines)-1]
-	if !strings.Contains(last, "v0.1.0") || !strings.Contains(last, "navigate") {
-		t.Errorf("footer must carry both the hint and the version, got %q", last)
+
+	// With a detected deployment the orbit version joins the same line.
+	m = seedDeployment(m)
+	m.orbitVersion = "v1.2.0"
+	lines = strings.Split(m.View(), "\n")
+	last = lines[len(lines)-1]
+	if !strings.Contains(last, "orbit-launcher v0.1.0 · orbit v1.2.0") {
+		t.Errorf("foot must carry both versions once orbit is known, got %q", last)
+	}
+}
+
+func TestSplashModel_AnyKeySkipsTheArrivalAndIsSwallowed(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+
+	if m.introDone {
+		t.Fatal("the arrival should be playing on a fresh animated splash")
+	}
+	if strings.Contains(m.View(), "Install") {
+		t.Fatal("the menu must not be visible at the start of the arrival")
+	}
+
+	updated, _ = m.Update(key(tea.KeyDown))
+	m = updated.(SplashModel)
+	if !m.introDone {
+		t.Error("any key must skip the arrival")
+	}
+	if m.selected != 0 {
+		t.Error("the skipping key must be swallowed, not treated as navigation")
+	}
+	if !strings.Contains(m.View(), "Install") {
+		t.Error("after the skip, the lit room must be fully there")
+	}
+}
+
+func TestSplashModel_ArrivalFinishesOnItsOwnAfterEnoughTicks(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+
+	for i := 0; i < 80; i++ { // 80 ticks ≈ 9.6s > introEnd
+		updated, _ = m.Update(tickMsg{})
+		m = updated.(SplashModel)
+	}
+	if !m.introDone {
+		t.Error("the arrival must conclude by itself")
+	}
+	if !strings.Contains(m.View(), "Install") || !strings.Contains(m.View(), "dormant") {
+		t.Error("the settled view must follow the arrival")
+	}
+}
+
+func TestSplashModel_NoAnimationNeverPlaysTheArrival(t *testing.T) {
+	m := NewSplashModelNoAnimation()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+	if !strings.Contains(m.View(), "Install") {
+		t.Error("reduced motion goes straight to the lit room")
+	}
+}
+
+func TestSplashModel_ArrivalShowsTheWordsInOrder(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+
+	var sawGet, sawInto, sawOrbitAlone bool
+	for i := 0; i < 80; i++ {
+		view := m.View()
+		if strings.Contains(view, "Get") {
+			sawGet = true
+		}
+		if strings.Contains(view, "Into") {
+			sawInto = true
+		}
+		if strings.Contains(view, "O R B I T") && !strings.Contains(view, "Install") {
+			sawOrbitAlone = true
+		}
+		updated, _ = m.Update(tickMsg{})
+		m = updated.(SplashModel)
+	}
+	if !sawGet || !sawInto || !sawOrbitAlone {
+		t.Errorf("arrival beats missing: Get=%v Into=%v OrbitAlone=%v", sawGet, sawInto, sawOrbitAlone)
 	}
 }
