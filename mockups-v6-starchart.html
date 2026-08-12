@@ -99,13 +99,19 @@
 </section>
 
 <section>
-  <h2><span>04</span> Arrival — the welcome beat, normal wordmark</h2>
+  <h2><span>04</span> Arrival — Get · Into · Orbit</h2>
   <div class="term"><pre class="cells" id="v6-arrival"></pre></div>
-  <div class="cap">POL-1 · ⟡ lands, O R B I T appears, then the room is lit — ~1s, once per launch, NO_ANIMATION skips</div>
+  <div class="cap">POL-1 revised · Get fades → Into fades → O R B I T lands · 2s sweep crosses the wordmark · then the room is lit — once per launch, NO_ANIMATION skips</div>
   <ul class="notes">
-    <li>Three beats of things simply appearing: the mark, then the wordmark, then identity +
-        menu + foot. No easing to fake — appearance is the one motion a cell grid does
-        honestly.</li>
+    <li><b>The fades are colour ramps, not motion:</b> each word steps from near-background to
+        full ink and back over a handful of frames — glyphs never move, brightness is the only
+        animated quantity, which truecolor terminals do perfectly. On a 16-colour terminal it
+        degrades to appear/disappear, still correct.</li>
+    <li><b>The sweep</b> is a soft highlight travelling across the wordmark's cells over 2s —
+        per-cell colour lift toward gold-white, left to right, then gone. Again: colour only,
+        cell-truthful.</li>
+    <li>Then ⟡, identity, menu and foot are simply there. Total ≈ 6s once per launch;
+        <b>ORBIT_LAUNCHER_NO_ANIMATION</b> (and any keypress) skips straight to the lit room.</li>
   </ul>
 </section>
 
@@ -320,25 +326,65 @@ splashScreen("v6-splash-afterdark","#7dd3fc");
   setInterval(frame,100); frame();
 })();
 
-// ==== 04 arrival — the welcome beat ========================================
+// ==== 04 arrival — Get · Into · Orbit ======================================
 (function(){
   const W=80,H=26,S=mkScreen("v6-arrival",W,H); if(!S)return;
   const CX=40, CY=12;
   const stars=mkStars(Math.round(W*H/38), 6, 46);
-  const LOOP=5;
+  const LOOP=9.5;
+  // ramp: 0→1→0 envelope for a word that fades in, holds, fades out
+  function envelope(p,start,fadeIn,hold,fadeOut){
+    const u=p-start;
+    if(u<0)return 0;
+    if(u<fadeIn)return u/fadeIn;
+    if(u<fadeIn+hold)return 1;
+    if(u<fadeIn+hold+fadeOut)return 1-(u-fadeIn-hold)/fadeOut;
+    return 0;
+  }
+  function inkAlpha(a){return "rgba(233,237,248,"+a.toFixed(2)+")";}
   let t=0;
   function frame(){
     t+=.1; S.reset();
     const p=t%LOOP;
     drawStars(S,stars,t,CX,CY,false);
     drawSystems(S,t,1,true);
-    const top=CY-6;
-    // beat 1: the mark alone
-    S.str(top,CX,"⟡","#d8b45a");
-    // beat 2 (0.5s): the wordmark appears
-    if(p>=0.5)S.str(top+2,CX-4,WORDMARK,"#e9edf8",{b:1});
-    // beat 3 (1.0s): the room is lit
-    if(p>=1.0){
+    const top=CY-6, wRow=top+2;
+
+    // beat 1: "Get"  (0.0 – 1.5: fade in .5, hold .6, fade out .4)
+    const aGet=envelope(p,0.0,0.5,0.6,0.4);
+    if(aGet>0.05)S.str(wRow,CX-1,"Get",inkAlpha(aGet),{b:1});
+
+    // beat 2: "Into" (1.7 – 3.2)
+    const aInto=envelope(p,1.7,0.5,0.6,0.4);
+    if(aInto>0.05)S.str(wRow,CX-2,"Into",inkAlpha(aInto),{b:1});
+
+    // beat 3: the wordmark lands (3.4) and stays
+    const aOrbit=p<3.4?0:Math.min(1,(p-3.4)/0.5);
+    if(aOrbit>0.05){
+      // the 2s sweep: a soft gold-white highlight crossing the letters,
+      // starting once the wordmark is fully in (3.9 – 5.9)
+      const sw=(p-3.9)/2;
+      for(let i=0;i<WORDMARK.length;i++){
+        const ch=WORDMARK[i];
+        if(ch===" ")continue;
+        let col=inkAlpha(aOrbit);
+        if(sw>=0&&sw<=1){
+          const pos=sw*WORDMARK.length;
+          const d=Math.abs(i-pos);
+          const lift=Math.max(0,1-d/2.2);
+          if(lift>0.05){
+            const r=Math.round(233+(255-233)*lift), g=Math.round(237+(240-237)*lift),
+                  b=Math.round(248+(200-248)*lift);
+            col="rgb("+r+","+g+","+b+")";
+          }
+        }
+        S.put(wRow,CX-4+i,ch,col,{b:1});
+      }
+    }
+
+    // beat 4: after the sweep, the room is lit (5.9)
+    if(p>=5.9){
+      S.str(top,CX,"⟡","#d8b45a");
       drawIdentity(S,top+4,CX,null,"dormant");
       const items=["Install","Update","Repair","Remove","Exit"];
       items.forEach(function(label,i){
