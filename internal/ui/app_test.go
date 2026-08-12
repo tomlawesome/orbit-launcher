@@ -17,6 +17,7 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 	m.targetDir = t.TempDir() // no .env-orbit here — a nil-deployment Remove flow
 
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
@@ -49,6 +50,7 @@ func TestAppModel_SelectingUpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 	m := NewAppModel()
 	m.targetDir = t.TempDir() // no .env-orbit here
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
@@ -71,6 +73,7 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 	m := NewAppModel()
 	m.targetDir = t.TempDir()
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Choose a deployment profile")) || bytes.Contains(out, []byte("Install"))
@@ -105,6 +108,7 @@ func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t
 	m := NewAppModel()
 	m.targetDir = dir
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
@@ -126,6 +130,7 @@ func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t
 func TestAppModel_SelectingRepairShowsTheHonestStub(t *testing.T) {
 	m := NewAppModel()
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
@@ -157,6 +162,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 	}
 
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
@@ -204,6 +210,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 	}
 
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+	skipArrival(tm)
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))

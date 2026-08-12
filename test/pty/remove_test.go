@@ -7,6 +7,7 @@ import (
 func TestApp_RealPTY_NavigatingToRemoveShowsTheConfirmScreen(t *testing.T) {
 	binPath := buildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
+	skipArrival(t, console)
 
 	if _, err := console.ExpectString("Install"); err != nil {
 		t.Fatalf("did not see the menu: %v", err)

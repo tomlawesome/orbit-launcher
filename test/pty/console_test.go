@@ -90,6 +90,7 @@ func driveToInstallNow(t *testing.T, console *expect.Console) {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
+	skipArrival(t, console)
 	must("▸ Install")
 	if _, err := console.Send("\r"); err != nil {
 		t.Fatalf("send: %v", err)

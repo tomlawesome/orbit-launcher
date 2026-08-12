@@ -20,13 +20,13 @@ func TestSuccessModel_ViewCarriesIdentitySlotAndFooter(t *testing.T) {
 	view := m.View()
 
 	for _, want := range []string{
-		"https://mail.example.com", // hero line in the splash's identity slot
+		"O R B I T",                // the wordmark, normal size, ink
+		"https://mail.example.com", // hero line in the identity slot
 		"alive",                    // status word beneath it
-		"Get into Orbit",           // stacked menu in splash grammar
+		"Get into Orbit",           // stacked menu, centred grammar
 		"Terminal",
 		"Menu",
-		"Orbit achieved in 3m 42s", // footer left: the console's real clock
-		"v9.9.9",                   // footer right
+		"Orbit achieved in 3m 42s", // the whole foot, centred
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("success view missing %q", want)
@@ -34,6 +34,9 @@ func TestSuccessModel_ViewCarriesIdentitySlotAndFooter(t *testing.T) {
 	}
 	if strings.Contains(view, "Orbit is ready") {
 		t.Error("the old completion copy must be gone")
+	}
+	if strings.Contains(view, "v9.9.9") {
+		t.Error("version numbers live on the splash's foot, not here")
 	}
 }
 

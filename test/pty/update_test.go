@@ -9,6 +9,7 @@ import (
 func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 	binPath := buildBinary(t)
 	console, cmd := startUnderPTYInDir(t, binPath, t.TempDir())
+	skipArrival(t, console)
 
 	if _, err := console.ExpectString("Install"); err != nil {
 		t.Fatalf("did not see the menu: %v", err)
@@ -43,6 +44,7 @@ func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *test
 
 	binPath := buildBinary(t)
 	console, cmd := startUnderPTYInDir(t, binPath, dir)
+	skipArrival(t, console)
 
 	if _, err := console.ExpectString("Install"); err != nil {
 		t.Fatalf("did not see the menu: %v", err)
