@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>orbit-launcher — design presentation v2 · the orbital system</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+  :root{
+    --bg:            #05070d;
+    --bg-panel:      #0b0f1a;
+    --bg-page:       #0a0c12;
+    --border:        #1c2434;
+    --border-soft:   #151b28;
+    --text:          #e7e9ee;
+    --text-muted:    #7c8699;
+    --text-faint:    #4a5468;
+    --accent:        #7dd3fc;
+    --warm:          #f0b429;
+    --success:       #4ade80;
+    --error:         #f87171;
+    --planet-ice:    #60a5fa;
+    --planet-rose:   #e879f9;
+    --planet-pale:   #cbd5e1;
+    --planet-ember:  #fb7185;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg-page);
+    color:var(--text);
+    font-family:var(--mono);
+    line-height:1.5;
+    padding:48px 24px 120px;
+  }
+  .wrap{max-width:1100px;margin:0 auto;}
+
+  header.intro{margin-bottom:64px;}
+  header.intro .kicker{
+    color:var(--accent);font-size:12px;letter-spacing:.18em;
+    text-transform:uppercase;margin-bottom:14px;
+  }
+  header.intro h1{font-size:34px;margin:0 0 10px;font-weight:800;}
+  header.intro p.lede{color:var(--text-muted);font-size:15px;max-width:720px;margin:0 0 20px;}
+  .laws{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:960px;}
+  @media (max-width:820px){.laws{grid-template-columns:1fr;}}
+  .law{
+    border:1px solid var(--border);background:var(--bg-panel);
+    border-radius:8px;padding:16px 18px;font-size:13px;color:var(--text-muted);
+  }
+  .law b{display:block;color:var(--text);margin-bottom:6px;font-size:13px;}
+  .law i{color:var(--accent);font-style:normal;}
+
+  section{margin-bottom:80px;}
+  section > h2{
+    font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--text-faint);border-bottom:1px solid var(--border-soft);
+    padding-bottom:12px;margin:0 0 28px;
+  }
+  section > h2 span{color:var(--accent);}
+
+  .frame-row{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px;}
+  .frame-notes{flex:1;min-width:280px;padding-top:8px;}
+  .frame-notes h3{font-size:14px;margin:0 0 10px;color:var(--text);}
+  .frame-notes ul{margin:0;padding-left:18px;font-size:13px;color:var(--text-muted);}
+  .frame-notes li{margin-bottom:9px;}
+  .frame-notes li b{color:var(--text);font-weight:600;}
+  .frame-notes code{color:var(--accent);background:none;font-size:12px;}
+
+  .term{
+    width:660px;max-width:100%;border-radius:10px;border:1px solid var(--border);
+    background:var(--bg);box-shadow:0 30px 60px -20px rgba(0,0,0,.6);
+    overflow:hidden;flex-shrink:0;
+  }
+  .term .bar{
+    background:var(--bg-panel);padding:9px 14px;display:flex;align-items:center;gap:8px;
+    border-bottom:1px solid var(--border-soft);
+  }
+  .term .dot{width:9px;height:9px;border-radius:50%;background:#2a3244;}
+  .term .bar .title{flex:1;text-align:center;font-size:11px;color:var(--text-faint);letter-spacing:.04em;}
+  .term .body{position:relative;height:430px;background:var(--bg);font-size:13px;overflow:hidden;}
+
+  /* ---------- starfield: fixed relative to each other, rotating with the viewer ----------
+     The stars never travel independently. The whole field turns as one rigid
+     body, because the *viewer* is slowly rotating in space. Two layers turn at
+     slightly different rates: nearer stars sweep a little faster than distant
+     ones, which is real parallax and gives the field depth. Twinkle is the only
+     per-star motion. */
+  .rotor{
+    position:absolute;left:50%;top:50%;width:1100px;height:1100px;
+    margin:-550px 0 0 -550px;z-index:0;
+    animation:spin var(--spin,360s) linear infinite;
+  }
+  .rotor.far{animation-duration:var(--spin-far,520s);}
+  @keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
+  .star{
+    position:absolute;border-radius:50%;background:#fff;
+    width:2px;height:2px;
+    animation:twinkle var(--tw,6s) ease-in-out var(--twd,0s) infinite;
+  }
+  .star.big{width:3px;height:3px;}
+  .star.faint{width:1px;height:1px;}
+  @keyframes twinkle{
+    0%,100%{opacity:var(--o,.4);}
+    50%{opacity:calc(var(--o,.4) * .28);}
+  }
+
+  /* ---------- the orbital system ---------- */
+  .system{position:absolute;inset:0;}
+
+  /* The central body is an opaque sphere, not an outline — planets crossing
+     its far side genuinely disappear behind it. A static off-centre inner
+     shadow gives it a terminator so it reads as a lit sphere rather than a
+     flat hole. */
+  .planet-main{
+    position:absolute;z-index:2;
+    left:50%;top:50%;width:340px;height:340px;
+    margin:-170px 0 0 -170px;border-radius:50%;
+    background:radial-gradient(circle at 36% 30%, #121826 0%, #0a0e17 52%, #04060b 100%);
+    border:1px solid rgba(231,233,238,.85);
+    box-shadow:
+      0 0 44px -16px rgba(125,211,252,.4),
+      inset -26px -20px 60px -30px rgba(0,0,0,.95),
+      inset 14px 12px 50px -34px rgba(125,211,252,.5);
+  }
+
+  .orbit{position:absolute;left:50%;top:50%;width:0;height:0;}
+  /* Plain transform keyframes, not offset-path: CSS Motion Path with a
+     basic-shape ellipse() silently no-ops in several engines instead of
+     erroring, which is exactly why the first pass looked frozen outside
+     Chromium. translate() has worked everywhere for a decade. */
+  .planet{
+    position:absolute;left:0;top:0;border-radius:50%;
+    width:var(--sz,18px);height:var(--sz,18px);
+    margin-left:calc(var(--sz,18px) / -2);
+    margin-top:calc(var(--sz,18px) / -2);
+    border:1.5px solid var(--pc,#fff);
+    box-shadow:0 0 12px -3px var(--pc,#fff);
+    animation-duration:var(--dur,90s);
+    animation-timing-function:linear;
+    animation-delay:var(--del,0s);
+    animation-iteration-count:infinite;
+  }
+  .planet.filled{background:var(--pc,#fff);border:none;box-shadow:0 0 14px -2px var(--pc,#fff);}
+  .planet.p-ice{animation-name:orbit-ice;}
+  .planet.p-rose{animation-name:orbit-rose;}
+  .planet.p-pale{animation-name:orbit-pale;}
+  .planet.p-ember{animation-name:orbit-ember;}
+
+  /* Path radius and tilt are baked into each planet's own keyframes. z-index
+     is discrete, so it snaps cleanly at the two crossings: z3 on the near
+     (lower) half of the path, z1 on the far (upper) half — behind the sphere. */
+  @keyframes orbit-ice{
+    0.0000% { transform: translate(265.00px, 0.00px); z-index: 3; }
+    4.1667% { transform: translate(255.97px, 28.47px); z-index: 3; }
+    8.3333% { transform: translate(229.50px, 55.00px); z-index: 3; }
+    12.5000% { transform: translate(187.38px, 77.78px); z-index: 3; }
+    16.6667% { transform: translate(132.50px, 95.26px); z-index: 3; }
+    20.8333% { transform: translate(68.59px, 106.25px); z-index: 3; }
+    25.0000% { transform: translate(0.00px, 110.00px); z-index: 3; }
+    29.1667% { transform: translate(-68.59px, 106.25px); z-index: 3; }
+    33.3333% { transform: translate(-132.50px, 95.26px); z-index: 3; }
+    37.5000% { transform: translate(-187.38px, 77.78px); z-index: 3; }
+    41.6667% { transform: translate(-229.50px, 55.00px); z-index: 3; }
+    45.8333% { transform: translate(-255.97px, 28.47px); z-index: 3; }
+    50.0000% { transform: translate(-265.00px, 0.00px); z-index: 3; }
+    54.1667% { transform: translate(-255.97px, -28.47px); z-index: 1; }
+    58.3333% { transform: translate(-229.50px, -55.00px); z-index: 1; }
+    62.5000% { transform: translate(-187.38px, -77.78px); z-index: 1; }
+    66.6667% { transform: translate(-132.50px, -95.26px); z-index: 1; }
+    70.8333% { transform: translate(-68.59px, -106.25px); z-index: 1; }
+    75.0000% { transform: translate(-0.00px, -110.00px); z-index: 1; }
+    79.1667% { transform: translate(68.59px, -106.25px); z-index: 1; }
+    83.3333% { transform: translate(132.50px, -95.26px); z-index: 1; }
+    87.5000% { transform: translate(187.38px, -77.78px); z-index: 1; }
+    91.6667% { transform: translate(229.50px, -55.00px); z-index: 1; }
+    95.8333% { transform: translate(255.97px, -28.47px); z-index: 1; }
+    100.0000% { transform: translate(265.00px, -0.00px); z-index: 1; }
+  }
+  @keyframes orbit-rose{
+    0.0000% { transform: translate(218.32px, -54.43px); z-index: 1; }
+    4.1667% { transform: translate(220.27px, -14.91px); z-index: 1; }
+    8.3333% { transform: translate(207.21px, 25.63px); z-index: 3; }
+    12.5000% { transform: translate(180.03px, 64.43px); z-index: 3; }
+    16.6667% { transform: translate(140.58px, 98.83px); z-index: 3; }
+    20.8333% { transform: translate(91.56px, 126.50px); z-index: 3; }
+    25.0000% { transform: translate(36.29px, 145.54px); z-index: 3; }
+    29.1667% { transform: translate(-21.45px, 154.67px); z-index: 3; }
+    33.3333% { transform: translate(-77.73px, 153.26px); z-index: 3; }
+    37.5000% { transform: translate(-128.71px, 141.40px); z-index: 3; }
+    41.6667% { transform: translate(-170.92px, 119.91px); z-index: 3; }
+    45.8333% { transform: translate(-201.49px, 90.25px); z-index: 3; }
+    50.0000% { transform: translate(-218.32px, 54.43px); z-index: 3; }
+    54.1667% { transform: translate(-220.27px, 14.91px); z-index: 3; }
+    58.3333% { transform: translate(-207.21px, -25.63px); z-index: 1; }
+    62.5000% { transform: translate(-180.03px, -64.43px); z-index: 1; }
+    66.6667% { transform: translate(-140.58px, -98.83px); z-index: 1; }
+    70.8333% { transform: translate(-91.56px, -126.50px); z-index: 1; }
+    75.0000% { transform: translate(-36.29px, -145.54px); z-index: 1; }
+    79.1667% { transform: translate(21.45px, -154.67px); z-index: 1; }
+    83.3333% { transform: translate(77.73px, -153.26px); z-index: 1; }
+    87.5000% { transform: translate(128.71px, -141.40px); z-index: 1; }
+    91.6667% { transform: translate(170.92px, -119.91px); z-index: 1; }
+    95.8333% { transform: translate(201.49px, -90.25px); z-index: 1; }
+    100.0000% { transform: translate(218.32px, -54.43px); z-index: 1; }
+  }
+  @keyframes orbit-pale{
+    0.0000% { transform: translate(296.31px, 46.93px); z-index: 3; }
+    4.1667% { transform: translate(280.54px, 81.12px); z-index: 3; }
+    8.3333% { transform: translate(245.66px, 109.78px); z-index: 3; }
+    12.5000% { transform: translate(194.03px, 130.96px); z-index: 3; }
+    16.6667% { transform: translate(129.19px, 143.22px); z-index: 3; }
+    20.8333% { transform: translate(55.54px, 145.71px); z-index: 3; }
+    25.0000% { transform: translate(-21.90px, 138.28px); z-index: 3; }
+    29.1667% { transform: translate(-97.84px, 121.42px); z-index: 3; }
+    33.3333% { transform: translate(-167.12px, 96.29px); z-index: 3; }
+    37.5000% { transform: translate(-225.01px, 64.59px); z-index: 3; }
+    41.6667% { transform: translate(-267.56px, 28.50px); z-index: 3; }
+    45.8333% { transform: translate(-291.88px, -9.54px); z-index: 1; }
+    50.0000% { transform: translate(-296.31px, -46.93px); z-index: 1; }
+    54.1667% { transform: translate(-280.54px, -81.12px); z-index: 1; }
+    58.3333% { transform: translate(-245.66px, -109.78px); z-index: 1; }
+    62.5000% { transform: translate(-194.03px, -130.96px); z-index: 1; }
+    66.6667% { transform: translate(-129.19px, -143.22px); z-index: 1; }
+    70.8333% { transform: translate(-55.54px, -145.71px); z-index: 1; }
+    75.0000% { transform: translate(21.90px, -138.28px); z-index: 1; }
+    79.1667% { transform: translate(97.84px, -121.42px); z-index: 1; }
+    83.3333% { transform: translate(167.12px, -96.29px); z-index: 1; }
+    87.5000% { transform: translate(225.01px, -64.59px); z-index: 1; }
+    91.6667% { transform: translate(267.56px, -28.50px); z-index: 1; }
+    95.8333% { transform: translate(291.88px, 9.54px); z-index: 3; }
+    100.0000% { transform: translate(296.31px, 46.93px); z-index: 3; }
+  }
+  @keyframes orbit-ember{
+    0.0000% { transform: translate(194.52px, 13.60px); z-index: 3; }
+    4.1667% { transform: translate(186.18px, 37.67px); z-index: 3; }
+    8.3333% { transform: translate(165.15px, 59.16px); z-index: 3; }
+    12.5000% { transform: translate(132.86px, 76.63px); z-index: 3; }
+    16.6667% { transform: translate(91.52px, 88.87px); z-index: 3; }
+    20.8333% { transform: translate(43.95px, 95.06px); z-index: 3; }
+    25.0000% { transform: translate(-6.63px, 94.77px); z-index: 3; }
+    29.1667% { transform: translate(-56.75px, 88.02px); z-index: 3; }
+    33.3333% { transform: translate(-103.00px, 75.27px); z-index: 3; }
+    37.5000% { transform: translate(-142.24px, 57.39px); z-index: 3; }
+    41.6667% { transform: translate(-171.78px, 35.60px); z-index: 3; }
+    45.8333% { transform: translate(-189.61px, 11.39px); z-index: 3; }
+    50.0000% { transform: translate(-194.52px, -13.60px); z-index: 1; }
+    54.1667% { transform: translate(-186.18px, -37.67px); z-index: 1; }
+    58.3333% { transform: translate(-165.15px, -59.16px); z-index: 1; }
+    62.5000% { transform: translate(-132.86px, -76.63px); z-index: 1; }
+    66.6667% { transform: translate(-91.52px, -88.87px); z-index: 1; }
+    70.8333% { transform: translate(-43.95px, -95.06px); z-index: 1; }
+    75.0000% { transform: translate(6.63px, -94.77px); z-index: 1; }
+    79.1667% { transform: translate(56.75px, -88.02px); z-index: 1; }
+    83.3333% { transform: translate(103.00px, -75.27px); z-index: 1; }
+    87.5000% { transform: translate(142.24px, -57.39px); z-index: 1; }
+    91.6667% { transform: translate(171.78px, -35.60px); z-index: 1; }
+    95.8333% { transform: translate(189.61px, -11.39px); z-index: 1; }
+    100.0000% { transform: translate(194.52px, 13.60px); z-index: 3; }
+  }
+
+  /* ---------- text layer: always last, always centred ---------- */
+  .system-text{
+    position:absolute;inset:0;z-index:5;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;pointer-events:none;
+  }
+  .mark-glyph{color:var(--accent);font-size:18px;margin-bottom:4px;}
+  /* Letter-spacing appends a trailing space after the final glyph, which
+     drags optically-centred text left by half of it. padding-left of the
+     same amount puts the visual centre back on the true centre. */
+  .wordmark{
+    font-size:26px;font-weight:800;letter-spacing:.3em;color:var(--text);
+    padding-left:.3em;
+  }
+  .tagline{
+    font-size:10px;color:var(--text-faint);letter-spacing:.16em;
+    text-transform:uppercase;margin:6px 0 26px;padding-left:.16em;
+  }
+  /* Each row centres its own label, with equal-width caret and spacer either
+     side, so the labels stay optically centred and never shift as the
+     selection moves. */
+  .menu{list-style:none;margin:0;padding:0;}
+  .menu li{
+    display:flex;justify-content:center;align-items:center;gap:8px;
+    padding:4px 0;font-size:13px;color:var(--text-muted);
+  }
+  .menu li.sel{color:var(--text);}
+  .menu li .car{color:var(--accent);width:12px;text-align:right;flex-shrink:0;}
+  .menu li .tail{width:12px;flex-shrink:0;}
+  .menu li.menu-gap{margin-top:12px;}
+
+  .version{
+    position:absolute;bottom:14px;right:18px;z-index:5;
+    font-size:11px;color:var(--text-faint);letter-spacing:.04em;
+  }
+
+  /* ---------- arrival storyboard frames ---------- */
+  .filmstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+  @media (max-width:900px){.filmstrip{grid-template-columns:repeat(2,1fr);}}
+  .cell{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg);}
+  .cell .shot{position:relative;height:170px;overflow:hidden;background:var(--bg);}
+  .cell .cap{padding:10px 12px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border-soft);}
+  .cell .cap b{color:var(--text);display:block;margin-bottom:3px;font-size:11px;}
+
+  .streak{
+    position:absolute;left:50%;top:50%;height:1px;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.7));
+    transform-origin:0 0;
+  }
+  .dotstar{position:absolute;width:2px;height:2px;border-radius:50%;background:#fff;opacity:.5;}
+  .mini-sphere{
+    position:absolute;left:50%;top:50%;border-radius:50%;transform:translate(-50%,-50%);
+    background:radial-gradient(circle at 36% 30%, #121826 0%, #0a0e17 52%, #04060b 100%);
+    border:1px solid rgba(231,233,238,.8);
+  }
+  .mini-word{
+    position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+    text-align:center;font-weight:800;letter-spacing:.3em;color:var(--text);
+    padding-left:.3em;font-size:13px;z-index:4;
+  }
+
+  /* ---------- centred flow screen ---------- */
+  .flow-center{
+    position:absolute;inset:0;z-index:5;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+  }
+  .flow-card{width:400px;max-width:88%;}
+  .flow-brand{
+    display:flex;justify-content:space-between;font-size:11px;color:var(--text-faint);
+    border-bottom:1px solid var(--border-soft);padding-bottom:12px;margin-bottom:16px;
+  }
+  .flow-brand .b span{color:var(--accent);}
+  h4.screen-title{font-size:14px;margin:0 0 16px;color:var(--text);font-weight:700;}
+  .opt-list{list-style:none;margin:0 0 16px;padding:0;}
+  .opt-list li{display:flex;gap:12px;padding:6px 0;font-size:12px;color:var(--text-muted);}
+  .opt-list li.sel{color:var(--text);}
+  .opt-list li .car{color:var(--accent);width:14px;flex-shrink:0;}
+  .opt-list li .desc{color:var(--text-faint);margin-left:auto;text-align:right;}
+  .note{font-size:11px;color:var(--text-faint);margin-bottom:16px;line-height:1.6;}
+  .actions{display:flex;gap:22px;font-size:12px;}
+  .actions .sel{color:var(--accent);}
+  .actions .un{color:var(--text-faint);}
+  .corner-arc{
+    position:absolute;border-radius:50%;border:1px solid rgba(231,233,238,.22);
+    z-index:1;
+  }
+
+  /* layer diagram */
+  .layers{display:flex;flex-direction:column;gap:8px;max-width:600px;margin-bottom:10px;}
+  .layer{
+    border:1px solid var(--border);border-radius:6px;background:var(--bg-panel);
+    padding:10px 16px;font-size:12px;color:var(--text-muted);
+    display:flex;justify-content:space-between;align-items:center;gap:16px;
+  }
+  .layer b{color:var(--text);font-weight:600;}
+  .layer .z{color:var(--accent);font-size:11px;white-space:nowrap;}
+
+  /* suggestions */
+  .sugg{
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    background:var(--bg-panel);border-radius:0 8px 8px 0;
+    padding:16px 20px;margin-bottom:16px;
+  }
+  .sugg h3{font-size:13px;margin:0 0 8px;color:var(--text);}
+  .sugg p{font-size:13px;color:var(--text-muted);margin:0 0 8px;}
+  .sugg .cost{font-size:11px;color:var(--text-faint);}
+  .sugg .cost b{color:var(--success);font-weight:600;}
+  .pair{display:flex;gap:16px;flex-wrap:wrap;margin:14px 0 4px;}
+  .mini-term{
+    width:300px;height:190px;position:relative;overflow:hidden;
+    border:1px solid var(--border);border-radius:8px;background:var(--bg);
+  }
+  .mini-term .lab{
+    position:absolute;bottom:8px;left:0;right:0;text-align:center;
+    font-size:10px;color:var(--text-faint);z-index:6;
+  }
+  .dormant{
+    position:absolute;left:50%;top:44%;width:150px;height:150px;
+    margin:-75px 0 0 -75px;border-radius:50%;z-index:2;
+    background:radial-gradient(circle at 36% 30%, #0d1119 0%, #080b12 52%, #04060b 100%);
+    border:1px solid rgba(124,134,153,.4);
+  }
+  .lit{
+    position:absolute;left:50%;top:44%;width:150px;height:150px;
+    margin:-75px 0 0 -75px;border-radius:50%;z-index:2;
+    background:radial-gradient(circle at 36% 30%, #121826 0%, #0a0e17 52%, #04060b 100%);
+    border:1px solid rgba(231,233,238,.85);
+    box-shadow:0 0 30px -8px rgba(74,222,128,.35), inset -12px -9px 28px -14px rgba(0,0,0,.95);
+  }
+  .mini-label{
+    position:absolute;left:0;right:0;top:44%;transform:translateY(-50%);
+    text-align:center;z-index:5;
+  }
+  .mini-label .w{font-weight:800;letter-spacing:.3em;padding-left:.3em;font-size:12px;color:var(--text);}
+  .mini-label .s{font-size:9px;letter-spacing:.12em;text-transform:uppercase;margin-top:5px;}
+
+  footer.end{
+    margin-top:80px;padding-top:28px;border-top:1px solid var(--border-soft);
+    color:var(--text-faint);font-size:12px;
+  }
+
+  /* Deliberately no prefers-reduced-motion switch here — this file is a
+     design review artifact whose whole point is demonstrating motion. The
+     real app honours ORBIT_LAUNCHER_NO_ANIMATION instead, as it already does. */
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="intro">
+    <div class="kicker">orbit-launcher · design presentation v2 · the orbital system</div>
+    <h1>The universe holds still. You drift.</h1>
+    <p class="lede">
+      v1 shipped the bones: starfield, wordmark, five choices. v2 fixes the
+      physics and gives the menu a home. Three laws govern every screen from
+      here on — everything else in this document follows from them.
+    </p>
+    <div class="laws">
+      <div class="law">
+        <b>1 · Stars are fixed points</b>
+        Real stars don't wander independently. The field is rigid — it never
+        scrolls or drifts. It <i>rotates as one body</i>, slowly, because
+        <i>you</i> are turning in space. Nearer stars sweep marginally faster
+        than distant ones; that parallax is the only depth cue. Twinkle is the
+        one thing a star does on its own.
+      </div>
+      <div class="law">
+        <b>2 · All motion is your motion</b>
+        Launch is an <i>arrival</i>: you fly through the field into the centre
+        and decelerate. Entering a flow flies you closer; esc pulls you back.
+        The idle rotation is you drifting. Motion always means <i>where you
+        are</i> — never decoration.
+      </div>
+      <div class="law">
+        <b>3 · The menu is a place</b>
+        A single large sphere holds the wordmark and menu — a body you're in
+        orbit of. Smaller planets circle it on their own paths and periods,
+        and genuinely <i>pass behind it</i>. Text renders above everything,
+        without exception.
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <h2><span>01</span> Arrival — flying in</h2>
+    <div class="filmstrip">
+      <div class="cell">
+        <div class="shot">
+          <div class="streak" style="transform:rotate(20deg);width:70px;"></div>
+          <div class="streak" style="transform:rotate(75deg);width:55px;"></div>
+          <div class="streak" style="transform:rotate(130deg);width:80px;"></div>
+          <div class="streak" style="transform:rotate(200deg);width:60px;"></div>
+          <div class="streak" style="transform:rotate(255deg);width:75px;"></div>
+          <div class="streak" style="transform:rotate(310deg);width:50px;"></div>
+          <div class="streak" style="transform:rotate(345deg);width:65px;"></div>
+        </div>
+        <div class="cap"><b>F1 · Travel</b>Stars streak radially outward from the vanishing point — the view through a windshield at speed. Longest streaks nearest the edges.</div>
+      </div>
+      <div class="cell">
+        <div class="shot">
+          <div class="streak" style="transform:rotate(20deg);width:26px;"></div>
+          <div class="streak" style="transform:rotate(75deg);width:20px;"></div>
+          <div class="streak" style="transform:rotate(130deg);width:30px;"></div>
+          <div class="streak" style="transform:rotate(200deg);width:22px;"></div>
+          <div class="streak" style="transform:rotate(255deg);width:28px;"></div>
+          <div class="streak" style="transform:rotate(310deg);width:18px;"></div>
+          <div class="dotstar" style="left:18%;top:22%;"></div>
+          <div class="dotstar" style="left:80%;top:30%;"></div>
+          <div class="dotstar" style="left:65%;top:78%;"></div>
+        </div>
+        <div class="cap"><b>F2 · Deceleration</b>Streaks shorten over ~600ms as you brake. Outer stars settle into fixed points first, centre last.</div>
+      </div>
+      <div class="cell">
+        <div class="shot">
+          <div class="dotstar" style="left:18%;top:22%;"></div>
+          <div class="dotstar" style="left:80%;top:30%;"></div>
+          <div class="dotstar" style="left:65%;top:78%;"></div>
+          <div class="dotstar" style="left:30%;top:64%;"></div>
+          <div class="dotstar" style="left:50%;top:12%;"></div>
+          <div class="mini-sphere" style="width:110px;height:110px;border-color:rgba(231,233,238,.35);"></div>
+        </div>
+        <div class="cap"><b>F3 · The body resolves</b>Once the field is still, the sphere's limb draws on — a sweep around its circumference (~400ms), like something coming into focus as you settle in front of it.</div>
+      </div>
+      <div class="cell">
+        <div class="shot">
+          <div class="dotstar" style="left:18%;top:22%;"></div>
+          <div class="dotstar" style="left:80%;top:30%;"></div>
+          <div class="dotstar" style="left:65%;top:78%;"></div>
+          <div class="dotstar" style="left:30%;top:64%;"></div>
+          <div class="dotstar" style="left:50%;top:12%;"></div>
+          <div class="mini-sphere" style="width:110px;height:110px;"></div>
+          <div style="position:absolute;left:50%;top:50%;margin-left:62px;margin-top:-20px;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--planet-ice);z-index:3;"></div>
+          <div style="position:absolute;left:50%;top:50%;margin-left:-58px;margin-top:30px;width:6px;height:6px;border-radius:50%;border:1.5px solid var(--planet-rose);z-index:3;"></div>
+          <div class="mini-word">ORBIT</div>
+        </div>
+        <div class="cap"><b>F4 · At rest</b>Wordmark and menu fade in on the sphere; planets are already in motion as they appear — the system was always here, you just arrived at it.</div>
+      </div>
+    </div>
+    <div class="frame-notes">
+      <ul>
+        <li><b>Total arrival budget: under 1.5 seconds</b>, and any key skips
+        straight to F4. The sequence sells the metaphor once; it must never
+        cost a returning user time.</li>
+        <li><b>Terminal implementation</b> — streaks are 2–4 cell runs of
+        <code>· ∙ ●</code> along precomputed radial lines, advancing on the
+        existing tick. Deceleration is just shortening the run length per
+        frame. The limb sweep lights arc cells progressively clockwise.</li>
+        <li><b><code>ORBIT_LAUNCHER_NO_ANIMATION=1</code></b> (and dumb
+        terminals) jump directly to F4, fully rendered and static — the same
+        rule the starfield already follows today.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>02</span> The system at rest — live</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher</span></div>
+        <div class="body">
+
+          <!-- distant layer: slower sweep -->
+          <div class="rotor far">
+            <span class="star faint" style="left:22%;top:18%;--tw:9s;--o:.3;"></span>
+            <span class="star faint" style="left:38%;top:31%;--tw:7s;--twd:2s;--o:.25;"></span>
+            <span class="star faint" style="left:63%;top:24%;--tw:11s;--twd:1s;--o:.3;"></span>
+            <span class="star faint" style="left:77%;top:40%;--tw:8s;--twd:3s;--o:.28;"></span>
+            <span class="star faint" style="left:29%;top:57%;--tw:10s;--o:.25;"></span>
+            <span class="star faint" style="left:55%;top:69%;--tw:6s;--twd:4s;--o:.3;"></span>
+            <span class="star faint" style="left:71%;top:74%;--tw:9s;--twd:2s;--o:.25;"></span>
+            <span class="star faint" style="left:44%;top:81%;--tw:7s;--twd:1s;--o:.28;"></span>
+            <span class="star faint" style="left:18%;top:44%;--tw:12s;--twd:5s;--o:.22;"></span>
+            <span class="star faint" style="left:82%;top:61%;--tw:8s;--twd:3s;--o:.26;"></span>
+          </div>
+
+          <!-- nearer layer: faster sweep, brighter -->
+          <div class="rotor">
+            <span class="star" style="left:26%;top:23%;--tw:6s;--o:.45;"></span>
+            <span class="star big" style="left:34%;top:38%;--tw:5s;--twd:1s;--o:.6;"></span>
+            <span class="star" style="left:48%;top:20%;--tw:8s;--twd:2s;--o:.4;"></span>
+            <span class="star" style="left:60%;top:33%;--tw:7s;--o:.45;"></span>
+            <span class="star big" style="left:70%;top:52%;--tw:6s;--twd:3s;--o:.55;"></span>
+            <span class="star" style="left:64%;top:66%;--tw:9s;--twd:1s;--o:.4;"></span>
+            <span class="star" style="left:50%;top:76%;--tw:6s;--twd:4s;--o:.45;"></span>
+            <span class="star big" style="left:36%;top:70%;--tw:7s;--twd:2s;--o:.5;"></span>
+            <span class="star" style="left:24%;top:52%;--tw:8s;--o:.4;"></span>
+            <span class="star" style="left:75%;top:28%;--tw:5s;--twd:3s;--o:.45;"></span>
+            <span class="star" style="left:42%;top:60%;--tw:10s;--twd:2s;--o:.35;"></span>
+            <span class="star" style="left:56%;top:45%;--tw:9s;--twd:5s;--o:.3;"></span>
+            <span class="star big" style="left:80%;top:45%;--tw:6s;--twd:1s;--o:.5;"></span>
+            <span class="star" style="left:30%;top:32%;--tw:11s;--twd:4s;--o:.35;"></span>
+          </div>
+
+          <div class="system">
+            <div class="planet-main"></div>
+
+            <!-- wide, unhurried ice giant -->
+            <div class="orbit"><div class="planet p-ice"
+              style="--pc:var(--planet-ice);--sz:20px;--dur:96s;"></div></div>
+
+            <!-- rose, tilted against the grain -->
+            <div class="orbit"><div class="planet p-rose"
+              style="--pc:var(--planet-rose);--sz:14px;--dur:64s;--del:-22s;"></div></div>
+
+            <!-- pale outer wanderer, slowest of all -->
+            <div class="orbit"><div class="planet p-pale"
+              style="--pc:var(--planet-pale);--sz:24px;--dur:150s;--del:-64s;"></div></div>
+
+            <!-- small ember moon, closest and quickest -->
+            <div class="orbit"><div class="planet p-ember filled"
+              style="--pc:var(--planet-ember);--sz:7px;--dur:40s;--del:-12s;"></div></div>
+
+            <div class="system-text">
+              <div class="mark-glyph">⟡</div>
+              <div class="wordmark">ORBIT</div>
+              <div class="tagline">personal server launcher</div>
+              <ul class="menu">
+                <li class="sel"><span class="car">▸</span>Install<span class="tail"></span></li>
+                <li><span class="car"></span>Update<span class="tail"></span></li>
+                <li><span class="car"></span>Repair<span class="tail"></span></li>
+                <li class="menu-gap"><span class="car"></span>Remove<span class="tail"></span></li>
+                <li><span class="car"></span>Exit<span class="tail"></span></li>
+              </ul>
+            </div>
+            <div class="version">v0.1.0</div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Four bodies, four temperaments</h3>
+        <ul>
+          <li><b>Speeds are roughly a quarter of the last pass</b> — periods
+          now run 40s (the little ember moon, closest in) to 150s (the pale
+          outer wanderer). Watch for a few seconds and it reads as calm drift;
+          look away and back and the sky has genuinely rearranged.</li>
+          <li><b>The centre is a sphere, not a ring.</b> It's opaque, so a
+          planet crossing its far side is fully hidden and re-emerges on the
+          other limb — the thing that was missing before. A static off-centre
+          inner shadow gives it a terminator so it reads as lit, not as a
+          hole cut in the starfield.</li>
+          <li><b>The starfield rotates as one rigid body</b> — you are turning,
+          slowly, roughly one revolution every six minutes. Two layers at
+          slightly different rates give real parallax. No star ever moves
+          relative to its neighbours.</li>
+          <li><b>Text is optically centred now</b> — the wordmark compensates
+          for its own trailing letter-space, and each menu row centres its
+          label between an equal-width caret and spacer, so labels never
+          shift as you move the selection.</li>
+          <li><b>Bottom bar is just the version</b>, right-aligned, in the old
+          footer's weight and colour. The keybind hints are gone.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>03</span> Layering — who's allowed on top</h2>
+    <div class="layers">
+      <div class="layer"><span><b>Text</b> — wordmark, menu, version, status</span><span class="z">z5 · always wins</span></div>
+      <div class="layer"><span><b>Planets, near half of orbit</b> — lower half of each path</span><span class="z">z3</span></div>
+      <div class="layer"><span><b>The central sphere</b> — static, opaque, occluding</span><span class="z">z2</span></div>
+      <div class="layer"><span><b>Planets, far half of orbit</b> — upper half, hidden behind the sphere</span><span class="z">z1</span></div>
+      <div class="layer"><span><b>Starfield</b> — rigid, rotating, twinkling</span><span class="z">z0</span></div>
+    </div>
+    <div class="frame-notes">
+      <ul>
+        <li><b>Depth from one rule:</b> a planet is "far" on the upper half of
+        its ellipse and "near" on the lower half — how a tilted orbit viewed
+        edge-on actually works. z-order snaps at the two crossings; no smooth
+        z needed.</li>
+        <li><b>In the terminal this is compositor order</b>, drawn back to
+        front into the cell buffer each frame: stars → far planets → sphere
+        cells → near planets → text. The sphere pass writes opaque cells
+        (spaces included), which is exactly what makes occlusion work — the
+        far planets simply never get drawn there.</li>
+        <li><b>Text always wins</b> literally: the text pass is last and
+        opaque, so a planet can never bleed through a menu label mid-crossing.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>04</span> Flow screens — yes, the field is still there</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — install</span></div>
+        <div class="body">
+          <div class="rotor far">
+            <span class="star faint" style="left:24%;top:26%;--tw:9s;--o:.22;"></span>
+            <span class="star faint" style="left:62%;top:19%;--tw:11s;--twd:2s;--o:.2;"></span>
+            <span class="star faint" style="left:74%;top:63%;--tw:8s;--twd:1s;--o:.22;"></span>
+            <span class="star faint" style="left:33%;top:72%;--tw:10s;--twd:3s;--o:.2;"></span>
+            <span class="star faint" style="left:52%;top:81%;--tw:7s;--o:.18;"></span>
+          </div>
+          <div class="rotor">
+            <span class="star" style="left:30%;top:33%;--tw:7s;--o:.3;"></span>
+            <span class="star" style="left:68%;top:29%;--tw:9s;--twd:2s;--o:.28;"></span>
+            <span class="star" style="left:44%;top:68%;--tw:6s;--twd:1s;--o:.3;"></span>
+            <span class="star" style="left:72%;top:54%;--tw:8s;--twd:4s;--o:.25;"></span>
+            <span class="star" style="left:26%;top:56%;--tw:10s;--twd:2s;--o:.26;"></span>
+            <span class="star big" style="left:58%;top:74%;--tw:7s;--twd:3s;--o:.3;"></span>
+          </div>
+          <div class="corner-arc" style="width:560px;height:560px;left:-210px;top:-230px;"></div>
+          <div class="flow-center">
+            <div class="flow-card">
+              <div class="flow-brand"><span class="b">ORBIT <span>·</span> Install</span><span>Step 1 of 3</span></div>
+              <h4 class="screen-title">Choose a deployment profile</h4>
+              <ul class="opt-list">
+                <li class="sel"><span class="car">▸</span>Standard<span class="desc">Mail, documents, calendar</span></li>
+                <li><span class="car"></span>AI<span class="desc">Adds a local model</span></li>
+                <li><span class="car"></span>Full<span class="desc">Every optional service</span></li>
+              </ul>
+              <div class="note">Standard profile uses roughly 2 vCPU · 2 GB RAM · 8 GB disk.</div>
+              <div class="actions"><span class="sel">↵ continue</span><span class="un">esc back</span></div>
+            </div>
+          </div>
+          <div class="version">v0.1.0</div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Same space, closer in</h3>
+        <ul>
+          <li><b>Yes — flow screens keep a twinkling starfield</b>, and it
+          keeps rotating on the same clock as the splash. It's deliberately
+          sparser and dimmer (about a third the density, roughly half the
+          brightness) so it never competes with reading, but it's the same
+          sky, still turning. You didn't go somewhere else; you moved closer.</li>
+          <li><b>Selecting a menu item is travel:</b> the camera pushes forward
+          ~300ms — stars stretch briefly, the sphere swells past the viewport
+          edge — and you arrive. <b>esc reverses the identical move.</b>
+          Navigation and motion are the same thing, so the spatial model
+          teaches itself.</li>
+          <li><b>The sphere never fully leaves.</b> Its limb survives as a huge
+          faint arc through a corner — you're close to it now, not elsewhere.
+          This replaces v1's hard cut from atmospheric splash to flat form.</li>
+          <li><b>Every flow screen is centred</b>, fixing the current build's
+          real inconsistency where the splash centres but Install / Update /
+          Remove / Repair hug the top-left on fixed padding.</li>
+          <li><b>Planets don't follow you in.</b> Flow screens are for
+          decisions — the residents here are the corner arc and the quiet
+          field. Data entry keeps v1's rule: atmosphere yields to focus.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>05</span> Motion vocabulary — the complete set</h2>
+    <div class="frame-notes" style="max-width:780px;">
+      <ul>
+        <li><b>Rotation</b> — the whole starfield, everywhere, always. One
+        revolution per ~6 minutes; distant layer ~8.5. This is you drifting.</li>
+        <li><b>Twinkle</b> — stars only; slow 5–12s cycles, never more than a
+        third of the field mid-twinkle at once. The idle heartbeat.</li>
+        <li><b>Orbit</b> — planets, main menu only; constant angular speed per
+        planet, periods 40–150s. Never paused, never accelerated: the system
+        persists rather than reacting to you.</li>
+        <li><b>Travel</b> — radial streak plus sphere scale; arrival and
+        flow enter/exit only. ≤1.5s arrival, ~300ms transitions, always
+        skippable, always symmetric (enter forward = esc backward).</li>
+        <li><b>Nothing else moves.</b> Any new animation is one of these four
+        or it doesn't ship.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>06</span> Suggestions — four, chosen for restraint</h2>
+
+    <div class="sugg">
+      <h3>1 · The sphere shows whether Orbit is actually running</h3>
+      <p>
+        orbit-launcher already detects an existing deployment on startup — it
+        has to, to decide between Install and Update. Right now that knowledge
+        only shows up as which menu item is preselected. Let the body itself
+        carry it: <b>dormant</b> when nothing is installed (unlit limb, muted
+        outline, no glow) and <b>lit</b> when Orbit is up and healthy (bright
+        limb, faint green cast). One glance, before reading a single word,
+        tells you the state of your server.
+      </p>
+      <div class="pair">
+        <div class="mini-term">
+          <div class="rotor" style="--spin:360s;">
+            <span class="star faint" style="left:30%;top:30%;--tw:8s;--o:.3;"></span>
+            <span class="star faint" style="left:66%;top:38%;--tw:6s;--twd:2s;--o:.28;"></span>
+            <span class="star faint" style="left:46%;top:66%;--tw:9s;--twd:1s;--o:.25;"></span>
+            <span class="star faint" style="left:70%;top:62%;--tw:7s;--twd:3s;--o:.26;"></span>
+          </div>
+          <div class="dormant"></div>
+          <div class="mini-label">
+            <div class="w">ORBIT</div>
+            <div class="s" style="color:var(--text-faint);">not installed</div>
+          </div>
+          <div class="lab">dormant</div>
+        </div>
+        <div class="mini-term">
+          <div class="rotor" style="--spin:360s;">
+            <span class="star" style="left:30%;top:30%;--tw:8s;--o:.4;"></span>
+            <span class="star" style="left:66%;top:38%;--tw:6s;--twd:2s;--o:.38;"></span>
+            <span class="star" style="left:46%;top:66%;--tw:9s;--twd:1s;--o:.35;"></span>
+            <span class="star" style="left:70%;top:62%;--tw:7s;--twd:3s;--o:.36;"></span>
+          </div>
+          <div class="lit"></div>
+          <div class="mini-label">
+            <div class="w">ORBIT</div>
+            <div class="s" style="color:var(--success);">running</div>
+          </div>
+          <div class="lab">lit</div>
+        </div>
+      </div>
+      <p class="cost">Cost: <b>low</b> — the detection already exists; this is a palette swap on cells you're drawing anyway.</p>
+    </div>
+
+    <div class="sugg">
+      <h3>2 · Arrival doubles as the completion moment</h3>
+      <p>
+        Install now hands the terminal to <code>install.sh</code>, so its
+        scrolling output is the real progress display and orbit-launcher takes
+        the screen back at the end. That handback is the strongest beat in the
+        whole app and currently it's just a text screen. Make it an arrival in
+        reverse: the field settles, the sphere <i>lights</i> (suggestion 1's
+        transition, played once, ~500ms), and the URL lands as the hero line
+        beneath it. You watched a wall of log output; now the planet is alive.
+      </p>
+      <p class="cost">Cost: <b>low</b> — reuses the arrival compositor and the lit/dormant states; no new machinery.</p>
+    </div>
+
+    <div class="sugg">
+      <h3>3 · One honest line where the keybind hints used to be</h3>
+      <p>
+        Dropping the footer text reclaims the bottom of the screen, and there's
+        one thing more useful there than <code>↑↓ navigate</code>: a quiet
+        status line, only when there's something true to say — a detected
+        deployment's address, or a waiting launcher update. Left-aligned,
+        version on the right, same faint weight. Silence when there's nothing
+        worth saying, which is most of the time.
+      </p>
+      <p class="cost">Cost: <b>low</b> — the update check and deployment detection both already run at startup.</p>
+    </div>
+
+    <div class="sugg">
+      <h3>4 · The system scales down instead of breaking</h3>
+      <p>
+        At 80×24 a 340px-equivalent sphere doesn't fit. Rather than clipping,
+        define three tiers: <b>full</b> (sphere, four planets, both star
+        layers), <b>compact</b> (smaller sphere, two planets, one star layer),
+        and <b>minimal</b> (no sphere, just centred text on a sparse field)
+        below roughly 60×18. Same layout logic, fewer bodies — so a cramped SSH
+        window degrades gracefully instead of rendering a broken circle.
+      </p>
+      <p class="cost">Cost: <b>medium</b> — needs real terminal-size testing, but it's the difference between "looks great on my machine" and "looks right everywhere".</p>
+    </div>
+
+    <div class="frame-notes" style="margin-top:18px;">
+      <ul>
+        <li><b>Deliberately not suggested:</b> planets reacting to selection,
+        sound, colour-shifting on hover, animated menu transitions, a spinning
+        sphere surface. All of them break law 2 — motion would stop meaning
+        "where you are" and start meaning "look at me".</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="end">
+    v2 direction pass — supersedes the motion and splash sections of
+    design/mockups.html; its flow-screen content, palette, and copy rules still
+    stand. Implementation order, smallest first: (1) centre the flow screens,
+    (2) starfield becomes a rigid rotating field, (3) opaque sphere plus
+    orbiting planets on the splash compositor, (4) arrival and travel
+    transitions, (5) whichever suggestions above survive review.
+  </footer>
+
+</div>
+</body>
+</html>

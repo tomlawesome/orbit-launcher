@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
 // BuildInstallCommand stages script (install.sh's content) to a temp
@@ -41,5 +42,39 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 
 	cmd = exec.Command("bash", scriptFile.Name())
 	cmd.Dir = targetDir
+	return cmd, cleanup, nil
+}
+
+// BuildEngineCommand stages script like BuildInstallCommand but builds
+// the mission console's non-interactive engine run instead of a
+// terminal handoff: `--plain --<action>`, detached from the controlling
+// terminal (Setsid), so the engine's documented non-interactive
+// contract engages — it can never prompt, and with incomplete
+// configuration it refuses before Compose with a
+// reason=configuration-failure event (orbit docs/engine-events.md).
+// That refusal is the console's cue for the interactive handoff, which
+// still uses BuildInstallCommand unchanged.
+//
+// A legacy install.sh (orbit main today) parses no arguments at all and
+// simply ignores these flags; detached and piped it either completes a
+// real run printing prose (which the console displays raw, judging the
+// outcome by exit code alone) or hits its own identical
+// no-controlling-terminal refusal. Both engines' refusals roll the
+// target back via install.sh's own file transaction, verified against
+// orbit develop, so the follow-up interactive handoff always starts
+// from a clean target.
+func BuildEngineCommand(script []byte, targetDir, action string) (cmd *exec.Cmd, cleanup func() error, err error) {
+	switch action {
+	case "install", "update", "repair":
+	default:
+		return nil, nil, fmt.Errorf("unknown engine action %q", action)
+	}
+
+	cmd, cleanup, err = BuildInstallCommand(script, targetDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Args = append(cmd.Args, "--plain", "--"+action)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd, cleanup, nil
 }
