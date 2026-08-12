@@ -75,3 +75,20 @@ func TestFetchInstallScript_RespectsContextCancellation(t *testing.T) {
 		t.Fatal("expected an error for an already-cancelled context")
 	}
 }
+
+func TestFetchInstallScript_URLOverrideRedirectsAwayFromOrbitMain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("#!/usr/bin/env bash\necho from-override\n"))
+	}))
+	defer srv.Close()
+
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+
+	body, err := FetchInstallScript(context.Background())
+	if err != nil {
+		t.Fatalf("FetchInstallScript: %v", err)
+	}
+	if !strings.Contains(string(body), "from-override") {
+		t.Errorf("body = %q, want the overridden server's content, not orbit's real main branch", body)
+	}
+}
