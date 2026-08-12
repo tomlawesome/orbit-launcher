@@ -58,7 +58,7 @@ jobs:
       - name: Run the live test
         env:
           ORBIT_LAUNCHER_LIVE_RAW_LOG: ${{ runner.temp }}/live-raw.log
-        run: go test -tags live -count=1 -v ./test/live/...
+        run: go test -tags live -count=1 -v -timeout 30m ./test/live/...
 
       - name: Docker state (always, for debugging)
         if: always()
