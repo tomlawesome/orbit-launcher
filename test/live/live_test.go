@@ -225,9 +225,13 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// engine (orbit develop) reports it as an event and lands on
 		// the styled configuration prompt; a legacy engine (orbit main)
 		// reports nothing and lands on the failure screen. Both
-		// screens' default option is the same guided interactive
-		// installer, so this test — which runs against whichever
-		// install.sh the job points at — accepts either.
+		// screens' default option leads to the same guided
+		// configuration — in-console over the machine prompt protocol
+		// when the engine speaks it, the interactive terminal handoff
+		// otherwise (the launcher falls back automatically) — and both
+		// paths use the same field prompts, so this test, which runs
+		// against whichever install.sh the job points at, accepts
+		// either.
 		if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
 			`Orbit needs your configuration|Installation stopped`))); err != nil {
 			t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
@@ -240,7 +244,13 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		sendLine(testOIDCIssuer)
 		must("OIDC client ID")
 		sendLine("orbit-launcher-live-ci-test")
-		must("OIDC client secret (input hidden)")
+		// Generation-agnostic: a contract-era engine (orbit develop)
+		// collects this in-console over the machine prompt protocol
+		// ("OIDC client secret" + "input hidden" on separate lines),
+		// while a legacy engine's terminal handoff prints install.sh's
+		// own "OIDC client secret (input hidden)" prompt. Match the
+		// common prefix so this suite proves both paths.
+		must("OIDC client secret")
 		sendLine("ci-live-test-fake-secret-value")
 
 		// Wait for the launcher's own success screen, never for the

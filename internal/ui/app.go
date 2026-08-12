@@ -189,7 +189,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateRepair:
 		updated, cmd := m.repair.Update(msg)
 		m.repair = updated.(RepairModel)
-		return m, cmd
+		return m.watchOutcome(m.repair.Outcome(), cmd)
 	case appStateInstall:
 		updated, cmd := m.install.Update(msg)
 		m.install = updated.(InstallModel)
@@ -250,9 +250,10 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = appStateRemove
 		return m, sizeCmd
 	case "Repair":
-		m.repair = NewRepairModel()
+		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
+		m.repair.prepare = m.flowSeams.prepareRepair
 		m.state = appStateRepair
-		return m, sizeCmd
+		return m, tea.Batch(sizeCmd, m.repair.Init())
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams

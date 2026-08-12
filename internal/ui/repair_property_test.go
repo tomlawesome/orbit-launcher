@@ -9,11 +9,12 @@ import (
 )
 
 // TestRepairModel_NeverMutatesAnything statically scans repair.go and
-// fails if it contains any call capable of touching the filesystem or
-// spawning a process — the concrete, checked form of "non-mutating dispatch
-// seam" (docs/implementation-plan.md section 5, Wave 3), not just a
-// docstring someone could quietly invalidate by adding real logic later
-// without also removing this test.
+// fails if it contains any direct call capable of touching the
+// filesystem or spawning a process. The diagnosis flow's only writes
+// and spawns live behind the deploy/engine seams (fetch, stage, run),
+// where they carry repair.sh's own read-only contract — the UI layer
+// itself must stay incapable of acting on a deployment, so a future
+// screen change can't quietly grow a side effect.
 func TestRepairModel_NeverMutatesAnything(t *testing.T) {
 	src, err := os.ReadFile("repair.go")
 	if err != nil {
