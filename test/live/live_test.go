@@ -323,7 +323,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// Matching it still proves deploy.Detect read the real
 		// .env-orbit this Install wrote.
 		must(strings.TrimPrefix(appURL, "https://"))
-		send("\r")   // Stand down Orbit selected by default
+		send("\r") // Stand down Orbit selected by default
 		must("Orbit has been stood down")
 		send("\r") // Exit
 
