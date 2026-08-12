@@ -1,3 +1,5 @@
+> **Resolved 2026-08-12** — implemented in #74 (identity block, status vocabulary, amber degraded, state-aware preselection); the version presentation was superseded by #77's centred foot.
+
 # Handover 02 — Status line, status vocabulary, and version corner
 
 **Model: Haiku 4.5 · no dependencies · read design/handovers/README.md first**

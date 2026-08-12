@@ -3,6 +3,7 @@ package engine
 import (
 	"bufio"
 	"errors"
+	"io"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -52,16 +53,39 @@ type Stream struct {
 // detaches the process from the controlling terminal so the engine's
 // documented non-interactive contract engages.
 func Start(cmd *exec.Cmd) (*Stream, error) {
+	stream, _, err := start(cmd, false)
+	return stream, err
+}
+
+// StartInteractive is Start with the child's stdin piped as well — the
+// shape the machine prompt protocol needs (configure.sh reads exactly
+// one answer line from stdin per prompt line it writes). The caller
+// writes answer lines to the returned writer and closes it when done;
+// a close with a prompt outstanding is the engine's documented
+// end-of-input abort.
+func StartInteractive(cmd *exec.Cmd) (*Stream, io.WriteCloser, error) {
+	return start(cmd, true)
+}
+
+func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
+	var stdin io.WriteCloser
+	if withStdin {
+		var err error
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	s := &Stream{C: make(chan any, 64), cmd: cmd}
@@ -113,7 +137,7 @@ func Start(cmd *exec.Cmd) (*Stream, error) {
 		close(s.C)
 	}()
 
-	return s, nil
+	return s, stdin, nil
 }
 
 // Kill terminates the engine's whole process group — the engine runs

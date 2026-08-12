@@ -1,3 +1,5 @@
+> **Resolved 2026-08-12** — implemented across #75/#77. The "version corner" became the single centred foot (a later owner decision); the centring grammar shipped.
+
 # Handover 01 — Centre all flow screens
 
 **Model: Haiku 4.5 · no dependencies · read design/handovers/README.md first**
