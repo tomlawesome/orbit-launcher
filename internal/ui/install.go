@@ -26,11 +26,13 @@ const (
 // but honestly say they aren't available yet rather than silently doing
 // the wrong thing.
 //
-// orbit-launcher still never collects or writes Orbit's configuration
-// itself (issue #51): the engine run cannot prompt by construction, and
-// when the engine refuses with its configuration-required signal, the
-// flow hands the real terminal to install.sh's own guided setup — the
-// single source of truth for what fields it needs — exactly as before.
+// orbit-launcher still never invents Orbit configuration itself
+// (issue #51): the engine run cannot prompt by construction, and when
+// the engine refuses with its configuration-required signal, the flow
+// runs configure.sh's own guided setup — the single source of truth
+// for what fields it needs and what answers are valid — in-console
+// over the machine prompt protocol when the engine speaks it
+// (orbit#297), or via the terminal handoff when it doesn't.
 type InstallModel struct {
 	width, height int
 	state         installState
@@ -52,6 +54,10 @@ type engineRunSeams struct {
 	runHandoff     runHandoffFunc
 	detect         detectFunc
 	now            nowFunc
+	prepareConfig  prepareConfigFunc
+	startConfig    startConfigFunc
+	adoptConfig    adoptConfigFunc
+	prepareRepair  prepareRepairFunc
 }
 
 func (r engineRun) withSeams(s engineRunSeams) engineRun {
@@ -60,6 +66,9 @@ func (r engineRun) withSeams(s engineRunSeams) engineRun {
 	r.runHandoff = s.runHandoff
 	r.detect = s.detect
 	r.now = s.now
+	r.prepareConfig = s.prepareConfig
+	r.startConfig = s.startConfig
+	r.adoptConfig = s.adoptConfig
 	return r
 }
 

@@ -127,8 +127,12 @@ func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t
 	}
 }
 
-func TestAppModel_SelectingRepairShowsTheHonestStub(t *testing.T) {
+func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.T) {
 	m := NewAppModel()
+	m.targetDir = t.TempDir()
+	m.flowSeams = engineRunSeams{
+		prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`),
+	}
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	skipArrival(tm)
 
@@ -142,10 +146,16 @@ func TestAppModel_SelectingRepairShowsTheHonestStub(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Repair isn't available yet"))
-	}, teatest.WithDuration(2*time.Second))
+		return bytes.Contains(out, []byte("Diagnosis clear"))
+	}, teatest.WithDuration(5*time.Second))
 
+	// "Menu" is preselected: back to the splash.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("O R B I T"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
