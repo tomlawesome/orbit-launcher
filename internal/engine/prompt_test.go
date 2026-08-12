@@ -68,8 +68,8 @@ func TestParsePromptLine_RejectsProse(t *testing.T) {
 		"Orbit guided configuration saved APP_URL.",
 		"prompt the engine would like a word",
 		"prompt",
-		"prompt-reject field=APP_URL",       // reject without a reason is not a protocol line
-		"prompting field=APP_URL kind=url",  // near-miss lead word
+		"prompt-reject field=APP_URL",      // reject without a reason is not a protocol line
+		"prompting field=APP_URL kind=url", // near-miss lead word
 		"phase=configuration component=configuration state=failed reason=configuration-failure action=configure elapsed=1s",
 	} {
 		if _, ok := ParsePromptLine(line); ok {
