@@ -318,7 +318,11 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		}
 		send("\r") // select Remove
 		must("This stops Orbit and removes its containers")
-		must(appURL) // proves deploy.Detect read the real .env-orbit this Install wrote
+		// The confirm screen's identity line carries the bare FQDN —
+		// the scheme is launcher noise at a glance, same as the splash.
+		// Matching it still proves deploy.Detect read the real
+		// .env-orbit this Install wrote.
+		must(strings.TrimPrefix(appURL, "https://"))
 		send("\r")   // Stand down Orbit selected by default
 		must("Orbit has been stood down")
 		send("\r") // Exit
