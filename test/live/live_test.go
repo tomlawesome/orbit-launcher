@@ -232,11 +232,18 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		must("OIDC client secret (input hidden)")
 		sendLine("ci-live-test-fake-secret-value")
 
-		acceptMenusUntil(t, console, "Orbit is ready")
-
-		// The resumed launcher concludes on the success screen: the
-		// deployment URL as the hero line, the stacked menu beneath.
-		must("Get into Orbit")
+		// Wait for the launcher's own success screen, never for the
+		// installer's completion prose — orbit main's v1.2.0 release
+		// reworded it ("Orbit is deployed from …" now; "Orbit is
+		// ready." before), which is precisely why prose is unstable by
+		// design and outcomes key off exit codes (learned the hard way:
+		// this exact assertion timed out against a fully successful
+		// install). The stacked success menu is this repo's own
+		// contract. A completion-prose line mentioning "Optional
+		// services" can match the adaptive menu pattern and cost one
+		// stray Enter on the success screen — which lands on "Get into
+		// Orbit", a deliberate no-quit action, so it is benign.
+		acceptMenusUntil(t, console, "Get into Orbit")
 
 		var lastStatus int
 		var lastErr error
