@@ -1,9 +1,7 @@
 package ui
 
 import (
-	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,86 +17,59 @@ const (
 	updateStateNotFound updateState = iota
 	updateStateConfirm
 	updateStateRunning
-	updateStateDone
-	updateStateFailed
 )
 
-// UpdateModel is the Update flow: confirm, then the same full terminal
-// handoff to install.sh that Install uses — see internal/ui/install.go
-// and internal/deploy.BuildInstallCommand for why. install.sh is
-// idempotent: run again against a directory that already holds a
-// recognised deployment, it pulls the latest image, refreshes
-// deployment assets, and runs its own configuration migration, all
-// while preserving the existing .env-orbit values (configure.sh's own
-// "Existing values were preserved" behaviour, verified directly
-// against orbit's develop branch).
+// UpdateModel is the Update flow: confirm, then the same mission
+// console the Install flow uses (see internal/ui/enginerun.go), with
+// the engine run flagged --update. install.sh is idempotent against an
+// existing deployment: it pulls the latest image, refreshes deployment
+// assets, and runs its own configuration migration, preserving the
+// existing .env-orbit values.
 type UpdateModel struct {
 	width, height int
+	targetDir     string
+	version       string
 	deployment    *deploy.Deployment
 	state         updateState
 	confirmSel    int // 0 = Update Orbit, 1 = Cancel
 
-	updateErr error
-	cleanup   func() error
+	run engineRun
 
-	// Overridable in tests so they don't need real network/terminal
-	// access; production code leaves these nil and gets the real
-	// implementations.
-	prepareInstall func(ctx context.Context, targetDir string) (*exec.Cmd, func() error, error)
-	runHandoff     func(cmd *exec.Cmd) tea.Cmd
+	seams engineRunSeams
 }
 
 // NewUpdateModel constructs the Update flow for a detected deployment. A
 // nil deployment means Update was chosen with nothing installed here —
 // the model honestly says so rather than pretending there's something to
 // update.
-func NewUpdateModel(d *deploy.Deployment) UpdateModel {
+func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel {
 	state := updateStateConfirm
 	if d == nil {
 		state = updateStateNotFound
 	}
-	return UpdateModel{
-		deployment:     d,
-		state:          state,
-		prepareInstall: defaultPrepareInstall,
-		runHandoff:     defaultRunHandoff,
-	}
+	return UpdateModel{deployment: d, targetDir: targetDir, version: version, state: state}
 }
+
+// Outcome surfaces the engine run's result to AppModel.
+func (m UpdateModel) Outcome() flowOutcome { return outcomeOf(m.run) }
 
 // Init implements tea.Model.
 func (m UpdateModel) Init() tea.Cmd { return nil }
 
 // Update implements tea.Model.
 func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+	if resized, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = resized.Width, resized.Height
+	}
 
-	case installPreparedMsg:
-		if msg.err != nil {
-			m.updateErr = msg.err
-			m.state = updateStateFailed
-			return m, nil
-		}
-		m.cleanup = msg.cleanup
-		return m, m.runHandoff(msg.cmd)
+	if m.state == updateStateRunning {
+		var cmd tea.Cmd
+		m.run, cmd = m.run.update(msg)
+		return m, cmd
+	}
 
-	case installFinishedMsg:
-		if m.cleanup != nil {
-			m.cleanup()
-			m.cleanup = nil
-		}
-		if msg.err != nil {
-			m.updateErr = msg.err
-			m.state = updateStateFailed
-		} else {
-			m.state = updateStateDone
-		}
-		return m, nil
-
-	case tea.KeyMsg:
-		return m.handleKey(msg)
+	if key, ok := msg.(tea.KeyMsg); ok {
+		return m.handleKey(key)
 	}
 	return m, nil
 }
@@ -112,8 +83,6 @@ func (m UpdateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case updateStateConfirm:
 		return m.handleConfirmKey(msg)
-	case updateStateDone, updateStateFailed:
-		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -130,9 +99,23 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.state = updateStateRunning
-		return m, prepareInstallCmd(m.prepareInstall, targetDirOrPlaceholder(m.deployment))
+		title := "Update"
+		if m.deployment != nil && m.deployment.AppURL != "" {
+			title = "Update — " + displayHost(m.deployment.AppURL)
+		}
+		m.run = newEngineRun("update", m.resolvedTargetDir(), title, m.version).withSeams(m.seams)
+		var cmd tea.Cmd
+		m.run, cmd = m.run.start(m.width, m.height)
+		return m, cmd
 	}
 	return m, nil
+}
+
+func (m UpdateModel) resolvedTargetDir() string {
+	if m.targetDir != "" {
+		return m.targetDir
+	}
+	return targetDirOrPlaceholder(m.deployment)
 }
 
 // View implements tea.Model.
@@ -146,11 +129,7 @@ func (m UpdateModel) View() string {
 	case updateStateConfirm:
 		return m.viewConfirm()
 	case updateStateRunning:
-		return m.viewRunning()
-	case updateStateDone:
-		return m.viewDone()
-	case updateStateFailed:
-		return m.viewFailed()
+		return m.run.view(m.width, m.height)
 	}
 	return ""
 }
@@ -191,7 +170,7 @@ func (m UpdateModel) viewConfirm() string {
 	fmt.Fprintf(&b, "  %s   %s\n", style.MenuUnselected.Render("Installed"), installed)
 	fmt.Fprintf(&b, "  %s       %s\n", style.MenuUnselected.Render("Image"), image)
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("This hands control of your terminal to Orbit's own installer."))
+	fmt.Fprintln(&b, style.Tagline.Render("The update runs inside the mission console, right here."))
 	fmt.Fprintln(&b, style.Tagline.Render("Your existing configuration is preserved. Nothing is deleted."))
 	fmt.Fprintln(&b)
 
@@ -203,37 +182,5 @@ func (m UpdateModel) viewConfirm() string {
 			fmt.Fprintln(&b, "  "+style.MenuUnselected.Render(opt))
 		}
 	}
-	return m.frame(b.String())
-}
-
-func (m UpdateModel) viewRunning() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Updating"))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.WarmText.Render("⠋")+" Handing off to install.sh…")
-	return m.frame(b.String())
-}
-
-func (m UpdateModel) viewDone() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolSuccess)+" "+lipgloss.NewStyle().Bold(true).Render("Orbit is up to date"))
-	fmt.Fprintln(&b)
-	if m.deployment != nil && m.deployment.AppURL != "" {
-		fmt.Fprintln(&b, style.AccentText.Render(m.deployment.AppURL))
-		fmt.Fprintln(&b)
-	}
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
-	return m.frame(b.String())
-}
-
-func (m UpdateModel) viewFailed() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Render("Update stopped"))
-	fmt.Fprintln(&b)
-	if m.updateErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(m.updateErr.Error()))
-	}
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
 	return m.frame(b.String())
 }
