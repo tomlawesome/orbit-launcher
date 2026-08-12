@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>orbit-launcher — design presentation v4 · the terminal truth</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+  :root{
+    --bg:#05070d; --bg-panel:#0b0f1a; --bg-page:#0a0c12;
+    --border:#1c2434; --border-soft:#151b28;
+    --text:#e7e9ee; --text-muted:#7c8699; --text-faint:#4a5468;
+    --accent:#7dd3fc; --warm:#f0b429; --errored:#fb923c;
+    --success:#4ade80; --error:#f87171;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:var(--bg-page);color:var(--text);font-family:var(--mono);line-height:1.5;padding:48px 24px 120px;}
+  .wrap{max-width:1100px;margin:0 auto;}
+  header.intro{margin-bottom:56px;}
+  header.intro .kicker{color:var(--accent);font-size:12px;letter-spacing:.18em;text-transform:uppercase;margin-bottom:14px;}
+  header.intro h1{font-size:34px;margin:0 0 10px;font-weight:800;}
+  header.intro p.lede{color:var(--text-muted);font-size:15px;max-width:740px;margin:0;}
+  section{margin-bottom:80px;}
+  section > h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);
+    border-bottom:1px solid var(--border-soft);padding-bottom:12px;margin:0 0 28px;}
+  section > h2 span{color:var(--accent);}
+  .frame-row{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px;}
+  .frame-notes{flex:1;min-width:280px;padding-top:8px;}
+  .frame-notes h3{font-size:14px;margin:0 0 10px;color:var(--text);}
+  .frame-notes ul{margin:0;padding-left:18px;font-size:13px;color:var(--text-muted);}
+  .frame-notes li{margin-bottom:9px;}
+  .frame-notes li b{color:var(--text);font-weight:600;}
+  .frame-notes code{color:var(--accent);background:none;font-size:12px;}
+  .term{width:660px;max-width:100%;border-radius:10px;border:1px solid var(--border);
+    background:var(--bg);box-shadow:0 30px 60px -20px rgba(0,0,0,.6);overflow:hidden;flex-shrink:0;}
+  .term .bar{background:var(--bg-panel);padding:9px 14px;display:flex;align-items:center;gap:8px;
+    border-bottom:1px solid var(--border-soft);}
+  .term .dot{width:9px;height:9px;border-radius:50%;background:#2a3244;}
+  .term .bar .title{flex:1;text-align:center;font-size:11px;color:var(--text-faint);letter-spacing:.04em;}
+  .term .body{position:relative;height:430px;background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  pre.cells{margin:0;font-family:'DejaVu Sans Mono','Menlo',monospace;font-size:12px;line-height:15px;letter-spacing:0;}
+  pre.cells-sm{margin:0;font-family:'DejaVu Sans Mono','Menlo',monospace;font-size:7.5px;line-height:9px;letter-spacing:0;}
+  /* every cell is a fixed-width inline-block: glyph metrics (and font
+     fallback) can no longer affect layout — the grid is the grid, exactly
+     like a real terminal */
+  pre.cells span{display:inline-block;width:7.2px;height:15px;vertical-align:top;overflow:visible;}
+  pre.cells-sm span{display:inline-block;width:4.5px;height:9px;vertical-align:top;overflow:visible;}
+  .term.wide{width:760px;}
+  footer.end{margin-top:80px;padding-top:28px;border-top:1px solid var(--border-soft);color:var(--text-faint);font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="intro">
+    <div class="kicker">orbit-launcher · design presentation v4 · the terminal truth</div>
+    <h1>No polish. This is the product.</h1>
+    <p class="lede">
+      Every panel on this page is rendered the way the shipped app renders:
+      an 80×26 grid of character cells, 10 frames per second, integer
+      positions, brightness as a stepped glyph ramp with 24-bit colour.
+      No blur, no easing, no subpixels.
+      <br/><br/>
+      <b>Verdict (2026-08-11): the orbital-system visuals failed this bar and
+      are scrapped for the TUI.</b> The shipped v1 splash is the final TUI
+      aesthetic. The panels below marked SCRAPPED are kept as the evidence
+      that drove that decision. The mission-console and success-screen
+      panels survive — they are text, and text is what terminals do well.
+      v2/v3 remain solely as reference for a future Orbit web UI rebrand.
+    </p>
+  </header>
+
+  <section>
+    <h2><span>01</span> Splash orbital system — SCRAPPED (kept for the record)</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher</span></div>
+        <div class="body"><pre class="cells" id="t-splash"></pre></div>
+      </div>
+      <div class="frame-notes">
+        <h3>What survives the medium</h3>
+        <ul>
+          <li><b>The sphere holds up</b> — opaque interior with a half-block
+          (<code>▀▄</code>) limb, terminator shading, text inside. It is
+          unmistakably a body, not a box.</li>
+          <li><b>Planets are single bright cells</b> on tilted ellipses,
+          40–150s periods. Watch one cross the top half: it genuinely
+          vanishes behind the sphere and re-emerges on the other limb.</li>
+          <li><b>The starfield rotates rigidly</b> — same two-layer clock as
+          the design (360s/520s). At cell resolution the motion is nearly
+          subliminal, which is the point.</li>
+          <li><b>Keybind footer is gone; version bottom-right</b> — as
+          decided.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>01b</span> Splash orbital system at 160×44 — SCRAPPED (kept for the record)</h2>
+    <div class="frame-row">
+      <div class="term wide">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — maximized</span></div>
+        <div class="body"><pre class="cells-sm" id="t-splash-big"></pre></div>
+      </div>
+      <div class="frame-notes">
+        <h3>The size it will usually be seen at</h3>
+        <ul>
+          <li><b>80×26 is the floor, not the target.</b> A maximized terminal
+          on any modern display is 150–250 columns; this panel is the
+          identical renderer at 160×44 — braille dot density doubles in each
+          axis, so the ring resolves into a fine, even circle.</li>
+          <li><b>This is why the size tiers matter</b> (handover 05): full
+          tier gets this; the 80×26 floor gets a smaller, honest compact
+          system; tiny windows drop the body entirely.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>02</span> Install — mission console, in cells</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — install</span></div>
+        <div class="body"><pre class="cells" id="t-install"></pre></div>
+      </div>
+      <div class="frame-notes">
+        <h3>The immersive flow, honestly</h3>
+        <ul>
+          <li><b>This is mostly text, and text is what terminals do well</b> —
+          the console frame is box-drawing characters, the log is the real
+          PTY stream, the spinner is the standard braille cycle. This screen
+          loses almost nothing against its v3 mockup.</li>
+          <li><b>Stage bar is a run of <code>━</code> cells</b>, filled in
+          accent against faint — no percentage, only the elapsed clock top
+          right.</li>
+          <li><b>Current stage in words</b> under the bar, bottom-left.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>03</span> Repair — amber discipline, in cells</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — repair</span></div>
+        <div class="body"><pre class="cells" id="t-repair"></pre></div>
+      </div>
+      <div class="frame-notes">
+        <h3>Identical grammar, different weather</h3>
+        <ul>
+          <li>Same console, amber stage bar and findings while unhealthy,
+          diagnose-then-intervene ordering. All character work — nothing
+          here degrades at all.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>04</span> Ignition corona — SCRAPPED (kept for the record)</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — ready</span></div>
+        <div class="body"><pre class="cells" id="t-ignite"></pre></div>
+      </div>
+      <div class="frame-notes">
+        <h3>The honest celebration</h3>
+        <ul>
+          <li>Sphere, sparse corona shimmer (fixed angular gaussians), wisps
+          as short revealed cell-runs blending into the same brightness
+          field, <code>alive</code>, URL, stacked actions, footer. This is
+          the ceiling of the effect in cells — judge it here.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="end">
+    v4 — the acceptance spec for all TUI implementation work. A motion or
+    lighting idea exists only if it reads at 80×26/10fps in this renderer —
+    the orbital-system panels above are the record of one that didn't.
+    Surviving scope lives in design/handovers/. design/mockups-v2.html and
+    design/mockups-v3-flows.html are preserved solely as the
+    visual-direction reference for a future Orbit web UI rebrand.
+  </footer>
+
+</div>
+
+<script>
+// ============== shared cell-renderer core (what the Go compositor has) ======
+const RAMP=[" ","·","∙","•","●"];
+const SPIN="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+function glyph(b){return RAMP[b<.06?0:b<.24?1:b<.5?2:b<.85?3:4];}
+function green(b){const t=Math.min(1,b);
+  return "rgb("+Math.round(10+124*t)+","+Math.round(28+211*t)+","+Math.round(16+156*t)+")";}
+function esc(ch){return ch==="<"?"&lt;":ch==="&"?"&amp;":ch;}
+function mkScreen(id,W,H){
+  const el=document.getElementById(id); if(!el) return null;
+  const S={el:el,W:W,H:H,buf:null};
+  S.reset=function(){S.buf=[];for(let r=0;r<H;r++)S.buf.push(new Array(W).fill(null));};
+  S.put=function(r,c,ch,f,o){
+    if(r<0||r>=H||c<0||c>=W)return;
+    o=o||{};
+    if(o.keep){const ex=S.buf[r][c];if(ex&&ex.bg)o.bg=ex.bg;delete o.keep;}
+    S.buf[r][c]=Object.assign({c:ch,f:f},o);
+  };
+  S.str=function(r,c,s,f,o){for(let i=0;i<s.length;i++)S.put(r,c+i,s[i],f,o);};
+  S.render=function(){
+    let h="";
+    for(let r=0;r<H;r++){for(let c=0;c<W;c++){const x=S.buf[r][c];
+      h+=x?'<span style="color:'+x.f+(x.bg?";background:"+x.bg:"")+(x.b?";font-weight:700":"")+'">'+esc(x.c)+"</span>":"<span> </span>";}
+      h+="\n";}
+    S.el.innerHTML=h;
+  };
+  return S;
+}
+function mkStars(n,rmin,rmax){
+  const a=[];
+  for(let i=0;i<n;i++)a.push({r:rmin+(i*17.23)%(rmax-rmin),a0:i*2.399963,layer:i%2,tp:5+(i%7),tph:i*1.7});
+  return a;
+}
+function drawStars(S,stars,t,CX,CY,dim){
+  stars.forEach(function(st){
+    const ang=st.a0+2*Math.PI*t/(st.layer?520:360);
+    const col=Math.round(CX+st.r*Math.cos(ang)), row=Math.round(CY+st.r*Math.sin(ang)/2);
+    const b=(dim?0.3:0.5)*(0.55+0.45*Math.sin(2*Math.PI*t/st.tp+st.tph));
+    if(b>0.1)S.put(row,col,"·","rgba(231,233,238,"+b.toFixed(2)+")");
+  });
+}
+// braille ring: each cell is a 2×4 dot matrix (U+2800 block) — the standard
+// terminal technique for smooth thin curves (drawille, plotext). The body is
+// a crisp one-dot-wide circle, exactly like the design's outline ring.
+const BRAILLE_BITS=[[0x01,0x08],[0x02,0x10],[0x04,0x20],[0x40,0x80]];
+function drawSphere(S,CX,CY,R){
+  // flat interior tint first — subtle "body" darker than space, no gradient
+  for(let row=0;row<S.H;row++)for(let col=0;col<S.W;col++){
+    const x=col-CX,y=(row-CY)*2;
+    if(Math.hypot(x,y)<R-0.3)S.put(row,col," ","#000",{bg:"#0b0f18"});
+  }
+  // then the ring: walk the circle parametrically, one dot glyph per cell —
+  // a fine, even, dotted circle from characters every terminal font has
+  const seen={};
+  for(let i=0;i<720;i++){
+    const a=i*Math.PI/360;
+    const col=Math.round(CX+R*Math.cos(a)), row=Math.round(CY+R*Math.sin(a)/2);
+    const key=row*S.W+col;
+    if(!seen[key]){seen[key]=1;S.put(row,col,"\u00b7","#cbd5e1",{bg:"#0b0f18"});}
+  }
+}
+
+// ============== 01 splash (parameterized: floor size and fullscreen) ========
+function splashScreen(id,W,H,R,ps){
+  const S=mkScreen(id,W,H); if(!S)return;
+  const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
+  const stars=mkStars(Math.round(W*H/45), R+2, Math.floor(W/2)+6);
+  const planets=[
+    {rx:31*ps,ry:13*ps,th:0,     T:96, ph:0,  col:"#60a5fa"},
+    {rx:26*ps,ry:18*ps,th:-0.244,T:64, ph:2.2,col:"#e879f9"},
+    {rx:35*ps,ry:16*ps,th:0.157, T:150,ph:4.4,col:"#cbd5e1"},
+    {rx:23*ps,ry:11*ps,th:0.07,  T:40, ph:1.1,col:"#fb7185"},
+  ];
+  let t=0;
+  function pos(p){
+    const a=2*Math.PI*t/p.T+p.ph, x0=p.rx*Math.cos(a), y0=p.ry*Math.sin(a);
+    return {x:x0*Math.cos(p.th)-y0*Math.sin(p.th),
+            y:x0*Math.sin(p.th)+y0*Math.cos(p.th), far:y0<0};
+  }
+  function frame(){
+    t+=.1; S.reset();
+    drawStars(S,stars,t,CX,CY,false);
+    planets.forEach(function(p){const q=pos(p);
+      if(q.far)S.put(Math.round(CY+q.y/2),Math.round(CX+q.x),"●",p.col);});
+    drawSphere(S,CX,CY,R);   // interior fill overwrites far planets = occlusion
+    planets.forEach(function(p){const q=pos(p);
+      if(!q.far)S.put(Math.round(CY+q.y/2),Math.round(CX+q.x),"●",p.col);});
+    S.str(CY-6,CX,"⟡","#7dd3fc",{keep:1});
+    S.str(CY-5,CX-4,"O R B I T","#e7e9ee",{b:1,keep:1});
+    S.str(CY-4,CX-12,"personal server launcher","#4a5468",{keep:1});
+    S.str(CY-2,CX-4,"▸","#7dd3fc",{keep:1}); S.str(CY-2,CX-2,"Install","#e7e9ee",{keep:1});
+    S.str(CY-1,CX-2,"Update","#7c8699",{keep:1});
+    S.str(CY,  CX-2,"Repair","#7c8699",{keep:1});
+    S.str(CY+2,CX-2,"Remove","#7c8699",{keep:1});
+    S.str(CY+3,CX-2,"Exit","#7c8699",{keep:1});
+    S.str(H-1,W-7,"v0.1.0","#4a5468");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+}
+splashScreen("t-splash",80,26,16,1);
+splashScreen("t-splash-big",160,44,32,2);
+
+// ============== 02/03 mission console =======================================
+function consoleScreen(id,opts){
+  const S=mkScreen(id,80,26); if(!S)return;
+  const stars=mkStars(16,22,46);
+  let t=0,idx=0,next=opts.script[0][0],lines=[],pct=0,stage=opts.stages[0][1];
+  function frame(){
+    t+=.1;
+    if(idx<opts.script.length&&t>=next){
+      const e=opts.script[idx];
+      lines.push(e[1]);
+      if(lines.length>13)lines.shift();
+      if(e[2]!=null){pct=e[2];
+        const st=opts.stages.filter(function(s){return s[0]<=e[2];}).pop();
+        if(st)stage=st[1];}
+      idx++;
+      if(idx<opts.script.length)next=t+opts.script[idx][0];
+      else next=t+6;                    // hold finished state, then loop
+    }
+    if(idx>=opts.script.length&&t>=next){
+      t=0;idx=0;next=opts.script[0][0];lines=[];pct=0;stage=opts.stages[0][1];
+    }
+    S.reset();
+    drawStars(S,stars,t,40,13,true);
+    // header
+    let c=2;
+    opts.title.forEach(function(seg){S.str(1,c,seg[0],seg[1]);c+=seg[0].length;});
+    const m=Math.floor(t/60),sec=Math.floor(t%60);
+    const clock=m+":"+(sec<10?"0":"")+sec;
+    S.str(1,78-clock.length,clock,"#4a5468");
+    // console frame (box-drawing)
+    const bc="#2a3244";
+    S.put(3,2,"╭",bc);S.put(3,77,"╮",bc);
+    S.put(19,2,"╰",bc);S.put(19,77,"╯",bc);
+    for(let x=3;x<77;x++){S.put(3,x,"─",bc);S.put(19,x,"─",bc);}
+    for(let y=4;y<19;y++){S.put(y,2,"│",bc);S.put(y,77,"│",bc);}
+    // log lines, newest at the bottom
+    const top=18-lines.length;
+    lines.forEach(function(segs,i){
+      let x=4;
+      segs.forEach(function(seg){
+        const txt=seg[2]?SPIN[Math.floor(t*10)%10]:seg[0];
+        S.str(top+i+1,x,txt,seg[1]); x+=txt.length;
+      });
+    });
+    // stage bar
+    const wBar=76, fill=Math.round(pct/100*wBar);
+    for(let x=0;x<wBar;x++)S.put(21,2+x,"─",x<fill?opts.accent:"#1e2636");
+    S.str(22,2,stage,"#7c8699");
+    S.str(25,73,"v0.1.0","#4a5468");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+}
+
+const OK=function(s){return [["✓ ","#4ade80"],[s,"#7c8699"]];};
+const RUN=function(s){return [["","#f0b429",true],[" "+s,"#7c8699"]];};
+const DIM=function(s){return [[s,"#4a5468"]];};
+const AMB=function(s){return [["! ","#fb923c"],[s,"#7c8699"]];};
+
+consoleScreen("t-install",{
+  accent:"#7dd3fc",
+  title:[["ORBIT","#7c8699"],[" · ","#7dd3fc"],["Install — Standard","#7c8699"]],
+  stages:[[0,"Preparing…"],[10,"Staging configuration"],[22,"Validating"],
+          [30,"Pulling image"],[52,"Starting services"],[95,"Health checks"],[100,"Ready"]],
+  script:[
+    [0.7, DIM("orbit install · standard profile · mail.example.com"),4],
+    [0.9, OK("Configuration staged — .env-orbit written"),10],
+    [0.8, OK("Docker 27.5.1 detected, Compose v2.32 available"),14],
+    [1.1, OK("Compose file validated against pinned digest"),22],
+    [0.9, RUN("Pulling ghcr.io/tomlawesome/orbit@sha256:9f21…c88a"),30],
+    [1.6, DIM("  layer 4f2a1c…  ██████████  28.4 MB"),null],
+    [1.3, DIM("  layer b81e77…  ██████████  102.7 MB"),null],
+    [1.5, OK("Image pulled and digest verified"),46],
+    [0.9, RUN("Starting services…"),52],
+    [1.3, OK("  postgres — healthy"),62],
+    [1.2, OK("  redis — healthy"),68],
+    [1.5, RUN("  orbit-app — waiting on migrations…"),74],
+    [2.0, OK("  orbit-app — healthy"),84],
+    [1.1, OK("  clamav — virus database current"),90],
+    [1.2, RUN("Public health check — https://mail.example.com"),95],
+    [1.6, OK("Orbit is ready"),100],
+  ],
+});
+
+consoleScreen("t-repair",{
+  accent:"#fb923c",
+  title:[["ORBIT","#7c8699"],[" · ","#7dd3fc"],["Repair — ","#7c8699"],["2 services unhealthy","#fb923c"]],
+  stages:[[0,"Diagnosing…"],[44,"Diagnosis complete"],[52,"Intervening"],
+          [95,"Verifying"],[100,"Healthy"]],
+  script:[
+    [0.7, DIM("orbit repair · deployment at /opt/orbit"),6],
+    [0.9, OK("Configuration intact — no drift from installed digest"),14],
+    [0.9, OK("  postgres — healthy"),22],
+    [1.0, AMB("  orbit-app — unhealthy (restarting loop)"),30],
+    [1.0, AMB("  clamav — unhealthy (stale virus database)"),38],
+    [1.2, DIM("2 findings · interventions follow, one at a time"),44],
+    [1.1, RUN("Recreating orbit-app from pinned digest…"),52],
+    [2.2, OK("  orbit-app — healthy"),68],
+    [1.0, RUN("Refreshing ClamAV virus database…"),76],
+    [2.4, OK("  clamav — healthy"),90],
+    [1.1, RUN("Full health sweep…"),95],
+    [1.5, OK("All services healthy — Orbit is ready"),100],
+  ],
+});
+
+// ============== 04 ignition =================================================
+(function(){
+  const S=mkScreen("t-ignite",80,26); if(!S)return;
+  const CX=40,CY=10,R=13.5, stars=mkStars(12,17,46);
+  const lobes=[[300,40,29,0,.22,.62],[45,32,41,2,.12,.5],
+               [160,36,53,4,.16,.45],[230,28,37,1,.08,.4]];
+  const wisps=[[305,7],[262,5],[212,8],[150,6],[95,5],[38,7]].map(function(w,i){
+    const ang=w[0]*Math.PI/180,len=w[1],cells=[];
+    for(let k=1;k<=len;k++){
+      const r=R+0.6+k*1.35, a=ang+0.09*Math.sin(k*1.1+i*2.3);
+      cells.push([Math.round(CX+r*Math.cos(a)),Math.round(CY+r*Math.sin(a)/2)]);
+    }
+    return {cells:cells,per:17+i*4.7,off:i*3.3};
+  });
+  let t=0;
+  function frame(){
+    t+=.1; S.reset();
+    const add={};
+    wisps.forEach(function(w){
+      const ph=((t+w.off)%w.per)/w.per;
+      let vis=0;
+      if(ph<.25)vis=ph/.25; else if(ph<.5)vis=1; else if(ph<.8)vis=1-(ph-.5)/.3;
+      const n=Math.round(vis*w.cells.length);
+      for(let k=0;k<n;k++){
+        const key=w.cells[k][1]*S.W+w.cells[k][0];
+        add[key]=(add[key]||0)+.5*(1-k/w.cells.length)*vis;
+      }
+    });
+    drawStars(S,stars,t,CX,CY,true);
+    drawSphere(S,CX,CY,R);
+    for(let row=0;row<S.H;row++)for(let col=0;col<S.W;col++){
+      if(S.buf[row][col])continue;
+      const x=col-CX,y=(row-CY)*2,d=Math.hypot(x,y);
+      if(d<=R+9){
+        const th=Math.atan2(y,x)*180/Math.PI;
+        let b=0;
+        lobes.forEach(function(L){
+          let dth=Math.abs(th-L[0]);if(dth>180)dth=360-dth;
+          const A=L[4]+(L[5]-L[4])*(.5+.5*Math.sin(2*Math.PI*t/L[2]+L[3]));
+          b+=A*Math.exp(-(dth*dth)/(2*L[1]*L[1]));
+        });
+        b*=Math.exp(-(d-R)/3.2);
+        b+=(add[row*S.W+col]||0);
+        if(b>.04)S.put(row,col,glyph(b),green(b));
+      }
+      if(!S.buf[row][col]&&(add[row*S.W+col]||0)>.04){
+        const b=add[row*S.W+col];
+        S.put(row,col,glyph(b),green(b));
+      }
+    }
+    S.str(CY-1,CX-4,"O R B I T","#e7e9ee",{b:1,keep:1});
+    S.str(CY+1,CX-2,"ALIVE","#4ade80",{keep:1});
+    S.str(20,CX-12,"https://mail.example.com","#7dd3fc");
+    S.str(22,CX-8,"▸ Get into Orbit","#e7e9ee");
+    S.str(23,CX-4,"Terminal","#7c8699");
+    S.str(24,CX-2,"Menu","#7c8699");
+    S.str(25,1,"Orbit achieved in 3m 42s","#4a5468");
+    S.str(25,73,"v0.1.0","#4a5468");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+})();
+</script>
+</body>
+</html>
