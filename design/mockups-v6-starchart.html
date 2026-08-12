@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orbit-launcher — v6 mockups: starchart alignment (rev 3, cell-truth)</title>
+<style>
+  body{background:#060b1c;color:#e9edf8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+       margin:0;padding:48px 24px 120px;display:flex;flex-direction:column;align-items:center;}
+  h1{font-size:15px;letter-spacing:.22em;text-transform:uppercase;color:#d8b45a;font-weight:600}
+  .sub{font-size:12px;color:#8791b3;max-width:72ch;text-align:center;line-height:1.7;margin-bottom:40px}
+  section{margin-bottom:72px;max-width:1000px}
+  section>h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#4d5878;
+             border-bottom:1px solid #14203e;padding-bottom:8px}
+  section>h2 span{color:#d8b45a}
+  .term{background:#05070d;border:1px solid #14203e;border-radius:8px;padding:10px 8px;width:fit-content;
+        box-shadow:0 18px 60px rgba(0,0,0,.5)}
+  .cap{font-size:11px;color:#4d5878;margin:6px 2px 18px;letter-spacing:.05em}
+  pre.cells{margin:0;font-size:12px;line-height:15px;letter-spacing:0}
+  pre.cells span{display:inline-block;width:7.2px;overflow:hidden;text-align:center;
+                 font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
+  ul.notes{font-size:12.5px;color:#8791b3;line-height:1.75;max-width:78ch}
+  ul.notes b{color:#e9edf8;font-weight:600}
+  ul.notes .g{color:#d8b45a}
+  .pair{display:flex;gap:28px;flex-wrap:wrap}
+  .decisions{font-size:12.5px;color:#8791b3;line-height:1.8;max-width:78ch;
+             border:1px solid #14203e;border-radius:8px;padding:14px 20px;margin-bottom:48px}
+  .decisions b{color:#e9edf8}
+  .decisions s{color:#4d5878}
+  footer{font-size:11px;color:#4d5878;max-width:72ch;text-align:center;line-height:1.7}
+</style>
+</head>
+<body>
+
+<h1>orbit-launcher · v6 — starchart alignment · rev 3</h1>
+<div class="sub">
+  Starchart identity (orbit issue #307, v8/v9): deep navy,
+  <span style="color:#d8b45a">gold accent #d8b45a</span>, approach-blue #8fb8ff.
+  Cell-truth renders: 80×26 fixed-width cells, 10 fps, nothing a real terminal can't do.
+</div>
+
+<div class="decisions">
+  <b>Owner decisions (cumulative):</b><br>
+  · Wordmark: normal-size letter-spaced <b>O R B I T</b>, ink, everywhere. Big text retired.<br>
+  · <s>Green success wordmark</s>, <s>compass bar</s> — rejected. Gold accent + gold hero URL stand.<br>
+  · <b>rev 3:</b> identity block sits tight under the wordmark; menu items individually centred
+    (not left-aligned to a common edge); the keybind hint is gone for good; the footer is one
+    centred faint line: launcher and orbit version numbers. Arrival: Get / Into / Orbit at
+    centre screen, the wordmark slides up, menu items fade in one by one.
+</div>
+
+<section>
+  <h2><span>01</span> Splash — tight identity, centred menu, version footer</h2>
+  <div class="pair">
+    <div>
+      <div class="term"><pre class="cells" id="v6-splash"></pre></div>
+      <div class="cap">starchart · cycling dormant → alive → degraded</div>
+    </div>
+    <div>
+      <div class="term"><pre class="cells" id="v6-splash-afterdark"></pre></div>
+      <div class="cap">afterdark (today's ice accent) — for comparison</div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>Identity:</b> FQDN directly beneath the wordmark, status word directly beneath that —
+        no floating gap. Dormant shows just the status word in the same slot.</li>
+    <li><b>Menu:</b> every label centred on the screen axis; the ▸ caret rides two cells left of
+        whichever label is selected.</li>
+    <li><b>Foot:</b> one centred faint line — <i>orbit-launcher v0.2.0 · orbit v1.2.0</i> — and
+        nothing else. Orbit's version appears once a deployment is detected; dormant machines
+        show only the launcher's. No hints: the keys are ↑↓/↵/esc and the screen teaches itself.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span>02</span> Mission console — as shipped, gold accent, version foot</h2>
+  <div class="term"><pre class="cells" id="v6-console"></pre></div>
+  <div class="cap">install mid-flight · plain thin bar, engine-phase fill, no percentage</div>
+</section>
+
+<section>
+  <h2><span>03</span> Success — quiet, centred, one gold line</h2>
+  <div class="term"><pre class="cells" id="v6-success"></pre></div>
+  <div class="cap">the achieved line is the whole foot, centred; versions live on the splash</div>
+</section>
+
+<section>
+  <h2><span>04</span> Arrival — Get · Into · Orbit, centre stage</h2>
+  <div class="term"><pre class="cells" id="v6-arrival"></pre></div>
+  <div class="cap">words fade at true centre · O R B I T lands, sweeps, slides up · menu fades in one by one · foot last</div>
+  <ul class="notes">
+    <li>All three words play at the vertical centre of the screen. The third stays, takes the 2s
+        gold-white sweep, then <b>slides up</b> — one row per frame-pair, real cell motion, ~0.5s
+        — to its resting position. The ⟡ and identity appear; then the five menu items fade in
+        top to bottom, quickly (about a breath for the whole column); the version foot arrives
+        last. ≈8s once per launch; any key skips; NO_ANIMATION skips.</li>
+  </ul>
+</section>
+
+<footer>
+  POL audit: adopted — POL-1 arrival (as above), POL-7 restored orbit (panel 03). Native — POL-9.
+  Rejected — POL-2/4/5/6 (rings and hover don't exist here), POL-8 (no product data), the
+  compass. All panels: 80×26 · 10 fps · glyph-ramp brightness plus whole-cell steps only.
+</footer>
+
+<script>
+function esc(ch){return ch==="<"?"&lt;":ch==="&"?"&amp;":ch;}
+function mkScreen(id,W,H){
+  const el=document.getElementById(id); if(!el) return null;
+  const S={el:el,W:W,H:H,buf:null};
+  S.reset=function(){S.buf=[];for(let r=0;r<H;r++)S.buf.push(new Array(W).fill(null));};
+  S.put=function(r,c,ch,f,o){
+    if(r<0||r>=H||c<0||c>=W)return;
+    S.buf[r][c]=Object.assign({c:ch,f:f},o||{});
+  };
+  S.str=function(r,c,s,f,o){for(let i=0;i<s.length;i++)if(s[i]!==" ")S.put(r,c+i,s[i],f,o);};
+  S.ctr=function(r,s,f,o){S.str(r,Math.floor(S.W/2)-Math.floor(s.length/2),s,f,o);};
+  S.render=function(){
+    let h="";
+    for(let r=0;r<H;r++){for(let c=0;c<W;c++){const x=S.buf[r][c];
+      h+=x?'<span style="color:'+x.f+(x.b?";font-weight:700":"")+'">'+esc(x.c)+"</span>":"<span> </span>";}
+      h+="\n";}
+    S.el.innerHTML=h;
+  };
+  return S;
+}
+function mkStars(n,rmin,rmax){
+  const a=[];
+  for(let i=0;i<n;i++)a.push({r:rmin+(i*17.23)%(rmax-rmin),a0:i*2.399963,layer:i%2,tp:5+(i%7),tph:i*1.7});
+  return a;
+}
+const STEP_S=2.5;
+function drawStars(S,stars,t,CX,CY,dim){
+  const step=Math.floor(t/STEP_S);
+  const angNear=step*2*Math.PI*STEP_S/360;
+  const angFar =step*2*Math.PI*STEP_S/520;
+  stars.forEach(function(st){
+    const ang=st.a0+(st.layer?angFar:angNear);
+    const col=Math.round(CX+st.r*Math.cos(ang)), row=Math.round(CY+st.r*Math.sin(ang)/2);
+    const b=(dim?0.3:0.5)*(0.55+0.45*Math.sin(2*Math.PI*t/st.tp+st.tph));
+    if(b>0.1)S.put(row,col,"·","rgba(233,237,248,"+b.toFixed(2)+")");
+  });
+}
+function drawSystems(S,t,ps,gold){
+  const bx=Math.round(S.W*0.78), by=Math.round(S.H*0.2);
+  const ba=2*Math.PI*t/34, brx=6*ps, bry=3*ps;
+  S.put(Math.round(by+bry*Math.sin(ba)), Math.round(bx+brx*Math.cos(ba)),"●",gold?"#d8b45a":"#60a5fa");
+  S.put(Math.round(by+bry*Math.sin(ba+Math.PI)), Math.round(bx+brx*Math.cos(ba+Math.PI)),"●",gold?"#8fb8ff":"#e879f9");
+  const px=Math.round(S.W*0.16), py=Math.round(S.H*0.78);
+  S.put(py,px,"●","#cbd5e1");
+  const ma=2*Math.PI*t/13;
+  S.put(Math.round(py+1.6*ps*Math.sin(ma)), Math.round(px+3.5*ps*Math.cos(ma)),"·","#fb7185");
+}
+const WORDMARK="O R B I T";
+// menu: every label centred; the caret rides just left of the selected label
+function drawMenu(S,topRow,items,sel,accent,alpha){
+  items.forEach(function(label,i){
+    const row=topRow+i+(items.length===5&&i>=3?1:0);
+    const a=alpha?alpha(i):1;
+    if(a<=0.05)return;
+    const start=Math.floor(S.W/2)-Math.floor(label.length/2);
+    if(i===sel){
+      S.str(row,start-2,"▸",a>=1?accent:"rgba(216,180,90,"+a.toFixed(2)+")");
+      S.str(row,start,label,a>=1?"#e9edf8":"rgba(233,237,248,"+a.toFixed(2)+")",{b:a>=1?0:0});
+    }else{
+      S.str(row,start,label,a>=1?"#8791b3":"rgba(135,145,179,"+a.toFixed(2)+")");
+    }
+  });
+}
+function drawIdentity(S,row,fqdn,st){
+  const stCol=st==="alive"?"#4ade80":st==="degraded"?"#fb923c":"#4d5878";
+  if(fqdn){
+    S.ctr(row,fqdn,"#8791b3");
+    S.ctr(row+1,st,stCol);
+  }else{
+    S.ctr(row,st,stCol);
+  }
+}
+function drawFoot(S,text){ S.ctr(S.H-1,text,"#4d5878"); }
+
+// ==== 01 splash ============================================================
+function splashScreen(id,accent){
+  const W=80,H=26,S=mkScreen(id,W,H); if(!S)return;
+  const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
+  const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
+  const gold=accent==="#d8b45a";
+  let t=0;
+  function frame(){
+    t+=.1; S.reset();
+    drawStars(S,stars,t,CX,CY,false);
+    drawSystems(S,t,1,gold);
+    const st=["dormant","alive","degraded"][Math.floor(t/10)%3];
+    const markCol=st==="alive"?"#4ade80":st==="degraded"?"#fb923c":accent;
+    const fqdn=st==="dormant"?null:"mail.example.com";
+    const sel=st==="alive"?1:st==="degraded"?2:0;
+    const top=CY-6;
+    S.str(top,CX,"⟡",markCol);
+    S.ctr(top+2,WORDMARK,"#e9edf8",{b:1});
+    drawIdentity(S,top+3,fqdn,st);
+    drawMenu(S,top+6,["Install","Update","Repair","Remove","Exit"],sel,accent);
+    drawFoot(S, st==="dormant" ? "orbit-launcher v0.2.0" : "orbit-launcher v0.2.0 · orbit v1.2.0");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+}
+splashScreen("v6-splash","#d8b45a");
+splashScreen("v6-splash-afterdark","#7dd3fc");
+
+// ==== 02 mission console ====================================================
+(function(){
+  const W=80,H=26,S=mkScreen("v6-console",W,H); if(!S)return;
+  const GOLD="#d8b45a", FAINT="#4d5878", MID="#8791b3";
+  const SPIN="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+  const stars=mkStars(14,20,44);
+  const STAGE=["Preparing","Checking host","Resolving image identity","Fetching deployment assets",
+               "Configuration","Verifying sign-in provider","Validating services","Preparing services",
+               "Waking the database","Starting Orbit","Optional services","Orbit achieved"];
+  const TAPE=[
+    [0.8,"ok","host","done", 1],
+    [1.6,"run","image","running", 2],
+    [1.4,"ok","image","done", 2],
+    [0.9,"ok","assets","done", 3],
+    [1.2,"raw","Created .env-orbit from .env-orbit.example.", null],
+    [1.0,"ok","configuration","done", 4],
+    [1.3,"ok","sign-in","done", 5],
+    [1.1,"run","services","running", 6],
+    [1.2,"ok","services","done", 6],
+    [1.5,"ok","database","healthy", 8],
+    [2.2,"run","application","starting", 9],
+  ];
+  let t=0,idx=0,next=TAPE[0][0],lines=[],phaseIdx=0;
+  function frame(){
+    t+=.1;
+    if(idx<TAPE.length&&t>=next){
+      const e=TAPE[idx]; lines.push(e); if(lines.length>13)lines.shift();
+      if(e[4]!=null&&e[4]>phaseIdx)phaseIdx=e[4];
+      idx++;
+      if(idx<TAPE.length)next=t+TAPE[idx][0]; else next=t+7;
+    }
+    if(idx>=TAPE.length&&t>=next){t=0;idx=0;next=TAPE[0][0];lines=[];phaseIdx=0;}
+    S.reset();
+    drawStars(S,stars,t,40,13,true);
+    S.str(1,2,"ORBIT",MID); S.str(1,8,"·",GOLD); S.str(1,10,"Install — Standard",MID);
+    const m=Math.floor(t/60),sec=Math.floor(t%60);
+    const clock=m+":"+(sec<10?"0":"")+sec;
+    S.str(1,78-clock.length,clock,FAINT);
+    const bc="#22335c";
+    S.put(3,2,"╭",bc);S.put(3,77,"╮",bc);S.put(19,2,"╰",bc);S.put(19,77,"╯",bc);
+    for(let x=3;x<77;x++){S.put(3,x,"─",bc);S.put(19,x,"─",bc);}
+    for(let y=4;y<19;y++){S.put(y,2,"│",bc);S.put(y,77,"│",bc);}
+    const top=18-lines.length;
+    lines.forEach(function(e,i){
+      const latest=i===lines.length-1;
+      let x=4;
+      if(e[1]==="raw"){S.str(top+i+1,x,e[2],FAINT);return;}
+      if(e[1]==="ok"){S.str(top+i+1,x,"✓","#4ade80");}
+      else if(latest){S.str(top+i+1,x,SPIN[Math.floor(t*10)%10],"#f0b429");}
+      else{S.str(top+i+1,x,"·",FAINT);}
+      S.str(top+i+1,x+2,e[2],MID);
+      S.str(top+i+1,x+3+e[2].length,e[3],e[1]==="ok"?MID:FAINT);
+    });
+    const bw=76, fill=Math.round((phaseIdx+1)/12*bw);
+    for(let x=0;x<bw;x++)S.put(21,2+x,"─",x<fill?GOLD:"#1a2745");
+    S.str(22,2,STAGE[phaseIdx],MID);
+    drawFoot(S,"orbit-launcher v0.2.0");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+})();
+
+// ==== 03 success ============================================================
+(function(){
+  const W=80,H=26,S=mkScreen("v6-success",W,H); if(!S)return;
+  const CX=40;
+  const stars=mkStars(40,6,46);
+  const LOOP=8;
+  let t=0;
+  function frame(){
+    t+=.1; S.reset();
+    drawStars(S,stars,t,CX,13,false);
+    const p=t%LOOP;
+    const bx=Math.round(W*0.78), by=Math.round(H*0.2);
+    const ba=2*Math.PI*t/34;
+    const drift=p<1?0:p>2.2?1:(p-1)/1.2;
+    const brx=6+3*drift, bry=3+1.5*drift;
+    const gx=Math.round(bx+brx*Math.cos(ba)), gy=Math.round(by+bry*Math.sin(ba));
+    if(p>=1&&p<=2.6){
+      for(let k=1;k<=3;k++){
+        const db=ba-0.12*k, dd=Math.max(0,drift-0.12*k);
+        const txp=Math.round(bx+(6+3*dd)*Math.cos(db)), typ=Math.round(by+(3+1.5*dd)*Math.sin(db));
+        if(txp!==gx||typ!==gy)S.put(typ,txp,"·","rgba(216,180,90,"+(0.5-0.13*k).toFixed(2)+")");
+      }
+    }
+    S.put(gy,gx,"●","#d8b45a");
+    S.put(Math.round(by+3*Math.sin(ba+Math.PI)), Math.round(bx+6*Math.cos(ba+Math.PI)),"●","#8fb8ff");
+    const px=Math.round(W*0.16), py=Math.round(H*0.78);
+    S.put(py,px,"●","#cbd5e1");
+    const ma=2*Math.PI*t/13;
+    S.put(Math.round(py+1.6*Math.sin(ma)), Math.round(px+3.5*Math.cos(ma)),"·","#fb7185");
+    const top=7;
+    S.str(top,CX,"⟡","#4ade80");
+    S.ctr(top+2,WORDMARK,"#e9edf8",{b:1});
+    S.ctr(top+3,"https://mail.example.com","#d8b45a");
+    S.ctr(top+4,"alive","#4ade80");
+    drawMenu(S,top+7,["Get into Orbit","Terminal","Menu"],0,"#d8b45a");
+    drawFoot(S,"Orbit achieved in 3m 42s");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+})();
+
+// ==== 04 arrival — Get · Into · Orbit, centre stage, slide, cascade ========
+(function(){
+  const W=80,H=26,S=mkScreen("v6-arrival",W,H); if(!S)return;
+  const CX=40, CY=Math.floor(H/2)-1; // 12 — true vertical centre
+  const stars=mkStars(Math.round(W*H/38), 6, 46);
+  const LOOP=11.5;
+  const top=CY-6, restRow=top+2; // the wordmark's resting row on the splash
+  function envelope(p,start,fadeIn,hold,fadeOut){
+    const u=p-start;
+    if(u<0)return 0;
+    if(u<fadeIn)return u/fadeIn;
+    if(u<fadeIn+hold)return 1;
+    if(u<fadeIn+hold+fadeOut)return 1-(u-fadeIn-hold)/fadeOut;
+    return 0;
+  }
+  function inkAlpha(a){return "rgba(233,237,248,"+a.toFixed(2)+")";}
+  let t=0;
+  function frame(){
+    t+=.1; S.reset();
+    const p=t%LOOP;
+    drawStars(S,stars,t,CX,CY,false);
+    drawSystems(S,t,1,true);
+
+    // beats 1–2: "Get", "Into" at true centre
+    const aGet=envelope(p,0.0,0.5,0.6,0.4);
+    if(aGet>0.05)S.ctr(CY,"Get",inkAlpha(aGet),{b:1});
+    const aInto=envelope(p,1.7,0.5,0.6,0.4);
+    if(aInto>0.05)S.ctr(CY,"Into",inkAlpha(aInto),{b:1});
+
+    // beat 3: the wordmark fades in at centre (3.4), sweeps (3.9–5.9)
+    const aOrbit=p<3.4?0:Math.min(1,(p-3.4)/0.5);
+    // beat 4: slide from CY up to restRow (5.9–6.7): one row per 0.2s
+    let wRow=CY;
+    if(p>=5.9)wRow=Math.max(restRow, CY-Math.floor((p-5.9)/0.2));
+    if(aOrbit>0.05){
+      const sw=(p-3.9)/2;
+      for(let i=0;i<WORDMARK.length;i++){
+        const ch=WORDMARK[i];
+        if(ch===" ")continue;
+        let col=inkAlpha(aOrbit);
+        if(sw>=0&&sw<=1){
+          const pos=sw*WORDMARK.length;
+          const d=Math.abs(i-pos);
+          const lift=Math.max(0,1-d/2.2);
+          if(lift>0.05){
+            const r=Math.round(233+22*lift), g=Math.round(237+3*lift), b=Math.round(248-48*lift);
+            col="rgb("+r+","+g+","+b+")";
+          }
+        }
+        S.put(wRow,CX-4+i,ch,col,{b:1});
+      }
+    }
+
+    // beat 5: once home, ⟡ + identity appear; menu items fade in one by one
+    const settled=p>=6.7;
+    if(settled){
+      S.str(top,CX,"⟡","#d8b45a");
+      drawIdentity(S,top+3,null,"dormant");
+      drawMenu(S,top+6,["Install","Update","Repair","Remove","Exit"],0,"#d8b45a",
+        function(i){ return Math.min(1,Math.max(0,(p-7.0-i*0.15)/0.3)); });
+    }
+    // beat 6: the foot arrives last
+    if(p>=8.2)drawFoot(S,"orbit-launcher v0.2.0");
+    S.render();
+  }
+  setInterval(frame,100); frame();
+})();
+</script>
+</body>
+</html>
