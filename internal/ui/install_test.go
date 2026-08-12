@@ -4,40 +4,113 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
+// fakeEngine returns a prepareEngine stand-in whose stream replays the
+// given messages — the deterministic, offline equivalent of a real
+// piped install.sh run. It records the action flag it was asked for.
+func fakeEngine(gotAction *string, msgs ...any) prepareEngineFunc {
+	return func(_ context.Context, _ string, action string) (*engine.Stream, func() error, error) {
+		if gotAction != nil {
+			*gotAction = action
+		}
+		ch := make(chan any, len(msgs))
+		for _, m := range msgs {
+			ch <- m
+		}
+		close(ch)
+		return &engine.Stream{C: ch}, func() error { return nil }, nil
+	}
+}
+
 // fakeHandoff returns a runHandoff stand-in that never touches a real
-// terminal or process — it just synchronously reports the given error,
-// so Install/Update tests can exercise the full prepare -> handoff ->
-// done/failed state machine deterministically.
-func fakeHandoff(err error) func(*exec.Cmd) tea.Cmd {
+// terminal or process — it just synchronously reports the given error.
+func fakeHandoff(err error) runHandoffFunc {
 	return func(*exec.Cmd) tea.Cmd {
 		return func() tea.Msg { return installFinishedMsg{err: err} }
 	}
 }
 
-func newTestInstallModel(prepare func(context.Context, string) (*exec.Cmd, func() error, error), handoff func(*exec.Cmd) tea.Cmd) InstallModel {
-	m := NewInstallModel("/opt/orbit")
-	m.prepareInstall = prepare
-	m.runHandoff = handoff
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	return updated.(InstallModel)
-}
-
-func fakePrepare(cmd *exec.Cmd, cleanupCalled *bool, err error) func(context.Context, string) (*exec.Cmd, func() error, error) {
-	return func(context.Context, string) (*exec.Cmd, func() error, error) {
-		if err != nil {
-			return nil, nil, err
-		}
-		return cmd, func() error { *cleanupCalled = true; return nil }, nil
+func fakeDetect(appURL string) detectFunc {
+	return func(string) (*deploy.Deployment, error) {
+		return &deploy.Deployment{TargetDir: "/opt/orbit", AppURL: appURL}, nil
 	}
 }
 
+func ev(phase, component, state, reason, action string) engine.EventMsg {
+	return engine.EventMsg{Event: engine.Event{Phase: phase, Component: component, State: state, Reason: reason, Action: action}}
+}
+
+// successStream is the honest shape of a completing contract-era run:
+// progress events, the success event, then a clean exit.
+func successStream() []any {
+	return []any{
+		ev("host", "host", "completed", "host-tools", "check"),
+		ev("application", "application", "healthy", "application-health", "health"),
+		ev("complete", "installer", "completed", "deployment-ready", "complete"),
+		engine.DoneMsg{ExitCode: 0},
+	}
+}
+
+// configRefusalStream is the documented non-interactive refusal.
+func configRefusalStream() []any {
+	return []any{
+		ev("host", "host", "completed", "host-tools", "check"),
+		ev("configuration", "configuration", "failed", "configuration-failure", "retry"),
+		engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1,
+			StderrTail: []string{"Orbit installer: configuration fields requiring attention: APP_URL."}},
+	}
+}
+
+func newTestInstallModel(seams engineRunSeams) InstallModel {
+	m := NewInstallModel("/opt/orbit", "v9.9.9")
+	m.seams = seams
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	return updated.(InstallModel)
+}
+
+// drive feeds a command's resulting messages back into the model until
+// the command chain goes quiet — how bubbletea itself would run it.
+func drive(t *testing.T, model tea.Model, cmd tea.Cmd) tea.Model {
+	t.Helper()
+	for i := 0; cmd != nil; i++ {
+		if i > 1000 {
+			t.Fatal("command chain did not settle")
+		}
+		msg := cmd()
+		if msg == nil {
+			return model
+		}
+		model, cmd = model.Update(msg)
+	}
+	return model
+}
+
+func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
+	t.Helper()
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
+	m = updated.(InstallModel)
+	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
+	m = updated.(InstallModel)
+	if m.state != installStateRunning {
+		t.Fatalf("state = %v, want installStateRunning", m.state)
+	}
+	if cmd == nil {
+		t.Fatal("expected a command to start the engine")
+	}
+	return m, cmd
+}
+
 func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
-	m := newTestInstallModel(nil, nil)
+	m := newTestInstallModel(engineRunSeams{})
 	updated, _ := m.Update(key(tea.KeyEnter))
 	m = updated.(InstallModel)
 	if m.state != installStateConfirm {
@@ -47,7 +120,7 @@ func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
 
 func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
 	for _, sel := range []int{1, 2} { // AI, Full
-		m := newTestInstallModel(nil, nil)
+		m := newTestInstallModel(engineRunSeams{})
 		m.profileSel = sel
 		updated, _ := m.Update(key(tea.KeyEnter))
 		m = updated.(InstallModel)
@@ -58,7 +131,7 @@ func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testin
 }
 
 func TestInstallModel_EscapeFromConfirmReturnsToProfile(t *testing.T) {
-	m := newTestInstallModel(nil, nil)
+	m := newTestInstallModel(engineRunSeams{})
 	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
 	updated, _ = m.Update(key(tea.KeyEsc))
@@ -68,112 +141,270 @@ func TestInstallModel_EscapeFromConfirmReturnsToProfile(t *testing.T) {
 	}
 }
 
-func TestInstallModel_ConfirmNeverPreparesOrHandsOffAutomatically(t *testing.T) {
-	prepareCalled := false
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		prepareCalled = true
-		return nil, nil, errors.New("should not be called")
+func TestInstallModel_ConfirmNeverStartsTheEngineAutomatically(t *testing.T) {
+	engineCalled := false
+	seams := engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			engineCalled = true
+			return nil, nil, errors.New("should not be called")
+		},
 	}
-	m := newTestInstallModel(prepare, nil)
+	m := newTestInstallModel(seams)
 	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
 	_ = m.View() // rendering alone must never trigger a side effect
 
-	if prepareCalled {
-		t.Error("prepareInstall must only run after an explicit confirm, never as a side effect of rendering")
+	if engineCalled {
+		t.Error("the engine must only start after an explicit confirm, never as a side effect of rendering")
 	}
 }
 
-func TestInstallModel_ConfirmEnterPreparesThenHandsOffAndReachesDone(t *testing.T) {
-	cleanupCalled := false
-	fakeCmd := exec.Command("true")
-	prepare := fakePrepare(fakeCmd, &cleanupCalled, nil)
-	m := newTestInstallModel(prepare, fakeHandoff(nil))
+func TestInstallModel_EngineSuccessConcludesTheFlow(t *testing.T) {
+	var gotAction string
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(&gotAction, successStream()...),
+		detect:        fakeDetect("https://mail.example.com"),
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
 
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
-	m = updated.(InstallModel)
-	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
-	m = updated.(InstallModel)
-	if m.state != installStateRunning {
-		t.Fatalf("state = %v, want installStateRunning", m.state)
+	if gotAction != "install" {
+		t.Errorf("engine action = %q, want install", gotAction)
 	}
-	if cmd == nil {
-		t.Fatal("expected a command to prepare install.sh")
+	o := m.Outcome()
+	if !o.Done || !o.Succeeded {
+		t.Fatalf("outcome = %+v, want Done and Succeeded", o)
 	}
-
-	msg := cmd() // installPreparedMsg
-	updated, cmd = m.Update(msg)
-	m = updated.(InstallModel)
-	if cmd == nil {
-		t.Fatal("expected a command to run the handoff after preparing")
-	}
-
-	msg = cmd() // installFinishedMsg
-	updated, _ = m.Update(msg)
-	m = updated.(InstallModel)
-
-	if m.state != installStateDone {
-		t.Errorf("state = %v, want installStateDone", m.state)
-	}
-	if !cleanupCalled {
-		t.Error("expected cleanup to be called after the handoff finished")
+	if o.URL != "https://mail.example.com" {
+		t.Errorf("URL = %q — the success screen's hero line comes from detection, not from prose", o.URL)
 	}
 }
 
-func TestInstallModel_PrepareFailureReachesFailedWithoutHandoff(t *testing.T) {
+func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
+	// Replay only progress events with no DoneMsg: the run is mid-
+	// flight, and the console must be showing the stream.
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(nil,
+			ev("host", "host", "completed", "host-tools", "check"),
+			ev("identity", "image", "running", "image-identity", "inspect"),
+		),
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
+
+	view := m.View()
+	if !strings.Contains(view, "image") || !strings.Contains(view, "running") {
+		t.Error("expected the console to render the streamed events")
+	}
+	if !strings.Contains(view, "Resolving image identity") {
+		t.Error("expected the stage word for the furthest phase reached")
+	}
+	if strings.Contains(view, "%") {
+		t.Error("the stage bar must never show a percentage")
+	}
+}
+
+func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
+	handoffRan := false
+	prepared := false
+	seams := engineRunSeams{
+		prepareEngine: fakeEngine(nil, configRefusalStream()...),
+		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
+			prepared = true
+			return exec.Command("true"), func() error { return nil }, nil
+		},
+		runHandoff: func(cmd *exec.Cmd) tea.Cmd {
+			handoffRan = true
+			return func() tea.Msg { return installFinishedMsg{} }
+		},
+		detect: fakeDetect("https://mail.example.com"),
+	}
+	m := newTestInstallModel(seams)
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
+
+	if m.run.state != runConfigPrompt {
+		t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
+	}
+	if handoffRan || prepared {
+		t.Fatal("the handoff must wait for the user's explicit choice")
+	}
+	if !strings.Contains(m.View(), "Orbit needs your configuration") {
+		t.Error("expected the styled configuration prompt")
+	}
+
+	// Accept the default: Continue — guided configuration.
+	updated, cmd := m.Update(key(tea.KeyEnter))
+	m = drive(t, updated, cmd).(InstallModel)
+
+	if !prepared || !handoffRan {
+		t.Fatal("expected the interactive handoff to run after Continue")
+	}
+	o := m.Outcome()
+	if !o.Done || !o.Succeeded {
+		t.Errorf("outcome after a clean handoff = %+v, want success", o)
+	}
+}
+
+func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(nil,
+			ev("identity", "image", "failed", "image-registry", "retry"),
+			engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1,
+				StderrTail: []string{"Orbit installer: Could not pull ghcr.io/tomlawesome/orbit:latest."}},
+		),
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
+
+	if m.run.state != runFailed {
+		t.Fatalf("run state = %v, want runFailed", m.run.state)
+	}
+	view := m.View()
+	for _, want := range []string{"Installation stopped", "image-registry", "Could not pull"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("failure view missing %q", want)
+		}
+	}
+
+	// Menu is the second option — choosing it asks for the splash back.
+	updated, _ := m.Update(key(tea.KeyDown))
+	m = updated.(InstallModel)
+	updated, _ = m.Update(key(tea.KeyEnter))
+	m = updated.(InstallModel)
+	if o := m.Outcome(); !o.Done || o.Succeeded || !o.WantsMenu {
+		t.Errorf("outcome = %+v, want WantsMenu without success", o)
+	}
+}
+
+func TestInstallModel_LegacyRefusalFailureScreenOpensGuidedInstaller(t *testing.T) {
+	// A legacy engine (orbit main) reports no telemetry: its
+	// non-interactive configuration refusal is just prose plus exit 1,
+	// which honestly lands on the failure screen — whose first option
+	// is the same guided installer the config prompt offers.
+	handoffRan := false
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(nil,
+			engine.RawLineMsg{Text: "Orbit installer: non-interactive use requires a complete .env-orbit"},
+			engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1,
+				StderrTail: []string{"Orbit installer: configuration fields requiring attention: APP_URL."}},
+		),
+		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
+			return exec.Command("true"), func() error { return nil }, nil
+		},
+		runHandoff: func(*exec.Cmd) tea.Cmd {
+			handoffRan = true
+			return func() tea.Msg { return installFinishedMsg{} }
+		},
+		detect: fakeDetect("https://mail.example.com"),
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
+
+	if m.run.state != runFailed {
+		t.Fatalf("run state = %v, want runFailed — no events means no config prompt", m.run.state)
+	}
+	if !strings.Contains(m.View(), "Open the guided installer") {
+		t.Fatal("failure screen must offer the guided installer")
+	}
+
+	updated, cmd := m.Update(key(tea.KeyEnter)) // Open the guided installer (default)
+	m = drive(t, updated, cmd).(InstallModel)
+
+	if !handoffRan {
+		t.Fatal("expected the guided installer handoff to run")
+	}
+	if o := m.Outcome(); !o.Done || !o.Succeeded {
+		t.Errorf("outcome = %+v, want success after a clean interactive install", o)
+	}
+}
+
+func TestInstallModel_LegacyEngineJudgedByExitCodeAlone(t *testing.T) {
+	// orbit main's install.sh emits no events. Its prose is displayed
+	// raw; a clean exit is still success — never keyed off the prose.
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(nil,
+			engine.RawLineMsg{Text: "Pulling ghcr.io/tomlawesome/orbit:latest"},
+			engine.RawLineMsg{Text: "Orbit is ready."},
+			engine.DoneMsg{ExitCode: 0},
+		),
+		detect: fakeDetect("https://mail.example.com"),
+	})
+	m, cmd := startInstallRun(t, m)
+
+	// Mid-drive the raw prose must be visible; drive fully first, since
+	// the fake stream is replayed synchronously.
+	m = drive(t, m, cmd).(InstallModel)
+	if o := m.Outcome(); !o.Done || !o.Succeeded {
+		t.Errorf("outcome = %+v, want success on exit 0 with zero events", o)
+	}
+}
+
+func TestInstallModel_EnginePrepareFailureReachesFailedWithoutHandoff(t *testing.T) {
 	handoffCalled := false
-	handoff := func(*exec.Cmd) tea.Cmd {
-		handoffCalled = true
-		return nil
-	}
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		return nil, nil, errors.New("could not fetch install.sh")
-	}
-	m := newTestInstallModel(prepare, handoff)
-
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
-	m = updated.(InstallModel)
-	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
-	m = updated.(InstallModel)
-
-	msg := cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(InstallModel)
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			return nil, nil, errors.New("could not fetch install.sh")
+		},
+		runHandoff: func(*exec.Cmd) tea.Cmd {
+			handoffCalled = true
+			return nil
+		},
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
 
 	if handoffCalled {
-		t.Error("the handoff must never run when preparing install.sh fails")
+		t.Error("the handoff must never run when the engine cannot start")
 	}
-	if m.state != installStateFailed {
-		t.Errorf("state = %v, want installStateFailed", m.state)
+	if m.run.state != runFailed {
+		t.Errorf("run state = %v, want runFailed", m.run.state)
 	}
-	if m.installErr == nil {
-		t.Error("expected installErr to be set")
+	if !strings.Contains(m.View(), "could not fetch install.sh") {
+		t.Error("expected the failure view to carry the error")
 	}
 }
 
-func TestInstallModel_HandoffFailureReachesFailedAndStillCleansUp(t *testing.T) {
-	cleanupCalled := false
-	fakeCmd := exec.Command("false")
-	prepare := fakePrepare(fakeCmd, &cleanupCalled, nil)
-	m := newTestInstallModel(prepare, fakeHandoff(errors.New("install.sh exited 1")))
+func TestInstallModel_HandoffFailureReachesFailed(t *testing.T) {
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(nil, configRefusalStream()...),
+		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
+			return exec.Command("false"), func() error { return nil }, nil
+		},
+		runHandoff: fakeHandoff(errors.New("install.sh exited 1")),
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
 
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
-	m = updated.(InstallModel)
-	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
-	m = updated.(InstallModel)
+	updated, cmd := m.Update(key(tea.KeyEnter)) // Continue — guided configuration
+	m = drive(t, updated, cmd).(InstallModel)
 
-	msg := cmd()
-	updated, cmd = m.Update(msg)
-	m = updated.(InstallModel)
-
-	msg = cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(InstallModel)
-
-	if m.state != installStateFailed {
-		t.Errorf("state = %v, want installStateFailed", m.state)
+	if m.run.state != runFailed {
+		t.Errorf("run state = %v, want runFailed after a failed handoff", m.run.state)
 	}
-	if !cleanupCalled {
-		t.Error("expected cleanup to still be called after a handoff failure")
+	if o := m.Outcome(); o.Succeeded {
+		t.Error("a failed handoff must never read as success")
+	}
+}
+
+func TestInstallModel_SuccessElapsedComesFromTheConsoleClock(t *testing.T) {
+	base := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	current := base
+	m := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngine(nil, successStream()...),
+		detect:        fakeDetect("https://mail.example.com"),
+		now: func() time.Time {
+			// First call stamps the console start; later calls read it
+			// 3m42s further on.
+			t := current
+			current = base.Add(3*time.Minute + 42*time.Second)
+			return t
+		},
+	})
+	m, cmd := startInstallRun(t, m)
+	m = drive(t, m, cmd).(InstallModel)
+
+	if got := m.Outcome().Elapsed; got != 3*time.Minute+42*time.Second {
+		t.Errorf("Elapsed = %v, want 3m42s from the injected clock", got)
 	}
 }

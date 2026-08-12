@@ -146,6 +146,85 @@ func TestAppModel_SelectingRepairShowsTheHonestStub(t *testing.T) {
 	}
 }
 
+func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *testing.T) {
+	dir := t.TempDir()
+	m := NewAppModel()
+	m.targetDir = dir
+	m = m.WithVersion("v9.9.9")
+	m.flowSeams = engineRunSeams{
+		prepareEngine: fakeEngine(nil, successStream()...),
+		detect:        fakeDetect("https://mail.example.com"),
+	}
+
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Install"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Choose a deployment profile"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Standard
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Ready to install"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install now -> engine runs -> success
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Get into Orbit")) &&
+			bytes.Contains(out, []byte("https://mail.example.com")) &&
+			bytes.Contains(out, []byte("alive"))
+	}, teatest.WithDuration(2*time.Second))
+
+	// Menu (third item) returns to the splash — the launcher is a loop.
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repair")) && bytes.Contains(out, []byte("Remove"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
+	m := NewAppModel()
+	m.targetDir = t.TempDir()
+	m.flowSeams = engineRunSeams{
+		prepareEngine: fakeEngine(nil, successStream()...),
+		detect:        fakeDetect("https://mail.example.com"),
+	}
+
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Install"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Standard
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Ready to install"))
+	}, teatest.WithDuration(2*time.Second))
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install now
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Get into Orbit"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Terminal
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
+}
+
 func TestAppModel_WithDeploymentStatusPreselectsUpdateAndSetsFQDN(t *testing.T) {
 	dir := t.TempDir()
 	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"

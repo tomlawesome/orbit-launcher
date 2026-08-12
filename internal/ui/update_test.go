@@ -3,20 +3,19 @@ package ui
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
-func newTestUpdateModel(d *deploy.Deployment, prepare func(context.Context, string) (*exec.Cmd, func() error, error), handoff func(*exec.Cmd) tea.Cmd) UpdateModel {
-	m := NewUpdateModel(d)
-	m.prepareInstall = prepare
-	m.runHandoff = handoff
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+func newTestUpdateModel(d *deploy.Deployment, seams engineRunSeams) UpdateModel {
+	m := NewUpdateModel(d, "/opt/orbit", "v9.9.9")
+	m.seams = seams
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	return updated.(UpdateModel)
 }
 
@@ -30,7 +29,7 @@ func testDeployment() *deploy.Deployment {
 }
 
 func TestUpdateModel_NoDeploymentReachesNotFoundAndOnlyQuits(t *testing.T) {
-	m := newTestUpdateModel(nil, nil, nil)
+	m := newTestUpdateModel(nil, engineRunSeams{})
 	if m.state != updateStateNotFound {
 		t.Fatalf("state = %v, want updateStateNotFound", m.state)
 	}
@@ -40,147 +39,124 @@ func TestUpdateModel_NoDeploymentReachesNotFoundAndOnlyQuits(t *testing.T) {
 	}
 }
 
-func TestUpdateModel_CancelFromConfirmNeverPrepares(t *testing.T) {
-	prepareCalled := false
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		prepareCalled = true
-		return nil, nil, errors.New("should not be called")
+func TestUpdateModel_CancelFromConfirmNeverStartsTheEngine(t *testing.T) {
+	engineCalled := false
+	seams := engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			engineCalled = true
+			return nil, nil, errors.New("should not be called")
+		},
 	}
-	m := newTestUpdateModel(testDeployment(), prepare, nil)
+	m := newTestUpdateModel(testDeployment(), seams)
 
 	updated, _ := m.Update(key(tea.KeyDown)) // move to Cancel
 	m = updated.(UpdateModel)
 	_, cmd := m.Update(key(tea.KeyEnter))
 
-	if prepareCalled {
-		t.Error("prepareInstall must never be called when Cancel is chosen")
+	if engineCalled {
+		t.Error("the engine must never start when Cancel is chosen")
 	}
 	if cmd == nil || cmd() != tea.Quit() {
 		t.Error("expected Cancel to issue tea.Quit")
 	}
 }
 
-func TestUpdateModel_EscapeAtConfirmQuitsWithoutPreparing(t *testing.T) {
-	prepareCalled := false
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		prepareCalled = true
-		return nil, nil, errors.New("should not be called")
+func TestUpdateModel_EscapeAtConfirmQuitsWithoutStarting(t *testing.T) {
+	engineCalled := false
+	seams := engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			engineCalled = true
+			return nil, nil, errors.New("should not be called")
+		},
 	}
-	m := newTestUpdateModel(testDeployment(), prepare, nil)
+	m := newTestUpdateModel(testDeployment(), seams)
 
 	_, cmd := m.Update(key(tea.KeyEsc))
 
-	if prepareCalled {
-		t.Error("prepareInstall must never be called on Escape")
+	if engineCalled {
+		t.Error("the engine must never start on Escape")
 	}
 	if cmd == nil || cmd() != tea.Quit() {
 		t.Error("expected Escape to issue tea.Quit")
 	}
 }
 
-func TestUpdateModel_ConfirmPreparesThenHandsOffAndReachesDone(t *testing.T) {
-	cleanupCalled := false
-	fakeCmd := exec.Command("true")
-	var gotTargetDir string
-	prepare := func(_ context.Context, targetDir string) (*exec.Cmd, func() error, error) {
-		gotTargetDir = targetDir
-		return fakeCmd, func() error { cleanupCalled = true; return nil }, nil
+func TestUpdateModel_NeverStartsTheEngineAutomatically(t *testing.T) {
+	engineCalled := false
+	seams := engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			engineCalled = true
+			return nil, nil, errors.New("should not be called")
+		},
 	}
-	m := newTestUpdateModel(testDeployment(), prepare, fakeHandoff(nil))
+	m := newTestUpdateModel(testDeployment(), seams)
+	_ = m.View() // rendering alone must never trigger a side effect
+	if engineCalled {
+		t.Error("the engine must only start after an explicit confirm, never as a side effect of rendering")
+	}
+}
+
+func TestUpdateModel_ConfirmRunsTheEngineWithUpdateAction(t *testing.T) {
+	var gotAction, gotTargetDir string
+	seams := engineRunSeams{
+		prepareEngine: func(_ context.Context, targetDir, action string) (*engine.Stream, func() error, error) {
+			gotAction, gotTargetDir = action, targetDir
+			ch := make(chan any, 2)
+			ch <- ev("complete", "installer", "completed", "deployment-ready", "complete")
+			ch <- engine.DoneMsg{ExitCode: 0}
+			close(ch)
+			return &engine.Stream{C: ch}, func() error { return nil }, nil
+		},
+		detect: fakeDetect("https://mail.example.com"),
+	}
+	m := newTestUpdateModel(testDeployment(), seams)
 
 	updated, cmd := m.Update(key(tea.KeyEnter)) // Update Orbit is selected by default
 	m = updated.(UpdateModel)
 	if m.state != updateStateRunning {
 		t.Fatalf("state = %v, want updateStateRunning", m.state)
 	}
-	if cmd == nil {
-		t.Fatal("expected a command to prepare install.sh")
+	m = drive(t, m, cmd).(UpdateModel)
+
+	if gotAction != "update" {
+		t.Errorf("engine action = %q, want update", gotAction)
 	}
-
-	msg := cmd()
-	updated, cmd = m.Update(msg)
-	m = updated.(UpdateModel)
-	if cmd == nil {
-		t.Fatal("expected a command to run the handoff after preparing")
-	}
-
-	msg = cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(UpdateModel)
-
 	if gotTargetDir != "/opt/orbit" {
-		t.Errorf("prepareInstall called with targetDir = %q, want /opt/orbit", gotTargetDir)
+		t.Errorf("engine targetDir = %q, want /opt/orbit", gotTargetDir)
 	}
-	if m.state != updateStateDone {
-		t.Errorf("state = %v, want updateStateDone", m.state)
-	}
-	if !cleanupCalled {
-		t.Error("expected cleanup to be called after the handoff finished")
+	if o := m.Outcome(); !o.Done || !o.Succeeded {
+		t.Errorf("outcome = %+v, want success", o)
 	}
 }
 
-func TestUpdateModel_PrepareFailureReachesFailedWithoutHandoff(t *testing.T) {
-	handoffCalled := false
-	handoff := func(*exec.Cmd) tea.Cmd {
-		handoffCalled = true
-		return nil
-	}
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		return nil, nil, errors.New("could not fetch install.sh")
-	}
-	m := newTestUpdateModel(testDeployment(), prepare, handoff)
-
+func TestUpdateModel_ConfigurationRefusalReachesThePromptToo(t *testing.T) {
+	// A migration can surface missing fields on update as well; the
+	// same handoff stretch applies.
+	m := newTestUpdateModel(testDeployment(), engineRunSeams{
+		prepareEngine: fakeEngine(nil, configRefusalStream()...),
+	})
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = updated.(UpdateModel)
-	msg := cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(UpdateModel)
+	m = drive(t, updated, cmd).(UpdateModel)
 
-	if handoffCalled {
-		t.Error("the handoff must never run when preparing install.sh fails")
-	}
-	if m.state != updateStateFailed {
-		t.Errorf("state = %v, want updateStateFailed", m.state)
-	}
-	if m.updateErr == nil {
-		t.Error("expected updateErr to be set")
+	if m.run.state != runConfigPrompt {
+		t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
 	}
 }
 
-func TestUpdateModel_HandoffFailureReachesFailedState(t *testing.T) {
-	cleanupCalled := false
-	fakeCmd := exec.Command("false")
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		return fakeCmd, func() error { cleanupCalled = true; return nil }, nil
-	}
-	m := newTestUpdateModel(testDeployment(), prepare, fakeHandoff(errors.New("docker compose up failed")))
-
+func TestUpdateModel_EngineFailureReachesFailedState(t *testing.T) {
+	m := newTestUpdateModel(testDeployment(), engineRunSeams{
+		prepareEngine: fakeEngine(nil,
+			ev("database", "database", "failed", "database-auth-migration", "repair"),
+			engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1},
+		),
+	})
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = updated.(UpdateModel)
-	msg := cmd()
-	updated, cmd = m.Update(msg)
-	m = updated.(UpdateModel)
-	msg = cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(UpdateModel)
+	m = drive(t, updated, cmd).(UpdateModel)
 
-	if m.state != updateStateFailed {
-		t.Errorf("state = %v, want updateStateFailed", m.state)
+	if m.run.state != runFailed {
+		t.Errorf("run state = %v, want runFailed", m.run.state)
 	}
-	if !cleanupCalled {
-		t.Error("expected cleanup to still be called after a handoff failure")
-	}
-}
-
-func TestUpdateModel_NeverPreparesAutomatically(t *testing.T) {
-	prepareCalled := false
-	prepare := func(context.Context, string) (*exec.Cmd, func() error, error) {
-		prepareCalled = true
-		return nil, nil, errors.New("should not be called")
-	}
-	m := newTestUpdateModel(testDeployment(), prepare, nil)
-	_ = m.View() // rendering alone must never trigger a side effect
-	if prepareCalled {
-		t.Error("prepareInstall must only run after an explicit confirm, never as a side effect of rendering")
+	if o := m.Outcome(); o.Succeeded {
+		t.Error("a failed engine run must never read as success")
 	}
 }
