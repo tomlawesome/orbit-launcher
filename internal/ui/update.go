@@ -134,53 +134,53 @@ func (m UpdateModel) View() string {
 	return ""
 }
 
-func (m UpdateModel) frame(body string) string {
-	return lipgloss.NewStyle().Padding(1, 2).Render(body)
-}
+// The flow screens speak the same starchart grammar as every other
+// screen (design/DECISIONS.md): centred block, ⟡ mark and bold title,
+// muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m UpdateModel) viewNotFound() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Render("No existing Orbit deployment found here"))
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "There's nothing to update in this directory. Use Install")
-	fmt.Fprintln(&b, "first if you haven't deployed Orbit yet.")
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("No Orbit deployment found here"))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
-	return m.frame(b.String())
+	fmt.Fprintln(&b, style.MutedText.Render("There's nothing to update in this directory —"))
+	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, []string{"Exit"}, 0)
+	return centreBlock(m.width, m.height, b.String())
 }
 
 func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Update"))
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Render("This pulls the latest Orbit image and updates your deployment"))
-	fmt.Fprintln(&b)
-
-	appURL, installed, image := "unknown", "unknown", "unknown"
-	if m.deployment != nil {
-		if m.deployment.AppURL != "" {
-			appURL = m.deployment.AppURL
-		}
-		if m.deployment.Image != "" {
-			image = m.deployment.Image
-		}
-		installed = m.deployment.InstalledAt.Format("2006-01-02")
-	}
-	fmt.Fprintf(&b, "  %s  %s\n", style.MenuUnselected.Render("Deployment"), appURL)
-	fmt.Fprintf(&b, "  %s   %s\n", style.MenuUnselected.Render("Installed"), installed)
-	fmt.Fprintf(&b, "  %s       %s\n", style.MenuUnselected.Render("Image"), image)
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("The update runs inside the mission console, right here."))
-	fmt.Fprintln(&b, style.Tagline.Render("Your existing configuration is preserved. Nothing is deleted."))
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Pull the latest Orbit and update this deployment"))
 	fmt.Fprintln(&b)
 
-	options := []string{"Update Orbit", "Cancel"}
-	for i, opt := range options {
-		if i == m.confirmSel {
-			fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render(opt))
-		} else {
-			fmt.Fprintln(&b, "  "+style.MenuUnselected.Render(opt))
-		}
+	identity := "no deployment details found"
+	if m.deployment != nil && m.deployment.AppURL != "" {
+		identity = displayHost(m.deployment.AppURL) + " · installed " + m.deployment.InstalledAt.Format("2006-01-02")
 	}
-	return m.frame(b.String())
+	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identity))
+	if image := m.deploymentImage(); image != "" {
+		fmt.Fprintln(&b, style.Tagline.Render(image))
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))
+	fmt.Fprintln(&b, style.MutedText.Render("Your existing configuration is preserved. Nothing is deleted."))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, []string{"Update Orbit", "Cancel"}, m.confirmSel)
+	return centreBlock(m.width, m.height, b.String())
+}
+
+// deploymentImage is the deployment's image reference without its
+// digest pin — the digest is engine bookkeeping, not something a
+// person scans a confirmation screen for.
+func (m UpdateModel) deploymentImage() string {
+	if m.deployment == nil || m.deployment.Image == "" {
+		return ""
+	}
+	image, _, _ := strings.Cut(m.deployment.Image, "@")
+	return image
 }
