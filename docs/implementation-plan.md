@@ -485,6 +485,31 @@ this: profile selection (Standard only, for now — AI/Full are honest
 config-collection screen at all, per the above); completion/failure
 based on `install.sh`'s own exit code.
 
+**v5 mission console (issue #73, layered on top without reversing #51).**
+The engine run now happens *inside* the TUI first: `internal/deploy.
+BuildEngineCommand` stages the same fetched `install.sh` but runs it
+`--plain --install|--update`, session-detached (`Setsid`) with stdout as
+a pipe, so orbit's engine event stream v0 (orbit `docs/engine-events.md`)
+renders natively in `internal/ui/console.go` — framed event log, phase-
+keyed stage bar (no percentage; the fill is the engine's own phase
+progression), elapsed clock. The detachment is what engages the engine's
+documented non-interactive contract: it can never prompt through the
+TUI, and with incomplete configuration it refuses before Compose
+(`reason=configuration-failure`), rolling the target back via its own
+file transaction (verified empirically against both orbit develop and
+main). That refusal is precisely where #51's handoff survives: the flow
+offers "Continue — guided configuration" and hands the real terminal to
+interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
+config field enters Go, ever. Outcomes are keyed off events plus exit
+codes, never scraped prose; a legacy engine (orbit main today) that
+emits no events has its output displayed verbatim and is judged by exit
+code alone, with the guided installer offered from the failure screen.
+Success concludes on `internal/ui/success.go`: the splash's scene with
+the wordmark in alive-green, the deployment URL in the identity slot,
+"Orbit achieved in Nm NNs" from the console's real clock, and
+Get into Orbit / Terminal / Menu. In-console config prompts stay out of
+scope until orbit#297's prompt protocol exists.
+
 **Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step
 up to the handoff; a live-matrix install-to-healthy-endpoint scenario
 passes on Linux (still open — no Docker/OIDC available in this working

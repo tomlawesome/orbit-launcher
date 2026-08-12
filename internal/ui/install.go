@@ -1,9 +1,7 @@
 package ui
 
 import (
-	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,83 +17,78 @@ const (
 	installStateUnavailableProfile
 	installStateConfirm
 	installStateRunning
-	installStateDone
-	installStateFailed
 )
 
-// InstallModel is the Install flow: profile choice, then a full
-// handoff of the real terminal to Orbit's own install.sh — see
-// design/mockups.html sections 03-08 and docs/implementation-plan.md
-// section 5 Wave 2. Only the Standard profile is wired to
-// internal/deploy; AI/Full are visible but honestly say they aren't
-// available yet rather than silently doing the wrong thing.
+// InstallModel is the Install flow: profile choice, confirmation, then
+// the mission console — the engine's event stream rendered natively
+// inside the TUI (see internal/ui/enginerun.go and design/mockups-v5.html
+// section 02). Only the Standard profile is wired; AI/Full are visible
+// but honestly say they aren't available yet rather than silently doing
+// the wrong thing.
 //
-// orbit-launcher deliberately never collects or writes Orbit's
-// configuration itself: install.sh's own scripts/configure.sh is the
-// single source of truth for what fields it needs and how to collect
-// them (including the OIDC client secret, which configure.sh only
-// ever reads from a real controlling terminal, by design). Requiring
-// this program to reimplement that field list would tie its
-// correctness to orbit's config schema, needing a recompile of
-// orbit-launcher every time that schema changes — see issue #51.
+// orbit-launcher still never collects or writes Orbit's configuration
+// itself (issue #51): the engine run cannot prompt by construction, and
+// when the engine refuses with its configuration-required signal, the
+// flow hands the real terminal to install.sh's own guided setup — the
+// single source of truth for what fields it needs — exactly as before.
 type InstallModel struct {
 	width, height int
 	state         installState
 	targetDir     string
+	version       string
 
 	profileSel int // 0 = Standard, 1 = AI, 2 = Full
 
-	installErr error
-	cleanup    func() error
+	run engineRun
 
-	// Overridable in tests so they don't need real network/terminal access.
-	prepareInstall func(ctx context.Context, targetDir string) (*exec.Cmd, func() error, error)
-	runHandoff     func(cmd *exec.Cmd) tea.Cmd
+	// Test seams, copied into the engine run at start; nil means real.
+	seams engineRunSeams
+}
+
+// engineRunSeams bundles the overridable dependencies tests inject.
+type engineRunSeams struct {
+	prepareEngine  prepareEngineFunc
+	prepareInstall prepareInstallFunc
+	runHandoff     runHandoffFunc
+	detect         detectFunc
+	now            nowFunc
+}
+
+func (r engineRun) withSeams(s engineRunSeams) engineRun {
+	r.prepareEngine = s.prepareEngine
+	r.prepareInstall = s.prepareInstall
+	r.runHandoff = s.runHandoff
+	r.detect = s.detect
+	r.now = s.now
+	return r
 }
 
 // NewInstallModel constructs the Install flow for targetDir.
-func NewInstallModel(targetDir string) InstallModel {
-	return InstallModel{
-		targetDir:      targetDir,
-		prepareInstall: defaultPrepareInstall,
-		runHandoff:     defaultRunHandoff,
-	}
+func NewInstallModel(targetDir, version string) InstallModel {
+	return InstallModel{targetDir: targetDir, version: version}
 }
+
+// Done, Succeeded, WantsMenu, SuccessURL and SuccessElapsed surface the
+// engine run's outcome to AppModel.
+func (m InstallModel) Outcome() flowOutcome { return outcomeOf(m.run) }
 
 // Init implements tea.Model.
 func (m InstallModel) Init() tea.Cmd { return nil }
 
 // Update implements tea.Model.
 func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+	if resized, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = resized.Width, resized.Height
+	}
 
-	case installPreparedMsg:
-		if msg.err != nil {
-			m.installErr = msg.err
-			m.state = installStateFailed
-			return m, nil
-		}
-		m.cleanup = msg.cleanup
-		return m, m.runHandoff(msg.cmd)
+	if m.state == installStateRunning {
+		var cmd tea.Cmd
+		m.run, cmd = m.run.update(msg)
+		return m, cmd
+	}
 
-	case installFinishedMsg:
-		if m.cleanup != nil {
-			m.cleanup()
-			m.cleanup = nil
-		}
-		if msg.err != nil {
-			m.installErr = msg.err
-			m.state = installStateFailed
-		} else {
-			m.state = installStateDone
-		}
-		return m, nil
-
-	case tea.KeyMsg:
-		return m.handleKey(msg)
+	if key, ok := msg.(tea.KeyMsg); ok {
+		return m.handleKey(key)
 	}
 	return m, nil
 }
@@ -111,8 +104,6 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case installStateConfirm:
 		return m.handleConfirmKey(msg)
-	case installStateDone, installStateFailed:
-		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -145,7 +136,10 @@ func (m InstallModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEnter:
 		m.state = installStateRunning
-		return m, prepareInstallCmd(m.prepareInstall, m.targetDir)
+		m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams)
+		var cmd tea.Cmd
+		m.run, cmd = m.run.start(m.width, m.height)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -163,11 +157,7 @@ func (m InstallModel) View() string {
 	case installStateConfirm:
 		return m.viewConfirm()
 	case installStateRunning:
-		return m.viewRunning()
-	case installStateDone:
-		return m.viewDone()
-	case installStateFailed:
-		return m.viewFailed()
+		return m.run.view(m.width, m.height)
 	}
 	return ""
 }
@@ -217,44 +207,14 @@ func (m InstallModel) viewConfirm() string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Render("Ready to install"))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "This hands control of your terminal to Orbit's own installer")
-	fmt.Fprintln(&b, "(install.sh) — it will guide you through any configuration it")
-	fmt.Fprintln(&b, "needs, pull the image, and start the containers. You'll return")
-	fmt.Fprintln(&b, "here automatically once it finishes.")
+	fmt.Fprintln(&b, "Orbit's own installer runs inside the mission console — you'll")
+	fmt.Fprintln(&b, "watch it validate, pull the image and start the containers right")
+	fmt.Fprintln(&b, "here. If it needs configuration only you can provide, it stops")
+	fmt.Fprintln(&b, "safely and hands you to its guided setup first.")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "  %s  %s\n", style.MenuUnselected.Render("Target"), m.targetDir)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render("Install now"))
 	fmt.Fprintln(&b, style.Tagline.Render("esc back"))
-	return m.frame(b.String())
-}
-
-func (m InstallModel) viewRunning() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Install"))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.WarmText.Render("⠋")+" Handing off to install.sh…")
-	return m.frame(b.String())
-}
-
-func (m InstallModel) viewDone() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolSuccess)+" "+lipgloss.NewStyle().Bold(true).Render("Orbit is ready"))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.AccentText.Render(m.targetDir))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
-	return m.frame(b.String())
-}
-
-func (m InstallModel) viewFailed() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Render("Installation stopped"))
-	fmt.Fprintln(&b)
-	if m.installErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(m.installErr.Error()))
-	}
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
 	return m.frame(b.String())
 }

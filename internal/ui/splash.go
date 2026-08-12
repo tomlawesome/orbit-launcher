@@ -302,125 +302,16 @@ func (m SplashModel) View() string {
 	contentLines := strings.Split(strings.TrimRight(m.renderCentreBlock(), "\n"), "\n")
 	bodyHeight := m.height - 1 // the last row is reserved for the footer
 	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
-	if topOffset < 0 {
-		topOffset = 0
-	}
 
-	// The sky and the content block are composited per row in styled
-	// segments: a content row keeps the sky visible in its margins
-	// (that's where the planetary systems live — they are placed clear
-	// of the centre column), and every segment is a whole Render() call,
-	// so no ANSI escape sequence is ever split mid-sequence.
-	sky := m.skyGrid(bodyHeight)
-	rows := make([]string, bodyHeight)
-	for y := 0; y < bodyHeight; y++ {
-		if i := y - topOffset; i >= 0 && i < len(contentLines) {
-			line := contentLines[i]
-			lineWidth := lipgloss.Width(line)
-			start := (m.width - lineWidth) / 2
-			if start < 0 {
-				start = 0
-			}
-			rows[y] = renderSkyCells(sky[y][:start]) + line + renderSkyCells(sky[y][min(start+lineWidth, m.width):])
-		} else {
-			rows[y] = renderSkyCells(sky[y])
-		}
-	}
-
+	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffset)
 	return strings.Join(rows, "\n") + "\n" + m.renderFooter()
-}
-
-// skyCell is one background cell: a glyph plus which style class draws
-// it. Class 0 is empty, 1 is a star; higher classes are planet kinds.
-type skyCell struct {
-	glyph rune
-	class int
-}
-
-var planetClassStyles = map[int]lipgloss.Style{
-	1: style.StarField,
-	2: style.PlanetIceText,
-	3: style.PlanetRoseText,
-	4: style.PlanetPaleText,
-	5: style.PlanetEmberText,
-}
-
-// skyGrid rasterises the current sky (stars then planets, planets on
-// top) into a cell grid.
-func (m SplashModel) skyGrid(height int) [][]skyCell {
-	grid := make([][]skyCell, height)
-	for y := range grid {
-		grid[y] = make([]skyCell, m.width)
-		for x := range grid[y] {
-			grid[y][x] = skyCell{glyph: ' '}
-		}
-	}
-	if !m.starReady {
-		return grid
-	}
-	for _, c := range m.star.StarCells() {
-		if c.Y >= 0 && c.Y < height {
-			grid[c.Y][c.X] = skyCell{glyph: c.Glyph, class: 1}
-		}
-	}
-	for _, p := range m.star.Planets() {
-		if p.Y >= 0 && p.Y < height {
-			grid[p.Y][p.X] = skyCell{glyph: p.Glyph, class: 2 + int(p.Kind)}
-		}
-	}
-	return grid
-}
-
-// renderSkyCells renders a run of sky cells, batching consecutive cells
-// of the same class into a single Render() call.
-func renderSkyCells(cells []skyCell) string {
-	if len(cells) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	runStart := 0
-	flush := func(end int) {
-		if end == runStart {
-			return
-		}
-		chunk := make([]rune, 0, end-runStart)
-		for _, c := range cells[runStart:end] {
-			chunk = append(chunk, c.glyph)
-		}
-		if s, ok := planetClassStyles[cells[runStart].class]; ok {
-			b.WriteString(s.Render(string(chunk)))
-		} else {
-			b.WriteString(string(chunk))
-		}
-		runStart = end
-	}
-	for i := 1; i < len(cells); i++ {
-		if cells[i].class != cells[runStart].class {
-			flush(i)
-		}
-	}
-	flush(len(cells))
-	return b.String()
 }
 
 // renderFooter builds the last row: the keybind hint centred, the
 // version bottom-right. The hint yields ground rather than colliding on
 // narrow terminals, and the version disappears before the hint does.
 func (m SplashModel) renderFooter() string {
-	const hint = "↑↓ navigate · ↵ select · esc quit"
-	hintWidth := lipgloss.Width(hint)
-	verWidth := lipgloss.Width(m.version)
-
-	if m.width < hintWidth {
-		return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, style.Tagline.Render(hint))
-	}
-	pad := (m.width - hintWidth) / 2
-	row := strings.Repeat(" ", pad) + style.Tagline.Render(hint)
-	right := m.width - pad - hintWidth
-	if m.version != "" && right >= verWidth+2 {
-		row += strings.Repeat(" ", right-verWidth-1) + style.Tagline.Render(m.version) + " "
-	}
-	return row
+	return footerRow(m.width, "", "↑↓ navigate · ↵ select · esc quit", m.version)
 }
 
 func (m SplashModel) renderCentreBlock() string {
