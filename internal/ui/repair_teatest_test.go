@@ -26,16 +26,18 @@ func TestRepairModel_TeaTest_DiagnosisRendersAndReturnsToMenu(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
 	m.prepare = fakeRepairStream(`
 echo 'finding class=managed-file-missing target=compose-file severity=fail'
+echo 'finding class=database-credential-mismatch target=database severity=fail'
 echo 'finding class=secret-missing target=session-secret severity=warn'
-echo 'diagnosis result=failed checked=12 skipped=1'
+echo 'diagnosis result=failed checked=15 skipped=0'
 exit 4`)
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Problems found")) &&
 			bytes.Contains(out, []byte("docker-compose.yml")) &&
+			bytes.Contains(out, []byte("rejects the stored credentials")) &&
 			bytes.Contains(out, []byte("session-secret secret")) &&
-			bytes.Contains(out, []byte("12 checked · 1 skipped")) &&
+			bytes.Contains(out, []byte("15 checked · 0 skipped")) &&
 			bytes.Contains(out, []byte("repair actions arrive with a later Orbit release"))
 	}, teatest.WithDuration(5*time.Second))
 
