@@ -419,23 +419,12 @@ func (r engineRun) viewFailed(width, height int) string {
 	return centreBlock(width, height, b.String())
 }
 
-// writeStackedMenu writes menu rows padded to a common width, so the
-// per-line centring downstream gives them a common left edge — the
-// splash's stacked-menu grammar.
+// writeStackedMenu writes menu rows in the centred grammar: each label
+// centres on the screen axis (via the per-line centring downstream),
+// the selected row's caret riding two cells left of its label.
 func writeStackedMenu(b *strings.Builder, items []string, selected int) {
-	widest := 0
-	for _, label := range items {
-		if len(label) > widest {
-			widest = len(label)
-		}
-	}
 	for i, label := range items {
-		pad := strings.Repeat(" ", widest-len(label))
-		if i == selected {
-			fmt.Fprintln(b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render(label)+pad)
-		} else {
-			fmt.Fprintln(b, "  "+style.MenuUnselected.Render(label)+pad)
-		}
+		fmt.Fprintln(b, menuRow(label, i == selected))
 	}
 }
 

@@ -20,6 +20,11 @@ type Deployment struct {
 	Profiles    []string
 	Image       string
 	InstalledAt time.Time
+
+	// Version is orbit's own applied version (ORBIT_CONFIG_APPLIED_VERSION,
+	// e.g. "v1.2.0"), recorded by the installer's configuration
+	// migration — shown in the splash's version foot.
+	Version string
 }
 
 // Detect looks for a recognised Orbit deployment in targetDir. It returns
@@ -59,6 +64,8 @@ func Detect(targetDir string) (*Deployment, error) {
 			d.Image = value
 		case "COMPOSE_PROFILES":
 			d.Profiles = splitProfiles(value)
+		case "ORBIT_CONFIG_APPLIED_VERSION":
+			d.Version = strings.TrimSpace(value)
 		}
 	}
 	if err := scanner.Err(); err != nil {

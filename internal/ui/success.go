@@ -7,24 +7,26 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // SuccessModel is the quiet hero screen after a completed install or
-// update (design/mockups-v5.html section 03, handover 06): the splash's
-// own scene — sky, planetary systems, pixel wordmark — with the
-// wordmark and mark in alive-green, the deployment URL in the splash's
-// identity slot as the hero line, and a stacked menu in the splash's
-// caret grammar. The footer carries "Orbit achieved in Nm NNs" (the
-// mission console's real clock) left and the version right.
+// update (design/mockups-v6-starchart.html section 03): the splash's
+// own scene, the wordmark in plain ink, the ⟡ mark alone carrying
+// alive-green, the deployment URL as the one gold object on screen, and
+// the centred stacked menu. The foot is the achieved line, centred, and
+// nothing else. On entry the binary pair's lead drifts once to a wider,
+// calmer orbit — the restored-orbit beat.
 type SuccessModel struct {
 	width, height int
 	star          starfield.Model
 	starReady     bool
 	noAnimation   bool
+
+	// driftTick drives the one-shot restored-orbit beat.
+	driftTick int
 
 	appURL  string
 	elapsed time.Duration
@@ -76,6 +78,18 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if m.starReady {
 			m.star = m.star.Advance()
+			// The restored-orbit beat: after a beat of stillness the
+			// lead body eases outward over ~1.2s, then stays. One shot.
+			m.driftTick++
+			const driftStart, driftLen = 8, 10
+			drift := float64(m.driftTick-driftStart) / driftLen
+			if drift < 0 {
+				drift = 0
+			}
+			if drift > 1 {
+				drift = 1
+			}
+			m.star.Drift = drift
 		}
 		if m.noAnimation {
 			return m, nil
@@ -155,7 +169,7 @@ func (m SuccessModel) View() string {
 		return ""
 	}
 
-	contentLines := strings.Split(strings.TrimRight(m.renderCentreBlock(), "\n"), "\n")
+	contentLines := m.centreBlockLines()
 	bodyHeight := m.height - 1
 	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
 
@@ -165,32 +179,32 @@ func (m SuccessModel) View() string {
 	if m.elapsed > 0 {
 		achieved = "Orbit achieved in " + formatAchieved(m.elapsed)
 	}
-	return strings.Join(rows, "\n") + "\n" + footerRow(m.width, achieved, "", m.version)
+	return strings.Join(rows, "\n") + "\n" + footerRow(m.width, achieved)
 }
 
-func (m SuccessModel) renderCentreBlock() string {
-	var b strings.Builder
+func (m SuccessModel) centreBlockLines() []string {
+	var lines []string
 
-	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	for _, row := range style.BigText("ORBIT") {
-		fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Success).Render(row))
-	}
+	// The mark alone carries alive-green; the wordmark is ink because
+	// it is the wordmark — states outrank brand, brand never shouts.
+	lines = append(lines, style.SuccessText.Render(style.SymbolMark))
+	lines = append(lines, "")
+	lines = append(lines, style.Wordmark("ORBIT"))
 
-	// The identity slot: the deployment URL is the hero line, with the
-	// status word beneath — exactly where the splash puts its FQDN and
-	// state, so success reads as the same being, now alive.
+	// The identity slot, tight beneath: the deployment URL is the one
+	// gold object on this screen, with the status word under it.
 	if m.appURL != "" {
-		fmt.Fprintln(&b, style.AccentText.Render(m.appURL))
+		lines = append(lines, style.AccentText.Render(m.appURL))
 	}
-	fmt.Fprintln(&b, style.SuccessText.Render("alive"))
-	fmt.Fprintln(&b)
+	lines = append(lines, style.SuccessText.Render("alive"))
+	lines = append(lines, "")
 
-	writeStackedMenu(&b, successMenu, m.selected)
+	for i, label := range successMenu {
+		lines = append(lines, menuRow(label, i == m.selected))
+	}
 	if m.openFailed {
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, style.Tagline.Render("no browser here — copy the URL above"))
+		lines = append(lines, "")
+		lines = append(lines, style.Tagline.Render("no browser here — copy the URL above"))
 	}
-
-	return b.String()
+	return lines
 }
