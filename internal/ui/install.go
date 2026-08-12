@@ -40,6 +40,7 @@ type InstallModel struct {
 	version       string
 
 	profileSel int // 0 = Standard, 1 = AI, 2 = Full
+	confirmSel int // 0 = Install now, 1 = Back
 
 	run engineRun
 
@@ -110,7 +111,12 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case installStateProfile:
 		return m.handleProfileKey(msg)
 	case installStateUnavailableProfile:
-		return m, tea.Quit
+		// The only way out of the honest dead end is back to the
+		// choice that led in.
+		if msg.Type == tea.KeyEnter || msg.Type == tea.KeyEsc {
+			m.state = installStateProfile
+		}
+		return m, nil
 	case installStateConfirm:
 		return m.handleConfirmKey(msg)
 	}
@@ -133,6 +139,7 @@ func (m InstallModel) handleProfileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state = installStateConfirm
+		m.confirmSel = 0
 		return m, nil
 	}
 	return m, nil
@@ -143,7 +150,14 @@ func (m InstallModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.state = installStateProfile
 		return m, nil
+	case tea.KeyUp, tea.KeyDown:
+		m.confirmSel = 1 - m.confirmSel
+		return m, nil
 	case tea.KeyEnter:
+		if m.confirmSel == 1 {
+			m.state = installStateProfile
+			return m, nil
+		}
 		m.state = installStateRunning
 		m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams)
 		var cmd tea.Cmd
@@ -171,59 +185,56 @@ func (m InstallModel) View() string {
 	return ""
 }
 
-func (m InstallModel) frame(body string) string {
-	return lipgloss.NewStyle().Padding(1, 2).Render(body)
-}
+// The flow screens speak the same starchart grammar as every other
+// screen (design/DECISIONS.md): centred block, ⟡ mark and bold title,
+// muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Install"))
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Render("Choose a deployment profile"))
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Choose a deployment profile"))
 	fmt.Fprintln(&b)
 
 	profiles := []struct{ name, desc string }{
-		{"Standard", "Mail, documents, calendar"},
-		{"AI", "Adds a local model for search & suggestions"},
+		{"Standard", "mail, documents, calendar"},
+		{"AI", "adds a local model for search & suggestions"},
 		{"Full", "AI features plus every optional service"},
 	}
 	for i, p := range profiles {
-		if i == m.profileSel {
-			fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render(p.name)+"  "+style.Tagline.Render(p.desc))
-		} else {
-			fmt.Fprintln(&b, "  "+style.MenuUnselected.Render(p.name)+"  "+style.Tagline.Render(p.desc))
-		}
+		fmt.Fprintln(&b, menuRow(p.name+"  ·  "+p.desc, i == m.profileSel))
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("Only Standard is wired up so far — AI and Full are visible but not yet available."))
-	return m.frame(b.String())
+	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
+	return centreBlock(m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Render("This profile isn't available yet"))
+	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "AI and Full profiles need local-model configuration that hasn't")
-	fmt.Fprintln(&b, "been built yet. Only Standard is wired up so far.")
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This profile isn't available yet"))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
-	return m.frame(b.String())
+	fmt.Fprintln(&b, style.MutedText.Render("AI and Full need local-model configuration that"))
+	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, []string{"Back"}, 0)
+	return centreBlock(m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Install"))
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Render("Ready to install"))
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Ready to install"))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Orbit's own installer runs inside the mission console — you'll")
-	fmt.Fprintln(&b, "watch it validate, pull the image and start the containers right")
-	fmt.Fprintln(&b, "here. If it needs configuration only you can provide, it stops")
-	fmt.Fprintln(&b, "safely and hands you to its guided setup first.")
+	fmt.Fprintln(&b, style.MutedText.Render("Orbit's own installer runs inside the mission console —"))
+	fmt.Fprintln(&b, style.MutedText.Render("watch it validate, pull the image, and start the containers"))
+	fmt.Fprintln(&b, style.MutedText.Render("right here. If it needs configuration only you can provide,"))
+	fmt.Fprintln(&b, style.MutedText.Render("it stops safely and asks first."))
 	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "  %s  %s\n", style.MenuUnselected.Render("Target"), m.targetDir)
+	fmt.Fprintln(&b, style.Tagline.Render(m.targetDir))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render("Install now"))
-	fmt.Fprintln(&b, style.Tagline.Render("esc back"))
-	return m.frame(b.String())
+	writeStackedMenu(&b, []string{"Install now", "Back"}, m.confirmSel)
+	return centreBlock(m.width, m.height, b.String())
 }
