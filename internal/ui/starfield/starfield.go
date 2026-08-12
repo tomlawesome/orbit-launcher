@@ -53,10 +53,11 @@ type Cell struct {
 type PlanetKind int
 
 const (
-	PlanetIce PlanetKind = iota
-	PlanetRose
+	PlanetLead PlanetKind = iota // the binary pair's gold lead
+	PlanetPartner
 	PlanetPale
 	PlanetEmber
+	PlanetTrail // the restored-orbit drift's fading wake
 )
 
 // Planet is one planetary-system body at a terminal cell.
@@ -71,6 +72,13 @@ type Model struct {
 	Width, Height int
 	Tick          int
 	Stars         []Star
+
+	// Drift widens the binary pair's orbit from its resting ellipse
+	// (0) to the calmer, wider one (1) — the restored-orbit beat the
+	// success screen plays once (design/mockups-v6-starchart.html,
+	// after orbit's POL-7). While mid-drift, the lead body trails a
+	// short fading wake.
+	Drift float64
 }
 
 // density is stars per 100 terminal cells — deliberately sparse; the
@@ -181,12 +189,26 @@ func (m Model) Planets() []Planet {
 		}
 	}
 
-	// Binary pair: two bodies opposite each other on one ellipse.
+	// Binary pair: two bodies opposite each other on one ellipse. The
+	// lead's ellipse widens with Drift; its partner keeps the resting
+	// orbit — a completed thing moves to a calmer one.
 	bx, by := float64(m.Width)*0.78, float64(m.Height)*0.20
 	ba := 2 * math.Pi * t / 34
-	brx, bry := 6*scale, 3*scale
-	put(bx+brx*math.Cos(ba), by+bry*math.Sin(ba), '●', PlanetIce)
-	put(bx+brx*math.Cos(ba+math.Pi), by+bry*math.Sin(ba+math.Pi), '●', PlanetRose)
+	drift := math.Max(0, math.Min(1, m.Drift))
+	brx, bry := (6+3*drift)*scale, (3+1.5*drift)*scale
+	if drift > 0 && drift < 1 {
+		for k := 1; k <= 3; k++ {
+			trailDrift := drift - 0.12*float64(k)
+			if trailDrift < 0 {
+				trailDrift = 0
+			}
+			ta := ba - 0.12*float64(k)
+			trx, try := (6+3*trailDrift)*scale, (3+1.5*trailDrift)*scale
+			put(bx+trx*math.Cos(ta), by+try*math.Sin(ta), '·', PlanetTrail)
+		}
+	}
+	put(bx+brx*math.Cos(ba), by+bry*math.Sin(ba), '●', PlanetLead)
+	put(bx+6*scale*math.Cos(ba+math.Pi), by+3*scale*math.Sin(ba+math.Pi), '●', PlanetPartner)
 
 	// Still planet with a circling moon.
 	px, py := float64(m.Width)*0.16, float64(m.Height)*0.78

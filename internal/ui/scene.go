@@ -24,10 +24,11 @@ type skyCell struct {
 
 var planetClassStyles = map[int]lipgloss.Style{
 	1: style.StarField,
-	2: style.PlanetIceText,
-	3: style.PlanetRoseText,
+	2: style.PlanetLeadText,
+	3: style.PlanetPartnerText,
 	4: style.PlanetPaleText,
 	5: style.PlanetEmberText,
+	6: style.PlanetTrailText,
 }
 
 // skyGrid rasterises the current sky (stars then planets, planets on
@@ -115,37 +116,26 @@ func compositeScene(star starfield.Model, ready bool, width, bodyHeight int, con
 	return rows
 }
 
-// footerRow builds the screen's last row: an optional centred segment,
-// an optional left segment and an optional right segment, all in the
-// faint footer style. The centre keeps its place; left and right yield
-// (disappear) rather than collide on narrow terminals.
-func footerRow(width int, left, centre, right string) string {
-	leftW, centreW, rightW := lipgloss.Width(left), lipgloss.Width(centre), lipgloss.Width(right)
+// footerRow builds the screen's last row: a single centred faint line —
+// the whole footer grammar. There are no hints and no corner text
+// anywhere, by decision (design/mockups-v6-starchart.html): the splash
+// carries version numbers here, the success screen its achieved line,
+// nothing else exists.
+func footerRow(width int, text string) string {
+	if text == "" {
+		return ""
+	}
+	return lipgloss.PlaceHorizontal(width, lipgloss.Center, style.Tagline.Render(text))
+}
 
-	if centre != "" {
-		if width < centreW {
-			return lipgloss.PlaceHorizontal(width, lipgloss.Center, style.Tagline.Render(centre))
-		}
-		pad := (width - centreW) / 2
-		row := strings.Repeat(" ", pad) + style.Tagline.Render(centre)
-		rightGap := width - pad - centreW
-		if right != "" && rightGap >= rightW+2 {
-			row += strings.Repeat(" ", rightGap-rightW-1) + style.Tagline.Render(right) + " "
-		}
-		if left != "" && pad >= leftW+2 {
-			row = " " + style.Tagline.Render(left) + strings.Repeat(" ", pad-leftW-1) + strings.TrimPrefix(row, strings.Repeat(" ", pad))
-		}
-		return row
+// menuRow renders one stacked-menu row for the centred-menu grammar:
+// each label centres on the screen axis, and the selected row's caret
+// rides two cells left of its label — achieved by padding the selected
+// row's right edge so per-line centring lands the label itself at
+// centre (design/mockups-v6-starchart.html).
+func menuRow(label string, selected bool) string {
+	if selected {
+		return style.MenuCaret.Render(style.SymbolSelected) + " " + style.MenuSelected.Render(label) + "  "
 	}
-
-	var b strings.Builder
-	used := 0
-	if left != "" && width >= leftW+1 {
-		b.WriteString(" " + style.Tagline.Render(left))
-		used = leftW + 1
-	}
-	if right != "" && width >= used+rightW+2 {
-		b.WriteString(strings.Repeat(" ", width-used-rightW-1) + style.Tagline.Render(right) + " ")
-	}
-	return b.String()
+	return style.MenuUnselected.Render(label)
 }

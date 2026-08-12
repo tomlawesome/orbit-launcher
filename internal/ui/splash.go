@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -81,10 +80,86 @@ func tick() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+// The arrival (design/mockups-v6-starchart.html panel 04, after orbit's
+// POL-1): Get, Into and Orbit fade at the screen's vertical centre; the
+// third word is the wordmark, which takes a gold sweep and slides up to
+// its resting row; then the identity and menu fade in and the foot
+// arrives last. All timings in seconds of tick-time (120ms ticks). Any
+// key skips; NO_ANIMATION never plays it; it runs once per process.
+const (
+	introGetStart   = 0.0
+	introIntoStart  = 1.7
+	introOrbitStart = 3.4
+	introSweepStart = 3.9
+	introSweepLen   = 2.0
+	introSlideStart = 5.9
+	introSlideStep  = 0.2 // seconds per row of upward slide
+	introSettle     = 6.7
+	introMenuStart  = 7.0
+	introMenuStep   = 0.15
+	introMenuFade   = 0.3
+	introFootAt     = 8.2
+	introEnd        = 8.6
+)
+
+// wordFadeIn/hold/out shape the Get and Into envelopes.
+const (
+	wordFadeIn  = 0.5
+	wordHold    = 0.6
+	wordFadeOut = 0.4
+)
+
+// inkRamp is the fade ladder from near-background to full ink — colour
+// steps are the terminal-honest way to fade (glyphs never move; only
+// brightness changes). Index by alpha.
+var inkRamp = []lipgloss.Style{
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#232837")),
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#3c4557")),
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7488")),
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#a9b1c1")),
+	lipgloss.NewStyle().Bold(true).Foreground(style.Text),
+}
+
+// sweepRamp lifts a wordmark cell toward gold-white as the sweep
+// highlight passes it.
+var sweepRamp = []lipgloss.Style{
+	lipgloss.NewStyle().Bold(true).Foreground(style.Text),
+	lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f2e7c8")),
+	lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffeec4")),
+}
+
+func rampStyle(ramp []lipgloss.Style, a float64) lipgloss.Style {
+	if a < 0 {
+		a = 0
+	}
+	if a > 1 {
+		a = 1
+	}
+	i := int(a * float64(len(ramp)-1) * 0.999)
+	return ramp[i]
+}
+
+// envelope is a fade-in / hold / fade-out alpha curve starting at start.
+func envelope(s, start float64) float64 {
+	u := s - start
+	switch {
+	case u < 0:
+		return 0
+	case u < wordFadeIn:
+		return u / wordFadeIn
+	case u < wordFadeIn+wordHold:
+		return 1
+	case u < wordFadeIn+wordHold+wordFadeOut:
+		return 1 - (u-wordFadeIn-wordHold)/wordFadeOut
+	default:
+		return 0
+	}
+}
+
 // SplashModel is the entry-point screen: the identity block (⟡ mark,
-// big ORBIT wordmark, FQDN and status word) over the rotating starfield
-// and its planetary systems, with the main menu beneath
-// (design/mockups-v5.html).
+// letter-spaced ORBIT wordmark, FQDN and status word) over the rotating
+// starfield and its planetary systems, with the main menu beneath and a
+// single centred version foot (design/mockups-v6-starchart.html).
 type SplashModel struct {
 	width, height int
 	selected      int
@@ -93,6 +168,12 @@ type SplashModel struct {
 	quitting      bool
 	noAnimation   bool
 	updateNotice  string
+
+	// The arrival plays once per process; introTick advances with the
+	// shared UI tick and introDone latches when it finishes (or is
+	// skipped by any key, or never starts under NO_ANIMATION).
+	introTick int
+	introDone bool
 
 	// Identity — populated by AppModel.WithDeploymentStatus before the
 	// program starts, so preselection is deterministic (no race between
@@ -106,9 +187,11 @@ type SplashModel struct {
 	// change what's displayed, but it never fights the user's hands.
 	userNavigated bool
 
-	// version is shown bottom-right, e.g. "v0.1.0" — set via
-	// AppModel.WithVersion; empty renders nothing.
-	version string
+	// version is the launcher's own version ("v0.1.0", "dev");
+	// orbitVersion is the detected deployment's applied orbit version.
+	// Both render in the single centred foot; orbitVersion may be empty.
+	version      string
+	orbitVersion string
 
 	// Chosen is set to the selected MenuItem's Label once Enter picks one,
 	// and stays "" while the user is still navigating or after quitting
@@ -137,14 +220,13 @@ func NewSplashModel() SplashModel {
 }
 
 // NewSplashModelNoAnimation constructs a splash/main-menu screen frozen at
-// its initial frame: no tick command, so the sky never advances.
-// Two real, independent reasons to want this, not just one convenience
-// hack: a reduced-motion accessibility mode for a screen that otherwise
-// animates continuously, and deterministic screenshots for visual
-// regression (see test/visual) — an always-turning sky would otherwise
-// make every baseline comparison flaky by construction.
+// its initial frame: no tick command, so the sky never advances and the
+// arrival never plays. Two real, independent reasons to want this, not
+// just one convenience hack: a reduced-motion accessibility mode for a
+// screen that otherwise animates continuously, and deterministic
+// screenshots for visual regression (see test/visual).
 func NewSplashModelNoAnimation() SplashModel {
-	return SplashModel{noAnimation: true, state: stateDormant}
+	return SplashModel{noAnimation: true, state: stateDormant, introDone: true}
 }
 
 // Init implements tea.Model.
@@ -193,6 +275,11 @@ func (m SplashModel) probeHealthCmd() tea.Cmd {
 	}
 }
 
+// introSeconds converts the intro's tick counter to seconds.
+func (m SplashModel) introSeconds() float64 {
+	return float64(m.introTick) * tickInterval.Seconds()
+}
+
 // Update implements tea.Model.
 func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -205,6 +292,12 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if m.starReady {
 			m.star = m.star.Advance()
+		}
+		if !m.introDone {
+			m.introTick++
+			if m.introSeconds() >= introEnd {
+				m.introDone = true
+			}
 		}
 		return m, tick()
 
@@ -237,7 +330,25 @@ func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC, tea.KeyEsc:
 		m.quitting = true
 		return m, tea.Quit
+	}
+	if msg.Type == tea.KeyRunes {
+		for _, r := range msg.Runes {
+			if r == 'q' {
+				m.quitting = true
+				return m, tea.Quit
+			}
+		}
+	}
 
+	// Any other key during the arrival skips straight to the lit room —
+	// nobody should ever wait for a splash — and is swallowed, so a
+	// hurried Enter doesn't also select a menu item.
+	if !m.introDone {
+		m.introDone = true
+		return m, nil
+	}
+
+	switch msg.Type {
 	case tea.KeyUp:
 		m.userNavigated = true
 		m.selected = (m.selected - 1 + len(MainMenu)) % len(MainMenu)
@@ -266,11 +377,6 @@ func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				}
 			}
-			switch r {
-			case 'q':
-				m.quitting = true
-				return m, tea.Quit
-			}
 		}
 	}
 
@@ -278,7 +384,8 @@ func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // markStyle returns the ⟡ mark's style for the current state — the mark
-// carries the deployment's state colour (design/mockups-v5.html).
+// carries the deployment's state colour; dormant wears the gold accent
+// (design/mockups-v6-starchart.html).
 func (m SplashModel) markStyle() lipgloss.Style {
 	switch m.state {
 	case stateAlive:
@@ -290,6 +397,20 @@ func (m SplashModel) markStyle() lipgloss.Style {
 	}
 }
 
+// footText is the splash's whole foot: the launcher's version, plus the
+// deployment's orbit version once one is known.
+func (m SplashModel) footText() string {
+	launcher := m.version
+	if launcher == "" {
+		launcher = "dev"
+	}
+	text := "orbit-launcher " + launcher
+	if m.orbitVersion != "" {
+		text += " · orbit " + m.orbitVersion
+	}
+	return text
+}
+
 // View implements tea.Model.
 func (m SplashModel) View() string {
 	if m.quitting {
@@ -298,70 +419,177 @@ func (m SplashModel) View() string {
 	if m.width == 0 {
 		return ""
 	}
+	if !m.introDone {
+		return m.viewIntro()
+	}
 
-	contentLines := strings.Split(strings.TrimRight(m.renderCentreBlock(), "\n"), "\n")
-	bodyHeight := m.height - 1 // the last row is reserved for the footer
+	contentLines := m.centreBlockLines()
+	bodyHeight := m.height - 1 // the last row is reserved for the foot
 	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
 
 	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffset)
-	return strings.Join(rows, "\n") + "\n" + m.renderFooter()
+	return strings.Join(rows, "\n") + "\n" + footerRow(m.width, m.footText())
 }
 
-// renderFooter builds the last row: the keybind hint centred, the
-// version bottom-right. The hint yields ground rather than colliding on
-// narrow terminals, and the version disappears before the hint does.
-func (m SplashModel) renderFooter() string {
-	return footerRow(m.width, "", "↑↓ navigate · ↵ select · esc quit", m.version)
-}
+// centreBlockLines builds the settled centre block: mark, blank,
+// wordmark, identity tight beneath it, optional update notice, blank,
+// then the menu in the centred grammar.
+func (m SplashModel) centreBlockLines() []string {
+	var lines []string
 
-func (m SplashModel) renderCentreBlock() string {
-	var b strings.Builder
+	lines = append(lines, m.markStyle().Render(style.SymbolMark))
+	lines = append(lines, "")
+	lines = append(lines, style.Wordmark("ORBIT"))
 
-	fmt.Fprintln(&b, m.markStyle().Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	for _, row := range style.BigText("ORBIT") {
-		fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(row))
-	}
-
-	// The identity block replaces the old static tagline: who this
-	// deployment is (FQDN), and how it is (status word, in its state
-	// colour). With no deployment there is only "dormant"; with an
-	// unresolved or disabled probe there is only the FQDN — the status
-	// word is never a guess (design/mockups-v5.html section 01).
+	// The identity block sits directly beneath the wordmark: FQDN then
+	// status word, no floating gap. With no deployment there is only
+	// "dormant"; with an unresolved or disabled probe only the FQDN —
+	// the status word is never a guess.
 	switch m.state {
 	case stateDormant:
-		fmt.Fprintln(&b, style.Tagline.Render("dormant"))
+		lines = append(lines, style.Tagline.Render("dormant"))
 	case stateUnknown:
-		fmt.Fprintln(&b, style.MutedText.Render(m.fqdn))
+		lines = append(lines, style.MutedText.Render(m.fqdn))
 	case stateAlive:
-		fmt.Fprintln(&b, style.MutedText.Render(m.fqdn))
-		fmt.Fprintln(&b, style.SuccessText.Render("alive"))
+		lines = append(lines, style.MutedText.Render(m.fqdn))
+		lines = append(lines, style.SuccessText.Render("alive"))
 	case stateDegraded:
-		fmt.Fprintln(&b, style.MutedText.Render(m.fqdn))
-		fmt.Fprintln(&b, style.DegradedText.Render("degraded"))
+		lines = append(lines, style.MutedText.Render(m.fqdn))
+		lines = append(lines, style.DegradedText.Render("degraded"))
 	}
 	if m.updateNotice != "" {
-		fmt.Fprintln(&b, style.WarmText.Render("update available: "+m.updateNotice))
+		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
 	}
-	fmt.Fprintln(&b)
+	lines = append(lines, "")
 
 	for i, item := range MainMenu {
 		if item.Gap {
-			fmt.Fprintln(&b)
+			lines = append(lines, "")
 		}
-		if i == m.selected {
-			fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render(item.Label))
-		} else {
-			fmt.Fprintln(&b, "  "+style.MenuUnselected.Render(item.Label))
+		lines = append(lines, menuRow(item.Label, i == m.selected))
+	}
+	return lines
+}
+
+// viewIntro renders the arrival. Content is assembled as a full-height
+// line list (composited at offset 0) so words can sit at the true
+// vertical centre and the wordmark can slide to exactly the row the
+// settled view will hold it at — no jump at the handover.
+func (m SplashModel) viewIntro() string {
+	bodyHeight := m.height - 1
+	s := m.introSeconds()
+
+	settledLines := m.centreBlockLines()
+	settledTop := int(0.42 * float64(bodyHeight-len(settledLines)))
+	if settledTop < 0 {
+		settledTop = 0
+	}
+	wordmarkRest := settledTop + 2 // mark, blank, wordmark
+	centreRow := bodyHeight/2 - 1
+	if centreRow < 0 {
+		centreRow = 0
+	}
+
+	lines := make([]string, bodyHeight)
+
+	if a := envelope(s, introGetStart); a > 0.06 {
+		lines[centreRow] = rampStyle(inkRamp, a).Render("Get")
+	}
+	if a := envelope(s, introIntoStart); a > 0.06 {
+		lines[centreRow] = rampStyle(inkRamp, a).Render("Into")
+	}
+
+	if s >= introOrbitStart {
+		fade := (s - introOrbitStart) / 0.5
+		row := centreRow
+		if s >= introSlideStart {
+			up := int((s - introSlideStart) / introSlideStep)
+			row = centreRow - up
+			if row < wordmarkRest {
+				row = wordmarkRest
+			}
+		}
+		if row >= 0 && row < bodyHeight {
+			lines[row] = m.introWordmark(fade, s)
 		}
 	}
 
+	if s >= introSettle {
+		// The mark and identity are simply there; the menu fades in one
+		// item at a time, top to bottom.
+		if settledTop < bodyHeight {
+			lines[settledTop] = m.markStyle().Render(style.SymbolMark)
+		}
+		identity := settledLines[3 : len(settledLines)-menuLineCount()-1]
+		for i, l := range identity {
+			if r := settledTop + 3 + i; r < bodyHeight {
+				lines[r] = l
+			}
+		}
+		menuTop := settledTop + len(settledLines) - menuLineCount()
+		item := 0
+		for i, mi := range MainMenu {
+			r := menuTop + item
+			if mi.Gap {
+				item++
+				r++
+			}
+			a := (s - introMenuStart - float64(i)*introMenuStep) / introMenuFade
+			if a > 0.06 && r >= 0 && r < bodyHeight {
+				if a >= 1 {
+					lines[r] = menuRow(mi.Label, i == m.selected)
+				} else {
+					lines[r] = rampStyle(inkRamp[:4], a).Render(mi.Label)
+				}
+			}
+			item++
+		}
+	}
+
+	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, lines, 0)
+	foot := ""
+	if s >= introFootAt {
+		foot = footerRow(m.width, m.footText())
+	}
+	return strings.Join(rows, "\n") + "\n" + foot
+}
+
+// introWordmark renders the letter-spaced wordmark mid-arrival: fading
+// in, then lifted cell by cell as the gold-white sweep crosses it.
+func (m SplashModel) introWordmark(fade, s float64) string {
+	word := "O R B I T"
+	if fade < 1 {
+		return rampStyle(inkRamp, fade).Render(word)
+	}
+	sweep := (s - introSweepStart) / introSweepLen
+	if sweep < 0 || sweep > 1 {
+		return inkRamp[len(inkRamp)-1].Render(word)
+	}
+	pos := sweep * float64(len(word))
+	var b strings.Builder
+	for i, r := range word {
+		if r == ' ' {
+			b.WriteRune(' ')
+			continue
+		}
+		d := pos - float64(i)
+		if d < 0 {
+			d = -d
+		}
+		lift := 1 - d/2.2
+		b.WriteString(rampStyle(sweepRamp, lift).Render(string(r)))
+	}
 	return b.String()
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// menuLineCount is the menu's row count including its one gap line.
+func menuLineCount() int {
+	n := 0
+	for _, item := range MainMenu {
+		if item.Gap {
+			n++
+		}
+		n++
 	}
-	return b
+	return n
 }

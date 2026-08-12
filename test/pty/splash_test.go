@@ -6,8 +6,6 @@
 package pty
 
 import (
-	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
-
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,6 +83,17 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 	return console, cmd
 }
 
+// skipArrival sends one benign key: any key skips the splash's arrival
+// animation and is swallowed, putting the lit room on screen for the
+// assertions that follow — the arrival itself is covered by internal/ui's
+// own unit tests.
+func skipArrival(t *testing.T, console *expect.Console) {
+	t.Helper()
+	if _, err := console.Send("s"); err != nil {
+		t.Fatalf("send skip key: %v", err)
+	}
+}
+
 func waitForExit(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 
@@ -105,10 +114,10 @@ func waitForExit(t *testing.T, cmd *exec.Cmd) {
 func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
 	binPath := buildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
+	skipArrival(t, console)
 
-	// The wordmark is the half-block pixel rendering of ORBIT — assert on
-	// its deterministic top row (see style.BigText).
-	if _, err := console.ExpectString(style.BigText("ORBIT")[0]); err != nil {
+	// The wordmark is the letter-spaced normal-size ORBIT.
+	if _, err := console.ExpectString("O R B I T"); err != nil {
 		t.Fatalf("did not see the wordmark: %v", err)
 	}
 	if _, err := console.ExpectString("Install"); err != nil {
@@ -125,6 +134,7 @@ func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
 func TestSplash_RealPTY_ArrowNavigationMovesTheCaret(t *testing.T) {
 	binPath := buildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
+	skipArrival(t, console)
 
 	if _, err := console.ExpectString("▸ Install"); err != nil {
 		t.Fatalf("did not see the initial selection on Install: %v", err)

@@ -510,6 +510,27 @@ the wordmark in alive-green, the deployment URL in the identity slot,
 Get into Orbit / Terminal / Menu. In-console config prompts stay out of
 scope until orbit#297's prompt protocol exists.
 
+**v6 starchart alignment (design/mockups-v6-starchart.html, aligned with
+orbit issue #307's web identity).** Gold (#d8b45a) is the accent —
+mark-when-dormant, caret, hero URL, the binary pair's lead (partner in
+approach-blue #8fb8ff). The wordmark returned to the letter-spaced
+normal-size O R B I T everywhere by owner decision (the v5 half-block
+big text is retired; `style.Wordmark` is canonical again). Identity sits
+tight under the wordmark; menu items centre individually with the caret
+riding left of the selected label; the keybind hint is gone entirely and
+each screen's foot is one centred faint line (splash: launcher + orbit
+versions; success: the achieved time; console: launcher version). Two
+one-shot beats, both colour-ramp/whole-cell honest and skipped by
+NO_ANIMATION: the arrival (Get · Into · Orbit fade at centre; the
+wordmark takes a 2s gold sweep, slides up, and the menu fades in one
+item at a time — any key skips, once per process) and the
+restored-orbit drift (on the success screen the gold body eases to a
+wider orbit with a brief trail). One test-harness consequence,
+discovered by an actual hang: a continuously animating splash never
+goes idle, so go-expect's read timeout cannot fire while the arrival
+plays — every PTY test sends one benign key first (`skipArrival`),
+which the model swallows.
+
 **Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step
 up to the handoff; a live-matrix install-to-healthy-endpoint scenario
 passes on Linux (still open — no Docker/OIDC available in this working
