@@ -125,8 +125,13 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 			}
 		}
 
+		// Join the stderr drain before Wait: with StderrPipe, Wait
+		// closes the pipes as soon as the process exits, and on a slow
+		// machine that can cut the drain off mid-read and lose the
+		// tail (seen as a real release-gate failure).
+		tail := <-tailCh
 		err := cmd.Wait()
-		done := DoneMsg{Err: err, StderrTail: <-tailCh}
+		done := DoneMsg{Err: err, StderrTail: tail}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			done.ExitCode = exitErr.ExitCode()
