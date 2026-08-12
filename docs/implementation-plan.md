@@ -511,7 +511,9 @@ Get into Orbit / Terminal / Menu. In-console config prompts stay out of
 scope until orbit#297's prompt protocol exists.
 
 **v6 starchart alignment (design/mockups-v6-starchart.html, aligned with
-orbit issue #307's web identity).** Gold (#d8b45a) is the accent —
+orbit issue #307's web identity; the owner-locked visual law is recorded
+durably in design/DECISIONS.md — read it before proposing any visual
+change).** Gold (#d8b45a) is the accent —
 mark-when-dormant, caret, hero URL, the binary pair's lead (partner in
 approach-blue #8fb8ff). The wordmark returned to the letter-spaced
 normal-size O R B I T everywhere by owner decision (the v5 half-block
@@ -530,6 +532,33 @@ discovered by an actual hang: a continuously animating splash never
 goes idle, so go-expect's read timeout cannot fire while the arrival
 plays — every PTY test sends one benign key first (`skipArrival`),
 which the model swallows.
+
+**In-console configuration + repair diagnosis (orbit#297 machine
+prompts, orbit#261 slice 1).** When the engine's configuration refusal
+lands, the flow now stages a config tree (configure.sh + siblings +
+.env-orbit.example fetched from the same channel as install.sh, seeded
+with the target's existing configuration), runs `configure.sh --check`
+to plan, then drives `--init` and `--set-oidc-secret` with
+`ORBIT_CONFIGURE_PROMPTS=machine` — the engine's own prompts, rendered
+as in-console input rows (`internal/ui/configcollect.go`), every answer
+validated engine-side, rejection classes rendered as honest words, the
+secret never echoed. The produced `.env-orbit`/`.orbit-secrets` are
+adopted into the target (install.sh's designed "pre-provisioned
+configuration shape") and the engine re-runs — this time proceeding.
+A legacy configure.sh exits with no protocol line, which is the
+capability signal: the flow falls back to the #51 terminal handoff
+automatically. Setsid on the configure run is as load-bearing as on the
+engine run — a legacy script would otherwise prompt on /dev/tty through
+the alt screen. Repair stopped being a stub: the launcher fetches
+orbit's standalone `repair.sh` (absence = "diagnosis needs a newer
+Orbit", honestly), stages it into the deployment's scripts/ directory,
+runs `--check`, and renders the finding/diagnosis enum contract with
+severity-ordered honest words, outcome keyed off exit codes
+(0/3/4/5). Repair *execution* remains orbit's next slice and the screen
+says so. Both engine-facing grammars (`prompt*`, `finding`/`diagnosis`)
+are parsed in `internal/engine` with the same tolerance rules as the
+event stream: unknown trailing fields ignored, unknown enum values
+carried verbatim, prose never misparsed.
 
 **Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step
 up to the handoff; a live-matrix install-to-healthy-endpoint scenario

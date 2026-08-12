@@ -17,24 +17,32 @@ import (
 
 // engineRun drives one engine run for the Install and Update flows:
 // the mission console over the piped plain-mode event stream first,
-// and — on the engine's configuration-required refusal — the styled
-// terminal handoff to the interactive installer, then the outcome.
+// and — on the engine's configuration-required refusal — guided
+// configuration, then the outcome.
 //
-// The #51 handoff architecture is preserved, not reversed
-// (orbit-launcher#73): no configuration field ever enters this
-// program. The piped run cannot prompt by construction
-// (deploy.BuildEngineCommand detaches it from the controlling
-// terminal, engaging the engine's documented non-interactive
-// contract), and configuration is still collected only by install.sh
-// itself, in the real terminal, via the same tea.ExecProcess handoff
-// as before. Success and failure are keyed off events plus exit
-// codes, never scraped prose.
+// Configuration stays the engine's domain (the #51 principle,
+// orbit-launcher#73): the launcher never invents a field name, a
+// validation rule, or a file format. With a contract-era engine
+// (orbit#297) the collection happens in-console over the machine
+// prompt protocol — configure.sh names each field, validates each
+// answer with its own validators, and writes its own files, with the
+// launcher relaying answers over stdin and adopting the produced
+// configuration into the target (see configcollect.go). A legacy
+// engine that doesn't speak the protocol fails fast with no prompt
+// line, and the flow falls back to the same tea.ExecProcess terminal
+// handoff as before — capability detected by behaviour, never by
+// version sniffing. The piped engine run itself cannot prompt by
+// construction (deploy.BuildEngineCommand detaches it from the
+// controlling terminal, engaging the engine's documented
+// non-interactive contract), and success and failure are keyed off
+// events plus exit codes, never scraped prose.
 type engineRunState int
 
 const (
 	runPreparing engineRunState = iota
 	runStreaming
 	runConfigPrompt
+	runConfigCollect
 	runHandoffRunning
 	runFailed
 	runSucceeded
@@ -89,8 +97,16 @@ type engineRun struct {
 	state   engineRunState
 	console ConsoleModel
 
+	// width/height are remembered so an in-flow restart (the retry
+	// after in-console configuration) rebuilds the console at size.
+	width, height int
+
 	stream  *engine.Stream
 	cleanup func() error
+
+	// cfg is the in-console configuration session, live while state is
+	// runConfigCollect.
+	cfg configCollect
 
 	// Outcome evidence, gathered from events and the exit code.
 	configRefused bool
@@ -114,6 +130,9 @@ type engineRun struct {
 	runHandoff     runHandoffFunc
 	detect         detectFunc
 	now            nowFunc
+	prepareConfig  prepareConfigFunc
+	startConfig    startConfigFunc
+	adoptConfig    adoptConfigFunc
 }
 
 func newEngineRun(action, targetDir, title, version string) engineRun {
@@ -129,6 +148,7 @@ func newEngineRun(action, targetDir, title, version string) engineRun {
 // engine is fetched and launched in the background.
 func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.state = runPreparing
+	r.width, r.height = width, height
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
@@ -176,6 +196,7 @@ func pumpEngine(s *engine.Stream) tea.Cmd {
 func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		r.width, r.height = msg.Width, msg.Height
 		r.console = r.console.setSize(msg.Width, msg.Height)
 		return r, nil
 
@@ -196,6 +217,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case engineStreamMsg:
 		return r.handleStream(msg.msg)
+
+	case configPlanMsg, configStepMsg, configStreamMsg, configAdoptedMsg:
+		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
 		if msg.err != nil {
@@ -304,15 +328,19 @@ func (r engineRun) handleKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 		if r.stream != nil {
 			r.stream.Kill()
 		}
+		r.cfg.close()
 		return r, tea.Quit
 	}
 
 	switch r.state {
+	case runConfigCollect:
+		return r.handleConfigKey(msg)
+
 	case runConfigPrompt:
 		return r.handleMenuKey(msg, len(configPromptMenu), func(sel int) (engineRun, tea.Cmd) {
 			switch sel {
 			case 0:
-				return r.beginHandoff()
+				return r.beginConfigCollect()
 			case 1:
 				r.Done = true
 				r.WantsMenu = true
@@ -376,6 +404,8 @@ func (r engineRun) view(width, height int) string {
 		return r.console.view(width, height)
 	case runConfigPrompt:
 		return r.viewConfigPrompt(width, height)
+	case runConfigCollect:
+		return r.viewConfigCollect(width, height)
 	case runHandoffRunning:
 		return lipgloss.NewStyle().Padding(1, 2).Render(style.Tagline.Render("in the installer — you'll return here when it finishes"))
 	case runFailed:
@@ -391,8 +421,9 @@ func (r engineRun) viewConfigPrompt(width, height int) string {
 	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("The engine stopped before touching anything: some settings"))
-	fmt.Fprintln(&b, style.MutedText.Render("only you can provide. Orbit's own guided setup will take the"))
-	fmt.Fprintln(&b, style.MutedText.Render("terminal, walk you through them, and finish the "+r.action+"."))
+	fmt.Fprintln(&b, style.MutedText.Render("only you can provide. Continue to fill them in right here —"))
+	fmt.Fprintln(&b, style.MutedText.Render("every answer is checked by Orbit's own setup, which takes"))
+	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+r.action+" resumes."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, configPromptMenu, r.menuSel)
 	return centreBlock(width, height, b.String())

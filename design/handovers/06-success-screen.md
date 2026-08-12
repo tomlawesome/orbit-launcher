@@ -1,3 +1,5 @@
+> **Resolved 2026-08-12** — implemented in #75 and restyled by #77: normal-size ink wordmark (green wordmark rejected), gold hero URL, centred menu, achieved-time as the whole foot.
+
 # Handover 06 — Success screen: copy and layout
 
 **Model: Sonnet 5 · depends on the mission console (frontier work) being merged
