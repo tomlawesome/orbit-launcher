@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 )
 
 // installScriptURL points at orbit's stable line, not a moving
@@ -26,8 +27,17 @@ const maxInstallScriptBytes = 1 << 20 // 1 MiB
 // branch. It never touches disk or executes anything — see Install for
 // that — and is deliberately re-fetched every time rather than cached, so
 // a person always installs against the current, real script.
+//
+// ORBIT_LAUNCHER_INSTALL_SCRIPT_URL overrides the source URL. It exists
+// only so CI can run the real install flow against orbit's develop/preview
+// branches to catch drift before it reaches main; a real install never has
+// this set, so it always runs the same stable script a person would get.
 func FetchInstallScript(ctx context.Context) ([]byte, error) {
-	return fetchInstallScript(ctx, installScriptURL)
+	url := installScriptURL
+	if override := os.Getenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL"); override != "" {
+		url = override
+	}
+	return fetchInstallScript(ctx, url)
 }
 
 func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {

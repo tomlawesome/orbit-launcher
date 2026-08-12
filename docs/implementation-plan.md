@@ -145,8 +145,7 @@ much this project's value is in *looking* right, not just working right.
 | Black-box PTY (Go's equivalent of `pexpect`) | `github.com/Netflix/go-expect` + `github.com/creack/pty` | spawn the **real compiled binary** under a real pty, send real keystrokes, assert on real terminal output | before merge to `develop` |
 | Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `develop`, gated to changes touching `internal/ui` or `internal/ui/style` |
 | Compose/deploy integration | Go `testing` + a disposable Docker context | prove profile selection produces a valid, `docker compose config`-verified compose file; prove stand-down actually stops what install started | before preview publication |
-| Real virtualized live install | matrix VM/container jobs, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end, on the Linux distros orbit-launcher actually targets | preview push (authoritative), release acceptance |
-| Multi-distro smoke | GitHub Actions matrix: `ubuntu-latest` plus a Debian container job (see 3.5) | binary actually runs, splash renders, `--version` correct | preview push |
+| Real virtualized live install | `ubuntu-latest` GitHub Actions job, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end | preview push (authoritative), release acceptance |
 
 ### 3.1 Unit tests
 
@@ -209,31 +208,46 @@ orbit-launcher runs *on the Linux server being managed* (SSH in, run it
 there — the same way `orbit`'s current installer is used today), not as a
 cross-platform desktop tool that reaches out to a remote host. It has no
 reason to run on Windows or macOS, because nobody deploys Orbit itself on
-those. Scope is Linux only:
+those. Scope is Linux only.
 
-- **Matrix**: `ubuntu-latest` (GitHub-hosted, Docker preinstalled) plus a
-  containerized Debian job (`debian:12`/`debian:13`, matching `orbit`'s own
-  CI-vs-Ubuntu distro-difference lesson from the #281 investigation —
-  don't assume Ubuntu-only behaviour is universal), running the **actual
-  bootstrap script** end-to-end against the **actual latest build artifact**
-  from that CI run (not a stub) — `curl`-equivalent, `Install` with a real
-  synthetic profile, wait for real health checks, assert the real HTTP
-  endpoint responds, then `Remove` and assert the containers are gone.
+**On a distro matrix, corrected from an earlier draft of this
+section**: a `ubuntu-latest` → `debian:12` container leg was built to
+also cover Debian in CI, matching `orbit`'s own CI-vs-Ubuntu
+distro-difference lesson from the #281 investigation. It was dropped
+(see issue #59, not wanted going forward): Docker-outside-of-Docker
+from inside a nested container hit a structural problem — bind-mounted
+volume paths resolve relative to the wrapper container's own
+filesystem, which the *host* daemon actually creating the containers
+can't see, so `docker compose up` failed before creating anything.
+Real Debian coverage doesn't need a second CI leg fighting
+container-nesting plumbing to prove: the mechanism was verified
+directly on a real Debian host, and via a locally-launched Ubuntu
+container on that same host with paths and networking aligned — a
+faster, cheaper, more direct answer than automating a second CI leg.
+`ubuntu-latest` alone is the CI-automated leg (Docker preinstalled, no
+nesting):
+
+- Runs the **actual bootstrap script** end-to-end against the **actual
+  latest build artifact** from that CI run (not a stub) —
+  `curl`-equivalent, `Install` with a real synthetic profile, wait for
+  real health checks, assert the real HTTP endpoint responds, then
+  `Remove` and assert the containers are gone.
 - Go still cross-compiles Linux `amd64` and `arm64` trivially (arm64
   matters for Raspberry Pi / NAS-class self-hosting, a real segment of
   Orbit's likely audience) — that's a build-target decision (4.2), separate
   from which platforms get live-tested here.
-- **Failure-path proof, not just happy-path**: at least one scenario per
-  wave that kills a dependency mid-install (stop Postgres between health
-  probes) and asserts the Failure screen's stated reason/action is accurate
-  and the rollback claim ("nothing on disk changed") is literally true —
-  same discipline as `orbit`'s negative-authorization-matrix and
+- **Failure-path proof, not just happy-path** (tracked as issue #57,
+  not yet built): at least one scenario that kills a dependency
+  mid-install (stop Postgres between health probes) and asserts the
+  Failure screen's stated reason/action is accurate and the rollback
+  claim ("nothing on disk changed") is literally true — same
+  discipline as `orbit`'s negative-authorization-matrix and
   recoverable-restore acceptance tests.
 
 This layer runs on every push to the protected `preview` branch
 (authoritative, matches `orbit`'s "protected preview push" gate exactly) and
 is available on-demand for pull requests via a label
-(`run-live-matrix`) to avoid burning the full matrix on every commit.
+(`run-live-matrix`) to avoid burning it on every commit.
 
 ### 3.6 Coverage policy
 
@@ -265,17 +279,17 @@ does).
 
 Same ruleset shape as `orbit`'s four rulesets (`deletion` and
 `non_fast_forward` blocked, `required_review_thread_resolution: true`,
-merge-commit only). One deliberate difference from `orbit`: all four
-rulesets here set `required_approving_review_count: 1` (confirmed) —
-`orbit` runs at `0` because its delivery model routes planning authority
-through its own AI-orchestration system; orbit-launcher doesn't have that
-yet, so a human approval is the real gate.
+merge-commit only). All four rulesets set
+`required_approving_review_count: 0`, matching `orbit` — deliberately, not
+as a gap: on a single-account repository the account that opens a pull
+request cannot approve it, so a non-zero count is unsatisfiable rather
+than protective.
 
-**Standing rule, not just for this setting**: any time I'm given
-permission to skip this gate for a specific piece of work, that permission
-covers only that work — it is never read as a standing exception, and the
-required-approval rule applies again on the next PR unless re-authorized
-for that one too.
+**The human gate is explicit owner direction, not a web-UI review.** An
+assistant merges a pull request only when the owner has approved that
+specific change — conversationally, on the issue, or on the PR; the record
+of that direction is the approval. Permission covers only the work it was
+given for and is never read as a standing exception for the next PR.
 
 ### 4.2 Release pipeline (preview push → main → tag)
 
@@ -327,40 +341,23 @@ in the Wave 0 CI skeleton below rather than hand-rolled build scripts.
   worth closing in both repos, flagging separately rather than silently
   fixing `orbit`'s).
 
-### 4.4 Planning governance — adapted, needs your decision
+### 4.4 Planning governance — decided: no attestation machinery (#71)
 
-`orbit` requires every PR touching a curated "protected planning" file list
-(architecture docs, workflows, governance configs) to carry a
-`Planning-Model: Sol Extra High` or `Planning-Model: Human` attestation
-line, enforced by a CI script. The *mechanism* (protected-path list +
-required attestation line + CI enforcement) is worth carrying over — it's a
-genuinely good discipline independent of which specific AI orchestration
-exists behind it. The *authority list* is not, because orbit-launcher has
-no "Sol Extra High" equivalent yet.
+An earlier draft proposed carrying over `orbit`'s protected-path +
+`Planning-Model` attestation mechanism. Since then `orbit` retired that
+mechanism entirely (orbit ADR-0011): for a single-owner project where every
+change lands through a reviewed pull request under branch protection, the
+machinery attested *authorship* rather than verifying *correctness*, and its
+maintenance cost exceeded the risk it retired.
 
-**Proposed for Wave 0, pending your confirmation:**
-```json
-{
-  "planningAuthorities": ["Human"],
-  "acceptedAttestations": ["Planning-Model: Human"],
-  "protectedFiles": [
-    ".github/workflows/*.yml",
-    ".github/planning-governance.json",
-    ".github/dependency-review-config.yml",
-    "docs/implementation-plan.md",
-    "docs/architecture.md",
-    "docs/quality-strategy.md",
-    "docs/releasing.md",
-    "docs/adr/*"
-  ]
-}
-```
-Same `Observability-Impact` PR-body declaration mechanism as `orbit`
-(`changed` with four evidence fields, or `none — <specific reason>`),
-enforced the same way. If later you want to name Claude (or another model)
-as an accepted planning authority for this repo specifically, that's a
-one-line policy change — flagging it as a deliberate future option, not
-assuming it now.
+**Decision (owner-approved in #71):** orbit-launcher does not carry the
+mechanism. The Wave 0 build of it (`tools/checkgovernance`, its CI step,
+`.github/planning-governance.json`, and the PR-template attestation and
+`Observability-Impact` sections) is removed by the PR recording this
+decision; PR review covers operational impact directly. Owner direction per
+change (§4.1) is the sole planning gate. If multi-author governance is ever
+needed, design it against the situation that exists then rather than
+reviving this mechanism.
 
 ---
 
@@ -487,6 +484,31 @@ this: profile selection (Standard only, for now — AI/Full are honest
 "not available yet" stubs); a confirm screen explaining the handoff (no
 config-collection screen at all, per the above); completion/failure
 based on `install.sh`'s own exit code.
+
+**v5 mission console (issue #73, layered on top without reversing #51).**
+The engine run now happens *inside* the TUI first: `internal/deploy.
+BuildEngineCommand` stages the same fetched `install.sh` but runs it
+`--plain --install|--update`, session-detached (`Setsid`) with stdout as
+a pipe, so orbit's engine event stream v0 (orbit `docs/engine-events.md`)
+renders natively in `internal/ui/console.go` — framed event log, phase-
+keyed stage bar (no percentage; the fill is the engine's own phase
+progression), elapsed clock. The detachment is what engages the engine's
+documented non-interactive contract: it can never prompt through the
+TUI, and with incomplete configuration it refuses before Compose
+(`reason=configuration-failure`), rolling the target back via its own
+file transaction (verified empirically against both orbit develop and
+main). That refusal is precisely where #51's handoff survives: the flow
+offers "Continue — guided configuration" and hands the real terminal to
+interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
+config field enters Go, ever. Outcomes are keyed off events plus exit
+codes, never scraped prose; a legacy engine (orbit main today) that
+emits no events has its output displayed verbatim and is judged by exit
+code alone, with the guided installer offered from the failure screen.
+Success concludes on `internal/ui/success.go`: the splash's scene with
+the wordmark in alive-green, the deployment URL in the identity slot,
+"Orbit achieved in Nm NNs" from the console's real clock, and
+Get into Orbit / Terminal / Menu. In-console config prompts stay out of
+scope until orbit#297's prompt protocol exists.
 
 **Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step
 up to the handoff; a live-matrix install-to-healthy-endpoint scenario
