@@ -511,7 +511,9 @@ Get into Orbit / Terminal / Menu. In-console config prompts stay out of
 scope until orbit#297's prompt protocol exists.
 
 **v6 starchart alignment (design/mockups-v6-starchart.html, aligned with
-orbit issue #307's web identity).** Gold (#d8b45a) is the accent —
+orbit issue #307's web identity; the owner-locked visual law is recorded
+durably in design/DECISIONS.md — read it before proposing any visual
+change).** Gold (#d8b45a) is the accent —
 mark-when-dormant, caret, hero URL, the binary pair's lead (partner in
 approach-blue #8fb8ff). The wordmark returned to the letter-spaced
 normal-size O R B I T everywhere by owner decision (the v5 half-block
