@@ -118,7 +118,7 @@ func TestPlanets_AllFourBodiesOrbitDeterministically(t *testing.T) {
 	seen := map[[2]int]bool{}
 	for i := 0; i < 34*10; i++ { // > one full 34s binary period at 120ms ticks
 		for _, p := range m.Planets() {
-			if p.Kind == PlanetIce {
+			if p.Kind == PlanetLead {
 				seen[[2]int{p.X, p.Y}] = true
 			}
 		}

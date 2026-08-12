@@ -5,8 +5,11 @@ package style
 
 import "github.com/charmbracelet/lipgloss"
 
-// Palette — see design/mockups.html section 01 for the visual swatches
-// these values are traceable to.
+// Palette — the starchart identity, aligned with orbit's own web
+// direction (orbit issue #307): gold is the accent, approach-blue its
+// companion. See design/mockups-v6-starchart.html for the swatches
+// these values are traceable to; design/mockups.html holds the
+// original (pre-starchart) set.
 var (
 	Background = lipgloss.Color("#05070d")
 	Panel      = lipgloss.Color("#0b0f1a")
@@ -15,8 +18,8 @@ var (
 	Text       = lipgloss.Color("#e7e9ee")
 	TextMuted  = lipgloss.Color("#7c8699")
 	TextFaint  = lipgloss.Color("#4a5468")
-	Accent     = lipgloss.Color("#7dd3fc")
-	AccentDim  = lipgloss.Color("#3a5568")
+	Accent     = lipgloss.Color("#d8b45a")
+	AccentDim  = lipgloss.Color("#5a4c28")
 	Warm       = lipgloss.Color("#f0b429")
 	Success    = lipgloss.Color("#4ade80")
 	Error      = lipgloss.Color("#f87171")
@@ -25,12 +28,13 @@ var (
 	// red, which means stopped/failed (design/mockups-v5.html).
 	Degraded = lipgloss.Color("#fb923c")
 
-	// Planet palette for the splash's free planetary systems
-	// (design/mockups-v5.html section 01).
-	PlanetIce   = lipgloss.Color("#60a5fa")
-	PlanetRose  = lipgloss.Color("#e879f9")
-	PlanetPale  = lipgloss.Color("#cbd5e1")
-	PlanetEmber = lipgloss.Color("#fb7185")
+	// Planet palette for the splash's free planetary systems: the
+	// binary pair leads gold with an approach-blue partner (starchart);
+	// the pale planet and its ember moon are unchanged from v5.
+	PlanetLead    = lipgloss.Color("#d8b45a")
+	PlanetPartner = lipgloss.Color("#8fb8ff")
+	PlanetPale    = lipgloss.Color("#cbd5e1")
+	PlanetEmber   = lipgloss.Color("#fb7185")
 )
 
 // Symbol glossary — see design/mockups.html section 01.
@@ -87,10 +91,13 @@ var (
 	MutedText    = lipgloss.NewStyle().Foreground(TextMuted)
 )
 
-// Planet styles, one per starfield planet kind.
+// Planet styles, one per starfield planet kind, plus the faint trail
+// the restored-orbit drift leaves behind (design/mockups-v6-starchart.html
+// section 03).
 var (
-	PlanetIceText   = lipgloss.NewStyle().Foreground(PlanetIce)
-	PlanetRoseText  = lipgloss.NewStyle().Foreground(PlanetRose)
-	PlanetPaleText  = lipgloss.NewStyle().Foreground(PlanetPale)
-	PlanetEmberText = lipgloss.NewStyle().Foreground(PlanetEmber)
+	PlanetLeadText    = lipgloss.NewStyle().Foreground(PlanetLead)
+	PlanetPartnerText = lipgloss.NewStyle().Foreground(PlanetPartner)
+	PlanetPaleText    = lipgloss.NewStyle().Foreground(PlanetPale)
+	PlanetEmberText   = lipgloss.NewStyle().Foreground(PlanetEmber)
+	PlanetTrailText   = lipgloss.NewStyle().Foreground(AccentDim)
 )
