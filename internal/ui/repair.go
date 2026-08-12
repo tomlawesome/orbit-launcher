@@ -347,6 +347,10 @@ func targetWords(target string) string {
 		return "containers"
 	case "database-volume":
 		return "database volume"
+	case "database":
+		return "database"
+	case "application":
+		return "application"
 	default:
 		return target
 	}
@@ -385,6 +389,23 @@ func classWords(class string) string {
 		return "database data kept but its credentials are gone"
 	case "unrelated-resource-present":
 		return "an unrelated Orbit-like volume exists"
+	// The database/container layer (orbit#261 slice 2), plus the
+	// classes its contract documents as reserved for the executor
+	// slice — named now so they render honestly the day they ship.
+	case "database-unreachable":
+		return "can't be reached"
+	case "database-credential-mismatch":
+		return "rejects the stored credentials"
+	case "stale-container":
+		return "running an older image than configured"
+	case "application-unhealthy":
+		return "reports unhealthy"
+	case "unsupported-schema":
+		return "schema newer than this engine supports"
+	case "migration-failed":
+		return "a migration failed"
+	case "image-identity-mismatch":
+		return "image identity doesn't match the record"
 	default:
 		return class
 	}
