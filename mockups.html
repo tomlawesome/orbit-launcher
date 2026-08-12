@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>orbit-launcher — design presentation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+  :root{
+    --bg:            #05070d;
+    --bg-panel:      #0b0f1a;
+    --bg-page:       #0a0c12;
+    --border:        #1c2434;
+    --border-soft:   #151b28;
+    --text:          #e7e9ee;
+    --text-muted:    #7c8699;
+    --text-faint:    #4a5468;
+    --accent:        #7dd3fc;
+    --accent-dim:    #3a5568;
+    --warm:          #f0b429;
+    --success:       #4ade80;
+    --error:         #f87171;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg-page);
+    color:var(--text);
+    font-family:var(--mono);
+    line-height:1.5;
+    padding:48px 24px 120px;
+  }
+
+  .wrap{max-width:1040px;margin:0 auto;}
+
+  header.intro{margin-bottom:64px;}
+  header.intro .kicker{
+    color:var(--accent);
+    font-size:12px;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    margin-bottom:14px;
+  }
+  header.intro h1{
+    font-size:34px;
+    margin:0 0 10px;
+    letter-spacing:.01em;
+    font-weight:800;
+  }
+  header.intro p.lede{
+    color:var(--text-muted);
+    font-size:15px;
+    max-width:680px;
+    margin:0 0 20px;
+  }
+  .stack-note{
+    border:1px solid var(--border);
+    background:var(--bg-panel);
+    border-radius:8px;
+    padding:16px 20px;
+    font-size:13px;
+    color:var(--text-muted);
+    max-width:720px;
+  }
+  .stack-note b{color:var(--text);}
+  .stack-note code{color:var(--accent);background:none;}
+
+  section{margin-bottom:72px;}
+  section > h2{
+    font-size:12px;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--text-faint);
+    border-bottom:1px solid var(--border-soft);
+    padding-bottom:12px;
+    margin:0 0 28px;
+  }
+  section > h2 span{color:var(--accent);}
+
+  /* ---------- style guide ---------- */
+  .palette{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:36px;}
+  .swatch{
+    width:150px;
+    border:1px solid var(--border);
+    border-radius:8px;
+    overflow:hidden;
+    background:var(--bg-panel);
+  }
+  .swatch .chip{height:56px;}
+  .swatch .label{padding:8px 10px;font-size:11px;}
+  .swatch .role{color:var(--text);display:block;margin-bottom:2px;}
+  .swatch .hex{color:var(--text-faint);}
+
+  .guide-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-bottom:8px;}
+  @media (max-width:820px){.guide-grid{grid-template-columns:1fr;}}
+  .guide-card{
+    border:1px solid var(--border);
+    border-radius:8px;
+    background:var(--bg-panel);
+    padding:18px 20px;
+  }
+  .guide-card h3{
+    font-size:12px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--text-muted);
+    margin:0 0 12px;
+  }
+  .glossary{list-style:none;margin:0;padding:0;font-size:13px;}
+  .glossary li{display:flex;gap:12px;padding:5px 0;color:var(--text-muted);}
+  .glossary li b{width:26px;color:var(--accent);font-weight:600;text-align:center;}
+  .type-sample .big{font-size:22px;font-weight:800;letter-spacing:.02em;margin-bottom:6px;}
+  .type-sample .mid{font-size:14px;color:var(--text);margin-bottom:6px;}
+  .type-sample .small{font-size:12px;color:var(--text-muted);}
+
+  /* ---------- terminal frame ---------- */
+  .frame-row{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px;}
+  .frame-notes{flex:1;min-width:260px;padding-top:8px;}
+  .frame-notes h3{font-size:14px;margin:0 0 10px;color:var(--text);}
+  .frame-notes ul{margin:0;padding-left:18px;font-size:13px;color:var(--text-muted);}
+  .frame-notes li{margin-bottom:8px;}
+  .frame-notes li b{color:var(--text);font-weight:600;}
+
+  .term{
+    width:640px;
+    max-width:100%;
+    border-radius:10px;
+    border:1px solid var(--border);
+    background:var(--bg);
+    box-shadow:0 30px 60px -20px rgba(0,0,0,.6);
+    overflow:hidden;
+    flex-shrink:0;
+  }
+  .term .bar{
+    background:var(--bg-panel);
+    padding:9px 14px;
+    display:flex;align-items:center;gap:8px;
+    border-bottom:1px solid var(--border-soft);
+  }
+  .term .dot{width:9px;height:9px;border-radius:50%;background:#2a3244;}
+  .term .bar .title{
+    flex:1;text-align:center;font-size:11px;color:var(--text-faint);
+    letter-spacing:.04em;
+  }
+  .term .body{
+    position:relative;
+    height:400px;
+    padding:0;
+    background:
+      radial-gradient(1px 1px at 8% 15%, rgba(255,255,255,.55), transparent),
+      radial-gradient(1px 1px at 22% 68%, rgba(255,255,255,.35), transparent),
+      radial-gradient(1.5px 1.5px at 34% 30%, rgba(255,255,255,.6), transparent),
+      radial-gradient(1px 1px at 46% 82%, rgba(255,255,255,.3), transparent),
+      radial-gradient(1px 1px at 61% 12%, rgba(255,255,255,.5), transparent),
+      radial-gradient(1.5px 1.5px at 73% 55%, rgba(255,255,255,.4), transparent),
+      radial-gradient(1px 1px at 85% 25%, rgba(255,255,255,.55), transparent),
+      radial-gradient(1px 1px at 91% 72%, rgba(255,255,255,.3), transparent),
+      radial-gradient(1px 1px at 14% 92%, rgba(255,255,255,.4), transparent),
+      radial-gradient(1px 1px at 55% 45%, rgba(255,255,255,.25), transparent),
+      radial-gradient(1px 1px at 4% 55%, rgba(255,255,255,.3), transparent),
+      radial-gradient(1px 1px at 96% 48%, rgba(255,255,255,.45), transparent),
+      var(--bg);
+    font-size:13px;
+  }
+  .term .body.plain{background:var(--bg);} /* screens without starfield */
+
+  .content{
+    position:relative;
+    z-index:2;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    padding:22px 28px;
+  }
+
+  /* splash screen specific */
+  .splash-center{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    padding-bottom:60px; /* pulls the block slightly above true vertical middle */
+  }
+  .mark{
+    display:flex;align-items:center;gap:10px;
+    color:var(--accent);
+    margin-bottom:6px;
+  }
+  .mark .ring{font-size:20px;}
+  .wordmark{
+    font-size:30px;font-weight:800;letter-spacing:.28em;
+    color:var(--text);
+  }
+  .tagline{
+    font-size:11px;color:var(--text-faint);letter-spacing:.14em;
+    text-transform:uppercase;margin:8px 0 34px;
+  }
+  .menu{list-style:none;margin:0;padding:0;text-align:left;width:190px;}
+  .menu li{
+    padding:5px 0;font-size:14px;color:var(--text-muted);
+    display:flex;gap:10px;
+  }
+  .menu li.sel{color:var(--text);}
+  .menu li .car{color:var(--accent);width:14px;}
+  .menu li.menu-gap{margin-top:14px;}
+  .footer-hint{
+    text-align:center;font-size:11px;color:var(--text-faint);
+    padding-top:14px;
+  }
+
+  /* generic app-screen chrome */
+  .topbar{
+    display:flex;justify-content:space-between;
+    font-size:11px;color:var(--text-faint);
+    padding-bottom:16px;border-bottom:1px solid var(--border-soft);
+    margin-bottom:18px;
+  }
+  .topbar .brand span{color:var(--accent);}
+  h4.screen-title{font-size:15px;margin:0 0 18px;color:var(--text);font-weight:700;}
+
+  .opt-list{list-style:none;margin:0 0 18px;padding:0;}
+  .opt-list li{
+    display:flex;gap:12px;padding:7px 0;font-size:13px;color:var(--text-muted);
+  }
+  .opt-list li.sel{color:var(--text);}
+  .opt-list li .car{color:var(--accent);width:14px;flex-shrink:0;}
+  .opt-list li .desc{color:var(--text-faint);}
+
+  .field-row{display:flex;align-items:center;gap:14px;font-size:12px;margin-bottom:10px;color:var(--text-muted);}
+  .field-row .flabel{width:130px;flex-shrink:0;}
+  .field-box{
+    flex:1;border:1px solid var(--border);border-radius:5px;
+    padding:5px 10px;color:var(--text);background:var(--bg-panel);
+  }
+  .field-box.masked{color:var(--text-faint);letter-spacing:2px;}
+
+  .checks{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--text-muted);margin:14px 0 20px;}
+  .checks label{display:flex;gap:8px;align-items:center;}
+  .checkbox{color:var(--accent);}
+  .checkbox.off{color:var(--text-faint);}
+
+  .review-grid{display:grid;grid-template-columns:110px 1fr;gap:8px 14px;font-size:12px;margin-bottom:20px;}
+  .review-grid .k{color:var(--text-faint);}
+  .review-grid .v{color:var(--text);}
+
+  .note{font-size:11px;color:var(--text-faint);margin-bottom:20px;line-height:1.6;}
+
+  .progress-list{list-style:none;margin:0 0 8px;padding:0;font-size:13px;}
+  .progress-list li{display:flex;gap:10px;padding:5px 0;color:var(--text-muted);}
+  .progress-list li.sub{padding-left:26px;font-size:12px;}
+  .progress-list .ok{color:var(--success);}
+  .progress-list .spin{color:var(--warm);}
+  .progress-list .queued{color:var(--text-faint);}
+
+  .hero-status{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  .hero-status .glyph{font-size:20px;}
+  .hero-status.ok .glyph{color:var(--success);}
+  .hero-status.err .glyph{color:var(--error);}
+  .hero-status .msg{font-size:16px;font-weight:700;}
+  .url-line{color:var(--accent);font-size:14px;margin:0 0 18px;}
+  .cmd-list{font-size:12px;color:var(--text-muted);margin:14px 0 22px;}
+  .cmd-list .cmd{display:flex;gap:16px;padding:4px 0;}
+  .cmd-list .cmd code{color:var(--text);width:220px;flex-shrink:0;}
+
+  .actions{display:flex;gap:22px;font-size:13px;margin-top:auto;padding-top:10px;}
+  .actions .sel{color:var(--accent);}
+  .actions .un{color:var(--text-faint);}
+
+  .step-badge{font-size:11px;color:var(--text-faint);}
+
+  footer.end{
+    margin-top:80px;padding-top:28px;border-top:1px solid var(--border-soft);
+    color:var(--text-faint);font-size:12px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="intro">
+    <div class="kicker">orbit-launcher · design presentation v0.1</div>
+    <h1>A full-screen terminal app, not a fancier script</h1>
+    <p class="lede">
+      This replaces the bash-script command-centre approach from issue
+      #260 (orbit/orbit#260) entirely. orbit-launcher is a dedicated
+      terminal application: true full-screen control of the terminal,
+      an animated starfield behind a static Orbit mark, and a small,
+      confident set of choices — not a menu tree bolted onto
+      <code>install.sh</code>. It also adds something #260 never had:
+      a real way out — <code>Remove</code> stops Orbit and hands back a
+      copy-pasteable command for anyone who decides it isn't for them,
+      instead of leaving them to figure out <code>docker</code> and file
+      paths on their own.
+    </p>
+    <div class="stack-note">
+      <b>Suggested stack:</b> Go, with <code>charmbracelet/bubbletea</code>
+      for the full-screen event loop and <code>charmbracelet/lipgloss</code>
+      for layout/styling — the same toolkit behind <code>gum</code> and
+      <code>glow</code>, built exactly for this. The starfield renders as
+      Unicode dots/braille on a tick-driven animation frame, true-colour
+      via 24-bit ANSI everywhere; on terminals that support the Kitty or
+      Sixel graphics protocol (Kitty, WezTerm, Ghostty, iTerm2) we can
+      optionally render it as a soft blurred image layer for extra depth,
+      falling back cleanly to the character-based version elsewhere.
+    </div>
+  </header>
+
+  <section>
+    <h2><span>01</span> Style guide</h2>
+
+    <div class="palette">
+      <div class="swatch"><div class="chip" style="background:#05070d"></div><div class="label"><span class="role">Background</span><span class="hex">#05070d</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#0b0f1a"></div><div class="label"><span class="role">Panel</span><span class="hex">#0b0f1a</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#e7e9ee"></div><div class="label"><span class="role">Text</span><span class="hex">#e7e9ee</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#7c8699"></div><div class="label"><span class="role">Muted text</span><span class="hex">#7c8699</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#7dd3fc"></div><div class="label"><span class="role">Accent (primary)</span><span class="hex">#7dd3fc</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#f0b429"></div><div class="label"><span class="role">Warm (in progress)</span><span class="hex">#f0b429</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#4ade80"></div><div class="label"><span class="role">Success</span><span class="hex">#4ade80</span></div></div>
+      <div class="swatch"><div class="chip" style="background:#f87171"></div><div class="label"><span class="role">Error</span><span class="hex">#f87171</span></div></div>
+    </div>
+
+    <div class="guide-grid">
+      <div class="guide-card">
+        <h3>Typography</h3>
+        <div class="type-sample">
+          <div class="big">ORBIT</div>
+          <div class="mid">Choose a deployment profile</div>
+          <div class="small">↑↓ navigate · ↵ select · esc back</div>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin-top:12px;">
+          One monospace family throughout (JetBrains Mono in this mock;
+          the real app just inherits the user's terminal font). Weight
+          and letter-spacing carry hierarchy instead of font-switching —
+          bold + wide tracking for the wordmark, plain for body copy,
+          dimmed for hints.
+        </p>
+      </div>
+      <div class="guide-card">
+        <h3>Symbol glossary</h3>
+        <ul class="glossary">
+          <li><b>▸</b> Selected menu item</li>
+          <li><b>✓</b> Complete / healthy (success colour)</li>
+          <li><b>✗</b> Failed (error colour)</li>
+          <li><b>⠋</b> In-progress spinner frame (warm colour)</li>
+          <li><b>·</b> Queued / not started (faint)</li>
+          <li><b>⟡</b> Orbit mark — small ring, orbiting dot when animated</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>02</span> Splash &amp; main menu</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher</span></div>
+        <div class="body">
+          <div class="content">
+            <div class="splash-center">
+              <div class="mark"><span class="ring">⟡</span></div>
+              <div class="wordmark">ORBIT</div>
+              <div class="tagline">personal server launcher</div>
+              <ul class="menu">
+                <li class="sel"><span class="car">▸</span>Install</li>
+                <li><span class="car"></span>Update</li>
+                <li><span class="car"></span>Repair</li>
+                <li class="menu-gap"><span class="car"></span>Remove</li>
+                <li><span class="car"></span>Exit</li>
+              </ul>
+            </div>
+            <div class="footer-hint">↑↓ navigate · ↵ select · esc quit</div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>First impression, one job</h3>
+        <ul>
+          <li><b>Banner position</b> — centred left/right, sitting slightly
+          above true vertical middle exactly as you described; the menu
+          hangs directly beneath it so the eye never has to travel far.</li>
+          <li><b>No box around the mark</b> — floating over the starfield
+          reads as "full screen app," not "dialog in a terminal."</li>
+          <li><b>Five choices, grouped by intent</b> — Install / Update /
+          Repair manage the deployment; a small gap, then Remove / Exit
+          are the two ways to leave. orbit-launcher detects which of
+          Install or Update applies and could even pre-select it, but
+          both stay visible for clarity.</li>
+          <li><b>Remove exists on purpose</b> — #260 never had a way
+          out. It's grouped with Exit, not hidden in a submenu, because
+          "I don't want this anymore" deserves to be as easy to find as
+          "I want this."</li>
+          <li><b>Animation here:</b> starfield drifts slowly (parallax —
+          distant dots move slower than near ones), individual stars
+          twinkle on a random slow cycle, and a single point of light
+          orbits the ⟡ mark once every few seconds. Nothing on this
+          screen animates fast enough to feel busy.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>03</span> Install — deployment profile</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — install</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div class="topbar">
+              <span class="brand">ORBIT <span>·</span> Install</span>
+              <span class="step-badge">Step 1 of 3</span>
+            </div>
+            <h4 class="screen-title">Choose a deployment profile</h4>
+            <ul class="opt-list">
+              <li class="sel"><span class="car">▸</span>Standard<span class="desc" style="margin-left:auto">Mail, documents, calendar</span></li>
+              <li><span class="car"></span>AI<span class="desc" style="margin-left:auto">Adds a local model for search &amp; suggestions</span></li>
+              <li><span class="car"></span>Full<span class="desc" style="margin-left:auto">AI features plus every optional service</span></li>
+            </ul>
+            <div class="note">Standard profile uses roughly 2 vCPU · 2 GB RAM · 8 GB disk.</div>
+            <div class="actions"><span class="sel">↵ continue</span><span class="un">esc back</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Decisions, not forms</h3>
+        <ul>
+          <li><b>One decision per screen</b> where possible — profile
+          first, without asking for the address or auth details yet, so
+          nothing feels like a wall of fields.</li>
+          <li><b>Cost is shown inline</b>, not hidden in docs — resource
+          footprint changes with profile, so it's shown the moment it
+          becomes relevant, in muted colour so it reads as context, not
+          a warning.</li>
+          <li>Step indicator top-right keeps orientation without a
+          progress bar competing for attention this early.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>04</span> Install — guided configuration</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — install</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div class="topbar">
+              <span class="brand">ORBIT <span>·</span> Install</span>
+              <span class="step-badge">Step 2 of 3</span>
+            </div>
+            <h4 class="screen-title">Core configuration</h4>
+            <div class="field-row"><span class="flabel">Public address</span><span class="field-box">mail.example.com</span></div>
+            <div class="field-row"><span class="flabel">Authentication</span><span class="field-box">OIDC — Authentik, Keycloak, Zitadel…</span></div>
+            <div class="field-row"><span class="flabel">Client secret</span><span class="field-box masked">●●●●●●●●●●●●●●●●</span></div>
+            <div style="font-size:11px;color:var(--text-faint);margin:18px 0 6px;">Optional services</div>
+            <div class="checks">
+              <label><span class="checkbox">☑</span>ClamAV virus scanning</label>
+              <label><span class="checkbox off">☐</span>Tika document search</label>
+              <label><span class="checkbox">☑</span>Local AI model (llama3.2)</label>
+            </div>
+            <div class="actions"><span class="sel">⇥ next field</span><span class="un">↵ continue</span><span class="un">esc back</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Only what's needed, grouped</h3>
+        <ul>
+          <li><b>Required fields first</b>, optional service toggles
+          visually separated below a hairline — the eye can stop reading
+          once the required section is filled in.</li>
+          <li><b>Secrets are masked but present</b> — never hidden behind
+          a separate "advanced" screen; security-relevant fields shouldn't
+          be an afterthought.</li>
+          <li>No animation on this screen beyond a blinking field cursor
+          — this is a moment of focus, the starfield stays off entirely
+          (plain background) so nothing competes with data entry.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>05</span> Install — final review</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — install</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div class="topbar">
+              <span class="brand">ORBIT <span>·</span> Install</span>
+              <span class="step-badge">Step 3 of 3</span>
+            </div>
+            <h4 class="screen-title">Review before install</h4>
+            <div class="review-grid">
+              <span class="k">Profile</span><span class="v">AI · llama3.2 (2.1 GB)</span>
+              <span class="k">Address</span><span class="v">mail.example.com</span>
+              <span class="k">Auth</span><span class="v">OIDC via auth.example.com</span>
+              <span class="k">Services</span><span class="v">ClamAV</span>
+              <span class="k">Image</span><span class="v">ghcr.io/tomlawesome/orbit@sha256:9f21…c88a</span>
+            </div>
+            <div class="note">Nothing has been installed yet. This is the last chance to change anything before Orbit touches the target.</div>
+            <div class="actions"><span class="sel">▸ Install now</span><span class="un">Back</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>The point of no return, made explicit</h3>
+        <ul>
+          <li><b>A plain-language commitment line</b>
+          ("Nothing has been installed yet…") rather than relying on the
+          user to infer it from a "Confirm" button — this is the single
+          most important sentence in the whole flow.</li>
+          <li>Full image digest shown, not hidden — matches the existing
+          project's emphasis on immutable, verifiable deployments.</li>
+          <li>Two choices only at this gate: commit, or go back. No
+          third "cancel entirely" needed — esc/Ctrl-C always works.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>06</span> Readiness — live progress</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — installing</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div class="topbar">
+              <span class="brand">ORBIT <span>·</span> Installing</span>
+              <span class="step-badge">elapsed 0:42</span>
+            </div>
+            <ul class="progress-list">
+              <li class="ok">✓ Configuration staged</li>
+              <li class="ok">✓ Docker Compose validated</li>
+              <li class="spin">⠋ Starting services…</li>
+              <li class="sub ok">✓ PostgreSQL — ready</li>
+              <li class="sub spin">⠋ Orbit application — starting</li>
+              <li class="sub queued">· ClamAV — queued</li>
+              <li class="sub queued">· Local model pull — queued</li>
+            </ul>
+            <div class="note" style="margin-top:20px;">This can take a few minutes on first install while the model downloads.</div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Never a silent gap</h3>
+        <ul>
+          <li>This is the direct fix for issue #260's original complaint
+          — no step collapses into a quiet, unexplained pause. Every
+          service gets its own line the moment it starts being checked.</li>
+          <li><b>Indentation shows hierarchy</b> — "Starting services" is
+          the parent state, its children are the individual health
+          probes, so the structure reads without needing a nested box.</li>
+          <li><b>Animation:</b> braille spinner frames advance on a
+          steady tick (~120ms) for anything "in progress"; completed
+          lines lock to a static ✓ the instant they finish so the log
+          doesn't feel like it's still moving once it's done. Starfield
+          stays off here — this screen is about status, not atmosphere.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>07</span> Completion</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — complete</span></div>
+        <div class="body">
+          <div class="content">
+            <div style="flex:1;display:flex;flex-direction:column;justify-content:center;">
+              <div class="hero-status ok"><span class="glyph">✓</span><span class="msg">Orbit is ready</span></div>
+              <div class="url-line">https://mail.example.com</div>
+              <div class="note">Deployed from ghcr.io/tomlawesome/orbit@sha256:9f21…c88a<br/>Profile: AI · Services: ClamAV, Local model</div>
+              <div class="cmd-list">
+                <div class="cmd"><code>docker compose logs -f</code><span>View live logs</span></div>
+                <div class="cmd"><code>docker compose ps</code><span>Check service status</span></div>
+                <div class="cmd"><code>orbit-launcher --repair</code><span>Repair a broken deployment</span></div>
+              </div>
+              <div class="actions"><span class="sel">▸ Open dashboard</span><span class="un">Exit</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Earn the celebration, then get out of the way</h3>
+        <ul>
+          <li>Starfield returns here — this is the one other moment
+          (besides the splash) that's allowed to feel a little
+          atmospheric, since the work is genuinely done.</li>
+          <li><b>The URL is the hero</b>, not a checkmark — the first
+          thing a person wants after install is the address, in the
+          accent colour, on its own line.</li>
+          <li>Exact commands, not "see the docs" — copyable, real,
+          scoped to what they just installed.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>08</span> Failure</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — failed</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div style="flex:1;display:flex;flex-direction:column;justify-content:center;">
+              <div class="hero-status err"><span class="glyph">✗</span><span class="msg">Installation stopped</span></div>
+              <div class="note" style="color:var(--text-muted);font-size:13px;">PostgreSQL did not become healthy within 90 seconds.</div>
+              <div style="font-size:11px;color:var(--text-faint);margin:16px 0 6px;">What you can do</div>
+              <div class="cmd-list">
+                <div class="cmd"><span style="color:var(--accent);width:20px;">→</span><span>Check disk space and Docker resource limits</span></div>
+                <div class="cmd"><span style="color:var(--accent);width:20px;">→</span><span>Re-run install — nothing on disk has changed</span></div>
+                <div class="cmd"><span style="color:var(--accent);width:20px;">→</span><span><code style="color:var(--text)">orbit-launcher --repair</code> for guided recovery</span></div>
+              </div>
+              <div class="note">Log: /var/log/orbit/install-2026-08-10T22-14.log</div>
+              <div class="actions"><span class="sel">▸ Retry</span><span class="un">View log</span><span class="un">Exit</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Calm, specific, actionable</h3>
+        <ul>
+          <li>Muted red, not flashing — the error is serious, the screen
+          shouldn't be alarming. No starfield: this is a moment for
+          plain, still focus.</li>
+          <li><b>One real reason</b>, not a stack trace — matches the
+          existing project's principle of fixed, non-sensitive
+          reason/action vocabulary, just given more room to breathe on a
+          full screen than a single log line ever could.</li>
+          <li>The reassurance ("nothing on disk has changed") is a
+          direct sentence, not implied — echoes the same honesty as the
+          final-review screen.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>09</span> Remove — confirm</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — remove</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div class="topbar">
+              <span class="brand">ORBIT <span>·</span> Remove</span>
+            </div>
+            <h4 class="screen-title">This stops Orbit and removes its containers</h4>
+            <div class="review-grid">
+              <span class="k">Deployment</span><span class="v">mail.example.com · AI profile</span>
+              <span class="k">Installed</span><span class="v">2026-06-14</span>
+              <span class="k">Data</span><span class="v">left on disk unless you remove it yourself — next screen</span>
+            </div>
+            <div class="note">Your mail, documents, and configuration are not deleted by this step.</div>
+            <div class="actions"><span class="sel">▸ Stand down Orbit</span><span class="un">Cancel</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>Say what will and won't happen</h3>
+        <ul>
+          <li>Same review-grid pattern as final-review on the way in —
+          consistency here matters: leaving should feel as considered
+          as arriving.</li>
+          <li><b>The scary part is named and scoped immediately</b>:
+          this step stops things, it does not delete things. That
+          distinction is the whole design, so it's said twice — once in
+          the title, once in the note.</li>
+          <li>Default action is still framed positively ("Stand down
+          Orbit," not "Yes, remove") — plain language over a generic
+          confirm/cancel pair.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>10</span> Remove — standing down</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — standing down</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div class="topbar">
+              <span class="brand">ORBIT <span>·</span> Standing down</span>
+              <span class="step-badge">elapsed 0:03</span>
+            </div>
+            <ul class="progress-list">
+              <li class="ok">✓ Orbit application stopped</li>
+              <li class="ok">✓ ClamAV stopped</li>
+              <li class="spin">⠋ PostgreSQL stopping…</li>
+              <li class="queued">· Network removed</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>The mirror of the install screen, deliberately</h3>
+        <ul>
+          <li>Reuses the readiness screen's exact visual language
+          (same spinner, same ✓ states) run in reverse — a person who's
+          seen Orbit install already knows how to read this without
+          learning anything new.</li>
+          <li>No starfield, no drama — this is routine maintenance, not
+          an ending. The ending is the next screen.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span>11</span> Remove — stood down</h2>
+    <div class="frame-row">
+      <div class="term">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">orbit-launcher — stood down</span></div>
+        <div class="body plain">
+          <div class="content">
+            <div style="flex:1;display:flex;flex-direction:column;justify-content:center;">
+              <div class="hero-status ok"><span class="glyph">✓</span><span class="msg">Orbit has been stood down</span></div>
+              <div class="note" style="color:var(--text-muted);font-size:13px;">
+                Containers and networks are stopped. Your files and data
+                volumes are still on disk at <span style="color:var(--text)">/opt/orbit</span> —
+                nothing has been deleted.
+              </div>
+              <div style="font-size:11px;color:var(--text-faint);margin:20px 0 8px;">To fully remove Orbit from this machine, copy and run</div>
+              <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg-panel);padding:12px 14px;font-size:12px;color:var(--text);margin-bottom:14px;">
+                docker compose -f /opt/orbit/docker-compose.yml down -v \<br/>
+                &nbsp;&nbsp;&amp;&amp; sudo rm -rf /opt/orbit
+              </div>
+              <div class="note" style="color:var(--error);">This deletes all mail, documents, and configuration. It cannot be undone.</div>
+              <div class="actions"><span class="sel">▸ Copy command</span><span class="un">Exit</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="frame-notes">
+        <h3>The app stops; the person decides on the data</h3>
+        <ul>
+          <li><b>This is the point of the whole feature.</b>
+          orbit-launcher never runs <code>rm -rf</code> or
+          <code>down -v</code> itself — it only ever does the safe,
+          reversible half automatically. The destructive half is a
+          real, readable command the person chooses to run themselves,
+          in their own shell, on their own authority.</li>
+          <li>The command is exact and copyable (real terminals support
+          OSC 52 clipboard copy over SSH — "Copy command" can genuinely
+          populate the clipboard, not just tell them to select text),
+          scoped to the actual install path, not a generic example.</li>
+          <li>Warning colour used exactly once, on the one sentence that
+          needs it — everything else on this screen stays in the calm,
+          neutral palette.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="end">
+    This is a first pass to align on direction — layouts, palette, and
+    tone — before any Go/Bubble Tea code gets written. Once the
+    direction here is right, next steps would be: a clickable prototype
+    (real Bubble Tea app, keyboard-navigable, starfield actually
+    animated) covering just the splash → install → progress path, then
+    the remaining screens (update detection, repair) once that core
+    feels right.
+  </footer>
+
+</div>
+</body>
+</html>
