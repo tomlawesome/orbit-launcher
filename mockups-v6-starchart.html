@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>orbit-launcher — v6 mockups: starchart alignment (revised, cell-truth)</title>
+<title>orbit-launcher — v6 mockups: starchart alignment (rev 3, cell-truth)</title>
 <style>
   body{background:#060b1c;color:#e9edf8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
        margin:0;padding:48px 24px 120px;display:flex;flex-direction:column;align-items:center;}
@@ -32,28 +32,25 @@
 </head>
 <body>
 
-<h1>orbit-launcher · v6 — starchart alignment · revised</h1>
+<h1>orbit-launcher · v6 — starchart alignment · rev 3</h1>
 <div class="sub">
-  Orbit's web identity (v8 → v9 "the living chart", issue #307): starchart primary — deep navy,
-  <span style="color:#d8b45a">gold accent #d8b45a</span>, approach-blue #8fb8ff. This is the
-  revision after owner review. Every panel is a cell-truth render: 80×26 fixed-width cells,
-  10 fps, nothing a real terminal can't produce.
+  Starchart identity (orbit issue #307, v8/v9): deep navy,
+  <span style="color:#d8b45a">gold accent #d8b45a</span>, approach-blue #8fb8ff.
+  Cell-truth renders: 80×26 fixed-width cells, 10 fps, nothing a real terminal can't do.
 </div>
 
 <div class="decisions">
-  <b>Owner decisions recorded (2026-08-12):</b><br>
-  · The wordmark returns to <b>normal size</b> — the letter-spaced <b>O R B I T</b> — on every
-    screen. The v5 half-block big text is retired (this reverses a v5 decision; the archive keeps
-    both).<br>
-  · <s>Green success wordmark</s> — rejected outright. Success keeps the mark's state colour and
-    the small status word only; the wordmark stays ink everywhere, always.<br>
-  · <s>Calendar-compass stage bar</s> — rejected: conceptually right, visually awkward in cells.
-    The console's stage bar stays the plain thin line.<br>
-  · The <b>gold accent</b> stands, including the gold hero URL. The <b>arrival</b> beat stands.
+  <b>Owner decisions (cumulative):</b><br>
+  · Wordmark: normal-size letter-spaced <b>O R B I T</b>, ink, everywhere. Big text retired.<br>
+  · <s>Green success wordmark</s>, <s>compass bar</s> — rejected. Gold accent + gold hero URL stand.<br>
+  · <b>rev 3:</b> identity block sits tight under the wordmark; menu items individually centred
+    (not left-aligned to a common edge); the keybind hint is gone for good; the footer is one
+    centred faint line: launcher and orbit version numbers. Arrival: Get / Into / Orbit at
+    centre screen, the wordmark slides up, menu items fade in one by one.
 </div>
 
 <section>
-  <h2><span>01</span> Splash — normal wordmark, gold accent</h2>
+  <h2><span>01</span> Splash — tight identity, centred menu, version footer</h2>
   <div class="pair">
     <div>
       <div class="term"><pre class="cells" id="v6-splash"></pre></div>
@@ -65,61 +62,45 @@
     </div>
   </div>
   <ul class="notes">
-    <li><b>Wordmark:</b> the original letter-spaced O R B I T, bold ink — simple, elegant, one
-        row. The ⟡ mark above it carries the state (or the <span class="g">gold accent</span>
-        when dormant); the identity block sits beneath as shipped.</li>
-    <li><b>Gold:</b> the mark (dormant), the ▸ caret, and the binary pair's lead body; partner in
-        approach-blue #8fb8ff. State colours always outrank brand on the mark.</li>
+    <li><b>Identity:</b> FQDN directly beneath the wordmark, status word directly beneath that —
+        no floating gap. Dormant shows just the status word in the same slot.</li>
+    <li><b>Menu:</b> every label centred on the screen axis; the ▸ caret rides two cells left of
+        whichever label is selected.</li>
+    <li><b>Foot:</b> one centred faint line — <i>orbit-launcher v0.2.0 · orbit v1.2.0</i> — and
+        nothing else. Orbit's version appears once a deployment is detected; dormant machines
+        show only the launcher's. No hints: the keys are ↑↓/↵/esc and the screen teaches itself.</li>
   </ul>
 </section>
 
 <section>
-  <h2><span>02</span> Mission console — as shipped, accent gold, plain bar</h2>
+  <h2><span>02</span> Mission console — as shipped, gold accent, version foot</h2>
   <div class="term"><pre class="cells" id="v6-console"></pre></div>
-  <div class="cap">install mid-flight · the stage bar stays a thin line; fill is engine phase truth, no percentage</div>
-  <ul class="notes">
-    <li>Only the accent changes: the title separator, the bar's filled portion. Frame, event
-        grammar (✓ / spinner / ✗), clock, stage word, raw-prose fallback for legacy engines —
-        all exactly as shipped.</li>
-  </ul>
+  <div class="cap">install mid-flight · plain thin bar, engine-phase fill, no percentage</div>
 </section>
 
 <section>
-  <h2><span>03</span> Success — quiet, ink wordmark, one gold line</h2>
+  <h2><span>03</span> Success — quiet, centred, one gold line</h2>
   <div class="term"><pre class="cells" id="v6-success"></pre></div>
-  <div class="cap">the mark is green because the state is alive; the wordmark is ink because it is the wordmark</div>
-  <ul class="notes">
-    <li>Normal-size wordmark in ink. The ⟡ mark alone carries alive-green — same rule as the
-        splash, nothing shouts. The deployment URL is the one
-        <span class="g">gold</span> object on screen; "alive" stays its small green self.
-        Quiet foot: achieved-in left, version right, both faint.</li>
-    <li>POL-7's restored-orbit beat plays once on entry: the gold body drifts to a wider orbit
-        with a brief trail (looped here; one-shot and skippable for real).</li>
-  </ul>
+  <div class="cap">the achieved line is the whole foot, centred; versions live on the splash</div>
 </section>
 
 <section>
-  <h2><span>04</span> Arrival — Get · Into · Orbit</h2>
+  <h2><span>04</span> Arrival — Get · Into · Orbit, centre stage</h2>
   <div class="term"><pre class="cells" id="v6-arrival"></pre></div>
-  <div class="cap">POL-1 revised · Get fades → Into fades → O R B I T lands · 2s sweep crosses the wordmark · then the room is lit — once per launch, NO_ANIMATION skips</div>
+  <div class="cap">words fade at true centre · O R B I T lands, sweeps, slides up · menu fades in one by one · foot last</div>
   <ul class="notes">
-    <li><b>The fades are colour ramps, not motion:</b> each word steps from near-background to
-        full ink and back over a handful of frames — glyphs never move, brightness is the only
-        animated quantity, which truecolor terminals do perfectly. On a 16-colour terminal it
-        degrades to appear/disappear, still correct.</li>
-    <li><b>The sweep</b> is a soft highlight travelling across the wordmark's cells over 2s —
-        per-cell colour lift toward gold-white, left to right, then gone. Again: colour only,
-        cell-truthful.</li>
-    <li>Then ⟡, identity, menu and foot are simply there. Total ≈ 6s once per launch;
-        <b>ORBIT_LAUNCHER_NO_ANIMATION</b> (and any keypress) skips straight to the lit room.</li>
+    <li>All three words play at the vertical centre of the screen. The third stays, takes the 2s
+        gold-white sweep, then <b>slides up</b> — one row per frame-pair, real cell motion, ~0.5s
+        — to its resting position. The ⟡ and identity appear; then the five menu items fade in
+        top to bottom, quickly (about a breath for the whole column); the version foot arrives
+        last. ≈8s once per launch; any key skips; NO_ANIMATION skips.</li>
   </ul>
 </section>
 
 <footer>
-  POL audit after revision: adopted — POL-1 arrival, POL-7 restored orbit. Absorbed — none (the
-  compass carried POL-3's now-marker; it went with the compass). Native — POL-9 (keyboard-first
-  already). Rejected — POL-2/4/5/6 (rings and hover don't exist here), POL-8 (no product data),
-  and the compass bar itself. All panels: 80×26 · 10 fps · glyph-ramp brightness only.
+  POL audit: adopted — POL-1 arrival (as above), POL-7 restored orbit (panel 03). Native — POL-9.
+  Rejected — POL-2/4/5/6 (rings and hover don't exist here), POL-8 (no product data), the
+  compass. All panels: 80×26 · 10 fps · glyph-ramp brightness plus whole-cell steps only.
 </footer>
 
 <script>
@@ -133,6 +114,7 @@ function mkScreen(id,W,H){
     S.buf[r][c]=Object.assign({c:ch,f:f},o||{});
   };
   S.str=function(r,c,s,f,o){for(let i=0;i<s.length;i++)if(s[i]!==" ")S.put(r,c+i,s[i],f,o);};
+  S.ctr=function(r,s,f,o){S.str(r,Math.floor(S.W/2)-Math.floor(s.length/2),s,f,o);};
   S.render=function(){
     let h="";
     for(let r=0;r<H;r++){for(let c=0;c<W;c++){const x=S.buf[r][c];
@@ -169,29 +151,38 @@ function drawSystems(S,t,ps,gold){
   const ma=2*Math.PI*t/13;
   S.put(Math.round(py+1.6*ps*Math.sin(ma)), Math.round(px+3.5*ps*Math.cos(ma)),"·","#fb7185");
 }
-// the wordmark, as decided: letter-spaced normal size, bold ink; ⟡ above
 const WORDMARK="O R B I T";
-function drawWordmark(S,row,CX,markCol){
-  S.str(row,CX,"⟡",markCol);
-  S.str(row+2,CX-Math.floor(WORDMARK.length/2),WORDMARK,"#e9edf8",{b:1});
+// menu: every label centred; the caret rides just left of the selected label
+function drawMenu(S,topRow,items,sel,accent,alpha){
+  items.forEach(function(label,i){
+    const row=topRow+i+(items.length===5&&i>=3?1:0);
+    const a=alpha?alpha(i):1;
+    if(a<=0.05)return;
+    const start=Math.floor(S.W/2)-Math.floor(label.length/2);
+    if(i===sel){
+      S.str(row,start-2,"▸",a>=1?accent:"rgba(216,180,90,"+a.toFixed(2)+")");
+      S.str(row,start,label,a>=1?"#e9edf8":"rgba(233,237,248,"+a.toFixed(2)+")",{b:a>=1?0:0});
+    }else{
+      S.str(row,start,label,a>=1?"#8791b3":"rgba(135,145,179,"+a.toFixed(2)+")");
+    }
+  });
 }
-function drawIdentity(S,row,CX,fqdn,st){
+function drawIdentity(S,row,fqdn,st){
   const stCol=st==="alive"?"#4ade80":st==="degraded"?"#fb923c":"#4d5878";
   if(fqdn){
-    S.str(row,CX-Math.floor(fqdn.length/2),fqdn,"#8791b3");
-    S.str(row+1,CX-Math.floor(st.length/2),st,stCol);
-    return row+1;
+    S.ctr(row,fqdn,"#8791b3");
+    S.ctr(row+1,st,stCol);
+  }else{
+    S.ctr(row,st,stCol);
   }
-  S.str(row,CX-Math.floor(st.length/2),st,stCol);
-  return row;
 }
+function drawFoot(S,text){ S.ctr(S.H-1,text,"#4d5878"); }
 
 // ==== 01 splash ============================================================
 function splashScreen(id,accent){
   const W=80,H=26,S=mkScreen(id,W,H); if(!S)return;
   const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
   const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
-  const HINT="↑↓ navigate · ↵ select · esc quit";
   const gold=accent==="#d8b45a";
   let t=0;
   function frame(){
@@ -203,16 +194,11 @@ function splashScreen(id,accent){
     const fqdn=st==="dormant"?null:"mail.example.com";
     const sel=st==="alive"?1:st==="degraded"?2:0;
     const top=CY-6;
-    drawWordmark(S,top,CX,markCol);
-    drawIdentity(S,top+4,CX,fqdn,st);
-    const items=["Install","Update","Repair","Remove","Exit"];
-    items.forEach(function(label,i){
-      const row=top+7+i+(i>=3?1:0);
-      if(i===sel){S.str(row,CX-4,"▸",accent);S.str(row,CX-2,label,"#e9edf8");}
-      else S.str(row,CX-2,label,"#8791b3");
-    });
-    S.str(H-1,CX-Math.floor(HINT.length/2),HINT,"#4d5878");
-    S.str(H-1,W-7,"v0.2.0","#4d5878");
+    S.str(top,CX,"⟡",markCol);
+    S.ctr(top+2,WORDMARK,"#e9edf8",{b:1});
+    drawIdentity(S,top+3,fqdn,st);
+    drawMenu(S,top+6,["Install","Update","Repair","Remove","Exit"],sel,accent);
+    drawFoot(S, st==="dormant" ? "orbit-launcher v0.2.0" : "orbit-launcher v0.2.0 · orbit v1.2.0");
     S.render();
   }
   setInterval(frame,100); frame();
@@ -220,7 +206,7 @@ function splashScreen(id,accent){
 splashScreen("v6-splash","#d8b45a");
 splashScreen("v6-splash-afterdark","#7dd3fc");
 
-// ==== 02 mission console — plain bar, gold accent ==========================
+// ==== 02 mission console ====================================================
 (function(){
   const W=80,H=26,S=mkScreen("v6-console",W,H); if(!S)return;
   const GOLD="#d8b45a", FAINT="#4d5878", MID="#8791b3";
@@ -276,13 +262,13 @@ splashScreen("v6-splash-afterdark","#7dd3fc");
     const bw=76, fill=Math.round((phaseIdx+1)/12*bw);
     for(let x=0;x<bw;x++)S.put(21,2+x,"─",x<fill?GOLD:"#1a2745");
     S.str(22,2,STAGE[phaseIdx],MID);
-    S.str(25,73,"v0.2.0",FAINT);
+    drawFoot(S,"orbit-launcher v0.2.0");
     S.render();
   }
   setInterval(frame,100); frame();
 })();
 
-// ==== 03 success — ink wordmark, green mark, gold URL, restored orbit ======
+// ==== 03 success ============================================================
 (function(){
   const W=80,H=26,S=mkScreen("v6-success",W,H); if(!S)return;
   const CX=40;
@@ -312,27 +298,24 @@ splashScreen("v6-splash-afterdark","#7dd3fc");
     const ma=2*Math.PI*t/13;
     S.put(Math.round(py+1.6*Math.sin(ma)), Math.round(px+3.5*Math.cos(ma)),"·","#fb7185");
     const top=7;
-    drawWordmark(S,top,CX,"#4ade80");
-    S.str(top+4,CX-12,"https://mail.example.com","#d8b45a");
-    S.str(top+5,CX-2,"alive","#4ade80");
-    S.str(top+8,CX-8,"▸","#d8b45a");
-    S.str(top+8,CX-6,"Get into Orbit","#e9edf8");
-    S.str(top+9,CX-6,"Terminal","#8791b3");
-    S.str(top+10,CX-6,"Menu","#8791b3");
-    S.str(25,1,"Orbit achieved in 3m 42s","#4d5878");
-    S.str(25,73,"v0.2.0","#4d5878");
+    S.str(top,CX,"⟡","#4ade80");
+    S.ctr(top+2,WORDMARK,"#e9edf8",{b:1});
+    S.ctr(top+3,"https://mail.example.com","#d8b45a");
+    S.ctr(top+4,"alive","#4ade80");
+    drawMenu(S,top+7,["Get into Orbit","Terminal","Menu"],0,"#d8b45a");
+    drawFoot(S,"Orbit achieved in 3m 42s");
     S.render();
   }
   setInterval(frame,100); frame();
 })();
 
-// ==== 04 arrival — Get · Into · Orbit ======================================
+// ==== 04 arrival — Get · Into · Orbit, centre stage, slide, cascade ========
 (function(){
   const W=80,H=26,S=mkScreen("v6-arrival",W,H); if(!S)return;
-  const CX=40, CY=12;
+  const CX=40, CY=Math.floor(H/2)-1; // 12 — true vertical centre
   const stars=mkStars(Math.round(W*H/38), 6, 46);
-  const LOOP=9.5;
-  // ramp: 0→1→0 envelope for a word that fades in, holds, fades out
+  const LOOP=11.5;
+  const top=CY-6, restRow=top+2; // the wordmark's resting row on the splash
   function envelope(p,start,fadeIn,hold,fadeOut){
     const u=p-start;
     if(u<0)return 0;
@@ -348,21 +331,19 @@ splashScreen("v6-splash-afterdark","#7dd3fc");
     const p=t%LOOP;
     drawStars(S,stars,t,CX,CY,false);
     drawSystems(S,t,1,true);
-    const top=CY-6, wRow=top+2;
 
-    // beat 1: "Get"  (0.0 – 1.5: fade in .5, hold .6, fade out .4)
+    // beats 1–2: "Get", "Into" at true centre
     const aGet=envelope(p,0.0,0.5,0.6,0.4);
-    if(aGet>0.05)S.str(wRow,CX-1,"Get",inkAlpha(aGet),{b:1});
-
-    // beat 2: "Into" (1.7 – 3.2)
+    if(aGet>0.05)S.ctr(CY,"Get",inkAlpha(aGet),{b:1});
     const aInto=envelope(p,1.7,0.5,0.6,0.4);
-    if(aInto>0.05)S.str(wRow,CX-2,"Into",inkAlpha(aInto),{b:1});
+    if(aInto>0.05)S.ctr(CY,"Into",inkAlpha(aInto),{b:1});
 
-    // beat 3: the wordmark lands (3.4) and stays
+    // beat 3: the wordmark fades in at centre (3.4), sweeps (3.9–5.9)
     const aOrbit=p<3.4?0:Math.min(1,(p-3.4)/0.5);
+    // beat 4: slide from CY up to restRow (5.9–6.7): one row per 0.2s
+    let wRow=CY;
+    if(p>=5.9)wRow=Math.max(restRow, CY-Math.floor((p-5.9)/0.2));
     if(aOrbit>0.05){
-      // the 2s sweep: a soft gold-white highlight crossing the letters,
-      // starting once the wordmark is fully in (3.9 – 5.9)
       const sw=(p-3.9)/2;
       for(let i=0;i<WORDMARK.length;i++){
         const ch=WORDMARK[i];
@@ -373,8 +354,7 @@ splashScreen("v6-splash-afterdark","#7dd3fc");
           const d=Math.abs(i-pos);
           const lift=Math.max(0,1-d/2.2);
           if(lift>0.05){
-            const r=Math.round(233+(255-233)*lift), g=Math.round(237+(240-237)*lift),
-                  b=Math.round(248+(200-248)*lift);
+            const r=Math.round(233+22*lift), g=Math.round(237+3*lift), b=Math.round(248-48*lift);
             col="rgb("+r+","+g+","+b+")";
           }
         }
@@ -382,19 +362,16 @@ splashScreen("v6-splash-afterdark","#7dd3fc");
       }
     }
 
-    // beat 4: after the sweep, the room is lit (5.9)
-    if(p>=5.9){
+    // beat 5: once home, ⟡ + identity appear; menu items fade in one by one
+    const settled=p>=6.7;
+    if(settled){
       S.str(top,CX,"⟡","#d8b45a");
-      drawIdentity(S,top+4,CX,null,"dormant");
-      const items=["Install","Update","Repair","Remove","Exit"];
-      items.forEach(function(label,i){
-        const row=top+7+i+(i>=3?1:0);
-        if(i===0){S.str(row,CX-4,"▸","#d8b45a");S.str(row,CX-2,label,"#e9edf8");}
-        else S.str(row,CX-2,label,"#8791b3");
-      });
-      S.str(H-1,CX-16,"↑↓ navigate · ↵ select · esc quit","#4d5878");
-      S.str(H-1,W-7,"v0.2.0","#4d5878");
+      drawIdentity(S,top+3,null,"dormant");
+      drawMenu(S,top+6,["Install","Update","Repair","Remove","Exit"],0,"#d8b45a",
+        function(i){ return Math.min(1,Math.max(0,(p-7.0-i*0.15)/0.3)); });
     }
+    // beat 6: the foot arrives last
+    if(p>=8.2)drawFoot(S,"orbit-launcher v0.2.0");
     S.render();
   }
   setInterval(frame,100); frame();
