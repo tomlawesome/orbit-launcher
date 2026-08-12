@@ -110,6 +110,39 @@ func TestBuildInstallCommand_CleanupRemovesTheStagedFile(t *testing.T) {
 	}
 }
 
+// TestBuildEngineCommand_DetachedPlainModeRun is BuildEngineCommand's
+// counterpart to TestBuildInstallCommand_NeverDetachesOrRedirectsStdio:
+// the mission console's engine run must be the exact opposite of the
+// handoff — session-detached (no controlling terminal, so the engine's
+// non-interactive contract engages and it can never prompt through the
+// TUI) and flagged --plain --<action> so a contract-era install.sh
+// selects the event stream and skips its own menus.
+func TestBuildEngineCommand_DetachedPlainModeRun(t *testing.T) {
+	dir := t.TempDir()
+	cmd, cleanup, err := BuildEngineCommand([]byte("#!/usr/bin/env bash\n"), dir, "update")
+	if err != nil {
+		t.Fatalf("BuildEngineCommand: %v", err)
+	}
+	defer cleanup()
+
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+		t.Error("expected Setsid — the engine run must have no controlling terminal")
+	}
+	if cmd.Dir != dir {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, dir)
+	}
+	got := strings.Join(cmd.Args[2:], " ")
+	if got != "--plain --update" {
+		t.Errorf("engine args = %q, want %q", got, "--plain --update")
+	}
+}
+
+func TestBuildEngineCommand_RejectsUnknownActions(t *testing.T) {
+	if _, _, err := BuildEngineCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir(), "obliterate"); err == nil {
+		t.Fatal("expected an unknown action to be rejected")
+	}
+}
+
 func TestBuildInstallCommand_ErrorsIfTargetDirDoesNotExist(t *testing.T) {
 	cmd, cleanup, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), "/nonexistent/orbit-launcher-test-dir")
 	if err != nil {
