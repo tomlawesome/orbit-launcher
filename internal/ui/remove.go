@@ -178,84 +178,62 @@ func (m RemoveModel) View() string {
 	}
 }
 
-func (m RemoveModel) frame(body string) string {
-	return lipgloss.NewStyle().Padding(1, 2).Render(body)
-}
+// The flow screens speak the same starchart grammar as every other
+// screen (design/DECISIONS.md): centred block, ⟡ mark and bold title,
+// muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Remove"))
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Render("This stops Orbit and removes its containers"))
-	fmt.Fprintln(&b)
-
-	appURL, installed, dataNote := "unknown", "unknown", "left on disk unless you remove it yourself — next screen"
-	if m.deployment != nil {
-		if m.deployment.AppURL != "" {
-			appURL = m.deployment.AppURL
-		}
-		installed = m.deployment.InstalledAt.Format("2006-01-02")
-	}
-	fmt.Fprintf(&b, "  %s  %s\n", style.MenuUnselected.Render("Deployment"), appURL)
-	fmt.Fprintf(&b, "  %s   %s\n", style.MenuUnselected.Render("Installed"), installed)
-	fmt.Fprintf(&b, "  %s       %s\n", style.MenuUnselected.Render("Data"), dataNote)
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("Your mail, documents, and configuration are not deleted by this step."))
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This stops Orbit and removes its containers"))
 	fmt.Fprintln(&b)
 
-	options := []string{"Stand down Orbit", "Cancel"}
-	for i, opt := range options {
-		if i == m.confirmSel {
-			fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render(opt))
-		} else {
-			fmt.Fprintln(&b, "  "+style.MenuUnselected.Render(opt))
-		}
+	identity := "no deployment details found"
+	if m.deployment != nil && m.deployment.AppURL != "" {
+		identity = displayHost(m.deployment.AppURL) + " · installed " + m.deployment.InstalledAt.Format("2006-01-02")
 	}
-	return m.frame(b.String())
+	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identity))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, style.MutedText.Render("Your mail, documents, and configuration are not deleted"))
+	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))
+	fmt.Fprintln(&b, style.MutedText.Render("shows exactly how to remove them if you choose to."))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, []string{"Stand down Orbit", "Cancel"}, m.confirmSel)
+	return centreBlock(m.width, m.height, b.String())
 }
 
 func (m RemoveModel) viewStandingDown() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.MenuSelected.Render("ORBIT · Standing down"))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.WarmText.Render("⠋")+" Standing down Orbit…")
-	return m.frame(b.String())
+	return centreBlock(m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("standing down Orbit…"))
 }
 
 func (m RemoveModel) viewDone() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolSuccess)+" "+lipgloss.NewStyle().Bold(true).Render("Orbit has been stood down"))
+	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolSuccess)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit has been stood down"))
 	fmt.Fprintln(&b)
 
 	targetDir := "the deployment directory"
 	if m.deployment != nil && m.deployment.TargetDir != "" {
 		targetDir = m.deployment.TargetDir
 	}
-	fmt.Fprintf(&b, "Containers and networks are stopped. Your files and data\nvolumes are still on disk at %s — nothing has been deleted.\n", style.MenuSelected.Render(targetDir))
+	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
+	fmt.Fprintln(&b, style.MutedText.Render("volumes are still on disk at "+targetDir+" —"))
+	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("To fully remove Orbit from this machine, copy and run"))
-	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
 
 	cmd := deploy.RemovalCommand(targetDirOrPlaceholder(m.deployment))
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(style.Border).Padding(0, 1).Render(cmd)
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(style.BorderSoft).Padding(0, 1).Render(cmd)
 	fmt.Fprintln(&b, box)
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.ErrorText.Render("This deletes all mail, documents, and configuration. It cannot be undone."))
+	fmt.Fprintln(&b, style.DegradedText.Render("this deletes all mail, documents, and configuration — it cannot be undone"))
 	fmt.Fprintln(&b)
 
-	options := []string{"Copy command", "Exit"}
-	for i, opt := range options {
-		label := opt
-		if i == 0 && m.copied {
-			label = opt + " (copied)"
-		}
-		if i == m.doneSel {
-			fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+style.MenuSelected.Render(label))
-		} else {
-			fmt.Fprintln(&b, "  "+style.MenuUnselected.Render(label))
-		}
+	copyLabel := "Copy command"
+	if m.copied {
+		copyLabel = "Copy command · copied"
 	}
-	return m.frame(b.String())
+	writeStackedMenu(&b, []string{copyLabel, "Exit"}, m.doneSel)
+	return centreBlock(m.width, m.height, b.String())
 }
 
 func targetDirOrPlaceholder(d *deploy.Deployment) string {
@@ -267,12 +245,12 @@ func targetDirOrPlaceholder(d *deploy.Deployment) string {
 
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Render("Could not stand down Orbit"))
+	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Could not stand down Orbit"))
 	fmt.Fprintln(&b)
 	if m.standDownErr != nil {
 		fmt.Fprintln(&b, style.Tagline.Render(m.standDownErr.Error()))
+		fmt.Fprintln(&b)
 	}
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "  "+style.MenuUnselected.Render("Exit"))
-	return m.frame(b.String())
+	writeStackedMenu(&b, []string{"Exit"}, 0)
+	return centreBlock(m.width, m.height, b.String())
 }
