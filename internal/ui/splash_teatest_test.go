@@ -7,19 +7,20 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
-
-	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
+
+// skipArrival sends one benign key — any key skips the arrival and is
+// swallowed, so the lit room is there for the assertions that follow.
+func skipArrival(tm *teatest.TestModel) {
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+}
 
 func TestSplashModel_TeaTest_RendersMarkAndMenu(t *testing.T) {
 	tm := teatest.NewTestModel(t, NewSplashModel(), teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
-	// The wordmark is the half-block pixel rendering of ORBIT, not a
-	// plain-text substring — assert on its deterministic top row (see
-	// style.BigText), plus the menu and the dormant status word.
-	wordmarkTopRow := []byte(style.BigText("ORBIT")[0])
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, wordmarkTopRow) &&
+		return bytes.Contains(out, []byte("O R B I T")) &&
 			bytes.Contains(out, []byte("Install")) &&
 			bytes.Contains(out, []byte("dormant"))
 	}, teatest.WithDuration(2*time.Second))
@@ -32,6 +33,7 @@ func TestSplashModel_TeaTest_RendersMarkAndMenu(t *testing.T) {
 
 func TestSplashModel_TeaTest_NavigateAndSelectRemove(t *testing.T) {
 	tm := teatest.NewTestModel(t, NewSplashModel(), teatest.WithInitialTermSize(80, 24))
+	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
