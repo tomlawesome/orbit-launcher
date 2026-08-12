@@ -16,12 +16,12 @@ import (
 // unset: install.sh must see a real controlling terminal, because its
 // own scripts/configure.sh is the single source of truth for what
 // configuration it needs and how to collect it (guided prompts for
-// missing fields, a hidden-input prompt for the OIDC client secret —
-// the secret path has no non-interactive form at all, by design, per
-// configure.sh's set_oidc_secret). orbit-launcher must not — and after
-// this change, does not — know a single field name orbit's config
-// requires; it only ever hands its real terminal to install.sh via
-// tea.ExecProcess (see internal/ui) and waits for it to finish, exactly
+// missing fields, a hidden-input prompt for the OIDC client secret).
+// This handoff is the fallback for engines that don't speak the
+// machine prompt protocol (see configure.go for the in-console path,
+// which keeps the same source of truth — configure.sh runs the
+// collection there too). Either way, orbit-launcher never invents a
+// field name or validation rule; the handoff runs install.sh exactly
 // as if a person had run `curl -fsSL .../install.sh | bash` themselves.
 func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanup func() error, err error) {
 	scriptFile, err := os.CreateTemp("", "orbit-launcher-install-*.sh")
