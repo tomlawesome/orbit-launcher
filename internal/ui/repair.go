@@ -14,23 +14,30 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
-// RepairModel is the real read-only diagnosis (orbit#261 first slice):
-// the launcher fetches orbit's standalone repair.sh fresh, stages it
-// into the deployment, runs `--check`, and renders the finding/
-// diagnosis contract — enums in, honest words out, outcome keyed off
-// the exit code (0 healthy / 3 attention / 4 failed / 5 not an orbit
-// installation), never prose. Repair *execution* is a later orbit
-// slice; this screen says so plainly instead of pretending.
+// RepairModel is the real read-only diagnosis and plan (orbit#261
+// slices 1–3): the launcher fetches orbit's standalone repair.sh
+// fresh, stages it into the deployment, runs `--plan` (diagnosis plus
+// the classified proposed actions — still zero mutation by the
+// script's own contract), and renders the finding/diagnosis/plan
+// grammar — enums in, honest words out, outcome keyed off exit codes,
+// never prose. A repair.sh too old for --plan rejects it as a usage
+// error, and the flow falls back to `--check` — capability detected by
+// behaviour. Repair *execution* is orbit's next slice; this screen
+// says so plainly instead of pretending.
 type RepairModel struct {
 	width, height int
 	targetDir     string
 	version       string
 
-	state     repairState
-	findings  []engine.Finding
-	diagnosis *engine.Diagnosis
-	exitCode  int
-	runErr    error
+	state       repairState
+	mode        deploy.RepairMode
+	findings    []engine.Finding
+	diagnosis   *engine.Diagnosis
+	planActions []engine.PlanAction
+	planSummary *engine.PlanSummary
+	manualNotes []string
+	exitCode    int
+	runErr      error
 
 	stream  *engine.Stream
 	menuSel int
@@ -53,7 +60,7 @@ const (
 	repairError
 )
 
-type prepareRepairFunc func(ctx context.Context, targetDir string) (*engine.Stream, error)
+type prepareRepairFunc func(ctx context.Context, targetDir string, mode deploy.RepairMode) (*engine.Stream, error)
 
 // repairReadyMsg carries the started diagnosis run (or why there is
 // none).
@@ -67,7 +74,7 @@ type repairStreamMsg struct{ msg any }
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	return RepairModel{targetDir: targetDir, version: version}
+	return RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
 }
 
 // Outcome surfaces the flow result to AppModel.
@@ -79,19 +86,24 @@ func (m RepairModel) Outcome() flowOutcome {
 // read-only by the script's own contract, so there is nothing to
 // confirm first.
 func (m RepairModel) Init() tea.Cmd {
+	return m.startRun(m.mode)
+}
+
+// startRun launches one read-only repair invocation in the given mode.
+func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
 	prepare := m.prepare
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}
 	targetDir := m.targetDir
 	return func() tea.Msg {
-		stream, err := prepare(context.Background(), targetDir)
+		stream, err := prepare(context.Background(), targetDir, mode)
 		return repairReadyMsg{stream: stream, err: err}
 	}
 }
 
-// defaultPrepareRepair fetches, stages and starts the diagnosis.
-func defaultPrepareRepair(ctx context.Context, targetDir string) (*engine.Stream, error) {
+// defaultPrepareRepair fetches, stages and starts one repair run.
+func defaultPrepareRepair(ctx context.Context, targetDir string, mode deploy.RepairMode) (*engine.Stream, error) {
 	script, err := deploy.FetchRepairScript(ctx)
 	if err != nil {
 		return nil, err
@@ -99,7 +111,7 @@ func defaultPrepareRepair(ctx context.Context, targetDir string) (*engine.Stream
 	if err := deploy.StageRepairScript(targetDir, script); err != nil {
 		return nil, err
 	}
-	return engine.Start(deploy.BuildRepairCheckCommand(targetDir))
+	return engine.Start(deploy.BuildRepairCommand(targetDir, mode))
 }
 
 func pumpRepair(s *engine.Stream) tea.Cmd {
@@ -145,6 +157,11 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 	case engine.RawLineMsg:
 		if f, ok := engine.ParseFinding(s.Text); ok {
 			m.findings = append(m.findings, f)
+		} else if p, ok := engine.ParsePlanAction(s.Text); ok {
+			m.planActions = append(m.planActions, p)
+		} else if ps, ok := engine.ParsePlanSummary(s.Text); ok {
+			summary := ps
+			m.planSummary = &summary
 		} else if d, ok := engine.ParseDiagnosis(s.Text); ok {
 			diag := d
 			m.diagnosis = &diag
@@ -157,10 +174,28 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 		m.exitCode = s.ExitCode
 		switch s.ExitCode {
 		case 0, 3, 4, 5:
-			// The contract's diagnosis outcomes — including "this
-			// isn't an orbit installation", which arrives with its own
-			// finding line and deserves the same honest rendering.
+			// The contract's outcomes — shared by --check and --plan,
+			// including "this isn't an orbit installation", which
+			// arrives with its own finding line and deserves the same
+			// honest rendering.
 			m.state = repairDiagnosis
+			if m.mode == deploy.RepairPlan {
+				// The manual guidance lines ride stderr, value-free
+				// by the script's contract.
+				m.manualNotes = s.StderrTail
+			}
+		case 2:
+			if m.mode == deploy.RepairPlan {
+				// A repair.sh too old for --plan: usage error. Fall
+				// back to the diagnosis it does speak.
+				m.mode = deploy.RepairCheck
+				m.findings, m.diagnosis = nil, nil
+				m.planActions, m.planSummary, m.manualNotes = nil, nil, nil
+				m.stream = nil
+				return m, m.startRun(deploy.RepairCheck)
+			}
+			m.runErr = s.Err
+			m.state = repairError
 		default:
 			m.runErr = s.Err
 			m.state = repairError
@@ -260,15 +295,24 @@ func (m RepairModel) viewDiagnosis() string {
 	if m.diagnosis != nil {
 		result = m.diagnosis.Result
 	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(style.Text)
 	switch {
 	case m.exitCode == 5:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("No Orbit installation here"))
-	case result == "healthy":
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Diagnosis clear"))
+		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("No Orbit installation here"))
+	case m.planSummary != nil && m.planSummary.Result == "empty",
+		result == "healthy",
+		m.planSummary != nil && m.exitCode == 0:
+		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Diagnosis clear"))
+	case m.planSummary != nil && m.exitCode == 3:
+		// Plan mode's stdout carries only the plan (verified against
+		// the real script): the proposal is the story.
+		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repairs proposed"))
+	case m.planSummary != nil:
+		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Needs your attention"))
 	case result == "attention":
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Needs attention"))
+		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Needs attention"))
 	default:
-		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Problems found"))
+		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Problems found"))
 	}
 	fmt.Fprintln(&b)
 
@@ -282,12 +326,97 @@ func (m RepairModel) viewDiagnosis() string {
 	if m.diagnosis != nil {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked · %d skipped", m.diagnosis.Checked, m.diagnosis.Skipped)))
 	}
-	if result != "healthy" && m.exitCode != 5 {
-		fmt.Fprintln(&b, style.Tagline.Render("repair actions arrive with a later Orbit release"))
-	}
+
+	m.writePlan(&b, result)
+
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, repairMenu, m.menuSel)
 	return centreBlock(m.width, m.height, b.String())
+}
+
+// writePlan renders the proposed plan (orbit#261 slice 3): what the
+// engine would do, classified — and the plain truth that nothing here
+// can execute yet.
+func (m *RepairModel) writePlan(b *strings.Builder, result string) {
+	if len(m.planActions) == 0 {
+		// No plan lines: healthy, a --check fallback run, or nothing
+		// plannable. Keep the honest note whenever something's wrong.
+		if result != "healthy" && m.exitCode != 5 {
+			fmt.Fprintln(b, style.Tagline.Render("repair actions arrive with a later Orbit release"))
+		}
+		return
+	}
+
+	for _, p := range m.planActions {
+		fmt.Fprintln(b, planLine(p))
+	}
+	for _, note := range m.manualNotes {
+		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
+			fmt.Fprintln(b, style.Tagline.Render(step))
+		}
+	}
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary)))
+}
+
+// planLine renders one proposed action: the action in plain words and
+// what it resolves, with the backup requirement when the contract
+// demands one. The mutation class is deliberately not repeated — the
+// action words already carry it, and every line must hold inside 80
+// cells (the cell-truth bar). Unknown enum values render verbatim.
+// Plan mode's stdout carries no separate finding lines, so the
+// resolves class is the reader's only pointer at the underlying
+// problem — always shown.
+func planLine(p engine.PlanAction) string {
+	glyph := style.AccentText.Render(style.SymbolQueued)
+	if p.Action == "manual" {
+		glyph = style.DegradedText.Render(style.SymbolQueued)
+	}
+	context := classWords(p.Resolves)
+	if p.Backup == "required" {
+		context += " · backup first"
+	}
+	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(actionWords(p.Action)) +
+		style.Tagline.Render(" — "+context)
+}
+
+// actionWords maps plan action classes to plain words.
+func actionWords(action string) string {
+	switch action {
+	case "fix-permissions":
+		return "restore safe permissions"
+	case "rerun-configuration":
+		return "re-run guided configuration"
+	case "restore-transaction":
+		return "restore the interrupted install transaction"
+	case "rotate-database-credential":
+		return "rotate database credentials"
+	case "regenerate-secret":
+		return "regenerate the secret"
+	case "restart-services":
+		return "restart Orbit's services"
+	case "manual":
+		return "needs your hands"
+	default:
+		return action
+	}
+}
+
+// planSummaryWords is the one-line truth under the plan.
+func planSummaryWords(s *engine.PlanSummary) string {
+	if s == nil {
+		return "execution arrives with a later Orbit release — nothing here has run"
+	}
+	switch s.Result {
+	case "ready":
+		return "a safe plan is ready — execution arrives with a later Orbit release"
+	case "manual-required":
+		return "some steps need your hands — execution arrives with a later Orbit release"
+	case "empty":
+		return "nothing to plan"
+	default:
+		return s.Result + " — execution arrives with a later Orbit release"
+	}
 }
 
 // sortedFindings orders fail before warn before info, preserving the

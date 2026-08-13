@@ -60,6 +60,60 @@ func ParseDiagnosis(line string) (d Diagnosis, ok bool) {
 	return Diagnosis{Result: fields["result"], Checked: checked, Skipped: skipped}, true
 }
 
+// PlanAction is one proposed, classified repair action from
+// `repair.sh --plan` (orbit#261 slice 3) — a proposal only; nothing
+// executes until orbit's executor slice exists.
+type PlanAction struct {
+	Action   string // action class, e.g. fix-permissions — unknown carried verbatim
+	Resolves string // the reason class this action addresses
+	Mutation string // none | reversible | credential-rotation | service-restart
+	Backup   string // required | not-required
+}
+
+// PlanSummary is the plan's terminal line.
+type PlanSummary struct {
+	Result  string // empty | ready | manual-required
+	Actions int
+	Manual  int
+}
+
+// ParsePlanAction parses one `plan action=…` line. ok is false for
+// anything else, including the plan summary line.
+func ParsePlanAction(line string) (p PlanAction, ok bool) {
+	fields, ok := repairFields(line, "plan")
+	if !ok || fields["action"] == "" {
+		return PlanAction{}, false
+	}
+	p = PlanAction{
+		Action:   fields["action"],
+		Resolves: fields["resolves"],
+		Mutation: fields["mutation"],
+		Backup:   fields["backup"],
+	}
+	if p.Resolves == "" || p.Mutation == "" || p.Backup == "" {
+		return PlanAction{}, false
+	}
+	return p, true
+}
+
+// ParsePlanSummary parses the `plan result=…` terminal line. ok is
+// false for anything else, including plan action lines.
+func ParsePlanSummary(line string) (s PlanSummary, ok bool) {
+	fields, ok := repairFields(line, "plan")
+	if !ok || fields["result"] == "" || fields["action"] != "" {
+		return PlanSummary{}, false
+	}
+	actions, err := strconv.Atoi(fields["actions"])
+	if err != nil || actions < 0 {
+		actions = 0
+	}
+	manual, err := strconv.Atoi(fields["manual"])
+	if err != nil || manual < 0 {
+		manual = 0
+	}
+	return PlanSummary{Result: fields["result"], Actions: actions, Manual: manual}, true
+}
+
 // repairFields tokenizes a "<lead> key=value ..." line, tolerating
 // unknown keys and rejecting prose (any bare word after the lead).
 func repairFields(line, lead string) (map[string]string, bool) {
