@@ -131,3 +131,50 @@ func repairFields(line, lead string) (map[string]string, bool) {
 	}
 	return fields, true
 }
+
+// ExecuteResult is one `execute action=…` line from repair.sh
+// --execute (orbit#261 slice 4): what happened to one planned action.
+type ExecuteResult struct {
+	Action   string // action class — unknown carried verbatim
+	Resolves string // the reason class it addressed
+	Result   string // done | failed | skipped
+}
+
+// ExecutionSummary is the `execution result=…` terminal line.
+type ExecutionSummary struct {
+	Result string // empty | complete | unactionable | declined | failed
+	Done   int
+	Failed int
+}
+
+// ParseExecuteResult parses one `execute …` line. ok is false for
+// anything else.
+func ParseExecuteResult(line string) (e ExecuteResult, ok bool) {
+	fields, ok := repairFields(line, "execute")
+	if !ok {
+		return ExecuteResult{}, false
+	}
+	e = ExecuteResult{Action: fields["action"], Resolves: fields["resolves"], Result: fields["result"]}
+	if e.Action == "" || e.Resolves == "" || e.Result == "" {
+		return ExecuteResult{}, false
+	}
+	return e, true
+}
+
+// ParseExecutionSummary parses the `execution …` terminal line. ok is
+// false for anything else.
+func ParseExecutionSummary(line string) (s ExecutionSummary, ok bool) {
+	fields, ok := repairFields(line, "execution")
+	if !ok || fields["result"] == "" {
+		return ExecutionSummary{}, false
+	}
+	done, err := strconv.Atoi(fields["done"])
+	if err != nil || done < 0 {
+		done = 0
+	}
+	failed, err := strconv.Atoi(fields["failed"])
+	if err != nil || failed < 0 {
+		failed = 0
+	}
+	return ExecutionSummary{Result: fields["result"], Done: done, Failed: failed}, true
+}
