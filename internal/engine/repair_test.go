@@ -123,3 +123,35 @@ func TestParsePlan_UnknownEnumsCarriedVerbatim(t *testing.T) {
 		t.Fatalf("unexpected action: %+v", p)
 	}
 }
+
+func TestParseExecuteResult(t *testing.T) {
+	e, ok := ParseExecuteResult("execute action=fix-permissions resolves=managed-file-permissions result=done")
+	if !ok {
+		t.Fatal("expected an execute line to parse")
+	}
+	if e.Action != "fix-permissions" || e.Resolves != "managed-file-permissions" || e.Result != "done" {
+		t.Fatalf("unexpected result: %+v", e)
+	}
+	for _, line := range []string{
+		"execute action=x resolves=y", // missing result
+		"execution result=complete done=1 failed=0",
+		"execute something odd",
+	} {
+		if _, ok := ParseExecuteResult(line); ok {
+			t.Errorf("expected %q to be rejected", line)
+		}
+	}
+}
+
+func TestParseExecutionSummary(t *testing.T) {
+	s, ok := ParseExecutionSummary("execution result=complete done=2 failed=0")
+	if !ok {
+		t.Fatal("expected the summary to parse")
+	}
+	if s.Result != "complete" || s.Done != 2 || s.Failed != 0 {
+		t.Fatalf("unexpected summary: %+v", s)
+	}
+	if _, ok := ParseExecutionSummary("execute action=x resolves=y result=done"); ok {
+		t.Error("expected an execute line to be rejected by the summary parser")
+	}
+}
