@@ -561,8 +561,19 @@ Plan mode's stdout carries only plan lines plus a `plan result=` line
 (verified against the real script); a repair.sh too old for `--plan`
 rejects it as a usage error and the flow falls back to `--check`'s
 finding/diagnosis rendering — capability by behaviour, as everywhere.
-Every plan line is composed to hold inside 80 cells. Repair
-*execution* remains orbit's next slice and the screen says so. Both engine-facing grammars (`prompt*`, `finding`/`diagnosis`)
+Every plan line is composed to hold inside 80 cells. Execution
+(slice 4) is adopted too: when the plan proposes safe actions the menu
+offers "Run the safe repairs" — `--execute --safe-only` piped on the
+script's documented unattended path (the person's menu choice is the
+consent that path expects), rendering `execute`/`execution` lines and
+the executor's own full re-diagnosis as the after-picture — and a
+planned `rotate-database-credential` offers the guarded rotation,
+driven in-console via `ORBIT_REPAIR_PROMPTS=machine` (repair's own
+prompt env var) through the typed action word and checkpoint
+passphrase prompts, which is the only non-TTY transport the script's
+never-automatable contract permits. Esc abandons the session; closed
+stdin is the engine's documented zero-mutation abort. The menu never
+offers an action the plan didn't propose. Both engine-facing grammars (`prompt*`, `finding`/`diagnosis`)
 are parsed in `internal/engine` with the same tolerance rules as the
 event stream: unknown trailing fields ignored, unknown enum values
 carried verbatim, prose never misparsed.
