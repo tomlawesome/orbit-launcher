@@ -39,6 +39,18 @@ on:
           live-test workflow that is dispatchable.
         required: false
         default: ""
+      orbit_channel:
+        description: >-
+          orbit image channel to install (empty = install.sh's own default,
+          "latest", which is the production image). Pair this with
+          orbit_branch: a pre-release branch's install.sh expects the image
+          generation from the same train, and orbit's publish workflow tags
+          that build "preview" while "latest" stays on the promoted
+          production digest. Testing a pre-release install.sh against the
+          production image fails at image-identity verification — a
+          cross-generation mismatch, not a launcher defect.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -50,7 +62,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'run-live-matrix')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite's own budget is 30m (go test -timeout below). A job cap
+    # under it turns a slow-but-passing run into a cancelled one with no
+    # Go-level failure to read — which is exactly what happened on the
+    # first orbit-branch dispatch.
+    timeout-minutes: 35
 
     steps:
       - name: Check out repository
@@ -66,6 +82,14 @@ jobs:
         run: |
           branch="${{ inputs.orbit_branch }}"
           echo "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=https://raw.githubusercontent.com/tomlawesome/orbit/$branch/scripts/install.sh" >> "$GITHUB_ENV"
+
+      - name: Select the orbit image channel
+        if: inputs.orbit_channel != ''
+        run: |
+          # install.sh reads ORBIT_CHANNEL itself; the launcher never sets
+          # the engine's environment, so the job's own environment reaches
+          # it unchanged through every spawn.
+          echo "ORBIT_CHANNEL=${{ inputs.orbit_channel }}" >> "$GITHUB_ENV"
 
       - name: Build orbit-launcher from source
         run: |
