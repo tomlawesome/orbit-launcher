@@ -14,6 +14,7 @@ package live
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -352,4 +353,99 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 			t.Error("expected the deployment's data volumes to survive Remove, found none")
 		}
 	})
+}
+
+// TestLive_InstallPortConflictFailsCleanly is the failure-path live
+// scenario (issue #57): a real deploy genuinely fails partway through,
+// and the launcher must land on an honest failure screen while
+// install.sh's own transaction leaves nothing half-changed. The
+// dependency is broken deterministically *before* the run — the test
+// process itself holds the app's port, so the engine's compose phase
+// hits a real "port is already allocated" failure — rather than
+// killing a container mid-install, which issue #57 itself flags as
+// needing timing care to keep non-flaky. Same failure family (the
+// deploy dies after config, at the container layer), none of the
+// race.
+func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	// Hold the app's port for the whole test: compose cannot bind it.
+	blocker, err := net.Listen("tcp", ":3000")
+	if err != nil {
+		t.Skipf("port 3000 not free to block: %v", err)
+	}
+	defer blocker.Close()
+
+	binPath := binaryPath(t)
+	dir := t.TempDir()
+	projectName := filepath.Base(dir)
+	t.Cleanup(func() { dockerComposeDown(projectName) })
+
+	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
+	console := startLive(t, binPath, dir)
+
+	must := func(s string) {
+		t.Helper()
+		if _, err := console.ExpectString(s); err != nil {
+			t.Fatalf("expected %q: %v", s, err)
+		}
+	}
+	send := func(s string) {
+		t.Helper()
+		if _, err := console.Send(s); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+	sendLine := func(s string) { send(s + "\r") }
+
+	must("Install")
+	sendLine("")
+	must("Choose a deployment profile")
+	sendLine("")
+	must("Ready to install")
+	sendLine("")
+
+	// The piped attempt's configuration refusal, then guided
+	// configuration — identical to the happy path up to here.
+	if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
+		`Orbit needs your configuration|Installation stopped`))); err != nil {
+		t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
+	}
+	sendLine("")
+
+	acceptMenusUntil(t, console, "Public Orbit origin")
+	sendLine(appURL)
+	must("OIDC issuer URL")
+	sendLine(testOIDCIssuer)
+	must("OIDC client ID")
+	sendLine("orbit-launcher-live-failure-test")
+	must("OIDC client secret")
+	sendLine("ci-live-failure-fake-secret")
+
+	// The deploy proceeds into compose and dies on the held port. The
+	// launcher's own failure screen — not a hang, not a fake success —
+	// is the contract, with its stacked menu present.
+	must("Installation stopped")
+	must("Menu")
+
+	// Exit via the failure menu (guided installer, Menu, Exit).
+	send("\x1b[B")
+	send("\x1b[B")
+	send("\r")
+
+	// Nothing half-changed: no containers left running for this
+	// project. (Stopped/created remnants are compose implementation
+	// detail; running anything would be the real lie.)
+	psOut, err := exec.Command("docker", "ps", "--filter", "name="+projectName, "--format", "{{.Names}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker ps: %v\n%s", err, psOut)
+	}
+	if len(psOut) != 0 {
+		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
+	}
 }
