@@ -27,7 +27,18 @@ name: Live install/remove test (on demand)
 on:
   pull_request:
     types: [labeled, synchronize]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      orbit_branch:
+        description: >-
+          orbit branch to fetch install.sh from (empty = the production
+          default, orbit main). installer-compat-watch.yml is the
+          purpose-built job for this, but workflow_dispatch only resolves
+          workflows present on the default branch and that one hasn't been
+          promoted to main yet — this input covers the gap from the one
+          live-test workflow that is dispatchable.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -49,6 +60,12 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+
+      - name: Point at the requested orbit branch's install.sh
+        if: inputs.orbit_branch != ''
+        run: |
+          branch="${{ inputs.orbit_branch }}"
+          echo "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=https://raw.githubusercontent.com/tomlawesome/orbit/$branch/scripts/install.sh" >> "$GITHUB_ENV"
 
       - name: Build orbit-launcher from source
         run: |
