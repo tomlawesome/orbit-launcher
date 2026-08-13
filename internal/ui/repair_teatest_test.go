@@ -17,7 +17,7 @@ import (
 // fakeRepairStream runs a real subprocess that speaks the repair
 // diagnosis contract, so the model consumes a genuine engine.Stream.
 func fakeRepairStream(script string) prepareRepairFunc {
-	return func(_ context.Context, _ string) (*engine.Stream, error) {
+	return func(_ context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 		return engine.Start(exec.Command("bash", "-c", script))
 	}
 }
@@ -69,7 +69,7 @@ func TestRepairModel_TeaTest_HealthyDiagnosis(t *testing.T) {
 
 func TestRepairModel_UnavailableOrbitLine(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = func(_ context.Context, _ string) (*engine.Stream, error) {
+	m.prepare = func(_ context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 		return nil, deploy.ErrRepairUnavailable
 	}
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
@@ -106,6 +106,82 @@ exit 5`)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("No Orbit installation here"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// planStream mirrors the real repair.sh --plan output shape (verified
+// against orbit develop's script): plan lines + summary on stdout,
+// value-free "manual step:" guidance on stderr, no finding lines.
+func TestRepairModel_TeaTest_PlanRenders(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = fakeRepairStream(`
+echo 'plan action=regenerate-secret resolves=secret-missing mutation=reversible backup=not-required'
+echo 'plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required'
+echo 'plan action=manual resolves=database-unreachable mutation=none backup=not-required'
+echo 'manual step: verify the database container is running, then re-run diagnosis (resolves=database-unreachable)' >&2
+echo 'plan result=ready actions=2 manual=1'
+exit 3`)
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repairs proposed")) &&
+			bytes.Contains(out, []byte("regenerate the secret")) &&
+			bytes.Contains(out, []byte("rotate database credentials")) &&
+			bytes.Contains(out, []byte("backup first")) &&
+			bytes.Contains(out, []byte("needs your hands")) &&
+			bytes.Contains(out, []byte("verify the database container is running")) &&
+			bytes.Contains(out, []byte("a safe plan is ready"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+func TestRepairModel_TeaTest_PlanEmptyIsClear(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = fakeRepairStream(`echo 'plan result=empty actions=0 manual=0'; exit 0`)
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Diagnosis clear"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// TestRepairModel_TeaTest_OldScriptFallsBackToCheck proves the
+// behaviour-detected downgrade: a repair.sh too old for --plan rejects
+// it (exit 2), and the flow silently reruns --check.
+func TestRepairModel_TeaTest_OldScriptFallsBackToCheck(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = func(_ context.Context, _ string, mode deploy.RepairMode) (*engine.Stream, error) {
+		if mode == deploy.RepairPlan {
+			return engine.Start(exec.Command("bash", "-c", `echo "Usage: repair.sh --check" >&2; exit 2`))
+		}
+		return engine.Start(exec.Command("bash", "-c", `
+echo 'finding class=secret-missing target=session-secret severity=warn'
+echo 'diagnosis result=attention checked=12 skipped=1'
+exit 3`))
+	}
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Needs attention")) &&
+			bytes.Contains(out, []byte("session-secret secret")) &&
+			bytes.Contains(out, []byte("repair actions arrive with a later Orbit release"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
