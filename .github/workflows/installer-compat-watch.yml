@@ -38,7 +38,12 @@ jobs:
   compat-check:
     name: Live test against orbit@${{ github.event.client_payload.branch || inputs.orbit_branch || 'develop' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Above the suite's own 30m budget, so a slow run fails with a
+    # readable Go-level error instead of being cancelled mid-assertion.
+    # Measured: a healthy run against the current pre-release generation
+    # takes ~7m, most of it a real first-boot (image pull, ClamAV
+    # database, health wait).
+    timeout-minutes: 35
 
     steps:
       - name: Check out repository
@@ -49,13 +54,33 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Resolve target branch and install.sh URL
+      - name: Resolve target branch, install.sh URL, and image channel
         run: |
           branch="${{ github.event.client_payload.branch || inputs.orbit_branch || 'develop' }}"
           sha="${{ github.event.client_payload.sha || '' }}"
           echo "ORBIT_BRANCH=$branch" >> "$GITHUB_ENV"
           echo "ORBIT_SHA=$sha" >> "$GITHUB_ENV"
           echo "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=https://raw.githubusercontent.com/tomlawesome/orbit/$branch/scripts/install.sh" >> "$GITHUB_ENV"
+
+          # install.sh and the image it verifies are one generation and must
+          # be tested as one. orbit's publish workflow tags every pre-release
+          # build "preview" and only moves "latest" on promotion to main, so
+          # a pre-release install.sh paired with the default channel installs
+          # the *promoted production* image — and fails on any identity check
+          # that image predates. Proved by running orbit develop's install.sh
+          # against latest: it verifies the image by invoking its entrypoint
+          # with --banner, the production v1.2.0 entrypoint has no such
+          # branch, falls through to its secret bootstrap and dies. That is a
+          # mismatch this job created, not a compatibility break — and this
+          # job files an issue on failure, so it would have been a false
+          # alarm every time. install.sh reads ORBIT_CHANNEL itself and the
+          # launcher never sets the engine's environment, so exporting it
+          # here reaches the engine unchanged.
+          case "$branch" in
+            main) channel="latest" ;;
+            *) channel="preview" ;;
+          esac
+          echo "ORBIT_CHANNEL=$channel" >> "$GITHUB_ENV"
 
       - name: Build orbit-launcher from source
         run: |
