@@ -552,10 +552,17 @@ engine run — a legacy script would otherwise prompt on /dev/tty through
 the alt screen. Repair stopped being a stub: the launcher fetches
 orbit's standalone `repair.sh` (absence = "diagnosis needs a newer
 Orbit", honestly), stages it into the deployment's scripts/ directory,
-runs `--check`, and renders the finding/diagnosis enum contract with
-severity-ordered honest words, outcome keyed off exit codes
-(0/3/4/5). Repair *execution* remains orbit's next slice and the screen
-says so. Both engine-facing grammars (`prompt*`, `finding`/`diagnosis`)
+runs `--plan` (orbit#261 slice 3: the identical read-only diagnosis
+plus a classified proposed action per warn/fail finding — still zero
+mutation), and renders the plan grammar in honest words: action words,
+the resolves class, `backup first` when the contract demands a
+checkpoint, and the value-free `manual step:` guidance from stderr.
+Plan mode's stdout carries only plan lines plus a `plan result=` line
+(verified against the real script); a repair.sh too old for `--plan`
+rejects it as a usage error and the flow falls back to `--check`'s
+finding/diagnosis rendering — capability by behaviour, as everywhere.
+Every plan line is composed to hold inside 80 cells. Repair
+*execution* remains orbit's next slice and the screen says so. Both engine-facing grammars (`prompt*`, `finding`/`diagnosis`)
 are parsed in `internal/engine` with the same tolerance rules as the
 event stream: unknown trailing fields ignored, unknown enum values
 carried verbatim, prose never misparsed.
