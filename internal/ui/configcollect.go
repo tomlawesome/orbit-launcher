@@ -352,6 +352,16 @@ func promptWords(field string) (label, hint string) {
 		return "OIDC client ID", "from your identity provider's app registration"
 	case "OIDC_CLIENT_SECRET":
 		return "OIDC client secret", "input hidden"
+	// repair.sh --execute's own prompt fields (orbit#261 slice 4),
+	// same grammar, same rendering.
+	case "action-word":
+		return "The action word", "type rotate to proceed — anything else cancels"
+	case "checkpoint-passphrase":
+		return "Checkpoint passphrase", "input hidden — protects the pre-rotation backup"
+	case "checkpoint-passphrase-confirm":
+		return "Confirm the passphrase", "input hidden"
+	case "safe-batch":
+		return "Run the safe repairs?", "y to proceed"
 	default:
 		return field, ""
 	}
