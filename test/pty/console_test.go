@@ -78,6 +78,12 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*expect.Cons
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
 	}
+	// Same leak guard as startUnderPTYInDir: a t.Fatalf exit must not
+	// leave the spawned binary alive on a dead pty.
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
 	return console, cmd
 }
 
