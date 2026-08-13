@@ -80,6 +80,14 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
 	}
+	// A failed expectation exits the test through t.Fatalf without ever
+	// reaching waitForExit — without this, that run leaks a live binary
+	// parked on a dead pty (found as five real strays after a local
+	// iteration session).
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
 	return console, cmd
 }
 
