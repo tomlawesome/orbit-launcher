@@ -76,7 +76,13 @@ jobs:
     name: Live test
     needs: build_and_publish
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Above the suite's own 30m budget (see the run step) so a slow run
+    # reports a Go-level failure rather than a bare cancellation. This
+    # leg installs orbit's promoted production image, which currently
+    # finishes in about a minute — but the pre-release generation it
+    # will promote to takes ~7m for the same work, so the headroom is
+    # already needed rather than speculative.
+    timeout-minutes: 35
     permissions:
       contents: read
     # ubuntu-latest only — a debian:12 container leg was tried and
