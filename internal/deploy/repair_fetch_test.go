@@ -74,8 +74,11 @@ func TestStageRepairScript_MissingTargetIsAnError(t *testing.T) {
 }
 
 func TestBuildRepairCommand_Shape(t *testing.T) {
-	cmd := BuildRepairCommand("/tmp/target", RepairPlan)
-	want := []string{"bash", "scripts/repair.sh", "--plan"}
+	cmd := BuildRepairCommand("/tmp/target", RepairExecuteSafe)
+	want := []string{"bash", "scripts/repair.sh", "--execute", "--safe-only"}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", cmd.Args, want)
+	}
 	for i := range want {
 		if cmd.Args[i] != want[i] {
 			t.Fatalf("args = %v, want %v", cmd.Args, want)
@@ -86,5 +89,19 @@ func TestBuildRepairCommand_Shape(t *testing.T) {
 	}
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
 		t.Error("Setsid must be set")
+	}
+	if cmd.Env != nil {
+		t.Error("safe mode must not opt into machine prompts — unattended is its documented path")
+	}
+
+	dangerous := BuildRepairCommand("/tmp/target", RepairExecuteDangerous)
+	machine := false
+	for _, e := range dangerous.Env {
+		if e == "ORBIT_REPAIR_PROMPTS=machine" {
+			machine = true
+		}
+	}
+	if !machine {
+		t.Error("dangerous mode requires the machine prompt transport or the script refuses (exit 6)")
 	}
 }
