@@ -72,10 +72,25 @@ esac
 exit 2
 `
 
-const fakeRepairCheck = `#!/usr/bin/env bash
+// fakeRepairCheckOnly speaks only --check, like a repair.sh from
+// before slice 3 — the launcher's --plan attempt gets the usage error
+// and must fall back, which this fake proves end to end.
+const fakeRepairCheckOnly = `#!/usr/bin/env bash
 [[ "$1" == "--check" ]] || exit 2
 echo "finding class=secret-missing target=postgres-password severity=warn"
 echo "diagnosis result=attention checked=12 skipped=1"
+exit 3
+`
+
+// fakeRepairPlan speaks slice 3: plan lines + summary on stdout,
+// value-free manual guidance on stderr, exactly the real script's
+// output shape (verified against orbit develop).
+const fakeRepairPlan = `#!/usr/bin/env bash
+[[ "$1" == "--plan" ]] || exit 2
+echo "plan action=regenerate-secret resolves=secret-missing mutation=reversible backup=not-required"
+echo "plan action=manual resolves=database-unreachable mutation=none backup=not-required"
+echo "manual step: verify the database container is running, then re-run diagnosis (resolves=database-unreachable)" >&2
+echo "plan result=ready actions=1 manual=1"
 exit 3
 `
 
@@ -175,6 +190,48 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	}
 }
 
+func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
+	binPath := buildBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scriptURL := serveOrbitTree(t, map[string]string{
+		"/scripts/install.sh": fakeConfigAwareEngine,
+		"/scripts/repair.sh":  fakeRepairPlan,
+	})
+	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
+
+	must := func(s string) {
+		t.Helper()
+		if _, err := console.ExpectString(s); err != nil {
+			t.Fatalf("expected %q: %v", s, err)
+		}
+	}
+	send := func(s string) {
+		t.Helper()
+		if _, err := console.Send(s); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+
+	skipArrival(t, console)
+	must("▸ Update")
+	send("\x1b[B")
+	send("\r")
+
+	must("Repairs proposed")
+	must("regenerate the secret")
+	must("needs your hands")
+	must("verify the database container is running")
+	must("a safe plan is ready")
+
+	send("\r")
+	must("▸ Update")
+	send("\x1b")
+	waitForExit(t, cmd)
+}
+
 func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	binPath := buildBinary(t)
 	dir := t.TempDir()
@@ -184,7 +241,7 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	}
 	scriptURL := serveOrbitTree(t, map[string]string{
 		"/scripts/install.sh": fakeConfigAwareEngine,
-		"/scripts/repair.sh":  fakeRepairCheck,
+		"/scripts/repair.sh":  fakeRepairCheckOnly,
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
