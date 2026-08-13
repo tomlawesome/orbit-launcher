@@ -63,11 +63,24 @@ func StageRepairScript(targetDir string, script []byte) error {
 	return os.Chmod(dst, 0o700)
 }
 
-// BuildRepairCheckCommand builds the read-only diagnosis run. Detached
+// RepairMode selects which read-only repair invocation runs.
+type RepairMode string
+
+const (
+	// RepairCheck is the diagnosis alone (orbit#261 slice 1+2).
+	RepairCheck RepairMode = "--check"
+	// RepairPlan is diagnosis plus the classified proposed plan
+	// (slice 3) — still zero mutation; execution is a later slice. An
+	// older repair.sh rejects it as a usage error (exit 2), which is
+	// the caller's cue to fall back to RepairCheck.
+	RepairPlan RepairMode = "--plan"
+)
+
+// BuildRepairCommand builds one read-only repair run. Detached
 // (Setsid) for uniformity with every other engine invocation — nothing
 // the launcher spawns may ever reach /dev/tty.
-func BuildRepairCheckCommand(targetDir string) *exec.Cmd {
-	cmd := exec.Command("bash", "scripts/repair.sh", "--check")
+func BuildRepairCommand(targetDir string, mode RepairMode) *exec.Cmd {
+	cmd := exec.Command("bash", "scripts/repair.sh", string(mode))
 	cmd.Dir = targetDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd

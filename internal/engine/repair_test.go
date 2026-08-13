@@ -73,3 +73,53 @@ func TestParseDiagnosis_RejectsProse(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePlanAction(t *testing.T) {
+	p, ok := ParsePlanAction("plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required")
+	if !ok {
+		t.Fatal("expected a plan action line to parse")
+	}
+	if p.Action != "rotate-database-credential" || p.Resolves != "database-credential-mismatch" ||
+		p.Mutation != "credential-rotation" || p.Backup != "required" {
+		t.Fatalf("unexpected action: %+v", p)
+	}
+}
+
+func TestParsePlanAction_RejectsSummaryAndProse(t *testing.T) {
+	for _, line := range []string{
+		"plan result=ready actions=4 manual=2",
+		"plan something informal",
+		"plan action=manual resolves=x mutation=none", // missing backup
+		"manual step: do the thing (resolves=x)",
+	} {
+		if _, ok := ParsePlanAction(line); ok {
+			t.Errorf("expected %q to be rejected", line)
+		}
+	}
+}
+
+func TestParsePlanSummary(t *testing.T) {
+	s, ok := ParsePlanSummary("plan result=ready actions=4 manual=2")
+	if !ok {
+		t.Fatal("expected the summary line to parse")
+	}
+	if s.Result != "ready" || s.Actions != 4 || s.Manual != 2 {
+		t.Fatalf("unexpected summary: %+v", s)
+	}
+}
+
+func TestParsePlanSummary_RejectsActionLines(t *testing.T) {
+	if _, ok := ParsePlanSummary("plan action=manual resolves=x mutation=none backup=not-required"); ok {
+		t.Error("expected an action line to be rejected by the summary parser")
+	}
+}
+
+func TestParsePlan_UnknownEnumsCarriedVerbatim(t *testing.T) {
+	p, ok := ParsePlanAction("plan action=defragment-rings resolves=ring-dust mutation=cosmetic backup=not-required")
+	if !ok {
+		t.Fatal("expected unknown enum values to parse — renderable, not rejected")
+	}
+	if p.Action != "defragment-rings" || p.Mutation != "cosmetic" {
+		t.Fatalf("unexpected action: %+v", p)
+	}
+}

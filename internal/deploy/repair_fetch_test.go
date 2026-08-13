@@ -73,9 +73,9 @@ func TestStageRepairScript_MissingTargetIsAnError(t *testing.T) {
 	}
 }
 
-func TestBuildRepairCheckCommand_Shape(t *testing.T) {
-	cmd := BuildRepairCheckCommand("/tmp/target")
-	want := []string{"bash", "scripts/repair.sh", "--check"}
+func TestBuildRepairCommand_Shape(t *testing.T) {
+	cmd := BuildRepairCommand("/tmp/target", RepairPlan)
+	want := []string{"bash", "scripts/repair.sh", "--plan"}
 	for i := range want {
 		if cmd.Args[i] != want[i] {
 			t.Fatalf("args = %v, want %v", cmd.Args, want)
