@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"io"
 	"os/exec"
 	"testing"
 	"time"
@@ -186,6 +187,191 @@ exit 3`))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// safePlanStream is a --plan run proposing one safe action, so the
+// contextual menu offers execution.
+const safePlanStream = `
+echo 'plan action=fix-permissions resolves=managed-file-permissions mutation=reversible backup=not-required'
+echo 'plan result=ready actions=1 manual=0'
+exit 3`
+
+// safeExecuteStream is the --execute --safe-only automation-path
+// output shape (verified against the real script): execute lines,
+// execution summary, then the full re-diagnosis.
+const safeExecuteStream = `
+echo 'execute action=fix-permissions resolves=managed-file-permissions result=done'
+echo 'execution result=complete done=1 failed=0'
+echo 'diagnosis result=healthy checked=15 skipped=0'
+exit 0`
+
+func modalRepairStream(planScript, executeScript string) prepareRepairFunc {
+	return func(_ context.Context, _ string, mode deploy.RepairMode) (*engine.Stream, error) {
+		script := planScript
+		if mode == deploy.RepairExecuteSafe {
+			script = executeScript
+		}
+		return engine.Start(exec.Command("bash", "-c", script))
+	}
+}
+
+func TestRepairModel_TeaTest_SafeExecutionRunsAndShowsAfterPicture(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = modalRepairStream(safePlanStream, safeExecuteStream)
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repairs proposed")) &&
+			bytes.Contains(out, []byte("Run the safe repairs"))
+	}, teatest.WithDuration(5*time.Second))
+
+	// "Run the safe repairs" is preselected: the plan proposed it.
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repairs applied")) &&
+			bytes.Contains(out, []byte("restore safe permissions")) &&
+			bytes.Contains(out, []byte("1 done · 0 failed")) &&
+			bytes.Contains(out, []byte("diagnosis clear after repairs")) &&
+			bytes.Contains(out, []byte("Diagnose again"))
+	}, teatest.WithDuration(5*time.Second))
+
+	// Exit cleanly (Diagnose again, Menu, Exit).
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+func TestRepairModel_TeaTest_NoExecutionOfferedWithoutSafeActions(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = fakeRepairStream(`
+echo 'plan action=manual resolves=database-unreachable mutation=none backup=not-required'
+echo 'plan result=manual-required actions=0 manual=1'
+exit 4`)
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("needs your hands")) &&
+			bytes.Contains(out, []byte("▸ Menu")) &&
+			!bytes.Contains(out, []byte("Run the safe repairs"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// rotationScript speaks the dangerous session's machine prompts
+// exactly as repair.sh does: typed action word, passphrase twice, then
+// execution and the re-diagnosis.
+const rotationScript = `
+echo "prompt field=action-word kind=typed-word required=true attempt=1"
+read -r word || exit 1
+[ "$word" = "rotate" ] || { echo "prompt-abort field=action-word"; exit 1; }
+echo "prompt-accept field=action-word"
+echo "prompt field=checkpoint-passphrase kind=secret required=true attempt=1"
+read -r p1 || exit 1
+echo "prompt-accept field=checkpoint-passphrase"
+echo "prompt field=checkpoint-passphrase-confirm kind=secret required=true attempt=1"
+read -r p2 || exit 1
+echo "prompt-accept field=checkpoint-passphrase-confirm"
+echo "execute action=rotate-database-credential resolves=database-credential-mismatch result=done"
+echo "execution result=complete done=1 failed=0"
+echo "diagnosis result=healthy checked=15 skipped=0"
+exit 0`
+
+func TestRepairModel_TeaTest_DangerousRotationDrivenInConsole(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = fakeRepairStream(`
+echo 'plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required'
+echo 'plan result=ready actions=1 manual=0'
+exit 3`)
+	m.prepareRotate = func(_ context.Context, _ string) (*engine.Stream, io.WriteCloser, error) {
+		return engine.StartInteractive(exec.Command("bash", "-c", rotationScript))
+	}
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Rotate database credentials")) &&
+			bytes.Contains(out, []byte("Repairs proposed"))
+	}, teatest.WithDuration(5*time.Second))
+
+	// The rotation entry is preselected (only executable action).
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("The action word")) &&
+			bytes.Contains(out, []byte("type rotate to proceed"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Type("rotate")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Checkpoint passphrase"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Type("orbit-checkpoint-pass")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Confirm the passphrase"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Type("orbit-checkpoint-pass")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repairs applied")) &&
+			bytes.Contains(out, []byte("rotate database credentials")) &&
+			bytes.Contains(out, []byte("diagnosis clear after repairs"))
+	}, teatest.WithDuration(5*time.Second))
+
+	// The passphrase must never have been echoed.
+	out, err := io.ReadAll(tm.Output())
+	if err == nil && bytes.Contains(out, []byte("orbit-checkpoint-pass")) {
+		t.Fatal("the checkpoint passphrase was echoed to the screen")
+	}
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+func TestRepairModel_TeaTest_EscAbandonsRotationUnchanged(t *testing.T) {
+	m := NewRepairModel(t.TempDir(), "v0.6.0")
+	m.prepare = fakeRepairStream(`
+echo 'plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required'
+echo 'plan result=ready actions=1 manual=0'
+exit 3`)
+	m.prepareRotate = func(_ context.Context, _ string) (*engine.Stream, io.WriteCloser, error) {
+		return engine.StartInteractive(exec.Command("bash", "-c", rotationScript))
+	}
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Rotate database credentials"))
+	}, teatest.WithDuration(5*time.Second))
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("The action word"))
+	}, teatest.WithDuration(5*time.Second))
+
+	// Esc: closed stdin is the engine's documented abort — zero
+	// mutation — and the plan screen returns.
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("Repairs proposed"))
+	}, teatest.WithDuration(5*time.Second))
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}

@@ -322,3 +322,69 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 	send("\x1b")
 	waitForExit(t, cmd)
 }
+
+// fakeRepairModal speaks --plan and --execute --safe-only, the full
+// slice-4 safe loop.
+const fakeRepairModal = `#!/usr/bin/env bash
+case "$*" in
+  "--plan")
+    echo "plan action=fix-permissions resolves=managed-file-permissions mutation=reversible backup=not-required"
+    echo "plan result=ready actions=1 manual=0"
+    exit 3 ;;
+  "--execute --safe-only")
+    echo "execute action=fix-permissions resolves=managed-file-permissions result=done"
+    echo "execution result=complete done=1 failed=0"
+    echo "diagnosis result=healthy checked=15 skipped=0"
+    exit 0 ;;
+esac
+exit 2
+`
+
+func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
+	binPath := buildBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scriptURL := serveOrbitTree(t, map[string]string{
+		"/scripts/install.sh": fakeConfigAwareEngine,
+		"/scripts/repair.sh":  fakeRepairModal,
+	})
+	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
+
+	must := func(s string) {
+		t.Helper()
+		if _, err := console.ExpectString(s); err != nil {
+			t.Fatalf("expected %q: %v", s, err)
+		}
+	}
+	send := func(s string) {
+		t.Helper()
+		if _, err := console.Send(s); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+
+	skipArrival(t, console)
+	must("▸ Update")
+	send("\x1b[B")
+	send("\r")
+
+	// The plan proposes a safe fix; running it is the preselected act.
+	must("Repairs proposed")
+	must("▸ Run the safe repairs")
+	send("\r")
+
+	// The after-picture: applied, counted, re-diagnosed clean.
+	must("Repairs applied")
+	must("restore safe permissions")
+	must("1 done · 0 failed")
+	must("diagnosis clear after repairs")
+
+	// Menu (one down from Diagnose again) returns to the splash.
+	send("\x1b[B")
+	send("\r")
+	must("▸ Update")
+	send("\x1b")
+	waitForExit(t, cmd)
+}
