@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
@@ -27,6 +28,7 @@ const (
 // existing .env-orbit values.
 type UpdateModel struct {
 	width, height int
+	star          starfield.Model
 	targetDir     string
 	version       string
 	deployment    *deploy.Deployment
@@ -58,8 +60,18 @@ func (m UpdateModel) Init() tea.Cmd { return nil }
 
 // Update implements tea.Model.
 func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// See InstallModel.Update: neither message is consumed here, a resize
+	// arms no tick chain, and the engine run re-arms the one chain while
+	// it owns the screen.
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
+		m.star = starfield.New(resized.Width, resized.Height, 1)
+	}
+	if _, ok := msg.(tickMsg); ok {
+		m.star = m.star.Advance()
+		if m.state != updateStateRunning {
+			return m, tick()
+		}
 	}
 
 	if m.state == updateStateRunning {
@@ -148,7 +160,7 @@ func (m UpdateModel) viewNotFound() string {
 	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Exit"}, 0)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m UpdateModel) viewConfirm() string {
@@ -171,7 +183,7 @@ func (m UpdateModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("Your existing configuration is preserved. Nothing is deleted."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Update Orbit", "Cancel"}, m.confirmSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // deploymentImage is the deployment's image reference without its

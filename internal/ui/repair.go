@@ -12,6 +12,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
@@ -33,6 +34,7 @@ import (
 // menu never offers an action the plan didn't propose.
 type RepairModel struct {
 	width, height int
+	star          starfield.Model
 	targetDir     string
 	version       string
 
@@ -196,8 +198,15 @@ func pumpRepair(s *engine.Stream) tea.Cmd {
 func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// See RemoveModel.Update: the sky is built here, the tick chain
+		// is not — there is exactly one, and it is already running.
 		m.width, m.height = msg.Width, msg.Height
+		m.star = starfield.New(msg.Width, msg.Height, 1)
 		return m, nil
+
+	case tickMsg:
+		m.star = m.star.Advance()
+		return m, tick()
 
 	case repairReadyMsg:
 		if msg.err != nil {
@@ -519,9 +528,9 @@ func (m RepairModel) View() string {
 	}
 	switch m.state {
 	case repairPreparing:
-		return centreBlock(m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
+		return skyBlock(m.star, m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
 	case repairExecuting:
-		return centreBlock(m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first"))
+		return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first"))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -550,13 +559,16 @@ func (m RepairModel) viewRotating() string {
 	p := m.rotPrompt
 	if p == nil {
 		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return centreBlock(m.width, m.height, b.String())
+		return skyBlock(m.star, m.width, m.height, b.String())
 	}
 
-	label, hint := promptWords(p.Field)
+	label, hint, notes := promptWords(p.Field, "")
 	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
 	if hint != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(hint))
+	}
+	for _, note := range notes {
+		fmt.Fprintln(&b, style.MutedText.Render(note))
 	}
 	fmt.Fprintln(&b)
 	shown := string(m.rotInput)
@@ -571,7 +583,7 @@ func (m RepairModel) viewRotating() string {
 	if p.Attempt > 1 {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
 	}
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // viewExecuted is the after-picture: what ran, how it ended, and the
@@ -623,7 +635,7 @@ func (m RepairModel) viewExecuted() string {
 	}
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, executedMenu, m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // executeLine renders one execution outcome in honest words.
@@ -654,7 +666,7 @@ func (m RepairModel) viewUnavailable() string {
 	fmt.Fprintln(&b, style.MutedText.Render("yet. Nothing on the deployment was touched."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, repairMenu, m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m RepairModel) viewError() string {
@@ -666,7 +678,7 @@ func (m RepairModel) viewError() string {
 		fmt.Fprintln(&b)
 	}
 	writeStackedMenu(&b, repairMenu, m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m RepairModel) viewDiagnosis() string {
@@ -712,7 +724,7 @@ func (m RepairModel) viewDiagnosis() string {
 
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, m.planMenu(), m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // writePlan renders the proposed plan (orbit#261 slice 3): what the

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
@@ -35,6 +36,7 @@ const (
 // (orbit#297), or via the terminal handoff when it doesn't.
 type InstallModel struct {
 	width, height int
+	star          starfield.Model
 	state         installState
 	targetDir     string
 	version       string
@@ -87,8 +89,21 @@ func (m InstallModel) Init() tea.Cmd { return nil }
 
 // Update implements tea.Model.
 func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// The sky is this model's own, but neither message is consumed here:
+	// while an engine run owns the screen the run's console needs both
+	// too, and it re-arms the tick chain itself. A resize builds the sky
+	// and arms nothing — the one app-wide chain SplashModel.Init started
+	// is still running, and starting a second here would double the
+	// sky's speed for the rest of the process (see AppModel.refreshSplash).
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
+		m.star = starfield.New(resized.Width, resized.Height, 1)
+	}
+	if _, ok := msg.(tickMsg); ok {
+		m.star = m.star.Advance()
+		if m.state != installStateRunning {
+			return m, tick()
+		}
 	}
 
 	if m.state == installStateRunning {
@@ -206,7 +221,7 @@ func (m InstallModel) viewProfile() string {
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
@@ -219,7 +234,7 @@ func (m InstallModel) viewUnavailableProfile() string {
 	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Back"}, 0)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewConfirm() string {
@@ -236,5 +251,5 @@ func (m InstallModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.Tagline.Render(m.targetDir))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Install now", "Back"}, m.confirmSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }

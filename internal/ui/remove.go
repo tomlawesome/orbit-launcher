@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
@@ -36,6 +37,7 @@ type standDownResultMsg struct{ err error }
 // promise.
 type RemoveModel struct {
 	width, height int
+	star          starfield.Model
 	deployment    *deploy.Deployment
 	state         removeState
 	confirmSel    int // 0 = Stand down Orbit, 1 = Cancel
@@ -68,8 +70,16 @@ func (m RemoveModel) Init() tea.Cmd { return nil }
 func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// Build the sky, arm nothing: the one app-wide tick chain
+		// SplashModel.Init started is still running and reaches this model
+		// the moment it owns the screen. See AppModel.refreshSplash.
 		m.width, m.height = msg.Width, msg.Height
+		m.star = starfield.New(msg.Width, msg.Height, 1)
 		return m, nil
+
+	case tickMsg:
+		m.star = m.star.Advance()
+		return m, tick()
 
 	case standDownResultMsg:
 		if msg.err != nil {
@@ -200,11 +210,11 @@ func (m RemoveModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("shows exactly how to remove them if you choose to."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Stand down Orbit", "Cancel"}, m.confirmSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m RemoveModel) viewStandingDown() string {
-	return centreBlock(m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("standing down Orbit…"))
+	return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("standing down Orbit…"))
 }
 
 func (m RemoveModel) viewDone() string {
@@ -233,7 +243,7 @@ func (m RemoveModel) viewDone() string {
 		copyLabel = "Copy command · copied"
 	}
 	writeStackedMenu(&b, []string{copyLabel, "Exit"}, m.doneSel)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func targetDirOrPlaceholder(d *deploy.Deployment) string {
@@ -252,5 +262,5 @@ func (m RemoveModel) viewFailed() string {
 		fmt.Fprintln(&b)
 	}
 	writeStackedMenu(&b, []string{"Exit"}, 0)
-	return centreBlock(m.width, m.height, b.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
