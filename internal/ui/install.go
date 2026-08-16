@@ -1,12 +1,15 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
@@ -18,7 +21,14 @@ const (
 	installStateUnavailableProfile
 	installStateConfirm
 	installStateRunning
+	installStateStaleVolume
 )
+
+// staleVolumeCheckTimeout bounds the pre-flight's one docker call. It is
+// generous for `docker volume ls` and still short enough that an
+// unreachable daemon costs a moment, not a wait — the check is advisory,
+// so timing out simply means the screen never appears.
+const staleVolumeCheckTimeout = 5 * time.Second
 
 // InstallModel is the Install flow: profile choice, confirmation, then
 // the mission console — the engine's event stream rendered natively
@@ -43,6 +53,16 @@ type InstallModel struct {
 
 	profileSel int // 0 = Standard, 1 = AI, 2 = Full
 	confirmSel int // 0 = Install now, 1 = Back
+	volumeSel  int // 0 = Continue anyway, 1 = Back
+
+	// staleVolumes carries the pre-flight's finding (issue #105): Orbit
+	// database volumes this machine already has and this target cannot
+	// prove it owns.
+	staleVolumes []deploy.DatabaseVolume
+
+	// checkVolumes is overridable in tests so they need no Docker
+	// daemon — production code leaves it nil and gets the real check.
+	checkVolumes func(context.Context, string) []deploy.DatabaseVolume
 
 	run engineRun
 
@@ -84,8 +104,27 @@ func NewInstallModel(targetDir, version string) InstallModel {
 // engine run's outcome to AppModel.
 func (m InstallModel) Outcome() flowOutcome { return outcomeOf(m.run) }
 
-// Init implements tea.Model.
-func (m InstallModel) Init() tea.Cmd { return nil }
+// staleVolumesMsg carries the pre-flight's finding back into the event
+// loop. An empty slice is the overwhelmingly common case and means the
+// flow proceeds exactly as it always has.
+type staleVolumesMsg struct{ volumes []deploy.DatabaseVolume }
+
+// Init implements tea.Model: the stale-database-volume pre-flight starts
+// immediately. It is read-only — one `docker volume ls` — so there is
+// nothing to confirm first, and it runs off the first frame's path so
+// the profile screen is never waiting on Docker to draw.
+func (m InstallModel) Init() tea.Cmd {
+	check := m.checkVolumes
+	if check == nil {
+		check = deploy.UnownedDatabaseVolumes
+	}
+	targetDir := m.targetDir
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), staleVolumeCheckTimeout)
+		defer cancel()
+		return staleVolumesMsg{volumes: check(ctx, targetDir)}
+	}
+}
 
 // Update implements tea.Model.
 func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -106,6 +145,19 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if found, ok := msg.(staleVolumesMsg); ok {
+		// Only the profile screen is interrupted. The check is async, so
+		// a quick hand can already be past it — and stopping someone
+		// mid-confirm to report a pre-flight finding would be worse than
+		// letting the engine give them the same news.
+		if len(found.volumes) > 0 && m.state == installStateProfile {
+			m.staleVolumes = found.volumes
+			m.state = installStateStaleVolume
+			m.volumeSel = 0
+		}
+		return m, nil
+	}
+
 	if m.state == installStateRunning {
 		var cmd tea.Cmd
 		m.run, cmd = m.run.update(msg)
@@ -123,6 +175,8 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch m.state {
+	case installStateStaleVolume:
+		return m.handleStaleVolumeKey(msg)
 	case installStateProfile:
 		return m.handleProfileKey(msg)
 	case installStateUnavailableProfile:
@@ -134,6 +188,27 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installStateConfirm:
 		return m.handleConfirmKey(msg)
+	}
+	return m, nil
+}
+
+// handleStaleVolumeKey keeps the pre-flight advisory. Continue anyway is
+// always offered and always works: this screen reports what the engine
+// is about to refuse, and a detection mistake here must never be able to
+// stand between someone and an install.
+func (m InstallModel) handleStaleVolumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		return m, tea.Quit
+	case tea.KeyUp, tea.KeyDown:
+		m.volumeSel = 1 - m.volumeSel
+		return m, nil
+	case tea.KeyEnter:
+		if m.volumeSel == 1 {
+			return m, tea.Quit
+		}
+		m.state = installStateProfile
+		return m, nil
 	}
 	return m, nil
 }
@@ -188,6 +263,8 @@ func (m InstallModel) View() string {
 		return ""
 	}
 	switch m.state {
+	case installStateStaleVolume:
+		return m.viewStaleVolume()
 	case installStateProfile:
 		return m.viewProfile()
 	case installStateUnavailableProfile:
@@ -203,6 +280,44 @@ func (m InstallModel) View() string {
 // The flow screens speak the same starchart grammar as every other
 // screen (design/DECISIONS.md): centred block, ⟡ mark and bold title,
 // muted prose, individually-centred stacked menu, no keybind hints.
+
+// viewStaleVolume is the pre-flight screen (issue #105). It explains a
+// refusal the engine is about to make and names the volume behind it —
+// nothing more. It deliberately does not offer to clear anything: the
+// dead end being fixed here is being told what is refused and never why,
+// and deleting someone's database is a separate, higher-consequence act
+// that belongs on its own screen if it is ever added at all.
+//
+// Every name shown comes verbatim from docker's own output (see
+// deploy.UnownedDatabaseVolumes), because a person may well act on a
+// volume name they read here.
+func (m InstallModel) viewStaleVolume() string {
+	var b strings.Builder
+	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This machine already has an Orbit database"))
+	fmt.Fprintln(&b)
+
+	for _, v := range m.staleVolumes {
+		line := v.Name
+		if v.Project != "" {
+			line += "  ·  from the " + v.Project + " deployment"
+		}
+		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(line))
+	}
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, style.MutedText.Render("It was left by an earlier install in another directory, and"))
+	fmt.Fprintln(&b, style.MutedText.Render("this one has none of the credentials that would prove it owns"))
+	fmt.Fprintln(&b, style.MutedText.Render("that database. Orbit will not start over a database it cannot"))
+	fmt.Fprintln(&b, style.MutedText.Render("prove belongs to it, so the installer will stop rather than"))
+	fmt.Fprintln(&b, style.MutedText.Render("risk the data inside it."))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, style.Tagline.Render("nothing has been changed, and nothing will be by this screen"))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, []string{"Continue anyway", "Back"}, m.volumeSel)
+	return skyBlock(m.star, m.width, m.height, b.String())
+}
 
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder

@@ -52,6 +52,10 @@ type AppModel struct {
 	// flowSeams lets tests fake the engine/handoff dependencies of
 	// flows this model constructs; zero in production (real deps).
 	flowSeams engineRunSeams
+
+	// flowCheckVolumes fakes Install's stale-database-volume pre-flight
+	// so tests need no Docker daemon; nil in production (real check).
+	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
 }
 
 // NewAppModel constructs the root application model, starting at the
@@ -98,6 +102,16 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 	m.healthProbe = probe
 	m.detectOnStart = true
 	m.splash = m.applyDeployment(m.splash)
+	return m
+}
+
+// WithoutVolumeCheck disables Install's stale-database-volume pre-flight
+// (issue #105). Its answer comes from the local Docker daemon, so it is
+// the one part of the Install flow whose behaviour depends on the machine
+// underneath it — which is exactly what a hermetic test suite cannot
+// have. See ORBIT_LAUNCHER_NO_VOLUME_CHECK in cmd/orbit-launcher.
+func (m AppModel) WithoutVolumeCheck() AppModel {
+	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
 	return m
 }
 
@@ -257,8 +271,12 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams
+		m.install.checkVolumes = m.flowCheckVolumes
 		m.state = appStateInstall
-		return m, sizeCmd
+		// Install's Init runs the stale-database-volume pre-flight
+		// (issue #105) — like Repair's, it is read-only, so it starts
+		// with the flow rather than waiting for a confirmation.
+		return m, tea.Batch(sizeCmd, m.install.Init())
 	case "Update":
 		deployment, _ := deploy.Detect(m.resolvedTargetDir())
 		m.update = NewUpdateModel(deployment, m.resolvedTargetDir(), m.version)
