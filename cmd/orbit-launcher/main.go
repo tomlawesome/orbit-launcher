@@ -37,6 +37,14 @@ func main() {
 		probe = deploy.ProbeHealth
 	}
 	app = app.WithDeploymentStatus(probe)
+	// Install's stale-database-volume pre-flight (issue #105) asks the
+	// local Docker daemon what volumes exist, so its answer depends on
+	// the machine the test runs on — and on any machine that has ever
+	// run Orbit it legitimately interrupts the profile screen. Same
+	// hermeticity gate as the two above, for the same reason.
+	if os.Getenv("ORBIT_LAUNCHER_NO_VOLUME_CHECK") != "" {
+		app = app.WithoutVolumeCheck()
+	}
 
 	program := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {

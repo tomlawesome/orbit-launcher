@@ -408,3 +408,96 @@ func TestInstallModel_SuccessElapsedComesFromTheConsoleClock(t *testing.T) {
 		t.Errorf("Elapsed = %v, want 3m42s from the injected clock", got)
 	}
 }
+
+// staleVolumeCheck returns a pre-flight seam reporting exactly volumes.
+func staleVolumeCheck(volumes ...deploy.DatabaseVolume) func(context.Context, string) []deploy.DatabaseVolume {
+	return func(context.Context, string) []deploy.DatabaseVolume { return volumes }
+}
+
+// The dead end issue #105 fixes is being told what is refused and never
+// why. The pre-flight names the volume before the engine fails, rather
+// than after.
+func TestInstallModel_StaleVolumePreFlightNamesTheVolume(t *testing.T) {
+	m := NewInstallModel("/opt/orbit", "v0.1.0")
+	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "old-tree_orbit-db-data", Project: "old-tree"})
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ = updated.Update(m.Init()())
+
+	view := updated.View()
+	for _, want := range []string{"old-tree_orbit-db-data", "old-tree", "Continue anyway"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("pre-flight screen missing %q", want)
+		}
+	}
+}
+
+// The screen explains a refusal; it never offers to carry one out. A
+// clearing command is deliberately out of scope (see the issue), and
+// nothing on this screen may read as an instruction to delete data.
+func TestInstallModel_StaleVolumePreFlightOffersNoDestructiveAction(t *testing.T) {
+	m := NewInstallModel("/opt/orbit", "v0.1.0")
+	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "old-tree_orbit-db-data", Project: "old-tree"})
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ = updated.Update(m.Init()())
+
+	view := updated.View()
+	for _, forbidden := range []string{"volume rm", "docker volume", "Copy command", "delete", "Delete"} {
+		if strings.Contains(view, forbidden) {
+			t.Errorf("pre-flight screen must not offer %q", forbidden)
+		}
+	}
+}
+
+// Advisory means advisory: a detection mistake must never be able to
+// stand between someone and an install.
+func TestInstallModel_StaleVolumePreFlightAlwaysLetsYouThrough(t *testing.T) {
+	m := NewInstallModel("/opt/orbit", "v0.1.0")
+	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ = updated.Update(m.Init()())
+	updated, _ = updated.Update(key(tea.KeyEnter)) // Continue anyway is preselected
+
+	if got := updated.(InstallModel).state; got != installStateProfile {
+		t.Errorf("Continue anyway left the flow in state %v, want the profile screen", got)
+	}
+	if !strings.Contains(updated.View(), "Choose a deployment profile") {
+		t.Error("expected the profile screen after continuing")
+	}
+}
+
+// A clean machine is the overwhelmingly common case, and it must be
+// indistinguishable from the flow before this pre-flight existed.
+func TestInstallModel_NoStaleVolumeChangesNothing(t *testing.T) {
+	m := NewInstallModel("/opt/orbit", "v0.1.0")
+	m.checkVolumes = staleVolumeCheck()
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ = updated.Update(m.Init()())
+
+	if got := updated.(InstallModel).state; got != installStateProfile {
+		t.Errorf("a clean machine moved the flow to state %v", got)
+	}
+}
+
+// The check is async, so its answer can arrive after a quick hand has
+// already moved on. Yanking someone back from the confirm screen to
+// report a pre-flight finding is worse than letting the engine say the
+// same thing a moment later.
+func TestInstallModel_StaleVolumeFindingNeverInterruptsALaterScreen(t *testing.T) {
+	m := NewInstallModel("/opt/orbit", "v0.1.0")
+	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ = updated.Update(key(tea.KeyEnter)) // Standard → confirm
+	if got := updated.(InstallModel).state; got != installStateConfirm {
+		t.Fatalf("expected the confirm screen, got state %v", got)
+	}
+
+	updated, _ = updated.Update(m.Init()())
+	if got := updated.(InstallModel).state; got != installStateConfirm {
+		t.Errorf("a late pre-flight finding pulled the flow back to state %v", got)
+	}
+}

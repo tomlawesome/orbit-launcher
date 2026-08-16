@@ -103,6 +103,7 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	m := NewAppModel()
 	m.targetDir = t.TempDir()
 	m = m.WithVersion("v9.9.9")
+	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = seams
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
 	skipArrival(tm)
