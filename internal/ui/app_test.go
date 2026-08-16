@@ -10,6 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
@@ -72,6 +74,7 @@ func TestAppModel_SelectingUpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 	m := NewAppModel()
 	m.targetDir = t.TempDir()
+	m.flowCheckVolumes = noStaleVolumes
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	skipArrival(tm)
 
@@ -130,6 +133,7 @@ func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t
 func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.T) {
 	m := NewAppModel()
 	m.targetDir = t.TempDir()
+	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = engineRunSeams{
 		prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`),
 	}
@@ -166,6 +170,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 	m := NewAppModel()
 	m.targetDir = dir
 	m = m.WithVersion("v9.9.9")
+	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = engineRunSeams{
 		prepareEngine: fakeEngine(nil, successStream()...),
 		detect:        fakeDetect("https://mail.example.com"),
@@ -214,6 +219,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 	m := NewAppModel()
 	m.targetDir = t.TempDir()
+	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = engineRunSeams{
 		prepareEngine: fakeEngine(nil, successStream()...),
 		detect:        fakeDetect("https://mail.example.com"),
@@ -276,3 +282,11 @@ func TestAppModel_WithDeploymentStatusIsANoOpWithoutADeployment(t *testing.T) {
 		t.Errorf("state = %v, want stateDormant", m.splash.state)
 	}
 }
+
+// noStaleVolumes fakes Install's stale-database-volume pre-flight as a
+// clean machine. Without it these tests would reach the real Docker
+// daemon, and on any machine that has ever run Orbit the pre-flight
+// would legitimately interrupt the profile screen they assert on —
+// every other dependency in this file is already faked for the same
+// reason.
+func noStaleVolumes(context.Context, string) []deploy.DatabaseVolume { return nil }

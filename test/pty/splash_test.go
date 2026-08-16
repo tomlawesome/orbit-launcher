@@ -75,7 +75,8 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 	// reason every other test in this repo mocks its network calls
 	// (see internal/deploy/fetch_test.go, internal/release/update_test.go).
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
-		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1")
+		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
+		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1")
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
