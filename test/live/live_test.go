@@ -198,7 +198,15 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 	cmd.Stderr = console.Tty()
 	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
 	// goroutine, not just the one that took the signal.
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all")
+	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all",
+		// The stale-database-volume pre-flight (issue #105) reads the
+		// host's volumes, so a volume left behind by a crashed earlier
+		// run would interrupt this install with a screen the test never
+		// expects — and the gate would sit out its full 600s waiting for
+		// a profile screen that isn't coming, which is precisely the
+		// hang class issue #100 exists to diagnose. Covered by its own
+		// unit and seam tests instead of on machine state.
+		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
