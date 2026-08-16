@@ -446,7 +446,7 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 	p := r.cfg.prompt
 	if p == nil {
 		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return centreBlock(width, height, b.String())
+		return skyBlock(r.console.sky, width, height, b.String())
 	}
 
 	label, hint, notes := promptWords(p.Field, r.cfg.origin)
@@ -474,5 +474,5 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 	if p.Attempt > 1 {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
 	}
-	return centreBlock(width, height, b.String())
+	return skyBlock(r.console.sky, width, height, b.String())
 }

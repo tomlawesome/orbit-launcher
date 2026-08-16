@@ -426,7 +426,7 @@ func (r engineRun) viewConfigPrompt(width, height int) string {
 	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+r.action+" resumes."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, configPromptMenu, r.menuSel)
-	return centreBlock(width, height, b.String())
+	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 func (r engineRun) viewFailed(width, height int) string {
@@ -447,7 +447,7 @@ func (r engineRun) viewFailed(width, height int) string {
 	}
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, failedMenu, r.menuSel)
-	return centreBlock(width, height, b.String())
+	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 // writeStackedMenu writes menu rows in the centred grammar: each label
