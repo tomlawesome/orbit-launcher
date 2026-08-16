@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -349,5 +350,92 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// Naming a field is not the same as telling someone where to find its
+// value. These are the notes that turn "your identity provider's issuer"
+// into something an administrator can actually answer.
+func TestPromptWords_CarriesTheGuidanceEachFieldNeeds(t *testing.T) {
+	t.Run("the issuer shows both self-hosted shapes", func(t *testing.T) {
+		_, _, notes := promptWords("OIDC_ISSUER", "")
+		joined := strings.Join(notes, "\n")
+		// Authentik's trailing slash is load-bearing: its discovery
+		// document is only served from the slashed form, and it is the
+		// character most easily dropped when copying by eye.
+		if !strings.Contains(joined, "/application/o/orbit/") {
+			t.Errorf("the Authentik example lost its trailing slash: %q", joined)
+		}
+		if !strings.Contains(joined, "/realms/orbit") {
+			t.Errorf("no Keycloak example: %q", joined)
+		}
+	})
+
+	t.Run("an unknown field is never guessed at", func(t *testing.T) {
+		label, hint, notes := promptWords("SOME_FUTURE_FIELD", "https://orbit.example.com")
+		if label != "SOME_FUTURE_FIELD" || hint != "" || notes != nil {
+			t.Errorf("invented words for an unknown field: %q / %q / %v", label, hint, notes)
+		}
+	})
+}
+
+// The redirect URI is the value an identity provider's registration needs
+// and the one most often got wrong, so the client-ID note names this
+// deployment's real one whenever APP_URL has already been answered.
+func TestCallbackNote_NamesThisDeploymentsRedirectURI(t *testing.T) {
+	const generic = "register <your Orbit URL>/api/auth/callback"
+
+	cases := []struct {
+		name   string
+		origin string
+		want   string
+	}{
+		{"no APP_URL answered yet", "", generic},
+		{"a real origin", "https://orbit.example.com", "register https://orbit.example.com/api/auth/callback"},
+		{"a trailing slash is not doubled", "https://orbit.example.com/", "register https://orbit.example.com/api/auth/callback"},
+		{"surrounding whitespace", "  https://orbit.example.com  ", "register https://orbit.example.com/api/auth/callback"},
+		{"plain http is not an Orbit origin", "http://orbit.example.com", generic},
+		{"too long for the bar", "https://" + strings.Repeat("a", 70) + ".example.com", generic},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := callbackNote(tc.origin)
+			if len(got) == 0 || got[0] != tc.want {
+				t.Errorf("callbackNote(%q) first line = %q, want %q", tc.origin, got, tc.want)
+			}
+			for _, line := range got {
+				if len(line) > 76 {
+					t.Errorf("note line would break the 80-cell bar: %q", line)
+				}
+			}
+		})
+	}
+}
+
+// nopWriteCloser stands in for the engine's stdin pipe, which the
+// session closes; a buffer has nothing to close.
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
+
+// origin is only ever remembered from a non-secret field: a secret must
+// not survive one keystroke longer than the write to the engine's stdin.
+func TestConfigCollect_OnlyAPPURLIsRemembered(t *testing.T) {
+	var stdin bytes.Buffer
+	r := engineRun{cfg: configCollect{stdin: nopWriteCloser{&stdin}}}
+
+	r.cfg.prompt = &engine.Prompt{Field: "OIDC_CLIENT_SECRET", Kind: "secret"}
+	r.cfg.input = []rune("hunter2")
+	r, _ = r.handleConfigKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if r.cfg.origin != "" {
+		t.Errorf("a secret was remembered as the origin: %q", r.cfg.origin)
+	}
+
+	r.cfg.prompt = &engine.Prompt{Field: "APP_URL", Kind: "url"}
+	r.cfg.input = []rune("https://orbit.example.com")
+	r, _ = r.handleConfigKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if r.cfg.origin != "https://orbit.example.com" {
+		t.Errorf("APP_URL was not remembered: %q", r.cfg.origin)
 	}
 }

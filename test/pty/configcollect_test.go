@@ -142,12 +142,16 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	must("Continue — guided configuration")
 	send("\r")
 
-	// The engine's own prompt for the public origin, answered in-TUI.
+	// The engine's own prompt for the public origin, answered in-TUI —
+	// with the worked example that tells someone what shape to type.
 	must("Public Orbit origin")
+	must("e.g. https://orbit.example.com")
 	send("https://pty.example.test\r")
 
-	// The secret step — the label says hidden, and the answer is.
+	// The secret step — the label says hidden, and the answer is. Its
+	// note is the one that stops an account password being pasted here.
 	must("OIDC client secret")
+	must("issued with the client ID")
 	send("pty-secret-value\r")
 
 	// Adoption + automatic retry: the engine now proceeds to success.
