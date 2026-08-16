@@ -75,6 +75,10 @@ type configCollect struct {
 	reason    string         // honest words for the last rejection
 	sawPrompt bool           // protocol capability evidence, per step
 	input     []rune
+	// origin is the accepted APP_URL answer, kept so a later field's
+	// guidance can name this deployment's real callback URL. Only ever
+	// set from a non-secret field.
+	origin string
 }
 
 // close releases the session's process and staged tree.
@@ -332,6 +336,9 @@ func (r engineRun) handleConfigKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 		if r.cfg.stdin != nil {
 			answer := string(r.cfg.input)
 			fmt.Fprintln(r.cfg.stdin, answer)
+			if r.cfg.prompt.Field == "APP_URL" {
+				r.cfg.origin = answer
+			}
 		}
 		r.cfg.prompt = nil
 		r.cfg.input = nil
@@ -340,31 +347,70 @@ func (r engineRun) handleConfigKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 }
 
 // promptWords maps protocol field names to the same human labels
-// install.sh's own TTY prompts use. An unknown field renders its
-// protocol name — honest, never guessed at.
-func promptWords(field string) (label, hint string) {
+// install.sh's own TTY prompts use, plus the guidance a person actually
+// needs to answer at that moment. An unknown field renders its protocol
+// name — honest, never guessed at.
+//
+// notes carry worked examples, because naming a field is not the same as
+// telling someone where to find its value: "your identity provider's
+// https:// issuer" is true and still leaves an administrator staring at
+// an empty line, which is exactly what happened on the first real test.
+// The issuer examples are the two common self-hosted providers, shown in
+// full so the shape — including Authentik's trailing slash, which its
+// discovery document requires and which is easy to drop — is visible
+// rather than described. origin is the answer already given for
+// APP_URL, so the client-ID note can name this deployment's real
+// callback URL instead of a placeholder; it is empty when unknown.
+func promptWords(field, origin string) (label, hint string, notes []string) {
 	switch field {
 	case "APP_URL":
-		return "Public Orbit origin", "the https:// address Orbit will live at"
+		return "Public Orbit origin", "the https:// address Orbit will live at", []string{
+			"e.g. https://orbit.example.com",
+		}
 	case "OIDC_ISSUER":
-		return "OIDC issuer URL", "your identity provider's https:// issuer"
+		return "OIDC issuer URL", "must serve /.well-known/openid-configuration", []string{
+			"Authentik  https://sso.example.com/application/o/orbit/",
+			"Keycloak   https://sso.example.com/realms/orbit",
+		}
 	case "OIDC_CLIENT_ID":
-		return "OIDC client ID", "from your identity provider's app registration"
+		return "OIDC client ID", "from your identity provider's app registration", callbackNote(origin)
 	case "OIDC_CLIENT_SECRET":
-		return "OIDC client secret", "input hidden"
+		return "OIDC client secret", "input hidden", []string{
+			"issued with the client ID — not your account password",
+		}
 	// repair.sh --execute's own prompt fields (orbit#261 slice 4),
 	// same grammar, same rendering.
 	case "action-word":
-		return "The action word", "type rotate to proceed — anything else cancels"
+		return "The action word", "type rotate to proceed — anything else cancels", nil
 	case "checkpoint-passphrase":
-		return "Checkpoint passphrase", "input hidden — protects the pre-rotation backup"
+		return "Checkpoint passphrase", "input hidden — protects the pre-rotation backup", nil
 	case "checkpoint-passphrase-confirm":
-		return "Confirm the passphrase", "input hidden"
+		return "Confirm the passphrase", "input hidden", nil
 	case "safe-batch":
-		return "Run the safe repairs?", "y to proceed"
+		return "Run the safe repairs?", "y to proceed", nil
 	default:
-		return field, ""
+		return field, "", nil
 	}
+}
+
+// callbackNote names the redirect URI this deployment will actually sign
+// in through, which is the value the identity provider's registration
+// needs and the one most often got wrong. origin is the answer already
+// given for APP_URL; when it is missing or long enough to break the
+// 80-cell bar, the note falls back to the shape rather than a truncated
+// address someone might paste.
+func callbackNote(origin string) []string {
+	const callbackPath = "/api/auth/callback"
+	generic := []string{"register <your Orbit URL>" + callbackPath, "as the redirect URI in your provider"}
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" || !strings.HasPrefix(origin, "https://") {
+		return generic
+	}
+	line := "register " + origin + callbackPath
+	if len(line) > 76 {
+		return generic
+	}
+	return []string{line, "as the redirect URI in your provider"}
 }
 
 // rejectionWords maps the engine's rejection reason classes to honest
@@ -403,10 +449,13 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 		return centreBlock(width, height, b.String())
 	}
 
-	label, hint := promptWords(p.Field)
+	label, hint, notes := promptWords(p.Field, r.cfg.origin)
 	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
 	if hint != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(hint))
+	}
+	for _, note := range notes {
+		fmt.Fprintln(&b, style.MutedText.Render(note))
 	}
 	fmt.Fprintln(&b)
 

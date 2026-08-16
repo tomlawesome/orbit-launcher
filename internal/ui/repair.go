@@ -553,10 +553,15 @@ func (m RepairModel) viewRotating() string {
 		return centreBlock(m.width, m.height, b.String())
 	}
 
-	label, hint := promptWords(p.Field)
+	// No origin: rotation is reached from an existing deployment, and
+	// none of its fields carry a note that needs one.
+	label, hint, notes := promptWords(p.Field, "")
 	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
 	if hint != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(hint))
+	}
+	for _, note := range notes {
+		fmt.Fprintln(&b, style.MutedText.Render(note))
 	}
 	fmt.Fprintln(&b)
 	shown := string(m.rotInput)
