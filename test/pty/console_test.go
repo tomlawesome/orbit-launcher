@@ -74,6 +74,7 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*expect.Cons
 	cmd.Stderr = console.Tty()
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
 		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
+		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
 		"ORBIT_LAUNCHER_INSTALL_SCRIPT_URL="+scriptURL)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)

@@ -51,6 +51,11 @@ test.beforeAll(async () => {
       ORBIT_LAUNCHER_NO_ANIMATION: "1",
       ORBIT_LAUNCHER_NO_UPDATE_CHECK: "1",
       ORBIT_LAUNCHER_NO_HEALTH_PROBE: "1",
+      // NO_VOLUME_CHECK: Install's stale-database-volume pre-flight asks
+      // the local Docker daemon what exists, so on any machine that has
+      // ever run Orbit it would legitimately interrupt the flow — same
+      // hermeticity rule as the two above.
+      ORBIT_LAUNCHER_NO_VOLUME_CHECK: "1",
     },
   });
 
