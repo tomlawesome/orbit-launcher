@@ -116,6 +116,25 @@ func compositeScene(star starfield.Model, ready bool, width, bodyHeight int, con
 	return rows
 }
 
+// skyBlock is centreBlock's grammar — the same 0.42 optical centre, the
+// same per-line centring — rendered over the live sky instead of a bare
+// terminal. The flow screens (install, remove, update, repair, in-console
+// configuration) were built with centreBlock and so read as plain text on
+// black while the splash, console and success screen carried the sky;
+// the identity broke exactly where a person spends the most time. Every
+// screen is the same scene with different content.
+func skyBlock(star starfield.Model, width, height int, content string) string {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if width <= 0 || height <= 0 {
+		return centreBlock(width, height, content)
+	}
+	topOffset := int(0.42 * float64(height-1-len(lines)))
+	if topOffset < 0 {
+		topOffset = 0
+	}
+	return strings.Join(compositeScene(star, true, width, height, lines, topOffset), "\n")
+}
+
 // footerRow builds the screen's last row: a single centred faint line —
 // the whole footer grammar. There are no hints and no corner text
 // anywhere, by decision (design/mockups-v6-starchart.html): the splash
