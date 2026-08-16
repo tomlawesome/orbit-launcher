@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -62,6 +63,88 @@ func binaryPath(t *testing.T) string {
 	return binPath
 }
 
+// liveSession is one launcher process on one real pty, plus the
+// expectations driven against it. It exists so every expectation in this
+// file runs the same hang diagnosis on timeout (issue #100) instead of
+// each subtest re-declaring its own bare must/send closures.
+type liveSession struct {
+	t       *testing.T
+	console *expect.Console
+	cmd     *exec.Cmd
+}
+
+// must waits for s, and on failure diagnoses the hang before failing —
+// the timeout is 600s, so this is the one chance to learn anything about
+// a freeze that has never reproduced locally.
+func (s *liveSession) must(str string) {
+	s.t.Helper()
+	if _, err := s.console.ExpectString(str); err != nil {
+		s.diagnose(fmt.Sprintf("expected %q", str))
+		s.t.Fatalf("expected %q: %v", str, err)
+	}
+}
+
+func (s *liveSession) send(str string) {
+	s.t.Helper()
+	if _, err := s.console.Send(str); err != nil {
+		s.diagnose("send " + str)
+		s.t.Fatalf("send: %v", err)
+	}
+}
+
+// diagnose answers the open question in issue #100: when the Remove
+// subtest freezes after one settled frame, is the launcher wedged or is
+// the pty transport dead? The recorded signature — zero further output,
+// not even starfield tick diffs, while the same binary's Install subtest
+// passes in the same job — points at the transport, but nothing so far
+// has proven it either way.
+//
+// Order matters here. The kernel-level state is read first and goes to
+// the test log, because it survives a dead pty; the goroutine dump is
+// asked for second and can only land in the raw transcript, which is
+// exactly the channel under suspicion. If /proc says the process is
+// blocked writing and no dump arrives, the transport is the bug and the
+// launcher is innocent. If the dump arrives and shows the app wedged in
+// its own code, this stops being a test problem.
+func (s *liveSession) diagnose(reason string) {
+	s.t.Helper()
+	if s.cmd == nil || s.cmd.Process == nil {
+		return
+	}
+	pid := s.cmd.Process.Pid
+	s.t.Logf("hang diagnosis (%s): orbit-launcher pid %d", reason, pid)
+
+	// wchan is the money shot: a process parked in the tty write path is
+	// blocked on a pty nobody is draining. status carries State and the
+	// thread count for corroboration.
+	for _, name := range []string{"wchan", "status"} {
+		content, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), name))
+		if err != nil {
+			s.t.Logf("  /proc/%d/%s: %v", pid, name, err)
+			continue
+		}
+		s.t.Logf("  /proc/%d/%s:\n%s", pid, name, strings.TrimSpace(string(content)))
+	}
+	if out, err := exec.Command("ps", "-o", "pid,ppid,stat,wchan:24,etime,args", "-p", strconv.Itoa(pid)).CombinedOutput(); err == nil {
+		s.t.Logf("  ps:\n%s", strings.TrimSpace(string(out)))
+	}
+
+	// SIGQUIT makes the Go runtime dump every goroutine's stack to
+	// stderr — which is this pty. GOTRACEBACK=all is set in startLive so
+	// the dump covers runtime goroutines too.
+	if err := s.cmd.Process.Signal(syscall.SIGQUIT); err != nil {
+		s.t.Logf("  SIGQUIT: %v", err)
+		return
+	}
+	// This read both waits for the dump and funnels it into the raw
+	// transcript. Its absence is the finding, not an error.
+	if _, err := s.console.Expect(expect.String("goroutine "), expect.WithTimeout(10*time.Second)); err != nil {
+		s.t.Logf("  no goroutine dump reached the pty within 10s (%v) — consistent with the transport, not the app, being the problem", err)
+		return
+	}
+	s.t.Log("  goroutine dump reached the pty; full stacks are in the raw transcript")
+}
+
 // startLive spawns binPath with a real controlling terminal attached —
 // not just a pty on stdin/stdout, but a real session controlling
 // terminal, which install.sh's has_controlling_terminal() (opens
@@ -69,7 +152,7 @@ func binaryPath(t *testing.T) string {
 // not establish this; creack/pty's own Start() helper does, via
 // Setsid+Setctty — discovered the hard way verifying this test
 // manually before writing it (see orbit-launcher issue #51/#52).
-func startLive(t *testing.T, binPath, dir string) *expect.Console {
+func startLive(t *testing.T, binPath, dir string) *liveSession {
 	t.Helper()
 
 	// install.sh's own readiness wait defaults to 180s
@@ -113,7 +196,9 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 	cmd.Stdin = console.Tty()
 	cmd.Stdout = console.Tty()
 	cmd.Stderr = console.Tty()
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1")
+	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
+	// goroutine, not just the one that took the signal.
+	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
@@ -133,7 +218,7 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 	if _, err := console.Send("s"); err != nil {
 		t.Fatalf("send arrival-skip key: %v", err)
 	}
-	return console
+	return &liveSession{t: t, console: console, cmd: cmd}
 }
 
 // acceptMenusUntil sends Enter to accept the default choice on any of
@@ -142,7 +227,7 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 // change exactly which menus appear before the guided configuration
 // prompts, so this stays adaptive rather than hardcoding an exact
 // sequence.
-func acceptMenusUntil(t *testing.T, console *expect.Console, target string) {
+func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
 	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(target))
 	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
@@ -154,16 +239,15 @@ func acceptMenusUntil(t *testing.T, console *expect.Console, target string) {
 		// 60s here, silently shadowing that default and causing a real
 		// CI failure on a resource-constrained runner even though the
 		// install had, in fact, not failed — just hadn't finished yet.
-		result, err := console.Expect(expect.Regexp(pattern))
+		result, err := session.console.Expect(expect.Regexp(pattern))
 		if err != nil {
+			session.diagnose("waiting for " + target + " or a menu")
 			t.Fatalf("waiting for %q or a menu: %v", target, err)
 		}
 		if targetPattern.MatchString(result) {
 			return
 		}
-		if _, err := console.Send("\r"); err != nil {
-			t.Fatalf("accept menu default: %v", err)
-		}
+		session.send("\r")
 	}
 }
 
@@ -197,27 +281,15 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	appURL := fmt.Sprintf("https://orbit-live-test-%d.internal", time.Now().UnixNano())
 
 	t.Run("Install", func(t *testing.T) {
-		console := startLive(t, binPath, dir)
+		session := startLive(t, binPath, dir)
 
-		must := func(s string) {
-			t.Helper()
-			if _, err := console.ExpectString(s); err != nil {
-				t.Fatalf("expected %q: %v", s, err)
-			}
-		}
-		send := func(s string) {
-			t.Helper()
-			if _, err := console.Send(s); err != nil {
-				t.Fatalf("send: %v", err)
-			}
-		}
-		sendLine := func(s string) { send(s + "\r") }
+		sendLine := func(s string) { session.send(s + "\r") }
 
-		must("Install")
+		session.must("Install")
 		sendLine("") // Install selected by default
-		must("Choose a deployment profile")
+		session.must("Choose a deployment profile")
 		sendLine("") // Standard selected by default
-		must("Ready to install")
+		session.must("Ready to install")
 		sendLine("") // confirm — the mission console's piped engine run starts
 
 		// The piped, terminal-less first attempt cannot prompt, so on a
@@ -233,17 +305,17 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// paths use the same field prompts, so this test, which runs
 		// against whichever install.sh the job points at, accepts
 		// either.
-		if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
+		if _, err := session.console.Expect(expect.Regexp(regexp.MustCompile(
 			`Orbit needs your configuration|Installation stopped`))); err != nil {
 			t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
 		}
 		sendLine("") // Continue — guided configuration / Open the guided installer
 
-		acceptMenusUntil(t, console, "Public Orbit origin")
+		acceptMenusUntil(t, session, "Public Orbit origin")
 		sendLine(appURL)
-		must("OIDC issuer URL")
+		session.must("OIDC issuer URL")
 		sendLine(testOIDCIssuer)
-		must("OIDC client ID")
+		session.must("OIDC client ID")
 		sendLine("orbit-launcher-live-ci-test")
 		// Generation-agnostic: a contract-era engine (orbit develop)
 		// collects this in-console over the machine prompt protocol
@@ -251,7 +323,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// while a legacy engine's terminal handoff prints install.sh's
 		// own "OIDC client secret (input hidden)" prompt. Match the
 		// common prefix so this suite proves both paths.
-		must("OIDC client secret")
+		session.must("OIDC client secret")
 		sendLine("ci-live-test-fake-secret-value")
 
 		// Wait for the launcher's own success screen, never for the
@@ -265,7 +337,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// services" can match the adaptive menu pattern and cost one
 		// stray Enter on the success screen — which lands on "Get into
 		// Orbit", a deliberate no-quit action, so it is benign.
-		acceptMenusUntil(t, console, "Get into Orbit")
+		acceptMenusUntil(t, session, "Get into Orbit")
 
 		var lastStatus int
 		var lastErr error
@@ -288,45 +360,32 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 			t.Fatalf("deployed Orbit app never answered 200 on :3000 (last status %d, last error %v)", lastStatus, lastErr)
 		}
 
-		send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
-		send("\r")     // quits this orbit-launcher instance cleanly
+		session.send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
+		session.send("\r")     // quits this orbit-launcher instance cleanly
 	})
 
 	t.Run("Remove", func(t *testing.T) {
-		console := startLive(t, binPath, dir)
+		session := startLive(t, binPath, dir)
 
-		must := func(s string) {
-			t.Helper()
-			if _, err := console.ExpectString(s); err != nil {
-				t.Fatalf("expected %q: %v", s, err)
-			}
-		}
-		send := func(s string) {
-			t.Helper()
-			if _, err := console.Send(s); err != nil {
-				t.Fatalf("send: %v", err)
-			}
-		}
-
-		must("Install")
+		session.must("Install")
 		// A detected deployment preselects Update, so Remove is two rows
 		// down (Update, Repair, Remove). The health probe (enabled here —
 		// this is a real deployment) resolves alive and never moves the
 		// caret; the first keypress pins it regardless.
-		must("▸ Update")
+		session.must("▸ Update")
 		for i := 0; i < 2; i++ {
-			send("\x1b[B") // Repair, Remove
+			session.send("\x1b[B") // Repair, Remove
 		}
-		send("\r") // select Remove
-		must("This stops Orbit and removes its containers")
+		session.send("\r") // select Remove
+		session.must("This stops Orbit and removes its containers")
 		// The confirm screen's identity line carries the bare FQDN —
 		// the scheme is launcher noise at a glance, same as the splash.
 		// Matching it still proves deploy.Detect read the real
 		// .env-orbit this Install wrote.
-		must(strings.TrimPrefix(appURL, "https://"))
-		send("\r") // Stand down Orbit selected by default
-		must("Orbit has been stood down")
-		send("\r") // Exit
+		session.must(strings.TrimPrefix(appURL, "https://"))
+		session.send("\r") // Stand down Orbit selected by default
+		session.must("Orbit has been stood down")
+		session.send("\r") // Exit
 
 		out, err := exec.Command("docker", "compose", "-p", projectName, "ps", "--format", "{{.Name}}").CombinedOutput()
 		if err != nil {
@@ -387,56 +446,44 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	t.Cleanup(func() { dockerComposeDown(projectName) })
 
 	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
-	console := startLive(t, binPath, dir)
+	session := startLive(t, binPath, dir)
 
-	must := func(s string) {
-		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
-			t.Fatalf("expected %q: %v", s, err)
-		}
-	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
-	sendLine := func(s string) { send(s + "\r") }
+	sendLine := func(s string) { session.send(s + "\r") }
 
-	must("Install")
+	session.must("Install")
 	sendLine("")
-	must("Choose a deployment profile")
+	session.must("Choose a deployment profile")
 	sendLine("")
-	must("Ready to install")
+	session.must("Ready to install")
 	sendLine("")
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
-	if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
+	if _, err := session.console.Expect(expect.Regexp(regexp.MustCompile(
 		`Orbit needs your configuration|Installation stopped`))); err != nil {
 		t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
 	}
 	sendLine("")
 
-	acceptMenusUntil(t, console, "Public Orbit origin")
+	acceptMenusUntil(t, session, "Public Orbit origin")
 	sendLine(appURL)
-	must("OIDC issuer URL")
+	session.must("OIDC issuer URL")
 	sendLine(testOIDCIssuer)
-	must("OIDC client ID")
+	session.must("OIDC client ID")
 	sendLine("orbit-launcher-live-failure-test")
-	must("OIDC client secret")
+	session.must("OIDC client secret")
 	sendLine("ci-live-failure-fake-secret")
 
 	// The deploy proceeds into compose and dies on the held port. The
 	// launcher's own failure screen — not a hang, not a fake success —
 	// is the contract, with its stacked menu present.
-	must("Installation stopped")
-	must("Menu")
+	session.must("Installation stopped")
+	session.must("Menu")
 
 	// Exit via the failure menu (guided installer, Menu, Exit).
-	send("\x1b[B")
-	send("\x1b[B")
-	send("\r")
+	session.send("\x1b[B")
+	session.send("\x1b[B")
+	session.send("\r")
 
 	// Nothing half-changed: no containers left running for this
 	// project. (Stopped/created remnants are compose implementation
@@ -447,5 +494,31 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	}
 	if len(psOut) != 0 {
 		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
+	}
+}
+
+// The hang diagnosis only ever runs when a release-gate run has already
+// failed, which is the worst possible moment to discover it is broken.
+// This exercises it end to end against a real launcher process on a real
+// pty — no Docker needed, so it runs even when the rest of this file
+// skips — and proves the two things it promises: that the kernel state
+// is readable, and that a SIGQUIT dump actually reaches the transcript.
+func TestLive_HangDiagnosisProducesAGoroutineDump(t *testing.T) {
+	session := startLive(t, binaryPath(t), t.TempDir())
+
+	// A settled first frame, so the process is genuinely up and drawing
+	// before it is asked to account for itself.
+	session.must("Install")
+
+	if _, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(session.cmd.Process.Pid), "wchan")); err != nil {
+		t.Skipf("no readable /proc on this platform: %v", err)
+	}
+
+	// The pty is being drained here, so unlike the failure this
+	// instruments, the dump is expected to arrive.
+	session.diagnose("instrumentation self-test")
+
+	if err := session.cmd.Wait(); err == nil {
+		t.Error("SIGQUIT should have terminated the launcher")
 	}
 }
