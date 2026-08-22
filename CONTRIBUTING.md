@@ -13,11 +13,11 @@ Issues, bug reports and feature discussion are welcome on the
 
 ## Internal workflow (for reference)
 
-- Three protected branches: `develop` (integration), `preview` (release
+- Three protected branches: `dev` (integration), `preview` (release
   lane), `main` (stable). See
   [docs/implementation-plan.md](docs/implementation-plan.md) section 4.
 - Every change starts as a short-lived `codex/issue-<n>-<slug>` branch off
-  `develop`, opened as a pull request that closes its tracking issue.
+  `dev`, opened as a pull request that closes its tracking issue.
 - No work happens on a wave or slice without a filed GitHub issue to track
   it first.
 - Every pull request links its issue and is merged only on explicit owner

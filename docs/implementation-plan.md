@@ -142,8 +142,8 @@ much this project's value is in *looking* right, not just working right.
 | Static | `go vet`, `staticcheck`, `golangci-lint`, `gofmt -l` | catch invalid patterns, unsafe code, style defects | first, parallel |
 | Unit | Go `testing` (`go test ./...`) | pure logic: starfield math, profile validation, compose-file selection, version parsing, state-machine transitions | first |
 | Component/message-flow | `charmbracelet/x/exp/teatest` | drive a `tea.Model` with synthetic key messages, assert rendered frames, without a real PTY | first, alongside unit |
-| Black-box PTY (Go's equivalent of `pexpect`) | `github.com/Netflix/go-expect` + `github.com/creack/pty` | spawn the **real compiled binary** under a real pty, send real keystrokes, assert on real terminal output | before merge to `develop` |
-| Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `develop`, gated to changes touching `internal/ui` or `internal/ui/style` |
+| Black-box PTY (Go's equivalent of `pexpect`) | `github.com/Netflix/go-expect` + `github.com/creack/pty` | spawn the **real compiled binary** under a real pty, send real keystrokes, assert on real terminal output | before merge to `dev` |
+| Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `dev`, gated to changes touching `internal/ui` or `internal/ui/style` |
 | Compose/deploy integration | Go `testing` + a disposable Docker context | prove profile selection produces a valid, `docker compose config`-verified compose file; prove stand-down actually stops what install started | before preview publication |
 | Real virtualized live install | `ubuntu-latest` GitHub Actions job, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end | preview push (authoritative), release acceptance |
 
@@ -272,8 +272,8 @@ does).
 
 | Branch | Role | Required checks (PR gate) |
 | --- | --- | --- |
-| `develop` | protected integration branch; ordinary issue branches target this | Static and unit checks · Component tests (`teatest`) · Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
-| `preview` | protected release lane; a reviewed merge from `develop` runs the full pipeline once | same PR-gate checks as `develop`, **plus** the full pipeline below runs as a required push-level job |
+| `dev` | protected integration branch; ordinary issue branches target this | Static and unit checks · Component tests (`teatest`) · Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
+| `preview` | protected release lane; a reviewed merge from `dev` runs the full pipeline once | same PR-gate checks as `dev`, **plus** the full pipeline below runs as a required push-level job |
 | `main` | stable; a PR from `preview` verifies (does not rebuild) that the accepted release artifact matches | Static and unit checks · Verify tested preview for stable merge · Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
 | `hotfix/**` | rare, urgent patch path from `main` | Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
 
@@ -365,7 +365,7 @@ reviving this mechanism.
 
 Six waves, each a GitHub Milestone, each with a **promotion gate**: the
 exact evidence required before that wave's work is allowed to move from
-`develop` to a `preview` push. Every issue within a wave cites which of the
+`dev` to a `preview` push. Every issue within a wave cites which of the
 waves' acceptance criteria it satisfies, same traceability discipline as
 `orbit`'s requirement-ID citation rule.
 
@@ -496,7 +496,7 @@ progression), elapsed clock. The detachment is what engages the engine's
 documented non-interactive contract: it can never prompt through the
 TUI, and with incomplete configuration it refuses before Compose
 (`reason=configuration-failure`), rolling the target back via its own
-file transaction (verified empirically against both orbit develop and
+file transaction (verified empirically against both orbit dev and
 main). That refusal is precisely where #51's handoff survives: the flow
 offers "Continue — guided configuration" and hands the real terminal to
 interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
@@ -640,7 +640,7 @@ holds release candidates to.
 
 ## 6. Evidence-for-promotion framework
 
-Every wave's closing PR (the one that merges its last issue into `develop`
+Every wave's closing PR (the one that merges its last issue into `dev`
 and is ready to be included in the next `preview` push) records, in the PR
 body, the same categories `orbit` requires per delivery issue:
 

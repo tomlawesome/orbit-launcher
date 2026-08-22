@@ -36,11 +36,11 @@ repo as reference is expected; modifying it is not.
 
 ## Branching and review
 
-Observed flow: feature branch → `develop` → `preview` → `main`, with
+Observed flow: feature branch → `dev` → `preview` → `main`, with
 `gh-pages` for the published site.
 
-- Protected branches here are `develop`, `preview`, and `main`.
-- Approval to merge into `develop` is not approval to promote.
+- Protected branches here are `dev`, `preview`, and `main`.
+- Approval to merge into `dev` is not approval to promote.
 
 ## Commit style
 
