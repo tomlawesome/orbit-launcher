@@ -1,9 +1,5 @@
 # orbit-launcher agent instructions
 
-Applies to Claude Code and any other AI tooling working in this
-repository, alongside the global agent instructions in
-`~/.claude/AGENTS.md`.
-
 Created 2026-08-22 because the repo had no agent file at all. It records
 what was observable from the repository itself; anything marked **(to
 confirm)** is an inference the owner should correct or ratify.
@@ -35,11 +31,8 @@ Layout:
 
 ## This repo installs Orbit; it does not edit Orbit
 
-This project's whole purpose is acting **on** Orbit, which makes it the
-most likely place to slip across the global stay-inside-your-project
-boundary. Reading Orbit as reference is fine and expected; if work here
-appears to need an Orbit change, say so and stop — cross-project writes
-follow the global scope rule.
+This project's whole purpose is acting **on** Orbit, so reading the Orbit
+repo as reference is expected; modifying it is not.
 
 ## Branching and review
 
@@ -48,8 +41,7 @@ Observed flow: feature branch → `develop` → `preview` → `main`, with
 `claude/<topic>` prefix.
 
 - Protected branches here are `develop`, `preview`, and `main`.
-- **A promotion toward `main` needs a fresh, explicit instruction each
-  time.** Approval to merge into `develop` is not approval to promote.
+- Approval to merge into `develop` is not approval to promote.
 
 ## Commit style
 
@@ -79,12 +71,6 @@ Eight workflows, several of which are unusually expensive to break:
 Because a TUI's output *is* its interface, treat a visual-regression
 failure as a real failure and look at the diff. Do not re-run it hoping
 for green.
-
-## Environment
-
-The live install test exercises containers, so the global environment
-constraints (rootless Docker, container-to-host networking) apply here
-in practice.
 
 ## Run it before you ship it
 
