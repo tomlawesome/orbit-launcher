@@ -1,13 +1,29 @@
+# Dependabot configuration with grouped updates to keep review PRs manageable.
+# Minor and patch updates are grouped to reduce fatigue and prevent rubber-stamping.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
     target-branch: develop
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "05:30"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
     target-branch: develop
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
