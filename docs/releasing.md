@@ -1,6 +1,6 @@
 # Releasing
 
-orbit-launcher ships through three lanes — `develop`, `preview`,
+orbit-launcher ships through three lanes — `dev`, `preview`,
 `main` — mirroring [orbit](https://github.com/tomlawesome/orbit)'s own
 branch-protection model, adapted from container-image promotion to
 binary releases. Nothing is rebuilt between lanes: the exact bytes
@@ -8,7 +8,7 @@ tested on preview are the exact bytes promoted to stable.
 
 ## The lanes
 
-### `develop` — integration
+### `dev` — integration
 
 Feature branches (`codex/issue-N-description`) merge here via PR. Every
 PR runs the full CI suite: `gofmt`, `go vet`, `go build`, `shellcheck`
@@ -20,7 +20,7 @@ run on every PR.
 
 ### `preview` — release candidate
 
-A "release train" PR from `develop` merges into `preview`. This runs
+A "release train" PR from `dev` merges into `preview`. This runs
 the same CI suite again, then
 [`release-preview.yml`](../.github/workflows/release-preview.yml)
 builds real Linux amd64/arm64 archives with `goreleaser`, attests their

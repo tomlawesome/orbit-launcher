@@ -13,12 +13,12 @@ orbit-launcher is a proper TUI application instead.
 
 No stable release has shipped yet (see [`docs/releasing.md`](docs/releasing.md)
 for what that means and how one gets there), so the bootstrap script
-isn't on `main` yet either — it only exists on `develop`/`preview` so
-far. Until v1.0.0, fetch it from `develop` and pin to the current
+isn't on `main` yet either — it only exists on `dev`/`preview` so
+far. Until v1.0.0, fetch it from `dev` and pin to the current
 preview build explicitly:
 
 ```
-ORBIT_LAUNCHER_VERSION=preview-latest curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit-launcher/develop/scripts/get-orbit-launcher.sh | bash
+ORBIT_LAUNCHER_VERSION=preview-latest curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit-launcher/dev/scripts/get-orbit-launcher.sh | bash
 ```
 
 Once v1.0.0 ships, the permanent quickstart becomes:
