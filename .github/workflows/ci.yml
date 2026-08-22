@@ -5,12 +5,14 @@ on:
     branches:
       - main
       - develop
+      - dev
       - preview
       - "hotfix/**"
   pull_request:
     branches:
       - main
       - develop
+      - dev
       - preview
       - "hotfix/**"
 
