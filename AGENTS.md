@@ -37,8 +37,7 @@ repo as reference is expected; modifying it is not.
 ## Branching and review
 
 Observed flow: feature branch → `develop` → `preview` → `main`, with
-`gh-pages` for the published site. Recent feature branches use a
-`claude/<topic>` prefix.
+`gh-pages` for the published site.
 
 - Protected branches here are `develop`, `preview`, and `main`.
 - Approval to merge into `develop` is not approval to promote.
@@ -48,13 +47,6 @@ Observed flow: feature branch → `develop` → `preview` → `main`, with
 Observed convention is **Conventional Commits** with an issue reference:
 `feat: name the database that blocks a fresh install (#105)`,
 `test: gate the live suite's volume pre-flight too (#105)`. Match it.
-
-> **Discrepancy to resolve (to confirm).** 23 of the last 60 commits here
-> carry AI attribution trailers, so this repo's history does not match
-> the global no-AI-attribution rule the owner set on 2026-08-22. History
-> is not to be rewritten, so those stay; the rule applies from now on.
-> The `claude/<topic>` branch prefix sits in the same grey area and has
-> not been ruled on.
 
 ## CI
 
