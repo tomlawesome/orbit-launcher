@@ -32,11 +32,8 @@ on:
       orbit_branch:
         description: >-
           orbit branch to fetch install.sh from (empty = the production
-          default, orbit main). installer-compat-watch.yml is the
-          purpose-built job for this, but workflow_dispatch only resolves
-          workflows present on the default branch and that one hasn't been
-          promoted to main yet — this input covers the gap from the one
-          live-test workflow that is dispatchable.
+          default, orbit main). This is the dispatchable way to run a live
+          test against a non-default orbit branch's install.sh.
         required: false
         default: ""
       orbit_channel:
