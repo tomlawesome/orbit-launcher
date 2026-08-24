@@ -28,6 +28,8 @@ import (
 
 	expect "github.com/Netflix/go-expect"
 	"github.com/creack/pty"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ui"
 )
 
 // testOIDCIssuer is a real, public, stable OIDC discovery endpoint.
@@ -73,15 +75,60 @@ type liveSession struct {
 	cmd     *exec.Cmd
 }
 
-// must waits for s, and on failure diagnoses the hang before failing —
-// the timeout is 600s, so this is the one chance to learn anything about
-// a freeze that has never reproduced locally.
+// expectBudget is the wall-clock ceiling for any single expectation.
+//
+// go-expect's own timeout cannot serve as this (issue #121): it resets
+// the read deadline before every rune (expect.go:82), so it measures
+// idleness *between characters*, not total time waiting for a match.
+// The starfield repaints continuously, so runes never stop arriving and
+// an expectation that will never match never times out — the run dies at
+// the job timeout instead, and diagnose below never gets to say anything.
+// Matches the console's configured default so a healthy slow run (real
+// image pull, real health checks) is unaffected.
+const expectBudget = 600 * time.Second
+
+// expectWithin runs one blocking expectation under a real wall-clock
+// deadline, diagnosing the hang before failing.
+//
+// On the timeout path the expectation's goroutine is still parked inside
+// go-expect reading runes, so it competes with diagnose for the pty. That
+// only costs the goroutine dump, which diagnose already treats as
+// best-effort ("its absence is the finding"); the kernel-level half is
+// read from /proc and is unaffected. Losing the dump beats today's
+// behaviour of reporting nothing at all.
+func (s *liveSession) expectWithin(what string, expectation func() (string, error)) string {
+	s.t.Helper()
+	type outcome struct {
+		out string
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		out, err := expectation()
+		done <- outcome{out: out, err: err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			s.diagnose(what)
+			s.t.Fatalf("%s: %v", what, got.err)
+		}
+		return got.out
+	case <-time.After(expectBudget):
+		s.diagnose(what)
+		s.t.Fatalf("%s: no match within %s of wall clock", what, expectBudget)
+		return ""
+	}
+}
+
+// must waits for str, and on failure diagnoses the hang before failing —
+// this is the one chance to learn anything about a freeze that has never
+// reproduced locally.
 func (s *liveSession) must(str string) {
 	s.t.Helper()
-	if _, err := s.console.ExpectString(str); err != nil {
-		s.diagnose(fmt.Sprintf("expected %q", str))
-		s.t.Fatalf("expected %q: %v", str, err)
-	}
+	s.expectWithin(fmt.Sprintf("expected %q", str), func() (string, error) {
+		return s.console.ExpectString(str)
+	})
 }
 
 func (s *liveSession) send(str string) {
@@ -90,6 +137,28 @@ func (s *liveSession) send(str string) {
 		s.diagnose("send " + str)
 		s.t.Fatalf("send: %v", err)
 	}
+}
+
+// choose selects a top-level menu row by its digit shortcut rather than by
+// counting arrow presses from an assumed caret position (issue #122).
+//
+// Relative navigation races the splash's async health probe: a failed
+// probe marks the deployment degraded and moves the caret to Repair
+// (splash.go:308-319), so two Downs intended as Update->Repair->Remove
+// instead walk Repair->Remove->Exit and the Enter quits the launcher.
+// That is the intermittent "freezes after one settled frame" of #100.
+// splash.go:368-380 maps "1"-"9" straight to a menu index, so this picks
+// the intended row whenever the probe lands, leaving the probe itself
+// enabled and its degraded-state behaviour exercised.
+func (s *liveSession) choose(label string) {
+	s.t.Helper()
+	for i, item := range ui.MainMenu {
+		if item.Label == label {
+			s.send(strconv.Itoa(i + 1))
+			return
+		}
+	}
+	s.t.Fatalf("no top-level menu row labelled %q", label)
 }
 
 // diagnose answers the open question in issue #100: when the Remove
@@ -206,7 +275,28 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// a profile screen that isn't coming, which is precisely the
 		// hang class issue #100 exists to diagnose. Covered by its own
 		// unit and seam tests instead of on machine state.
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1")
+		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
+		// No arrival animation (issue #120). Menu rows render at
+		// introMenuStart but keys stay swallowed until introEnd
+		// (internal/ui/splash.go:98-102), so a test that matches "Install"
+		// and immediately sends a selection can have it eaten as the skip,
+		// leaving the menu settled with nothing chosen.
+		//
+		// Sending a separate skip key first does not fix it: bubbletea
+		// batches consecutive printable runes into one KeyRunes message,
+		// and handleKey's swallow returns before the digit shortcuts are
+		// examined (splash.go:343-380), so "s" and the selection sent
+		// back-to-back are discarded together. Measured: that attempt hung
+		// in exactly the same place as no skip key at all.
+		//
+		// This costs no coverage. The arrival's own behaviour — any key
+		// skips and is swallowed, it finishes on its own after enough
+		// ticks, NO_ANIMATION never plays it — is asserted by
+		// internal/ui/splash_test.go, and how it looks belongs to
+		// visual-regression.yml. What this suite exists to pin is the
+		// install.sh handoff contract, which the animation only ever
+		// added nondeterminism to.
+		"ORBIT_LAUNCHER_NO_ANIMATION=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
@@ -216,16 +306,6 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		_, _ = cmd.Process.Wait()
 	})
 
-	// Skip the splash's arrival animation with one benign key (any key
-	// skips and is swallowed). Load-bearing twice over, learned from a
-	// real 20-minute release-gate hang: menu text appears mid-cascade,
-	// so an Enter sent right after matching it lands while the arrival
-	// is still playing and gets swallowed as the skip — and because the
-	// splash animates continuously, go-expect's read timeout never goes
-	// idle, so the next expectation waits forever, not five seconds.
-	if _, err := console.Send("s"); err != nil {
-		t.Fatalf("send arrival-skip key: %v", err)
-	}
 	return &liveSession{t: t, console: console, cmd: cmd}
 }
 
@@ -240,18 +320,15 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(target))
 	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
 	for {
-		// No explicit per-call timeout here — this falls back to the
-		// console's own configured default (see startLive), which is
-		// generous specifically because a real image pull plus health
+		// No tighter budget than expectWithin's — that ceiling is
+		// deliberately generous because a real image pull plus health
 		// checks can genuinely take minutes. An earlier draft hardcoded
-		// 60s here, silently shadowing that default and causing a real
-		// CI failure on a resource-constrained runner even though the
-		// install had, in fact, not failed — just hadn't finished yet.
-		result, err := session.console.Expect(expect.Regexp(pattern))
-		if err != nil {
-			session.diagnose("waiting for " + target + " or a menu")
-			t.Fatalf("waiting for %q or a menu: %v", target, err)
-		}
+		// 60s here, causing a real CI failure on a resource-constrained
+		// runner even though the install had, in fact, not failed — just
+		// hadn't finished yet.
+		result := session.expectWithin("waiting for "+target+" or a menu", func() (string, error) {
+			return session.console.Expect(expect.Regexp(pattern))
+		})
 		if targetPattern.MatchString(result) {
 			return
 		}
@@ -294,7 +371,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		sendLine := func(s string) { session.send(s + "\r") }
 
 		session.must("Install")
-		sendLine("") // Install selected by default
+		session.choose("Install") // by digit, not by trusting the preselection
 		session.must("Choose a deployment profile")
 		sendLine("") // Standard selected by default
 		session.must("Ready to install")
@@ -313,10 +390,10 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// paths use the same field prompts, so this test, which runs
 		// against whichever install.sh the job points at, accepts
 		// either.
-		if _, err := session.console.Expect(expect.Regexp(regexp.MustCompile(
-			`Orbit needs your configuration|Installation stopped`))); err != nil {
-			t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
-		}
+		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
+			return session.console.Expect(expect.Regexp(regexp.MustCompile(
+				`Orbit needs your configuration|Installation stopped`)))
+		})
 		sendLine("") // Continue — guided configuration / Open the guided installer
 
 		acceptMenusUntil(t, session, "Public Orbit origin")
@@ -375,16 +452,21 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	t.Run("Remove", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 
+		// Nothing is asserted about the caret here (issue #122). The
+		// health probe is enabled — this is a real deployment — and this
+		// test's APP_URL is deliberately unresolvable, so the probe fails,
+		// marks the deployment degraded and moves the caret to Repair
+		// (splash.go:308-319); it was observed doing exactly that. Which
+		// row is preselected is therefore a race, so the row is chosen by
+		// digit instead of by counting arrows from an assumed start.
+		//
+		// Detection is not asserted on this screen either: the splash's
+		// identity line is styled and centred, so escape sequences
+		// interleave within the FQDN and ExpectString cannot match it
+		// there. The confirm screen below carries the bare FQDN and
+		// proves the same thing.
 		session.must("Install")
-		// A detected deployment preselects Update, so Remove is two rows
-		// down (Update, Repair, Remove). The health probe (enabled here —
-		// this is a real deployment) resolves alive and never moves the
-		// caret; the first keypress pins it regardless.
-		session.must("▸ Update")
-		for i := 0; i < 2; i++ {
-			session.send("\x1b[B") // Repair, Remove
-		}
-		session.send("\r") // select Remove
+		session.choose("Remove")
 		session.must("This stops Orbit and removes its containers")
 		// The confirm screen's identity line carries the bare FQDN —
 		// the scheme is launcher noise at a glance, same as the splash.
@@ -459,7 +541,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	sendLine := func(s string) { session.send(s + "\r") }
 
 	session.must("Install")
-	sendLine("")
+	session.choose("Install") // by digit, not by trusting the preselection
 	session.must("Choose a deployment profile")
 	sendLine("")
 	session.must("Ready to install")
@@ -467,10 +549,10 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
-	if _, err := session.console.Expect(expect.Regexp(regexp.MustCompile(
-		`Orbit needs your configuration|Installation stopped`))); err != nil {
-		t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
-	}
+	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
+		return session.console.Expect(expect.Regexp(regexp.MustCompile(
+			`Orbit needs your configuration|Installation stopped`)))
+	})
 	sendLine("")
 
 	acceptMenusUntil(t, session, "Public Orbit origin")
