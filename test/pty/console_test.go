@@ -44,8 +44,8 @@ exit 1
 `
 
 // serveScript stands up a local server the launcher fetches "install.sh"
-// from via ORBIT_LAUNCHER_INSTALL_SCRIPT_URL — the same override the
-// installer-compat-watch CI harness uses.
+// from via ORBIT_LAUNCHER_INSTALL_SCRIPT_URL — the same override orbit's
+// launcher-install-compat gate uses.
 func serveScript(t *testing.T, script string) string {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
