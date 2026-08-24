@@ -50,12 +50,10 @@ Observed convention is **Conventional Commits** with an issue reference:
 
 ## CI
 
-Eight workflows, several of which are unusually expensive to break:
+Seven workflows, several of which are unusually expensive to break:
 
 - `ci.yml`, `codeql.yml`, `dependency-review.yml` — the standard gates
 - `live-install-test.yml` — a real install, end to end
-- `installer-compat-watch.yml` — guards the bootstrap script's
-  compatibility surface
 - `visual-regression.yml` — the TUI is a visual product; screenshots are
   part of the contract
 - `release-preview.yml`, `promote.yml` — the release lane
