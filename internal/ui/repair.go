@@ -52,6 +52,7 @@ type RepairModel struct {
 	// with findings/diagnosis holding the post-execution re-diagnosis.
 	executeResults []engine.ExecuteResult
 	execSummary    *engine.ExecutionSummary
+	dangerous      *engine.Dangerous
 
 	// The dangerous rotation's machine-prompt session.
 	stdin     io.WriteCloser
@@ -172,6 +173,7 @@ func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream
 func (m *RepairModel) startExecution() {
 	m.findings, m.diagnosis = nil, nil
 	m.executeResults, m.execSummary = nil, nil
+	m.dangerous = nil
 	m.manualNotes = nil
 	m.stream, m.stdin = nil, nil
 	m.rotPrompt, m.rotReason, m.rotInput = nil, "", nil
@@ -280,6 +282,9 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 		} else if es, ok := engine.ParseExecutionSummary(s.Text); ok {
 			summary := es
 			m.execSummary = &summary
+		} else if dg, ok := engine.ParseDangerous(s.Text); ok {
+			summary := dg
+			m.dangerous = &summary
 		} else if p, ok := engine.ParsePlanAction(s.Text); ok {
 			m.planActions = append(m.planActions, p)
 		} else if ps, ok := engine.ParsePlanSummary(s.Text); ok {
@@ -631,8 +636,14 @@ func (m RepairModel) viewExecuted() string {
 	}
 	if m.exitCode == repairExitDangerousRefused {
 		// The dangerous batch's gate was never passed. Nothing was
-		// rotated and nothing failed — say only that.
-		fmt.Fprintln(&b, style.DegradedText.Render("credentials left as they were — nothing was rotated"))
+		// rotated and nothing failed — say only that, and say why when
+		// the stream told us, because "you declined" and "there was no
+		// terminal to ask" send the operator to different next steps.
+		refusal := "credentials left as they were — nothing was rotated"
+		if m.dangerous != nil && m.dangerous.Reason == "non-interactive" {
+			refusal += " (no terminal was available to approve it)"
+		}
+		fmt.Fprintln(&b, style.DegradedText.Render(refusal))
 	}
 
 	// The after-picture: the executor's own honest re-diagnosis.
