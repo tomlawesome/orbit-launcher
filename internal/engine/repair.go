@@ -178,3 +178,34 @@ func ParseExecutionSummary(line string) (s ExecutionSummary, ok bool) {
 	}
 	return ExecutionSummary{Result: fields["result"], Done: done, Failed: failed}, true
 }
+
+// Dangerous is the `dangerous result=…` terminal line printed once by
+// repair.sh --execute --dangerous (orbit#533), after the safe batch's
+// own execution summary. result=refused means the approval gate was
+// never passed — nothing was attempted, and exit code 6 says so: an
+// outcome, not a failure.
+type Dangerous struct {
+	Result string // empty | complete | refused | failed
+	Done   int
+	Failed int
+	Reason string // none | non-interactive | refused-by-operator | checkpoint-failed | step-failed
+}
+
+// ParseDangerous parses the `dangerous …` terminal line. ok is false
+// for anything else, including a line missing the contract's result or
+// reason.
+func ParseDangerous(line string) (d Dangerous, ok bool) {
+	fields, ok := repairFields(line, "dangerous")
+	if !ok || fields["result"] == "" || fields["reason"] == "" {
+		return Dangerous{}, false
+	}
+	done, err := strconv.Atoi(fields["done"])
+	if err != nil || done < 0 {
+		done = 0
+	}
+	failed, err := strconv.Atoi(fields["failed"])
+	if err != nil || failed < 0 {
+		failed = 0
+	}
+	return Dangerous{Result: fields["result"], Done: done, Failed: failed, Reason: fields["reason"]}, true
+}

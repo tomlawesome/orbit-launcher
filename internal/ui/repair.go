@@ -84,6 +84,11 @@ const (
 	repairExecuted
 )
 
+// repairExitDangerousRefused is repair.sh's exit code for a dangerous
+// batch whose approval gate was never passed (orbit#533): nothing was
+// attempted, and nothing failed.
+const repairExitDangerousRefused = 6
+
 type (
 	prepareRepairFunc func(ctx context.Context, targetDir string, mode deploy.RepairMode) (*engine.Stream, error)
 	prepareRotateFunc func(ctx context.Context, targetDir string) (*engine.Stream, io.WriteCloser, error)
@@ -301,8 +306,11 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case repairExecuting, repairRotating:
 		// Execution outcomes come from the parsed execution summary,
-		// with the exit code as the honest fallback.
-		if m.execSummary == nil && s.ExitCode != 0 {
+		// with the exit code as the honest fallback. Exit 6 is the
+		// dangerous batch refused: the operator said no, or there was
+		// no terminal to ask. Nothing was attempted, so it ends on the
+		// after-picture like any other outcome, not on the error screen.
+		if m.execSummary == nil && s.ExitCode != 0 && s.ExitCode != repairExitDangerousRefused {
 			m.runErr = s.Err
 			m.state = repairError
 			m.menuSel = 0
@@ -620,6 +628,11 @@ func (m RepairModel) viewExecuted() string {
 	}
 	if m.execSummary != nil && (m.execSummary.Done > 0 || m.execSummary.Failed > 0) {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done · %d failed", m.execSummary.Done, m.execSummary.Failed)))
+	}
+	if m.exitCode == repairExitDangerousRefused {
+		// The dangerous batch's gate was never passed. Nothing was
+		// rotated and nothing failed — say only that.
+		fmt.Fprintln(&b, style.DegradedText.Render("credentials left as they were — nothing was rotated"))
 	}
 
 	// The after-picture: the executor's own honest re-diagnosis.
