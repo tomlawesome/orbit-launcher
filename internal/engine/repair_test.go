@@ -155,3 +155,62 @@ func TestParseExecutionSummary(t *testing.T) {
 		t.Error("expected an execute line to be rejected by the summary parser")
 	}
 }
+
+func TestParseDangerous(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want Dangerous
+	}{
+		{"dangerous result=empty done=0 failed=0 reason=none", Dangerous{Result: "empty", Reason: "none"}},
+		{"dangerous result=complete done=2 failed=0 reason=none", Dangerous{Result: "complete", Done: 2, Reason: "none"}},
+		{"dangerous result=refused done=0 failed=0 reason=non-interactive", Dangerous{Result: "refused", Reason: "non-interactive"}},
+		{"dangerous result=refused done=0 failed=0 reason=refused-by-operator", Dangerous{Result: "refused", Reason: "refused-by-operator"}},
+		{"dangerous result=failed done=0 failed=1 reason=checkpoint-failed", Dangerous{Result: "failed", Failed: 1, Reason: "checkpoint-failed"}},
+		{"dangerous result=failed done=1 failed=1 reason=step-failed", Dangerous{Result: "failed", Done: 1, Failed: 1, Reason: "step-failed"}},
+	} {
+		d, ok := ParseDangerous(tc.line)
+		if !ok {
+			t.Errorf("expected %q to parse", tc.line)
+			continue
+		}
+		if d != tc.want {
+			t.Errorf("%q: got %+v, want %+v", tc.line, d, tc.want)
+		}
+	}
+}
+
+func TestParseDangerous_MalformedCountsDefaultToZero(t *testing.T) {
+	d, ok := ParseDangerous("dangerous result=complete done=some failed=-2 reason=none")
+	if !ok {
+		t.Fatal("expected the line to parse")
+	}
+	if d.Done != 0 || d.Failed != 0 {
+		t.Fatalf("unexpected dangerous line: %+v", d)
+	}
+}
+
+func TestParseDangerous_UnknownEnumsCarriedVerbatim(t *testing.T) {
+	d, ok := ParseDangerous("dangerous result=deferred done=0 failed=0 reason=awaiting-quorum")
+	if !ok {
+		t.Fatal("expected unknown enum values to parse — renderable, not rejected")
+	}
+	if d.Result != "deferred" || d.Reason != "awaiting-quorum" {
+		t.Fatalf("unexpected dangerous line: %+v", d)
+	}
+}
+
+func TestParseDangerous_RejectsProseAndIncomplete(t *testing.T) {
+	for _, line := range []string{
+		"",
+		"dangerous refused by the operator",
+		"dangerous done=0 failed=0 reason=none", // missing result
+		"dangerous result=refused done=0 failed=0",            // missing reason
+		"execution result=complete done=1 failed=0",           // another mode's summary
+		"execute action=x resolves=y result=done",             // not a summary at all
+		"dangerouss result=empty done=0 failed=0 reason=none", // not the contract's lead
+	} {
+		if _, ok := ParseDangerous(line); ok {
+			t.Errorf("expected %q to be rejected", line)
+		}
+	}
+}
