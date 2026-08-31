@@ -4,4 +4,4 @@
 *.out
 *.test
 .DS_Store
-.agents/handoffs/
+/.agents/
