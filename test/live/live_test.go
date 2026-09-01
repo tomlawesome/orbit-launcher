@@ -73,6 +73,11 @@ type liveSession struct {
 	t       *testing.T
 	console *expect.Console
 	cmd     *exec.Cmd
+	// budget is the wall-clock ceiling used by expectWithin. It exists
+	// as a field (rather than expectWithin reading the expectBudget
+	// constant directly) so a test can substitute a short budget to
+	// exercise the timeout path without waiting out the real one.
+	budget time.Duration
 }
 
 // expectBudget is the wall-clock ceiling for any single expectation.
@@ -91,12 +96,25 @@ const expectBudget = 600 * time.Second
 // deadline, diagnosing the hang before failing.
 //
 // On the timeout path the expectation's goroutine is still parked inside
-// go-expect reading runes, so it competes with diagnose for the pty. That
-// only costs the goroutine dump, which diagnose already treats as
-// best-effort ("its absence is the finding"); the kernel-level half is
-// read from /proc and is unaffected. Losing the dump beats today's
-// behaviour of reporting nothing at all.
+// go-expect reading runes, so it competes with diagnose for the pty.
+// diagnose is told which case it is (consoleBusy) so it never issues its
+// own console.Expect on top of the parked reader on the timeout path —
+// doing so raced two goroutines against the same bufio.Reader and could
+// panic ("slice bounds out of range"), destroying the diagnosis the code
+// exists to produce.
 func (s *liveSession) expectWithin(what string, expectation func() (string, error)) string {
+	s.t.Helper()
+	out, err := s.expectWithinErr(what, expectation)
+	if err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
+	return out
+}
+
+// expectWithinErr holds all of expectWithin's logic but returns the
+// failure instead of calling t.Fatalf, so the timeout/diagnose path can
+// be exercised and asserted on by a test.
+func (s *liveSession) expectWithinErr(what string, expectation func() (string, error)) (string, error) {
 	s.t.Helper()
 	type outcome struct {
 		out string
@@ -110,14 +128,13 @@ func (s *liveSession) expectWithin(what string, expectation func() (string, erro
 	select {
 	case got := <-done:
 		if got.err != nil {
-			s.diagnose(what)
-			s.t.Fatalf("%s: %v", what, got.err)
+			s.diagnose(what, false)
+			return "", got.err
 		}
-		return got.out
-	case <-time.After(expectBudget):
-		s.diagnose(what)
-		s.t.Fatalf("%s: no match within %s of wall clock", what, expectBudget)
-		return ""
+		return got.out, nil
+	case <-time.After(s.budget):
+		s.diagnose(what, true)
+		return "", fmt.Errorf("no match within %s of wall clock", s.budget)
 	}
 }
 
@@ -134,7 +151,7 @@ func (s *liveSession) must(str string) {
 func (s *liveSession) send(str string) {
 	s.t.Helper()
 	if _, err := s.console.Send(str); err != nil {
-		s.diagnose("send " + str)
+		s.diagnose("send "+str, false)
 		s.t.Fatalf("send: %v", err)
 	}
 }
@@ -175,7 +192,14 @@ func (s *liveSession) choose(label string) {
 // blocked writing and no dump arrives, the transport is the bug and the
 // launcher is innocent. If the dump arrives and shows the app wedged in
 // its own code, this stops being a test problem.
-func (s *liveSession) diagnose(reason string) {
+// consoleBusy tells diagnose whether a reader is already parked on
+// s.console (the expectWithinErr timeout path). When it is, diagnose must
+// not issue its own console.Expect — two goroutines reading the same
+// underlying bufio.Reader at once can panic ("slice bounds out of
+// range"), destroying the diagnosis. Call sites where nothing is parked
+// (an expectation's own error path, and send) pass false and keep the
+// original console.Expect-based dump capture.
+func (s *liveSession) diagnose(reason string, consoleBusy bool) {
 	s.t.Helper()
 	if s.cmd == nil || s.cmd.Process == nil {
 		return
@@ -205,6 +229,19 @@ func (s *liveSession) diagnose(reason string) {
 		s.t.Logf("  SIGQUIT: %v", err)
 		return
 	}
+
+	if consoleBusy {
+		// A reader is already parked in console.Expect for the
+		// expectation that just timed out — issuing a second Expect here
+		// would race that goroutine on the same bufio.Reader and can
+		// panic. Give the parked reader a brief grace period to drain the
+		// dump instead; it lands in the raw transcript (if configured),
+		// not the test log, since nothing here is reading it.
+		s.t.Log("  SIGQUIT sent; a reader is already parked on the console, so the goroutine dump (if any) is left for it to drain and will appear only in the raw transcript, not this log")
+		time.Sleep(2 * time.Second)
+		return
+	}
+
 	// This read both waits for the dump and funnels it into the raw
 	// transcript. Its absence is the finding, not an error.
 	if _, err := s.console.Expect(expect.String("goroutine "), expect.WithTimeout(10*time.Second)); err != nil {
@@ -306,7 +343,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		_, _ = cmd.Process.Wait()
 	})
 
-	return &liveSession{t: t, console: console, cmd: cmd}
+	return &liveSession{t: t, console: console, cmd: cmd, budget: expectBudget}
 }
 
 // acceptMenusUntil sends Enter to accept the default choice on any of
@@ -315,10 +352,18 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 // change exactly which menus appear before the guided configuration
 // prompts, so this stays adaptive rather than hardcoding an exact
 // sequence.
+// stopScreenReasonPattern matches the installer's own reason line on its
+// failure screen, e.g. "Orbit installer: Could not fetch
+// config/tika-config.json from the published revision." (see
+// internal/ui/install_test.go around lines 254-288 for real examples).
+var stopScreenReasonPattern = regexp.MustCompile(`Orbit installer: .*`)
+
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(target))
+	const stopScreen = "Installation stopped"
+	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(stopScreen) + `|` + regexp.QuoteMeta(target))
 	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
+	stopPattern := regexp.MustCompile(regexp.QuoteMeta(stopScreen))
 	for {
 		// No tighter budget than expectWithin's — that ceiling is
 		// deliberately generous because a real image pull plus health
@@ -331,6 +376,22 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		})
 		if targetPattern.MatchString(result) {
 			return
+		}
+		if stopPattern.MatchString(result) {
+			// The install genuinely stopped — sending Enter here would
+			// just cycle the menu until the 600s budget expires instead
+			// of reporting why. Fail now, with the installer's own
+			// reason if it's available.
+			if reasons := stopScreenReasonPattern.FindAllString(result, -1); len(reasons) > 0 {
+				t.Fatalf("install stopped waiting for %s: %s", target, reasons[len(reasons)-1])
+			}
+			more, err := session.console.Expect(expect.Regexp(stopScreenReasonPattern), expect.WithTimeout(10*time.Second))
+			if err == nil {
+				if reasons := stopScreenReasonPattern.FindAllString(more, -1); len(reasons) > 0 {
+					t.Fatalf("install stopped waiting for %s: %s", target, reasons[len(reasons)-1])
+				}
+			}
+			t.Fatalf("install stopped waiting for %s, but no reason line was captured", target)
 		}
 		session.send("\r")
 	}
@@ -605,10 +666,69 @@ func TestLive_HangDiagnosisProducesAGoroutineDump(t *testing.T) {
 	}
 
 	// The pty is being drained here, so unlike the failure this
-	// instruments, the dump is expected to arrive.
-	session.diagnose("instrumentation self-test")
+	// instruments, the dump is expected to arrive. Nothing is parked on
+	// the console at this point, so consoleBusy is false.
+	session.diagnose("instrumentation self-test", false)
 
 	if err := session.cmd.Wait(); err == nil {
 		t.Error("SIGQUIT should have terminated the launcher")
+	}
+}
+
+// TestExpectWithin_TimeoutDiagnosesWithoutPanicking reproduces the race
+// fixed above: on the timeout path, the expectation's goroutine is still
+// parked inside console.Expect reading runes when diagnose runs. Before
+// the fix, diagnose issued its own console.Expect on top of that parked
+// reader — two goroutines pulling from the same bufio.Reader at once,
+// which panics ("slice bounds out of range") instead of producing a
+// diagnosis. This drives expectWithinErr into that exact timeout path
+// with a short budget and asserts it returns an error instead of
+// panicking.
+//
+// It needs no Docker, network or the real launcher binary — just any
+// process on a real pty that keeps producing output. The child's tight
+// echo loop is deliberate and load-bearing: it keeps the expectation's
+// reader inside a blocking ReadRune for the whole budget, which is what
+// puts two goroutines in the same bufio.Reader. Measured against the
+// unfixed code: a tight loop panics on every run, the same loop with a
+// 50ms sleep passes every run — enough idle time between ticks and the
+// two readers simply take turns. A slower child would make this a test
+// that always passes and proves nothing.
+//
+// Verified by reverting the fix (passing false at the timeout call site
+// in expectWithinErr): three of three runs die with the issue's exact
+// panic, "slice bounds out of range [:32] with capacity 16" in
+// bufio.(*Reader).ReadRune via go-expect's Console.Expect. With the fix
+// in place, three of three pass, as does -race.
+func TestExpectWithin_TimeoutDiagnosesWithoutPanicking(t *testing.T) {
+	console, err := expect.NewConsole()
+	if err != nil {
+		t.Fatalf("create console: %v", err)
+	}
+	t.Cleanup(func() { console.Close() })
+
+	cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+	cmd.Stdin = console.Tty()
+	cmd.Stdout = console.Tty()
+	cmd.Stderr = console.Tty()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start noisy child: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	session := &liveSession{t: t, console: console, cmd: cmd, budget: 2 * time.Second}
+
+	_, err = session.expectWithinErr("waiting for something that never arrives", func() (string, error) {
+		return session.console.Expect(expect.String("this string never appears"))
+	})
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no match within") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "no match within")
 	}
 }
