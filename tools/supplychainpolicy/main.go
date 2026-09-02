@@ -51,48 +51,31 @@ func main() {
 }
 
 func run(root string, write bool) error {
+	if !write {
+		return check(root)
+	}
 	pins, err := scp.CollectPins(root)
 	if err != nil {
 		return err
 	}
-	if write {
-		return regenerate(root, pins)
-	}
-	return check(root, pins)
+	return regenerate(root, pins)
 }
 
-// check is the offline gate. It reports the same drift the test does, but as a
-// command a person can run and act on.
-func check(root string, pins []scp.Pin) error {
-	pol, err := scp.Load(root)
+// check is the offline gate. The rules live in the policy package so this
+// command and test/supplychain enforce one implementation rather than two
+// that agree until the day they do not.
+func check(root string) error {
+	problems, err := scp.Verify(root)
 	if err != nil {
 		return err
 	}
-	recorded := map[string]scp.Action{}
-	for _, a := range pol.Actions {
-		recorded[a.Name] = a
-	}
-	var problems []string
-	for _, p := range pins {
-		if !scp.IsSHA(p.Ref) {
-			problems = append(problems, fmt.Sprintf("%s:%d %s is pinned to %q, not a commit SHA", p.File, p.Line, p.Full, p.Ref))
-			continue
-		}
-		a, ok := recorded[p.Action]
-		if !ok {
-			problems = append(problems, fmt.Sprintf("%s:%d %s is not recorded in the policy", p.File, p.Line, p.Action))
-			continue
-		}
-		if a.Commit != p.Ref {
-			problems = append(problems, fmt.Sprintf("%s:%d %s pins %s, policy records %s", p.File, p.Line, p.Action, p.Ref, a.Commit))
-		}
-		if p.Comment != "" && a.Version != p.Comment {
-			problems = append(problems, fmt.Sprintf("%s:%d %s comment says %s, policy records %s", p.File, p.Line, p.Action, p.Comment, a.Version))
-		}
-	}
 	if len(problems) > 0 {
+		lines := make([]string, len(problems))
+		for i, p := range problems {
+			lines[i] = p.String()
+		}
 		return fmt.Errorf("the policy no longer matches the workflows:\n  %s\n\nRegenerate it:\n  go run ./tools/supplychainpolicy -write",
-			strings.Join(problems, "\n  "))
+			strings.Join(lines, "\n  "))
 	}
 	fmt.Println("supply-chain policy matches the workflows")
 	return nil

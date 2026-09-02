@@ -178,3 +178,158 @@ func TestCollectPinsReadsTheInlineListForm(t *testing.T) {
 		t.Errorf("parsed %q and %q", pins[0].Action, pins[1].Action)
 	}
 }
+
+const (
+	checkoutSHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	setupGoSHA  = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+)
+
+// goodPins and goodPolicy are a matching pair. Each case below breaks exactly
+// one thing about them, so a case that fails to produce a problem is a rule
+// that does not fire.
+func goodPins() []Pin {
+	return []Pin{
+		{Action: "actions/checkout", Full: "actions/checkout", Ref: checkoutSHA, Comment: "v7.0.1", File: "ci.yml", Line: 10},
+		{Action: "actions/setup-go", Full: "actions/setup-go", Ref: setupGoSHA, Comment: "v7.0.0", File: "ci.yml", Line: 14},
+	}
+}
+
+func goodPolicy() Policy {
+	return Policy{
+		SchemaVersion: SchemaVersion,
+		Actions: []Action{
+			{Name: "actions/checkout", Version: "v7.0.1", Commit: checkoutSHA, License: "MIT", UpdateOwner: "maintainers"},
+			{Name: "actions/setup-go", Version: "v7.0.0", Commit: setupGoSHA, License: "MIT", UpdateOwner: "maintainers"},
+		},
+		Exceptions: []Exception{},
+	}
+}
+
+func TestVerifyPinsAcceptsAMatchingPair(t *testing.T) {
+	if problems := VerifyPins(goodPins(), goodPolicy()); len(problems) != 0 {
+		t.Fatalf("a matching policy reported problems: %v", problems)
+	}
+}
+
+// TestVerifyPinsCatches is the standing proof that each rule fires. These were
+// originally run by hand against the real repository, which proved them once;
+// as cases they are proved on every run.
+func TestVerifyPinsCatches(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		pins    func([]Pin) []Pin
+		policy  func(Policy) Policy
+		wantSub string
+	}{
+		{
+			name:    "a floating tag instead of a SHA",
+			pins:    func(p []Pin) []Pin { p[0].Ref = "v7.0.1"; return p },
+			wantSub: "not a 40-character commit SHA",
+		},
+		{
+			name:    "a pin with no version comment",
+			pins:    func(p []Pin) []Pin { p[0].Comment = ""; return p },
+			wantSub: "no `# vX.Y.Z` comment",
+		},
+		{
+			name:    "an action used in CI but absent from the policy",
+			policy:  func(pol Policy) Policy { pol.Actions = pol.Actions[:1]; return pol },
+			wantSub: "not recorded in the policy",
+		},
+		{
+			name:    "a bumped pin the policy was not regenerated for",
+			pins:    func(p []Pin) []Pin { p[1].Ref = "1111111111111111111111111111111111111111"; return p },
+			wantSub: "but the policy records",
+		},
+		{
+			name:    "a bumped version comment the policy was not regenerated for",
+			pins:    func(p []Pin) []Pin { p[1].Comment = "v7.1.0"; return p },
+			wantSub: "the policy records version",
+		},
+		{
+			name: "a policy entry no workflow uses",
+			policy: func(pol Policy) Policy {
+				pol.Actions = append(pol.Actions, Action{Name: "actions/stale", License: "MIT", UpdateOwner: "x"})
+				return pol
+			},
+			wantSub: "which no workflow uses",
+		},
+		{
+			name:    "an entry with no licence",
+			policy:  func(pol Policy) Policy { pol.Actions[0].License = ""; return pol },
+			wantSub: "records no licence",
+		},
+		{
+			name:    "an entry with no update owner",
+			policy:  func(pol Policy) Policy { pol.Actions[0].UpdateOwner = ""; return pol },
+			wantSub: "records no update owner",
+		},
+		{
+			name: "a tool with no licence",
+			policy: func(pol Policy) Policy {
+				pol.Tools = append(pol.Tools, Tool{Name: "gitleaks", UpdateOwner: "x"})
+				return pol
+			},
+			wantSub: "tool gitleaks records no licence",
+		},
+		{
+			name: "an exception with no reason",
+			policy: func(pol Policy) Policy {
+				pol.Exceptions = append(pol.Exceptions, Exception{Name: "actions/checkout", Reason: "  "})
+				return pol
+			},
+			wantSub: "records no reason",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pins, pol := goodPins(), goodPolicy()
+			if c.pins != nil {
+				pins = c.pins(pins)
+			}
+			if c.policy != nil {
+				pol = c.policy(pol)
+			}
+			problems := VerifyPins(pins, pol)
+			if len(problems) == 0 {
+				t.Fatalf("no problem reported for %s; the rule does not fire", c.name)
+			}
+			var joined string
+			for _, p := range problems {
+				joined += p.String() + "\n"
+			}
+			if !strings.Contains(joined, c.wantSub) {
+				t.Errorf("problems did not mention %q:\n%s", c.wantSub, joined)
+			}
+		})
+	}
+}
+
+// A recorded exception suppresses the "not recorded" complaint — that is what
+// an exception is for — but must not suppress the SHA rule, which is the one
+// thing no exception should buy.
+func TestExceptionExcusesTheRecordButNotAFloatingTag(t *testing.T) {
+	pol := goodPolicy()
+	pol.Actions = pol.Actions[:1]
+	pol.Exceptions = []Exception{{Name: "actions/setup-go", Reason: "vendored fork, reviewed 2026-09-01"}}
+
+	if problems := VerifyPins(goodPins(), pol); len(problems) != 0 {
+		t.Fatalf("an excepted action still reported problems: %v", problems)
+	}
+
+	pins := goodPins()
+	pins[1].Ref = "v7.0.0"
+	problems := VerifyPins(pins, pol)
+	if len(problems) == 0 {
+		t.Fatal("an exception silenced the commit-SHA rule; no exception should buy that")
+	}
+}
+
+func TestProblemStringOmitsLocationWhenThereIsNone(t *testing.T) {
+	withFile := Problem{File: "ci.yml", Line: 12, Msg: "boom"}
+	if got := withFile.String(); got != "ci.yml:12: boom" {
+		t.Errorf("String() = %q", got)
+	}
+	if got := (Problem{Msg: "boom"}).String(); got != "boom" {
+		t.Errorf("String() = %q, want no location prefix", got)
+	}
+}
