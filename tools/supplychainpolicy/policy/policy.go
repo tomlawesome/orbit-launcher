@@ -216,3 +216,140 @@ func Marshal(p Policy) ([]byte, error) {
 	}
 	return append(b, '\n'), nil
 }
+
+// Problem is one disagreement between what the workflows pin and what the
+// policy records. Where it can be attributed to a line, it is.
+type Problem struct {
+	File string
+	Line int
+	Msg  string
+}
+
+func (p Problem) String() string {
+	if p.File == "" {
+		return p.Msg
+	}
+	return fmt.Sprintf("%s:%d: %s", p.File, p.Line, p.Msg)
+}
+
+// VerifyPins reports every disagreement between a set of pins and a policy.
+//
+// It takes its inputs rather than reading them so the rules can be tested
+// against constructed cases. A rule proved only by breaking the real
+// repository is proved once, by hand, and never again.
+func VerifyPins(pins []Pin, pol Policy) []Problem {
+	recorded := map[string]Action{}
+	for _, a := range pol.Actions {
+		recorded[a.Name] = a
+	}
+	excepted := map[string]bool{}
+	for _, e := range pol.Exceptions {
+		excepted[e.Name] = true
+	}
+
+	var problems []Problem
+	add := func(f string, l int, format string, args ...any) {
+		problems = append(problems, Problem{File: f, Line: l, Msg: fmt.Sprintf(format, args...)})
+	}
+
+	used := map[string]bool{}
+	for _, p := range pins {
+		used[p.Action] = true
+
+		if !IsSHA(p.Ref) {
+			add(p.File, p.Line, "%s is pinned to %q, which is not a 40-character commit SHA. "+
+				"A tag can be moved by whoever owns it; a SHA cannot.", p.Full, p.Ref)
+			continue
+		}
+		if p.Comment == "" {
+			add(p.File, p.Line, "%s has no `# vX.Y.Z` comment beside its SHA, so a reviewer "+
+				"cannot tell what the hash is without resolving it by hand.", p.Full)
+		}
+		if excepted[p.Action] {
+			continue
+		}
+		a, ok := recorded[p.Action]
+		if !ok {
+			add(p.File, p.Line, "%s is used in CI but not recorded in the policy.", p.Action)
+			continue
+		}
+		if a.Commit != p.Ref {
+			add(p.File, p.Line, "%s is pinned to %s but the policy records %s. "+
+				"One of the two is stale; the workflow is what actually runs.", p.Action, p.Ref, a.Commit)
+		}
+		if p.Comment != "" && a.Version != p.Comment {
+			add(p.File, p.Line, "%s says %q beside the pin but the policy records version %q. "+
+				"A comment that disagrees with the record is worse than no comment.",
+				p.Action, p.Comment, a.Version)
+		}
+	}
+
+	for _, a := range pol.Actions {
+		if !used[a.Name] {
+			add("", 0, "the policy records %s, which no workflow uses. "+
+				"Stale entries make the file look more thorough than it is.", a.Name)
+		}
+		if a.License == "" {
+			add("", 0, "action %s records no licence.", a.Name)
+		}
+		if a.UpdateOwner == "" {
+			add("", 0, "action %s records no update owner; an unowned pin is nobody's job.", a.Name)
+		}
+	}
+	for _, t := range pol.Tools {
+		if t.License == "" {
+			add("", 0, "tool %s records no licence.", t.Name)
+		}
+		if t.UpdateOwner == "" {
+			add("", 0, "tool %s records no update owner.", t.Name)
+		}
+	}
+	for _, e := range pol.Exceptions {
+		if strings.TrimSpace(e.Reason) == "" {
+			add("", 0, "exception %s records no reason; an unexplained exception is just an absence.", e.Name)
+		}
+	}
+	return problems
+}
+
+// Verify runs every offline check against a repository: the pin rules above,
+// plus the pinned tools, whose versions live in a workflow env block where no
+// `uses:` rule would ever see them drift.
+//
+// The error return is for reading the repository; a policy that simply
+// disagrees with the workflows comes back as problems, not as an error.
+func Verify(root string) ([]Problem, error) {
+	pins, err := CollectPins(root)
+	if err != nil {
+		return nil, err
+	}
+	pol, err := Load(root)
+	if err != nil {
+		return nil, err
+	}
+	problems := VerifyPins(pins, pol)
+
+	version, sha256, err := GitleaksPin(root)
+	if err != nil {
+		return nil, err
+	}
+	var gl *Tool
+	for i := range pol.Tools {
+		if pol.Tools[i].Name == "gitleaks" {
+			gl = &pol.Tools[i]
+		}
+	}
+	if gl == nil {
+		problems = append(problems, Problem{Msg: "the policy records no gitleaks entry, but secret-scan.yml pins one"})
+		return problems, nil
+	}
+	if gl.Version != version {
+		problems = append(problems, Problem{Msg: fmt.Sprintf(
+			"secret-scan.yml pins gitleaks %s but the policy records %s.", version, gl.Version)})
+	}
+	if gl.SHA256 != sha256 {
+		problems = append(problems, Problem{Msg: fmt.Sprintf(
+			"secret-scan.yml pins gitleaks digest %s but the policy records %s.", sha256, gl.SHA256)})
+	}
+	return problems, nil
+}
