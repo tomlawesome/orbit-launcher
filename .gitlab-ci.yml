@@ -223,6 +223,72 @@ gitleaks:
       /tmp/bin/gitleaks version
       /tmp/bin/gitleaks git --redact --no-banner --log-level error .
 
+# ci.yml's `verify_preview_for_stable`, mirrored here because promotions into
+# `main` are merge requests on GitLab now, and that GitHub Actions job only
+# ever triggered on a GitHub pull request into `main` -- it never runs for a
+# promotion here, so nothing guards `main` on this host without this job.
+#
+# Same three checks ci.yml makes, in the same order: the `preview-latest`
+# GitHub release's checksum, that its embedded revision is this exact commit,
+# and its build provenance attestation. GH_TOKEN below is $GITHUB_COM_TOKEN,
+# the same read-only github.com token the renovate job's variable comment
+# documents (public read only, no permissions granted) -- `gh attestation
+# verify` needs an authenticated call even against a public repository, or it
+# rate-limits or refuses anonymously.
+verify_preview_for_stable:
+  stage: fast
+  image: $UBUNTU_IMAGE
+  timeout: 10m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+  variables:
+    GH_TOKEN: $GITHUB_COM_TOKEN
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends curl ca-certificates
+    # gh's official apt repository, per
+    # https://github.com/cli/cli/blob/trunk/docs/install_linux.md.
+    - mkdir -p -m 755 /etc/apt/keyrings
+    - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    - mkdir -p -m 755 /etc/apt/sources.list.d
+    - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+    - apt-get update -qq
+    - apt-get install -y -qq gh
+  script:
+    # Download preview release assets.
+    - |
+      set -euo pipefail
+      gh release download preview-latest \
+        --repo tomlawesome/orbit-launcher \
+        --dir preview-release \
+        --pattern "orbit-launcher_linux_amd64.tar.gz" \
+        --pattern "checksums.txt"
+    # Verify checksum. Piped rather than ci.yml's `sha256sum -c <(...)`: the
+    # image's default shell has no process substitution.
+    - |
+      set -euo pipefail
+      cd preview-release
+      grep amd64 checksums.txt | sha256sum -c -
+    # Verify embedded revision matches this merge request's target commit.
+    - |
+      set -euo pipefail
+      tar -xzf preview-release/orbit-launcher_linux_amd64.tar.gz -C preview-release orbit-launcher
+      chmod +x preview-release/orbit-launcher
+      actual="$(preview-release/orbit-launcher --version | sed -n 's/.*(\(.*\))/\1/p')"
+      expected="$CI_COMMIT_SHA"
+      if [ "$actual" != "$expected" ]; then
+        echo "preview-latest release was built from $actual, but this merge request's head is $expected — the preview release is stale relative to this merge"
+        exit 1
+      fi
+      echo "Verified: preview-latest release matches this merge request's exact head commit."
+    # Verify build provenance attestation.
+    - |
+      set -euo pipefail
+      gh attestation verify preview-release/orbit-launcher_linux_amd64.tar.gz \
+        --repo tomlawesome/orbit-launcher
+
 # --- acceptance --------------------------------------------------------------
 
 # visual-regression.yml. Same trigger: a merge request that touches the TUI or
