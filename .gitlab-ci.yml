@@ -1,20 +1,20 @@
 # orbit-launcher's pipeline on the owner's self-hosted GitLab
-# (gitlab.tomlawson.io), step 1 of #140 (move to GitLab).
+# (gitlab.tomlawson.io), the gate merges wait on since #140 step 3 made
+# GitLab the source and GitHub the mirror.
 #
 # It reproduces the GitHub gate job for job -- ci.yml's static and unit
 # checks, secret-scan.yml, visual-regression.yml and live-install-test.yml --
 # running the same commands against the same pinned tool versions, so a
-# finding on one host means the same thing on the other. GitHub stays the
-# source of truth until #140 step 3; nothing here publishes or promotes.
+# finding on one host means the same thing on the other. GitHub still runs
+# its workflows on the mirrored push as a second opinion; nothing here
+# publishes or promotes.
 #
 # Deliberately not here:
 #
-#   1. ci.yml's `verify_preview_for_stable`, release-preview.yml and
-#      promote.yml. They read and write GitHub Releases and verify GitHub
-#      build attestations, so they stay on GitHub, which remains the public
-#      download source (#140 step 4).
-#   2. codeql.yml and dependency-review.yml: GitHub's own scanners keep running
-#      on the mirror.
+#   1. release-preview.yml and promote.yml. They write GitHub Releases, so
+#      they stay on GitHub, which remains the public download source; the
+#      mirror push into `preview` is what fires the first (#140 step 4).
+#   2. codeql.yml: GitHub's own scanner keeps running on the mirror.
 #
 # Only the live install test needs a Docker daemon, and a daemon needs a
 # privileged container whichever way it arrives. It asks for the project's own
@@ -25,6 +25,7 @@
 stages:
   - fast
   - acceptance
+  - maintenance
 
 workflow:
   rules:
@@ -222,6 +223,71 @@ gitleaks:
       /tmp/bin/gitleaks version
       /tmp/bin/gitleaks git --redact --no-banner --log-level error .
 
+# ci.yml's `verify_preview_for_stable`, mirrored here because promotions into
+# `main` are merge requests on GitLab now, and that GitHub Actions job only
+# ever triggered on a GitHub pull request into `main` -- it never runs for a
+# promotion here, so nothing guards `main` on this host without this job.
+#
+# Same three checks ci.yml makes, in the same order: the `preview-latest`
+# GitHub release's checksum, that its embedded revision is this exact commit,
+# and its build provenance attestation. GH_TOKEN below is $GITHUB_COM_TOKEN,
+# the same read-only github.com token the renovate job's variable comment
+# documents (public read only, no permissions granted) -- `gh attestation
+# verify` needs an authenticated call even against a public repository, or it
+# rate-limits or refuses anonymously.
+verify_preview_for_stable:
+  stage: fast
+  image: $UBUNTU_IMAGE
+  timeout: 10m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+  variables:
+    GH_TOKEN: $GITHUB_COM_TOKEN
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends curl ca-certificates
+    # gh's official apt repository, per
+    # https://github.com/cli/cli/blob/trunk/docs/install_linux.md.
+    - mkdir -p -m 755 /etc/apt/keyrings
+    - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    - mkdir -p -m 755 /etc/apt/sources.list.d
+    - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+    - apt-get update -qq
+    - apt-get install -y -qq gh
+  script:
+    # Download preview release assets.
+    - |
+      set -euo pipefail
+      gh release download preview-latest \
+        --repo tomlawesome/orbit-launcher \
+        --dir preview-release \
+        --pattern "orbit-launcher_linux_amd64.tar.gz" \
+        --pattern "checksums.txt"
+    # Verify checksum (piped; same check as ci.yml's `sha256sum -c <(...)`).
+    - |
+      set -euo pipefail
+      cd preview-release
+      grep amd64 checksums.txt | sha256sum -c -
+    # Verify embedded revision matches this merge request's target commit.
+    - |
+      set -euo pipefail
+      tar -xzf preview-release/orbit-launcher_linux_amd64.tar.gz -C preview-release orbit-launcher
+      chmod +x preview-release/orbit-launcher
+      actual="$(preview-release/orbit-launcher --version | sed -n 's/.*(\(.*\))/\1/p')"
+      expected="$CI_COMMIT_SHA"
+      if [ "$actual" != "$expected" ]; then
+        echo "preview-latest release was built from $actual, but this merge request's head is $expected — the preview release is stale relative to this merge"
+        exit 1
+      fi
+      echo "Verified: preview-latest release matches this merge request's exact head commit."
+    # Verify build provenance attestation.
+    - |
+      set -euo pipefail
+      gh attestation verify preview-release/orbit-launcher_linux_amd64.tar.gz \
+        --repo tomlawesome/orbit-launcher
+
 # --- acceptance --------------------------------------------------------------
 
 # visual-regression.yml. Same trigger: a merge request that touches the TUI or
@@ -329,3 +395,98 @@ live:
     paths:
       - .live/live-raw.log.*
     expire_in: 7 days
+
+# --- maintenance ---------------------------------------------------------
+
+# Renovate, taking over from Dependabot for this host (#140 step 4). It runs
+# here rather than in a runner project of its own: one repository, one
+# schedule, one place to look when an expected merge request does not appear.
+# What it watches, how it groups and why is in renovate.json at the repo root.
+#
+# No `tags:`. Nothing in this job talks to a Docker daemon, so it stays on the
+# shared untagged runner and never queues behind `orbit-launcher-build`.
+#
+# Two CI/CD variables the owner creates under Settings > CI/CD > Variables.
+# Mask both. Leave both unprotected unless the schedule's branch is itself
+# protected: a protected variable is simply absent from a job running on an
+# unprotected branch, and Renovate then fails at start-up with an
+# authentication error that says nothing about variable settings.
+#
+#   RENOVATE_TOKEN     A project access token on ai/orbit-launcher, or a bot
+#                      account's personal access token, with the `api` scope
+#                      and the Developer role. `api` is what lets Renovate
+#                      read the repository, push branches and open merge
+#                      requests; a `read_api` token can look and never write.
+#   GITHUB_COM_TOKEN   A github.com fine-grained personal access token with no
+#                      permissions granted at all -- public read only.
+#                      Renovate uses it for changelogs and release notes.
+#                      Without it the unauthenticated github.com API
+#                      rate-limits partway through a run and merge requests
+#                      arrive with their release notes missing.
+#
+# Neither value is ever printed: nothing below dumps an environment, and
+# LOG_LEVEL stays at info. `debug` logs the resolved configuration and would.
+#
+# One optional schedule variable picks the mode. RENOVATE_DRY_RUN=full makes a
+# run that reports what it would do and creates nothing, which is what the
+# first run should be. Delete the variable and the next run opens merge
+# requests. Renovate reads that name itself; the job only has to make an empty
+# value mean "unset", because Renovate accepts extract, lookup or full and
+# nothing else.
+renovate:
+  stage: maintenance
+  # Pinned by digest, the way every other image here is. The digest is the
+  # docker-content-digest header from a manifest HEAD against
+  # registry-1.docker.io, not a tag listing.
+  #
+  # Deliberately not the newest release. 44.64.0 was current on 2026-09-04 and
+  # neither it nor 44.63.0 starts at all: both ship an `apk` datasource that
+  # imports `tar`, and `tar` is not in the image's node_modules, so the run
+  # dies on "Cannot find package 'tar'" before it reads any configuration.
+  # 44.62.2 is the newest release published before that datasource existed.
+  # renovate.json excludes exactly those two versions, so Renovate offers the
+  # next release itself; that bump is only proven by the following scheduled
+  # run, so a run that dies at start-up means: revert, and add the version to
+  # the exclusion.
+  #
+  # The default image rather than `-full`: it carries Node only and installs
+  # the tools a run needs as it goes (binarySource=install), which is where
+  # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
+  # gigabytes of pull on a shared runner every week.
+  image: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
+  timeout: 1h
+  # A weekly maintenance run has nothing that could supersede it, and being
+  # cancelled part-way leaves half-written branches behind.
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE == "true"
+  variables:
+    # The checkout exists only so RENOVATE_CONFIG_FILE below has a file to
+    # read. Renovate clones the repository it updates itself, elsewhere.
+    GIT_DEPTH: 1
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    # Renovate reads a repository's own config from its default branch, which
+    # is `main` by design and only receives renovate.json when `dev` is
+    # promoted. Until then this job hands Renovate the copy in its own
+    # checkout -- the branch the schedule runs on -- as global config. Once
+    # the file reaches `main`, the repository copy merges over this one and
+    # they are the same file.
+    RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/renovate.json
+    # For the same reason, no onboarding merge request: a repository with no
+    # config of its own is expected here, not something to offer to fix.
+    RENOVATE_ONBOARDING: "false"
+    RENOVATE_REQUIRE_CONFIG: "optional"
+    LOG_LEVEL: info
+  script:
+    - |
+      set -eu
+      if [ -z "${RENOVATE_DRY_RUN:-}" ]; then
+        unset RENOVATE_DRY_RUN
+        echo "renovate: live run, merge requests will be created"
+      else
+        echo "renovate: dry run (${RENOVATE_DRY_RUN}), nothing will be created"
+      fi
+      renovate
