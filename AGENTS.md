@@ -58,6 +58,11 @@ Seven workflows, several of which are unusually expensive to break:
   part of the contract
 - `release-preview.yml`, `promote.yml` — the release lane
 
+`.gitlab-ci.yml` reproduces the gate for the move to the owner's GitLab
+(#140, GitLab-first migration). Until that issue's step 3 flips the mirror,
+GitHub is still the source and the GitLab pipeline is a second copy: keep
+the two in step when changing a check.
+
 Because a TUI's output *is* its interface, treat a visual-regression
 failure as a real failure and look at the diff. Do not re-run it hoping
 for green.
