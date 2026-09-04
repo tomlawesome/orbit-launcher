@@ -25,6 +25,7 @@
 stages:
   - fast
   - acceptance
+  - maintenance
 
 workflow:
   rules:
@@ -329,3 +330,99 @@ live:
     paths:
       - .live/live-raw.log.*
     expire_in: 7 days
+
+# --- maintenance ---------------------------------------------------------
+
+# Renovate, taking over from Dependabot for this host (#140 step 4). It runs
+# here rather than in a runner project of its own: one repository, one
+# schedule, one place to look when an expected merge request does not appear.
+# What it watches, how it groups and why is in renovate.json at the repo root.
+#
+# No `tags:`. Nothing in this job talks to a Docker daemon, so it stays on the
+# shared untagged runner and never queues behind `orbit-launcher-build`.
+#
+# Two CI/CD variables the owner creates under Settings > CI/CD > Variables.
+# Mask both. Leave both unprotected unless the schedule's branch is itself
+# protected: a protected variable is simply absent from a job running on an
+# unprotected branch, and Renovate then fails at start-up with an
+# authentication error that says nothing about variable settings.
+#
+#   RENOVATE_TOKEN     A project access token on ai/orbit-launcher, or a bot
+#                      account's personal access token, with the `api` scope
+#                      and the Developer role. `api` is what lets Renovate
+#                      read the repository, push branches and open merge
+#                      requests; a `read_api` token can look and never write.
+#   GITHUB_COM_TOKEN   A github.com fine-grained personal access token with no
+#                      permissions granted at all -- public read only.
+#                      Renovate uses it for changelogs and release notes.
+#                      Without it the unauthenticated github.com API
+#                      rate-limits partway through a run and merge requests
+#                      arrive with their release notes missing.
+#
+# Neither value is ever printed: nothing below dumps an environment, and
+# LOG_LEVEL stays at info. `debug` logs the resolved configuration and would.
+#
+# One optional schedule variable picks the mode. RENOVATE_DRY_RUN=full makes a
+# run that reports what it would do and creates nothing, which is what the
+# first run should be. Delete the variable and the next run opens merge
+# requests. Renovate reads that name itself; the job only has to make an empty
+# value mean "unset", because Renovate accepts extract, lookup or full and
+# nothing else.
+renovate:
+  stage: maintenance
+  # Pinned by digest, the way every other image here is. The digest is the
+  # docker-content-digest header from a manifest HEAD against
+  # registry-1.docker.io, not a tag listing.
+  #
+  # Deliberately not the newest release. 44.64.0 was current on 2026-09-04 and
+  # neither it nor 44.63.0 starts at all: both ship an `apk` datasource that
+  # imports `tar`, and `tar` is not in the image's node_modules, so the run
+  # dies on "Cannot find package 'tar'" before it reads any configuration.
+  # 44.62.2 is the newest release published before that datasource existed.
+  # renovate.json excludes exactly those two versions, so Renovate offers the
+  # next release itself; that bump is only proven by the following scheduled
+  # run, so a run that dies at start-up means: revert, and add the version to
+  # the exclusion.
+  #
+  # The default image rather than `-full`: it carries Node only and installs
+  # the tools a run needs as it goes (binarySource=install), which is where
+  # the Go toolchain and staticcheck a `gomod`/`gomodTidy` run needs come
+  # from. `-full` preinstalls a much wider toolset and costs several
+  # gigabytes of pull on a shared runner every week.
+  image: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
+  timeout: 1h
+  # A weekly maintenance run has nothing that could supersede it, and being
+  # cancelled part-way leaves half-written branches behind.
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE == "true"
+  variables:
+    # The checkout exists only so RENOVATE_CONFIG_FILE below has a file to
+    # read. Renovate clones the repository it updates itself, elsewhere.
+    GIT_DEPTH: 1
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    # Renovate reads a repository's own config from its default branch.
+    # renovate.json is on `dev`, which is not this project's GitLab default
+    # branch yet (#140 step 3), so until then this job hands Renovate the
+    # copy in its own checkout -- the branch the schedule runs on -- as global
+    # config. When the default branch flips to `dev`, the repository copy
+    # merges over this one and they are the same file.
+    RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/renovate.json
+    # For the same reason, no onboarding merge request: a repository with no
+    # config of its own is expected here, not something to offer to fix.
+    RENOVATE_ONBOARDING: "false"
+    RENOVATE_REQUIRE_CONFIG: "optional"
+    LOG_LEVEL: info
+  script:
+    - |
+      set -eu
+      if [ -z "${RENOVATE_DRY_RUN:-}" ]; then
+        unset RENOVATE_DRY_RUN
+        echo "renovate: live run, merge requests will be created"
+      else
+        echo "renovate: dry run (${RENOVATE_DRY_RUN}), nothing will be created"
+      fi
+      renovate
