@@ -136,6 +136,39 @@ variables:
   done
   docker info > /dev/null 2>&1 || { echo "the in-job Docker daemon did not start"; cat /tmp/dockerd.log; exit 1; }
 
+# Temporary, for #144: Orbit's installer refused the live install at its OIDC
+# discovery check on pipeline 214, and install.sh raises that one message from
+# five conditions with every output sent to /dev/null, so the transcript cannot
+# say which. This runs the two candidates with their output visible, using the
+# same flags install.sh uses (orbit main, scripts/install.sh ~483-527): the
+# discovery fetch, then the hardened `docker run` of the image's node over the
+# fetched document. Never fails the job; it only reports. Remove once #144
+# names the cause.
+.oidc_probe: &oidc_probe |
+  echo "--- #144 probe: discovery fetch"
+  issuer="https://accounts.google.com"
+  discovery_url="${issuer}/.well-known/openid-configuration"
+  curl_status=0
+  response_status="$(curl --silent --show-error --location --connect-timeout 5 --max-time 10 \
+    --max-filesize 1048576 --header 'Accept: application/json' \
+    --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --output /tmp/discovery.json --write-out '%{http_code}' "$discovery_url")" || curl_status=$?
+  echo "curl exit=${curl_status} http=${response_status} bytes=$(stat -c %s /tmp/discovery.json 2>/dev/null || echo none)"
+  echo "ipv4: $(curl --silent --output /dev/null --max-time 10 -4 --write-out '%{http_code}' "$discovery_url" || echo "exit $?")"
+  echo "ipv6: $(curl --silent --output /dev/null --max-time 10 -6 --write-out '%{http_code}' "$discovery_url" || echo "exit $?")"
+  echo "--- #144 probe: hardened parser container"
+  docker info --format 'docker {{.ServerVersion}} cgroup {{.CgroupDriver}}/{{.CgroupVersion}} storage {{.Driver}} rootless={{.Rootless}}' || true
+  image="ghcr.io/tomlawesome/orbit:${ORBIT_CHANNEL:-latest}"
+  docker pull --quiet "$image" || echo "pull failed: exit $?"
+  probe_status=0
+  { printf '%s\n' "$issuer"; cat /tmp/discovery.json; } | docker run --rm \
+    --interactive --entrypoint node --network none --read-only \
+    --cap-drop ALL --security-opt no-new-privileges --user 1001:1001 \
+    --pids-limit 64 --memory 64m --cpus 0.5 \
+    "$image" --input-type=commonjs -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const [iss,...rest]=s.split("\n");const d=JSON.parse(rest.join("\n"));console.error("node",process.version,"issuer",d.issuer===iss?"matches":"differs:"+d.issuer)})' || probe_status=$?
+  echo "hardened docker run exit=${probe_status}"
+  echo "--- #144 probe end"
+
 # --- fast --------------------------------------------------------------------
 
 # ci.yml `fast`, step for step.
@@ -304,7 +337,8 @@ live:
       [ -n "$ORBIT_CHANNEL" ] || unset ORBIT_CHANNEL
       go build -o /tmp/orbit-launcher ./cmd/orbit-launcher
       export ORBIT_LAUNCHER_LIVE_BINARY=/tmp/orbit-launcher
-      go test -tags live -count=1 -v -timeout 30m ./test/live/...
+    - *oidc_probe
+    - go test -tags live -count=1 -v -timeout 30m ./test/live/...
   after_script:
     # Docker state, always, for debugging.
     - docker ps -a || true
