@@ -1,0 +1,312 @@
+# orbit-launcher's pipeline on the owner's self-hosted GitLab
+# (gitlab.tomlawson.io), step 1 of #140 (move to GitLab).
+#
+# It reproduces the GitHub gate job for job -- ci.yml's static and unit
+# checks, secret-scan.yml, visual-regression.yml and live-install-test.yml --
+# running the same commands against the same pinned tool versions, so a
+# finding on one host means the same thing on the other. GitHub stays the
+# source of truth until #140 step 3; nothing here publishes or promotes.
+#
+# Deliberately not here:
+#
+#   1. ci.yml's `verify_preview_for_stable`, release-preview.yml and
+#      promote.yml. They read and write GitHub Releases and verify GitHub
+#      build attestations, so they stay on GitHub, which remains the public
+#      download source (#140 step 4).
+#   2. codeql.yml and dependency-review.yml: GitHub's own scanners keep running
+#      on the mirror.
+#
+# Only the live install test needs a Docker daemon, and a daemon needs a
+# privileged container whichever way it arrives. It asks for the project's own
+# privileged runner by tag (`orbit-launcher-build`, #140 decision 1); every
+# other job stays untagged on the shared group runner so the privileged one is
+# not the queue for the whole pipeline.
+
+stages:
+  - fast
+  - acceptance
+
+workflow:
+  rules:
+    # Tags publish nothing here; the release lane is GitHub's.
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Once a branch has an open merge request, the merge-request pipeline is
+    # the one that matters.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+default:
+  interruptible: true
+  # Infrastructure only: a job that failed on its own merits is never retried.
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stale_schedule
+      - scheduler_failure
+
+variables:
+  # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
+  # images: a moving tag would silently change what the gate ran on.
+  GO_IMAGE: golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd
+  # The same Go build as a tarball, for the two jobs whose image is chosen by
+  # something other than Go (a browser, a Docker daemon).
+  GO_VERSION: "1.26.5"
+  GO_SHA256: 5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053
+  # Ships the exact Chromium that test/visual/package-lock.json's
+  # @playwright/test expects, so no browser download happens in the job. Noble
+  # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
+  # committed screenshot baselines were taken.
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+  # The live test stands up a real Orbit through orbit's install.sh, which was
+  # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
+  # Debian leg that was tried and dropped).
+  UBUNTU_IMAGE: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+  # Same pins as the workflows.
+  STATICCHECK_VERSION: v0.7.0
+  BATS_VERSION: "1.14.0"
+  BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
+  TTYD_VERSION: "1.7.7"
+  TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
+  # this GitLab, not the GitHub mirror. Overridable per pipeline the way the
+  # GitHub job's `orbit_branch` and `orbit_channel` inputs are.
+  ORBIT_PROJECT: ai/orbit
+  ORBIT_BRANCH: main
+  ORBIT_CHANNEL: ""
+  # Set to "true" on a pipeline started by hand to run the live test without
+  # the merge-request label.
+  RUN_LIVE: "false"
+  # Go's caches live inside the project directory so GitLab's cache can carry
+  # them between jobs and pipelines; the paths are relative for the same reason.
+  GOMODCACHE: $CI_PROJECT_DIR/.go/mod
+  GOCACHE: $CI_PROJECT_DIR/.go/build
+
+# --- Reusable pieces ---------------------------------------------------------
+
+.go_cache:
+  cache:
+    key:
+      prefix: go
+      files:
+        - go.sum
+    paths:
+      - .go/mod
+      - .go/build
+
+# The official tarball, checksum-verified, for images that are not the Go
+# image. `go env -w` is not used: GOMODCACHE and GOCACHE arrive from the
+# pipeline variables above, exactly as they do in the Go image.
+.go_tarball: &go_tarball |
+  tarball="go${GO_VERSION}.linux-amd64.tar.gz"
+  curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
+    "https://go.dev/dl/${tarball}"
+  echo "${GO_SHA256}  /tmp/${tarball}" | sha256sum -c -
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "/tmp/${tarball}"
+  export PATH="/usr/local/go/bin:${PATH}"
+  go version
+
+# The one place the privileged runner is named. Everything that needs a Docker
+# daemon reaches it through here, so the tag is a single edit if the runner is
+# ever re-registered under another name.
+.privileged_runner:
+  tags:
+    - orbit-launcher-build
+
+# The daemon inside the job's own container, copied from ai/orbit's
+# `.docker_in_job`. The dind *service* pattern cannot be used here: install.sh
+# publishes Orbit on the loopback address and the live test health-checks
+# http://localhost:3000/ from the job, so the daemon has to share the job's
+# network namespace, exactly as GitHub's runner does. `/builds` is a real
+# volume; the rest of the container is overlayfs, which overlay2 cannot stack
+# on, so the daemon's data root goes there.
+.docker_in_job: &docker_in_job |
+  docker_data_root="${CI_BUILDS_DIR:-/builds}/.orbit-launcher-docker-data"
+  mkdir -p "$docker_data_root"
+  nohup dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
+  for _ in $(seq 1 60); do
+    docker info > /dev/null 2>&1 && break
+    sleep 1
+  done
+  docker info > /dev/null 2>&1 || { echo "the in-job Docker daemon did not start"; cat /tmp/dockerd.log; exit 1; }
+
+# --- fast --------------------------------------------------------------------
+
+# ci.yml `fast`, step for step.
+fast:
+  stage: fast
+  image: $GO_IMAGE
+  extends: .go_cache
+  timeout: 15m
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends shellcheck
+  script:
+    - |
+      unformatted="$(gofmt -l .)"
+      if [ -n "$unformatted" ]; then
+        echo "gofmt found unformatted files:"
+        echo "$unformatted"
+        exit 1
+      fi
+    - go build ./... && go vet ./...
+    - shellcheck scripts/get-orbit-launcher.sh
+    - |
+      curl --fail --silent --show-error --location --output /tmp/bats.tar.gz \
+        "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz"
+      echo "${BATS_SHA256}  /tmp/bats.tar.gz" | sha256sum -c -
+      mkdir -p /tmp/bats-core
+      tar -xzf /tmp/bats.tar.gz -C /tmp/bats-core --strip-components=1
+      export PATH="/tmp/bats-core/bin:${PATH}"
+      bats scripts/test/get-orbit-launcher.bats
+    - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+    - staticcheck ./...
+    - go test -race -coverprofile=coverage.out ./...
+  artifacts:
+    name: coverage
+    when: always
+    paths:
+      - coverage.out
+    expire_in: 14 days
+
+# secret-scan.yml, step for step. Full history: the point is catching a secret
+# that reached the remote in an earlier commit and is no longer in the working
+# tree, which a filesystem scan cannot see. --redact keeps any finding out of
+# the build log; the log names the file and rule, never the value.
+gitleaks:
+  stage: fast
+  image: $UBUNTU_IMAGE
+  timeout: 10m
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git
+  script:
+    - |
+      set -euo pipefail
+      tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+      echo "${GITLEAKS_SHA256}  /tmp/${tarball}" | sha256sum -c -
+      mkdir -p /tmp/bin
+      tar -xzf "/tmp/${tarball}" -C /tmp/bin gitleaks
+      chmod +x /tmp/bin/gitleaks
+      /tmp/bin/gitleaks version
+      /tmp/bin/gitleaks git --redact --no-banner --log-level error .
+
+# --- acceptance --------------------------------------------------------------
+
+# visual-regression.yml. Same trigger: a merge request that touches the TUI or
+# the visual suite (or a pipeline started by hand). A failure here is a real
+# failure -- look at the diff, do not re-run it hoping for green (AGENTS.md).
+#
+# The first run on this host is also the test of whether the committed
+# baselines survive the move: the browser build is the one the lock file
+# names, but system fonts are the image's, not GitHub's runner image's.
+visual:
+  stage: acceptance
+  image: $PLAYWRIGHT_IMAGE
+  extends: .go_cache
+  timeout: 15m
+  needs: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - internal/ui/**/*
+        - test/visual/**/*
+        - .gitlab-ci.yml
+  before_script:
+    - *go_tarball
+    - |
+      curl --fail --silent --show-error --location --output /usr/local/bin/ttyd \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
+      echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -
+      chmod +x /usr/local/bin/ttyd
+  script:
+    - cd test/visual
+    - npm ci
+    - npx playwright test
+  artifacts:
+    name: playwright-report
+    when: on_failure
+    paths:
+      - test/visual/playwright-report/
+      - test/visual/test-results/
+    expire_in: 14 days
+
+# live-install-test.yml: the real install, end to end, building orbit-launcher
+# fresh from this commit. Opt-in, as on GitHub -- the `run-live-matrix` label
+# on the merge request, or RUN_LIVE=true on a pipeline started by hand -- since
+# it is slow: real image pulls, real health checks, minutes not seconds.
+#
+# install.sh is read from ai/orbit through the API with the job's own token
+# (ai/orbit is private, so its raw URLs need one), then served to the launcher
+# from the loopback address: ORBIT_LAUNCHER_INSTALL_SCRIPT_URL takes a URL and
+# nothing else, so the launcher still fetches the script over HTTP the way a
+# real install does. This needs ai/orbit's job-token allowlist to name
+# ai/orbit-launcher, a project setting only the owner changes.
+#
+# The suite's own budget is 30m (go test -timeout below). A job cap under it
+# turns a slow-but-passing run into a cancelled one with no Go-level failure to
+# read, which is what happened on GitHub's first orbit-branch dispatch.
+live:
+  stage: acceptance
+  image: $UBUNTU_IMAGE
+  extends:
+    - .privileged_runner
+    - .go_cache
+  timeout: 35m
+  needs: []
+  rules:
+    - if: $RUN_LIVE == "true"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
+  variables:
+    ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq
+    - *go_tarball
+    - *docker_in_job
+  script:
+    - mkdir -p .live/install-script
+    - |
+      project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+      curl --fail --silent --show-error --location \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --output .live/install-script/install.sh \
+        "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${ORBIT_BRANCH}"
+      head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }
+      python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
+      for _ in $(seq 1 30); do
+        curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
+        sleep 1
+      done
+      export ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=http://127.0.0.1:8765/install.sh
+      # install.sh reads ORBIT_CHANNEL itself; the launcher never sets the
+      # engine's environment, so the job's own environment reaches it
+      # unchanged through every spawn. Empty means install.sh's own default.
+      [ -n "$ORBIT_CHANNEL" ] || unset ORBIT_CHANNEL
+      go build -o /tmp/orbit-launcher ./cmd/orbit-launcher
+      export ORBIT_LAUNCHER_LIVE_BINARY=/tmp/orbit-launcher
+      go test -tags live -count=1 -v -timeout 30m ./test/live/...
+  after_script:
+    # Docker state, always, for debugging.
+    - docker ps -a || true
+    - docker volume ls || true
+  artifacts:
+    name: live-raw-log
+    when: always
+    paths:
+      - .live/live-raw.log.*
+    expire_in: 7 days
