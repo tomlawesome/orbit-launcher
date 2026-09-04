@@ -1,20 +1,20 @@
 # orbit-launcher's pipeline on the owner's self-hosted GitLab
-# (gitlab.tomlawson.io), step 1 of #140 (move to GitLab).
+# (gitlab.tomlawson.io), the gate merges wait on since #140 step 3 made
+# GitLab the source and GitHub the mirror.
 #
 # It reproduces the GitHub gate job for job -- ci.yml's static and unit
 # checks, secret-scan.yml, visual-regression.yml and live-install-test.yml --
 # running the same commands against the same pinned tool versions, so a
-# finding on one host means the same thing on the other. GitHub stays the
-# source of truth until #140 step 3; nothing here publishes or promotes.
+# finding on one host means the same thing on the other. GitHub still runs
+# its workflows on the mirrored push as a second opinion; nothing here
+# publishes or promotes.
 #
 # Deliberately not here:
 #
-#   1. ci.yml's `verify_preview_for_stable`, release-preview.yml and
-#      promote.yml. They read and write GitHub Releases and verify GitHub
-#      build attestations, so they stay on GitHub, which remains the public
-#      download source (#140 step 4).
-#   2. codeql.yml and dependency-review.yml: GitHub's own scanners keep running
-#      on the mirror.
+#   1. release-preview.yml and promote.yml. They write GitHub Releases, so
+#      they stay on GitHub, which remains the public download source; the
+#      mirror push into `preview` is what fires the first (#140 step 4).
+#   2. codeql.yml: GitHub's own scanner keeps running on the mirror.
 #
 # Only the live install test needs a Docker daemon, and a daemon needs a
 # privileged container whichever way it arrives. It asks for the project's own
@@ -265,8 +265,7 @@ verify_preview_for_stable:
         --dir preview-release \
         --pattern "orbit-launcher_linux_amd64.tar.gz" \
         --pattern "checksums.txt"
-    # Verify checksum. Piped rather than ci.yml's `sha256sum -c <(...)`: the
-    # image's default shell has no process substitution.
+    # Verify checksum (piped; same check as ci.yml's `sha256sum -c <(...)`).
     - |
       set -euo pipefail
       cd preview-release
@@ -452,8 +451,7 @@ renovate:
   #
   # The default image rather than `-full`: it carries Node only and installs
   # the tools a run needs as it goes (binarySource=install), which is where
-  # the Go toolchain and staticcheck a `gomod`/`gomodTidy` run needs come
-  # from. `-full` preinstalls a much wider toolset and costs several
+  # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
   # gigabytes of pull on a shared runner every week.
   image: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
   timeout: 1h
@@ -470,12 +468,12 @@ renovate:
     RENOVATE_ENDPOINT: $CI_API_V4_URL
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
-    # Renovate reads a repository's own config from its default branch.
-    # renovate.json is on `dev`, which is not this project's GitLab default
-    # branch yet (#140 step 3), so until then this job hands Renovate the
-    # copy in its own checkout -- the branch the schedule runs on -- as global
-    # config. When the default branch flips to `dev`, the repository copy
-    # merges over this one and they are the same file.
+    # Renovate reads a repository's own config from its default branch, which
+    # is `main` by design and only receives renovate.json when `dev` is
+    # promoted. Until then this job hands Renovate the copy in its own
+    # checkout -- the branch the schedule runs on -- as global config. Once
+    # the file reaches `main`, the repository copy merges over this one and
+    # they are the same file.
     RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/renovate.json
     # For the same reason, no onboarding merge request: a repository with no
     # config of its own is expected here, not something to offer to fix.
