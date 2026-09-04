@@ -127,6 +127,20 @@ variables:
 # volume; the rest of the container is overlayfs, which overlay2 cannot stack
 # on, so the daemon's data root goes there.
 .docker_in_job: &docker_in_job |
+  # cgroup v2 nesting, as docker:dind's entrypoint does it. The job is the
+  # root of its own cgroup namespace, and cgroup v2 refuses to enable
+  # controllers on a group that still holds processes, so the job's processes
+  # move to an `init` child first. Without this the daemon still starts and
+  # `docker pull` works, but any `docker run` that asks for a limit
+  # (--pids-limit, --memory, --cpus) fails with `cannot enter cgroupv2
+  # "/sys/fs/cgroup/docker" ... it is in an invalid state`. install.sh's
+  # hardened OIDC-discovery parser asks for all three, and reported the
+  # refusal as "OIDC provider configuration could not be validated" (#144).
+  if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    mkdir -p /sys/fs/cgroup/init
+    xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+    sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control
+  fi
   docker_data_root="${CI_BUILDS_DIR:-/builds}/.orbit-launcher-docker-data"
   mkdir -p "$docker_data_root"
   nohup dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
