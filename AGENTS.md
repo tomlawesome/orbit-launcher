@@ -34,12 +34,34 @@ Layout:
 This project's whole purpose is acting **on** Orbit, so reading the Orbit
 repo as reference is expected; modifying it is not.
 
+## Hosts: GitLab first, GitHub is the mirror
+
+Since 2026-09-04 (#140) the project lives at
+`gitlab.tomlawson.io/ai/orbit-launcher` (project id 50): issues, merge
+requests, protected branches and the CI gate are there. Remote `gitlab`.
+
+GitHub `tomlawesome/orbit-launcher` (remote `origin`) is a push mirror
+GitLab updates after every merge, plus the public download source: GitHub
+Releases, `promote.yml`, `release-preview.yml` and CodeQL stay there.
+Nothing is filed, pushed or merged on GitHub by hand.
+
+- Mirror identity: a GitLab-generated SSH key held as a write-access deploy
+  key on GitHub; "Deploy keys" is the only bypass on GitHub's rulesets.
+- Issues 1–148 have the same number on both hosts; from 149 on, GitLab only.
+- Runner: `orbit-launcher-build` (privileged, for the live test); everything
+  else runs on the shared group runner.
+- Agent credential: `glab` with `GLAB_CONFIG_DIR=~/.config/glab-claude` (or
+  the Codex one) and `GITLAB_TOKEN` unset; the repo-local git credential
+  helper for the `gitlab` remote is `!glab auth git-credential`.
+- Start a pipeline by hand with `gl-pipeline-run ai/orbit-launcher <ref>
+  RUN_LIVE=true` to include the live test.
+
 ## Branching and review
 
-Observed flow: feature branch → `dev` → `preview` → `main`, with
-`gh-pages` for the published site.
+Flow: feature branch → `dev` → `preview` → `main`, all by merge request on
+GitLab, with `gh-pages` for the published site.
 
-- Protected branches here are `dev`, `preview`, and `main`.
+- Protected branches are `dev`, `preview`, and `main` on both hosts.
 - Approval to merge into `dev` is not approval to promote.
 
 ## Commit style
@@ -58,10 +80,11 @@ Seven workflows, several of which are unusually expensive to break:
   part of the contract
 - `release-preview.yml`, `promote.yml` — the release lane
 
-`.gitlab-ci.yml` reproduces the gate for the move to the owner's GitLab
-(#140, GitLab-first migration). Until that issue's step 3 flips the mirror,
-GitHub is still the source and the GitLab pipeline is a second copy: keep
-the two in step when changing a check.
+`.gitlab-ci.yml` is the gate merges wait on: `fast`, `gitleaks`, `visual`
+(when web sources change) and `live` (MR label `run-live-matrix` or
+`RUN_LIVE=true`). The GitHub workflows still run on the mirrored push as a
+second opinion; a failure there is advisory and never blocks a GitLab merge.
+Keep the two in step when changing a check.
 
 Because a TUI's output *is* its interface, treat a visual-regression
 failure as a real failure and look at the diff. Do not re-run it hoping
