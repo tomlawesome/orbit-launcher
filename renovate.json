@@ -4,7 +4,7 @@
   "description": [
     "Renovate for the GitLab lane on gitlab.tomlawson.io (ai/orbit-launcher), taking over from the retired .github/dependabot.yml (#140 step 4). Same cadence and the same grouping the Dependabot file had, so nothing about what gets watched changes with the host.",
     "GitHub Actions is watched from here too, matching the actions entry the retired .github/dependabot.yml carried, plus the .gitlab-ci.yml job images and the pipeline's own digest pins, which Dependabot never watched because .gitlab-ci.yml did not exist when it was written.",
-    "This file is read two ways: as the repository config Renovate finds on the repository's default branch, and as the global config the renovate job in .gitlab-ci.yml points RENOVATE_CONFIG_FILE at. GitLab's default branch for ai/orbit-launcher is still `main`, not `dev` (#140 step 3 has not flipped it yet), so the second reading is what makes this work before renovate.json reaches the default branch -- see the job's comment."
+    "This file is read two ways: as the repository config Renovate finds on the repository's default branch, and as the global config the renovate job in .gitlab-ci.yml points RENOVATE_CONFIG_FILE at. The default branch is `main` by design and only receives this file when `dev` is promoted, so the second reading is what makes this work until then -- see the job's comment."
   ],
   "timezone": "Europe/London",
   "schedule": ["after 5:00am and before 6:15am on monday"],
