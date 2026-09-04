@@ -150,7 +150,12 @@ fast:
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
     - |
-      unformatted="$(gofmt -l .)"
+      # The tracked Go files, not `gofmt -l .`: GitLab's cache can only carry
+      # paths inside the project directory, so GOMODCACHE lives there and a
+      # walk of the working tree reports the Go toolchain's own deliberately
+      # broken testdata (#142). On GitHub's clean checkout the two are the
+      # same set of files.
+      unformatted="$(git ls-files -z '*.go' | xargs -0 --no-run-if-empty gofmt -l)"
       if [ -n "$unformatted" ]; then
         echo "gofmt found unformatted files:"
         echo "$unformatted"
