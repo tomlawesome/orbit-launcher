@@ -426,7 +426,12 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 
 	appURL := fmt.Sprintf("https://orbit-live-test-%d.internal", time.Now().UnixNano())
 
-	t.Run("Install", func(t *testing.T) {
+	// Remove only means something against the deployment Install left
+	// behind. When Install fails there is nothing to remove, and driving
+	// the launcher through a Remove anyway only waits for a screen that
+	// never comes: on GitLab pipeline 214 a 31s Install failure was
+	// followed by 602s of Remove before the hang diagnosis fired (#145).
+	installed := t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 
 		sendLine := func(s string) { session.send(s + "\r") }
@@ -511,6 +516,9 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	})
 
 	t.Run("Remove", func(t *testing.T) {
+		if !installed {
+			t.Skip("Install failed; nothing to remove")
+		}
 		session := startLive(t, binPath, dir)
 
 		// Nothing is asserted about the caret here (issue #122). The
