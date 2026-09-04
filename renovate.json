@@ -1,0 +1,63 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": [
+    "Renovate for the GitLab lane on gitlab.tomlawson.io (ai/orbit-launcher), taking over from the retired .github/dependabot.yml (#140 step 4). Same cadence and the same grouping the Dependabot file had, so nothing about what gets watched changes with the host.",
+    "GitHub Actions is watched from here too, matching the actions entry the retired .github/dependabot.yml carried, plus the .gitlab-ci.yml job images and the pipeline's own digest pins, which Dependabot never watched because .gitlab-ci.yml did not exist when it was written.",
+    "This file is read two ways: as the repository config Renovate finds on the repository's default branch, and as the global config the renovate job in .gitlab-ci.yml points RENOVATE_CONFIG_FILE at. GitLab's default branch for ai/orbit-launcher is still `main`, not `dev` (#140 step 3 has not flipped it yet), so the second reading is what makes this work before renovate.json reaches the default branch -- see the job's comment."
+  ],
+  "timezone": "Europe/London",
+  "schedule": ["after 5:00am and before 6:15am on monday"],
+  "baseBranchPatterns": ["dev"],
+  "labels": ["dependencies"],
+  "semanticCommits": "disabled",
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate dependency dashboard",
+  "pinDigests": true,
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 0,
+  "osvVulnerabilityAlerts": true,
+  "enabledManagers": ["gomod", "github-actions", "gitlabci", "custom.regex"],
+  "postUpdateOptions": ["gomodTidy"],
+  "customManagers": [
+    {
+      "description": "The pipeline pins its job images in the top-level variables block -- GO_IMAGE, PLAYWRIGHT_IMAGE, UBUNTU_IMAGE -- and the jobs reference them as $GO_IMAGE, $PLAYWRIGHT_IMAGE and $UBUNTU_IMAGE. The gitlabci manager reads image: and services: keys, so it sees the variable references and never the pins themselves. This reads the pins directly.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "matchStrings": [
+        "_IMAGE:\\s+(?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "description": "Security fixes do not wait for Monday. GitLab CE has no dependency-alert API for Renovate to read, so osvVulnerabilityAlerts above is what supplies the advisories, from the OSV database, and this is what lets a fix land outside the weekly window.",
+    "enabled": true,
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Go modules: the go-minor-patch group the Dependabot file had. Majors are left out of the group so a breaking change is reviewed on its own.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "go minor and patch"
+    },
+    {
+      "description": "GitHub Actions: the actions-minor-patch group the Dependabot file had. Majors separate, as everywhere else here.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "github-actions minor and patch"
+    },
+    {
+      "description": "The pipeline's own images -- GO_IMAGE, PLAYWRIGHT_IMAGE and UBUNTU_IMAGE from the custom manager above, and anything the gitlabci manager finds in a literal image: key (the renovate job's own image below). Dependabot never watched any of this -- .gitlab-ci.yml did not exist when it was written -- so this is new cover rather than a like-for-like replacement.",
+      "matchManagers": ["gitlabci", "custom.regex"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "gitlab-ci image minor and patch"
+    },
+    {
+      "description": "Renovate's own image, which the gitlabci manager finds in the renovate job. 44.63.0 and 44.64.0 (both released 2026-09-04) do not start: they ship an `apk` datasource that imports `tar`, and `tar` is absent from the image's node_modules, so the container dies before it reads any configuration. Only those two are excluded, so the next working release is offered as usual. Nothing runs this job outside the weekly schedule, so a bump is only proven by the next scheduled run: if that run fails at start-up, revert the bump and add the version here.",
+      "matchPackageNames": ["renovate/renovate"],
+      "allowedVersions": "!/^44\\.6[34]\\.0$/"
+    }
+  ]
+}
