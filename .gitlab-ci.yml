@@ -159,7 +159,9 @@ variables:
 # ci.yml `fast`, step for step.
 fast:
   stage: fast
-  image: $GO_IMAGE
+  image:
+    name: $GO_IMAGE
+    pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
   before_script:
@@ -211,7 +213,9 @@ fast:
 # allowed, so a dependency under AGPL still fails.
 deps:
   stage: fast
-  image: $GO_IMAGE
+  image:
+    name: $GO_IMAGE
+    pull_policy: if-not-present
   extends: .go_cache
   timeout: 10m
   script:
@@ -229,7 +233,9 @@ deps:
 # the build log; the log names the file and rule, never the value.
 gitleaks:
   stage: fast
-  image: $UBUNTU_IMAGE
+  image:
+    name: $UBUNTU_IMAGE
+    pull_policy: if-not-present
   timeout: 10m
   variables:
     GIT_DEPTH: 0
@@ -264,7 +270,9 @@ gitleaks:
 # rate-limits or refuses anonymously.
 verify_preview_for_stable:
   stage: fast
-  image: $UBUNTU_IMAGE
+  image:
+    name: $UBUNTU_IMAGE
+    pull_policy: if-not-present
   timeout: 10m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
@@ -326,7 +334,9 @@ verify_preview_for_stable:
 # names, but system fonts are the image's, not GitHub's runner image's.
 visual:
   stage: acceptance
-  image: $PLAYWRIGHT_IMAGE
+  image:
+    name: $PLAYWRIGHT_IMAGE
+    pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
   needs: []
@@ -373,7 +383,9 @@ visual:
 # read, which is what happened on GitHub's first orbit-branch dispatch.
 live:
   stage: acceptance
-  image: $UBUNTU_IMAGE
+  image:
+    name: $UBUNTU_IMAGE
+    pull_policy: if-not-present
   extends:
     - .privileged_runner
     - .go_cache
@@ -480,7 +492,9 @@ renovate:
   # the tools a run needs as it goes (binarySource=install), which is where
   # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
   # gigabytes of pull on a shared runner every week.
-  image: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
+  image:
+    name: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
+    pull_policy: if-not-present
   timeout: 1h
   # A weekly maintenance run has nothing that could supersede it, and being
   # cancelled part-way leaves half-written branches behind.
