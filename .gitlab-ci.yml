@@ -500,8 +500,9 @@ renovate:
     name: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
     pull_policy: if-not-present
   timeout: 1h
-  tags:
-    - light
+  # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
+  # and runs `go mod tidy` inside the job, which can pass the light lane's
+  # 2 GB limit. Same choice as mikroview's renovate:run.
   # A weekly maintenance run has nothing that could supersede it, and being
   # cancelled part-way leaves half-written branches behind.
   interruptible: false
