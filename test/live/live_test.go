@@ -633,10 +633,14 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	session.must("OIDC client secret")
 	sendLine("ci-live-failure-fake-secret")
 
-	// The deploy proceeds into compose and dies on the held port. The
-	// launcher's own failure screen — not a hang, not a fake success —
-	// is the contract, with its stacked menu present.
-	session.must("Installation stopped")
+	// The guided installer still asks for its "Final review" confirmation
+	// (and any other menu) before it deploys; answer those as the happy
+	// path does, or the launcher waits on the menu until the budget runs
+	// out and the held port is never even tried (#151). Then the deploy
+	// proceeds into compose and dies on the held port. The launcher's own
+	// failure screen — not a hang, not a fake success — is the contract,
+	// with its stacked menu present.
+	acceptMenusUntil(t, session, "Installation stopped")
 	session.must("Menu")
 
 	// Exit via the failure menu (guided installer, Menu, Exit).
