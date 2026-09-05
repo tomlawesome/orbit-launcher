@@ -215,6 +215,10 @@ fast:
 # allowed, so a dependency under AGPL still fails.
 deps:
   stage: fast
+  # Short scanners run on the light lane (2 CPU / 2 GB, three at a time) so
+  # they stop holding a big-lane slot; if one is ever killed for memory,
+  # move it back to big (owner decision, ai/agent-infra#3, 2026-09-05).
+  tags: [light]
   image:
     name: $GO_IMAGE
     pull_policy: if-not-present
@@ -235,6 +239,7 @@ deps:
 # the build log; the log names the file and rule, never the value.
 gitleaks:
   stage: fast
+  tags: [light]
   image:
     name: $UBUNTU_IMAGE
     pull_policy: if-not-present
