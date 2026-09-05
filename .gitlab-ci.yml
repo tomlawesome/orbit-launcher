@@ -40,6 +40,8 @@ workflow:
     - if: $CI_COMMIT_BRANCH
 
 default:
+  tags:
+    - big
   interruptible: true
   # Infrastructure only: a job that failed on its own merits is never retried.
   retry:
@@ -274,6 +276,8 @@ verify_preview_for_stable:
     name: $UBUNTU_IMAGE
     pull_policy: if-not-present
   timeout: 10m
+  tags:
+    - light
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
   variables:
@@ -496,6 +500,8 @@ renovate:
     name: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
     pull_policy: if-not-present
   timeout: 1h
+  tags:
+    - light
   # A weekly maintenance run has nothing that could supersede it, and being
   # cancelled part-way leaves half-written branches behind.
   interruptible: false
