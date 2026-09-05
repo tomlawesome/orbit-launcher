@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -149,9 +150,9 @@ func fetchFile(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := scriptFetchClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fetchError(path.Base(url), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
