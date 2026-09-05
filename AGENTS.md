@@ -72,15 +72,16 @@ Observed convention is **Conventional Commits** with an issue reference:
 
 ## CI
 
-Seven workflows, several of which are unusually expensive to break:
+Six workflows, several of which are unusually expensive to break:
 
-- `ci.yml`, `codeql.yml`, `dependency-review.yml` — the standard gates
+- `ci.yml`, `codeql.yml` — the standard gates (dependency review moved to
+  the GitLab `deps` job when merges left GitHub; see `.gitlab-ci.yml`)
 - `live-install-test.yml` — a real install, end to end
 - `visual-regression.yml` — the TUI is a visual product; screenshots are
   part of the contract
 - `release-preview.yml`, `promote.yml` — the release lane
 
-`.gitlab-ci.yml` is the gate merges wait on: `fast`, `gitleaks`, `visual`
+`.gitlab-ci.yml` is the gate merges wait on: `fast`, `deps`, `gitleaks`, `visual`
 (when web sources change) and `live` (MR label `run-live-matrix` or
 `RUN_LIVE=true`). The GitHub workflows still run on the mirrored push as a
 second opinion; a failure there is advisory and never blocks a GitLab merge.

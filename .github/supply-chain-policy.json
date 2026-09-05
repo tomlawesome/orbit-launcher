@@ -31,14 +31,6 @@
       "updateOwner": "orbit-launcher maintainers"
     },
     {
-      "name": "actions/dependency-review-action",
-      "version": "v5.0.0",
-      "commit": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
-      "license": "MIT",
-      "source": "https://github.com/actions/dependency-review-action/releases/tag/v5.0.0",
-      "updateOwner": "orbit-launcher maintainers"
-    },
-    {
       "name": "actions/setup-go",
       "version": "v7.0.0",
       "commit": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
