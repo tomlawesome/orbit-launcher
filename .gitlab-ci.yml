@@ -52,11 +52,11 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd
+  GO_IMAGE: golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
-  GO_VERSION: "1.26.5"
-  GO_SHA256: 5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053
+  GO_VERSION: "1.26.8"
+  GO_SHA256: d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
   # Ships the exact Chromium that test/visual/package-lock.json's
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
@@ -68,6 +68,9 @@ variables:
   UBUNTU_IMAGE: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
   # Same pins as the workflows.
   STATICCHECK_VERSION: v0.7.0
+  # The `deps` job's two tools.
+  GOVULNCHECK_VERSION: v1.7.0
+  GO_LICENSES_VERSION: v2.0.1
   BATS_VERSION: "1.14.0"
   BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
   TTYD_VERSION: "1.7.7"
@@ -195,6 +198,30 @@ fast:
     paths:
       - coverage.out
     expire_in: 14 days
+
+# Replaces GitHub's dependency-review.yml, which ran only on GitHub pull
+# requests and so stopped running when merges moved here (#140). Same policy
+# as the retired .github/dependency-review-config.yml -- fail on a known
+# vulnerability, fail on a licence outside the allow-list -- but done with
+# Go's own tools rather than GitHub's dependency graph, which never had
+# reliable licence data for Go modules. govulncheck reports only
+# vulnerabilities the code actually calls, standard library included, so a
+# failure here means a real fix: usually a `go get -u` or a Go patch bump.
+# The project itself is AGPL-3.0, which is not on the list: it is ignored, not
+# allowed, so a dependency under AGPL still fails.
+deps:
+  stage: fast
+  image: $GO_IMAGE
+  extends: .go_cache
+  timeout: 10m
+  script:
+    - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+    - govulncheck ./...
+    - go install "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
+    - |
+      go-licenses check ./... \
+        --ignore github.com/tomlawesome/orbit-launcher \
+        --allowed_licenses=0BSD,Apache-2.0,BSD-2-Clause,BSD-3-Clause,CC0-1.0,ISC,MIT,MIT-0,MPL-2.0,Unlicense
 
 # secret-scan.yml, step for step. Full history: the point is catching a secret
 # that reached the remote in an earlier commit and is no longer in the working

@@ -332,7 +332,10 @@ in the Wave 0 CI skeleton below rather than hand-rolled build scripts.
   point (Go's ecosystem licensing profile is different from npm's — the
   allow-list will need its own pass in Wave 0 rather than a blind copy,
   but the *mechanism*, thresholds and "no PR comment noise, fail the check
-  instead" policy carry over unchanged).
+  instead" policy carry over unchanged). *Superseded 2026-09-05 (#140):
+  the action only ran on GitHub pull requests, so once merges moved to
+  GitLab it never ran again. The `deps` job in `.gitlab-ci.yml` carries
+  the same policy with `govulncheck` and `go-licenses`.*
 - **Repository security settings**: enable secret scanning, secret scanning
   push protection, and Dependabot security updates — the exact three
   `security_and_analysis` settings confirmed already active on `orbit`.
