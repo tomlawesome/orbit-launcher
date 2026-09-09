@@ -333,7 +333,16 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// visual-regression.yml. What this suite exists to pin is the
 		// install.sh handoff contract, which the animation only ever
 		// added nondeterminism to.
-		"ORBIT_LAUNCHER_NO_ANIMATION=1")
+		"ORBIT_LAUNCHER_NO_ANIMATION=1",
+		// Prove the path, don't hope for it. Until orbit's own CI served
+		// the whole configuration tree, deploy.FetchConfigTree 404'd here
+		// and the launcher quietly switched to the terminal handoff — a
+		// run that looked identical to a passing one, because both paths
+		// ask for the same fields. With this set the launcher refuses the
+		// handoff and stops instead, so a fallback is a red test rather
+		// than an invisible one. Deliberately not what an operator gets:
+		// unset (the default), a fallback still falls back.
+		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
@@ -413,6 +422,19 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	}
 }
 
+// inConsolePromptMarker is the guidance line the launcher prints under
+// its own APP_URL prompt (internal/ui/configcollect.go, promptWords).
+//
+// It has to be this rather than the field's label: the labels are
+// deliberately the same words install.sh's own TTY prompts use, so
+// "Public Orbit origin" matches whichever path ran and proves neither.
+// This sentence is written in this repository and rendered only by
+// viewConfigCollect, i.e. only while the launcher itself is drawing the
+// prompt. On the handoff path the launcher draws nothing at all —
+// install.sh owns the terminal — and the string appears nowhere in the
+// orbit repository, checked.
+const inConsolePromptMarker = "the https:// address Orbit will live at"
+
 func dockerComposeDown(projectName string) {
 	_ = exec.Command("docker", "compose", "-p", projectName, "down", "-v").Run()
 }
@@ -465,31 +487,24 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// engine (orbit develop) reports it as an event and lands on
 		// the styled configuration prompt; a legacy engine (orbit main)
 		// reports nothing and lands on the failure screen. Both
-		// screens' default option leads to the same guided
-		// configuration — in-console over the machine prompt protocol
-		// when the engine speaks it, the interactive terminal handoff
-		// otherwise (the launcher falls back automatically) — and both
-		// paths use the same field prompts, so this test, which runs
-		// against whichever install.sh the job points at, accepts
-		// either.
+		// screens' default option leads to the guided configuration.
 		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
 			return session.console.Expect(expect.Regexp(regexp.MustCompile(
 				`Orbit needs your configuration|Installation stopped`)))
 		})
 		sendLine("") // Continue — guided configuration / Open the guided installer
 
-		acceptMenusUntil(t, session, "Public Orbit origin")
+		// Strict mode is on, so the only guided configuration available
+		// is the in-console one, and this marker says it is the one that
+		// ran. A fallback would have stopped the run above instead.
+		acceptMenusUntil(t, session, inConsolePromptMarker)
 		sendLine(appURL)
 		session.must("OIDC issuer URL")
 		sendLine(testOIDCIssuer)
 		session.must("OIDC client ID")
 		sendLine("orbit-launcher-live-ci-test")
-		// Generation-agnostic: a contract-era engine (orbit develop)
-		// collects this in-console over the machine prompt protocol
-		// ("OIDC client secret" + "input hidden" on separate lines),
-		// while a legacy engine's terminal handoff prints install.sh's
-		// own "OIDC client secret (input hidden)" prompt. Match the
-		// common prefix so this suite proves both paths.
+		// The in-console prompt puts the label and "input hidden" on
+		// separate lines; the label alone is what is matched, as above.
 		session.must("OIDC client secret")
 		sendLine("ci-live-test-fake-secret-value")
 
@@ -640,7 +655,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	})
 	sendLine("")
 
-	acceptMenusUntil(t, session, "Public Orbit origin")
+	acceptMenusUntil(t, session, inConsolePromptMarker)
 	sendLine(appURL)
 	session.must("OIDC issuer URL")
 	sendLine(testOIDCIssuer)
@@ -649,10 +664,9 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	session.must("OIDC client secret")
 	sendLine("ci-live-failure-fake-secret")
 
-	// The guided installer still asks for its "Final review" confirmation
-	// (and any other menu) before it deploys; answer those as the happy
-	// path does, or the launcher waits on the menu until the budget runs
-	// out and the held port is never even tried (#151). Then the deploy
+	// Any remaining confirmation menu is answered as the happy path does,
+	// or the launcher waits on the menu until the budget runs out and the
+	// held port is never even tried (#151). Then the deploy
 	// proceeds into compose and dies on the held port. The launcher's own
 	// failure screen — not a hang, not a fake success — is the contract,
 	// with its stacked menu present.
