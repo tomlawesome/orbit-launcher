@@ -80,6 +80,7 @@ type engineRunSeams struct {
 	prepareConfig  prepareConfigFunc
 	startConfig    startConfigFunc
 	adoptConfig    adoptConfigFunc
+	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
 }
 
@@ -92,6 +93,7 @@ func (r engineRun) withSeams(s engineRunSeams) engineRun {
 	r.prepareConfig = s.prepareConfig
 	r.startConfig = s.startConfig
 	r.adoptConfig = s.adoptConfig
+	r.recheckConfig = s.recheckConfig
 	return r
 }
 

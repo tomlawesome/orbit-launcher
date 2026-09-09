@@ -133,6 +133,7 @@ type engineRun struct {
 	prepareConfig  prepareConfigFunc
 	startConfig    startConfigFunc
 	adoptConfig    adoptConfigFunc
+	recheckConfig  recheckConfigFunc
 }
 
 func newEngineRun(action, targetDir, title, version string) engineRun {
@@ -218,7 +219,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 	case engineStreamMsg:
 		return r.handleStream(msg.msg)
 
-	case configPlanMsg, configStepMsg, configStreamMsg, configAdoptedMsg:
+	case configPlanMsg, configStepMsg, configStreamMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
