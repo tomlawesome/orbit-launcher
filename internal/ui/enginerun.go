@@ -133,6 +133,7 @@ type engineRun struct {
 	prepareConfig  prepareConfigFunc
 	startConfig    startConfigFunc
 	adoptConfig    adoptConfigFunc
+	recheckConfig  recheckConfigFunc
 }
 
 func newEngineRun(action, targetDir, title, version string) engineRun {
