@@ -150,6 +150,27 @@ func pumpConfig(s *engine.Stream) tea.Cmd {
 	}
 }
 
+// The four ways in-console collection can be abandoned, in fixed
+// phrases. Deliberately not built from the underlying error: the fetch
+// error carries the source URL, and configure.sh's output carries
+// answers. Neither belongs in a log CI keeps as an artifact (see
+// logDiag).
+const (
+	fallbackFetchFailed  = "could not stage a configuration tree"
+	fallbackUnfixable    = "the configuration needs fields this console cannot ask for"
+	fallbackStepFailed   = "the configuration step would not start"
+	fallbackLegacyEngine = "the engine never spoke the machine prompt protocol"
+)
+
+// fallbackToHandoff records why in-console collection was abandoned,
+// then routes on: normally into the terminal handoff, or — under
+// ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG — to a hard stop, which
+// beginHandoff decides.
+func (r engineRun) fallbackToHandoff(reason string) (engineRun, tea.Cmd) {
+	logDiag("in-console configuration unavailable: " + reason)
+	return r.beginHandoff()
+}
+
 // handleConfigMsg advances the session. Any failure that isn't the
 // person cancelling falls back to the terminal handoff — the engine's
 // own interactive flow remains the path that always works.
@@ -165,8 +186,16 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			// Can't collect here (fetch failed, or fields beyond the
 			// protocol's vocabulary are missing) — the guided installer
 			// in the real terminal can.
+			reason := fallbackFetchFailed
+			if msg.err == nil {
+				// How many, not which: the names come from the fetched
+				// tree's own --check output, and nothing fetched is
+				// logged. The count is enough to tell this apart from
+				// a fetch that never happened.
+				reason = fmt.Sprintf("%s (%d)", fallbackUnfixable, len(msg.plan.unfixable))
+			}
 			r.cfg.close()
-			return r.beginHandoff()
+			return r.fallbackToHandoff(reason)
 		}
 		r.cfg.plan = msg.plan
 		if !msg.plan.needInit && !msg.plan.needSecret {
@@ -179,7 +208,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	case configStepMsg:
 		if msg.err != nil {
 			r.cfg.close()
-			return r.beginHandoff()
+			return r.fallbackToHandoff(fallbackStepFailed)
 		}
 		r.cfg.stream = msg.stream
 		r.cfg.stdin = msg.stdin
@@ -275,7 +304,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		if !sawPrompt {
 			// Exited without ever speaking the protocol: a legacy
 			// configure.sh. The terminal handoff is the honest path.
-			return r.beginHandoff()
+			return r.fallbackToHandoff(fallbackLegacyEngine)
 		}
 		// The engine aborted (rejections exhausted or input closed) —
 		// back to the refusal menu; the person decides what's next.

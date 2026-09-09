@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -314,7 +315,31 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 // the config collection stretch. Deliberately flagless: install.sh's
 // own menus pick the right action for whatever state the target is in,
 // on any engine generation.
+//
+// Under ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG the handoff is
+// refused outright and the run stops on the failure screen instead.
+// The gate sits here rather than at each fallback so that the menu
+// row offering the handoff by hand cannot quietly reopen the path the
+// variable exists to close — with it set, this process never reaches
+// install.sh's interactive prompts, which is what lets CI treat one of
+// those prompts appearing as proof of the in-console path.
 func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
+	if requireInConsoleConfig() {
+		logDiag("refusing the terminal handoff: " + requireInConsoleEnv + " is set")
+		// The strict refusal is now the reason this run stopped, so
+		// the earlier evidence must not render in its place —
+		// viewFailed prefers lastFailed over runErr.
+		r.lastFailed = nil
+		r.stderrTail = nil
+		// Short enough to survive an 80-column screen: the renderer
+		// truncates a content line to the terminal width, and a reason
+		// nobody can read is not a loud failure. The variable's name
+		// goes in the diagnostic line above, which has no such limit.
+		r.runErr = errors.New("in-console configuration required — terminal handoff refused")
+		r.state = runFailed
+		r.menuSel = 0
+		return r, nil
+	}
 	r.state = runHandoffRunning
 	prepare := r.prepareInstall
 	if prepare == nil {
