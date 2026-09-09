@@ -352,16 +352,28 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 // change exactly which menus appear before the guided configuration
 // prompts, so this stays adaptive rather than hardcoding an exact
 // sequence.
+//
+// One question is not a menu: an M7 installer (orbit !908, ADR-0023 §1)
+// opens the guided configuration by asking "Sign in with local accounts
+// only, or also with an identity provider? [local/oidc] (default:
+// local)". Enter there would pick local-only, and the OIDC prompts this
+// suite drives next would never come, so it is answered "oidc" — the
+// flow every assertion below was written for. A pre-M7 installer never
+// asks, and never matches.
+//
 // stopScreenReasonPattern matches the installer's own reason line on its
 // failure screen, e.g. "Orbit installer: Could not fetch
 // config/tika-config.json from the published revision." (see
 // internal/ui/install_test.go around lines 254-288 for real examples).
 var stopScreenReasonPattern = regexp.MustCompile(`Orbit installer: .*`)
 
+// signInModePattern is the M7 sign-in mode question (see acceptMenusUntil).
+var signInModePattern = regexp.MustCompile(`\[local/oidc\]`)
+
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
 	const stopScreen = "Installation stopped"
-	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(stopScreen) + `|` + regexp.QuoteMeta(target))
+	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + signInModePattern.String() + `|` + regexp.QuoteMeta(stopScreen) + `|` + regexp.QuoteMeta(target))
 	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
 	stopPattern := regexp.MustCompile(regexp.QuoteMeta(stopScreen))
 	for {
@@ -392,6 +404,10 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 				}
 			}
 			t.Fatalf("install stopped waiting for %s, but no reason line was captured", target)
+		}
+		if signInModePattern.MatchString(result) {
+			session.send("oidc\r")
+			continue
 		}
 		session.send("\r")
 	}
