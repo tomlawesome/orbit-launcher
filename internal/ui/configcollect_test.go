@@ -75,6 +75,18 @@ func planned(needInit, needSecret bool) prepareConfigFunc {
 	}
 }
 
+// secretStillOwed and secretNotOwed stand in for the post-init
+// re-check (recheckAfterInit): configure.sh --check run again once
+// --init has landed, reporting whether OIDC_CLIENT_SECRET is still
+// missing.
+func secretStillOwed(context.Context, string) (deploy.ConfigCheck, error) {
+	return deploy.ConfigCheck{Missing: []string{"OIDC_CLIENT_SECRET"}}, nil
+}
+
+func secretNotOwed(context.Context, string) (deploy.ConfigCheck, error) {
+	return deploy.ConfigCheck{}, nil
+}
+
 // engineTwice serves the refusal on the first run and success on the
 // retry — the full in-console configuration journey's engine side.
 func engineTwice() prepareEngineFunc {
@@ -131,6 +143,7 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 		prepareEngine: engineTwice(),
 		prepareConfig: planned(true, true),
 		startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+		recheckConfig: secretStillOwed,
 		adoptConfig: func(_, _ string) error {
 			adopted <- struct{}{}
 			return nil
@@ -185,6 +198,121 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 
 	// The retry engine run succeeds and lands on the success screen.
 	wait("Get into Orbit", "orbit.example.test")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret reproduces orbit
+// #156: a fresh .env-orbit has OIDC off, so the check made before
+// --init finds OIDC_CLIENT_SECRET "not in use" (needSecret false).
+// --init then switches OIDC on. Without a fresh check afterwards, the
+// launcher would skip straight to adoptAndRetry and orbit's
+// install.sh would then refuse the directory for a missing secret
+// file. The post-init re-check must catch this and still ask.
+func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
+	adopted := make(chan struct{}, 1)
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: engineTwice(),
+		prepareConfig: planned(true, false), // pre-init check: secret not in use
+		startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+		recheckConfig: secretStillOwed, // post-init check: --init turned OIDC on
+		adoptConfig: func(_, _ string) error {
+			adopted <- struct{}{}
+			return nil
+		},
+		detect: fakeDetect("https://orbit.example.test"),
+	})
+
+	wait := func(want string) {
+		t.Helper()
+		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+			return bytes.Contains(out, []byte(want))
+		}, teatest.WithDuration(10*time.Second))
+	}
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	wait("Public Orbit origin")
+	tm.Type("https://orbit.example.test")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	wait("OIDC issuer URL")
+	tm.Type("https://accounts.example.test")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	wait("OIDC client ID")
+	tm.Type("orbit-client")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// --init is done; the re-check must still route to the secret
+	// step rather than straight to adoptAndRetry.
+	wait("OIDC client secret")
+	tm.Type("s3cret-value")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	select {
+	case <-adopted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("configuration was never adopted into the target")
+	}
+
+	wait("Get into Orbit")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret is the companion
+// case: a local-only install where --init leaves OIDC off, so the
+// post-init re-check still says the secret is not in use. The fix
+// must not hard-code "always ask" — adoptAndRetry follows directly,
+// with no secret prompt.
+func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
+	adopted := make(chan struct{}, 1)
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: engineTwice(),
+		prepareConfig: planned(true, false),
+		startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+		recheckConfig: secretNotOwed,
+		adoptConfig: func(_, _ string) error {
+			adopted <- struct{}{}
+			return nil
+		},
+		detect: fakeDetect("https://orbit.example.test"),
+	})
+
+	wait := func(want string) {
+		t.Helper()
+		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+			return bytes.Contains(out, []byte(want))
+		}, teatest.WithDuration(10*time.Second))
+	}
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	wait("Public Orbit origin")
+	tm.Type("https://orbit.example.test")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	wait("OIDC issuer URL")
+	tm.Type("https://accounts.example.test")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	wait("OIDC client ID")
+	tm.Type("orbit-client")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	select {
+	case <-adopted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("configuration was never adopted into the target")
+	}
+
+	wait("Get into Orbit")
+
+	out, err := io.ReadAll(tm.Output())
+	if err == nil && bytes.Contains(out, []byte("OIDC client secret")) {
+		t.Fatal("the secret step ran even though the re-check said the secret is not in use")
+	}
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if err := tm.Quit(); err != nil {

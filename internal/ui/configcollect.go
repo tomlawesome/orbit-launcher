@@ -62,6 +62,7 @@ type (
 	prepareConfigFunc func(ctx context.Context, targetDir string) configPlanMsg
 	startConfigFunc   func(treeDir string, step deploy.ConfigStep) (*engine.Stream, io.WriteCloser, error)
 	adoptConfigFunc   func(treeDir, targetDir string) error
+	recheckConfigFunc func(ctx context.Context, treeDir string) (deploy.ConfigCheck, error)
 )
 
 // configCollect is the live session state.
