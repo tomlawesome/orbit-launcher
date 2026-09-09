@@ -42,12 +42,14 @@ exit 0
 const fakeMachineConfigure = `#!/usr/bin/env bash
 case "$1" in
   --check)
-    if [[ -f .env-orbit ]]; then
-      printf 'ready APP_URL\nready OIDC_CLIENT_SECRET\n'
-      exit 0
-    fi
-    printf 'missing APP_URL\nmissing OIDC_CLIENT_SECRET\n'
-    exit 1
+    # Each field reports its own state, as the real script does: after
+    # --init the origin is ready but the secret is still owed until
+    # --set-oidc-secret has written it (#156 hangs on the re-check
+    # between the two steps).
+    rc=0
+    if [[ -f .env-orbit ]]; then echo "ready APP_URL"; else echo "missing APP_URL"; rc=1; fi
+    if [[ -f .orbit-secrets/oidc-client-secret ]]; then echo "ready OIDC_CLIENT_SECRET"; else echo "missing OIDC_CLIENT_SECRET"; rc=1; fi
+    exit $rc
     ;;
   --init)
     [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || { echo "Orbit configuration: needs a terminal." >&2; exit 1; }
