@@ -57,6 +57,13 @@ type configStreamMsg struct{ msg any }
 // target.
 type configAdoptedMsg struct{ err error }
 
+// configRecheckMsg carries configure.sh --check's fresh answer, asked
+// again once --init has landed (see recheckAfterInit).
+type configRecheckMsg struct {
+	check deploy.ConfigCheck
+	err   error
+}
+
 // Seams so flow tests drive the whole session with fakes.
 type (
 	prepareConfigFunc func(ctx context.Context, targetDir string) configPlanMsg
@@ -192,6 +199,17 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	case configStreamMsg:
 		return r.handleConfigStream(msg.msg)
 
+	case configRecheckMsg:
+		if msg.err != nil {
+			// Same honest fallback as the first check: can't tell
+			// what's still owed, so the terminal handoff decides
+			// instead of guessing.
+			r.cfg.close()
+			return r.beginHandoff()
+		}
+		r.cfg.plan.needSecret = msg.check.NeedsSecret()
+		return r.startNextConfigStep()
+
 	case configAdoptedMsg:
 		if msg.err != nil {
 			r.cfg.close()
@@ -230,6 +248,24 @@ func (r engineRun) startNextConfigStep() (engineRun, tea.Cmd) {
 	}
 }
 
+// recheckAfterInit re-runs configure.sh --check once --init has
+// landed. M7 leaves OIDC off by default, so the check made before
+// --init can find the secret "not in use" even though --init is
+// about to turn OIDC on; whether the secret is still owed is only
+// knowable after --init actually runs, never assumed either way from
+// the plan made before it.
+func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
+	recheck := r.recheckConfig
+	if recheck == nil {
+		recheck = deploy.RunConfigCheck
+	}
+	treeDir := r.cfg.plan.treeDir
+	return r, func() tea.Msg {
+		check, err := recheck(context.Background(), treeDir)
+		return configRecheckMsg{check: check, err: err}
+	}
+}
+
 func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.RawLineMsg:
@@ -263,13 +299,13 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		sawPrompt := r.cfg.sawPrompt
 		if m.Err == nil {
 			// Step complete; mark it off and continue.
-			if r.cfg.step == deploy.ConfigStepInit {
-				r.cfg.plan.needInit = false
-			} else {
-				r.cfg.plan.needSecret = false
-			}
 			r.cfg.stream = nil
 			r.cfg.stdin = nil
+			if r.cfg.step == deploy.ConfigStepInit {
+				r.cfg.plan.needInit = false
+				return r.recheckAfterInit()
+			}
+			r.cfg.plan.needSecret = false
 			return r.startNextConfigStep()
 		}
 		r.cfg.close()
