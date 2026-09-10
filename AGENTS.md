@@ -85,7 +85,9 @@ Seven workflows, several of which are unusually expensive to break:
 `.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
 diff is documentation only; `fast` and `deps` then skip themselves when it is,
 `gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (when web sources
-change) and `live` (MR label `run-live-matrix` or `RUN_LIVE=true`). The GitHub workflows still run on the mirrored push as a
+change) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or a moved
+`UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin -- an image bump can no longer go
+green without being installed). The GitHub workflows still run on the mirrored push as a
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
 
