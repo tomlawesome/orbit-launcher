@@ -81,9 +81,10 @@ Six workflows, several of which are unusually expensive to break:
   part of the contract
 - `release-preview.yml`, `promote.yml` — the release lane
 
-`.gitlab-ci.yml` is the gate merges wait on: `fast`, `deps`, `gitleaks`, `visual`
-(when web sources change) and `live` (MR label `run-live-matrix` or
-`RUN_LIVE=true`). The GitHub workflows still run on the mirrored push as a
+`.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
+diff is documentation only; `fast` and `deps` then skip themselves when it is,
+`gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (when web sources
+change) and `live` (MR label `run-live-matrix` or `RUN_LIVE=true`). The GitHub workflows still run on the mirrored push as a
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
 

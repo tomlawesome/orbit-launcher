@@ -366,11 +366,12 @@ reviving this mechanism.
 
 ## 5. Milestones, epics and delivery waves
 
-Six waves, each a GitHub Milestone, each with a **promotion gate**: the
-exact evidence required before that wave's work is allowed to move from
-`dev` to a `preview` push. Every issue within a wave cites which of the
-waves' acceptance criteria it satisfies, same traceability discipline as
-`orbit`'s requirement-ID citation rule.
+Each wave is a GitLab milestone naming one capability, with a **promotion
+gate**: the exact evidence required before that wave's work is allowed to
+move from `dev` to a `preview` push. A version release is not a wave and
+gets a milestone of its own, holding only its promote issue. Every issue
+within a wave cites which of the waves' acceptance criteria it satisfies,
+same traceability discipline as `orbit`'s requirement-ID citation rule.
 
 ### Epics (span waves, tracked as GitHub labels)
 
@@ -621,17 +622,79 @@ reversible), then a copy-pasteable, exact, irreversible removal command
 asserts containers/network are gone and the stated file path is exactly
 correct; the "app never runs the destructive command" property test passes.
 
-### Wave 5 — Release hardening & v1 promotion
+What was one phase here, "Release hardening & v1 promotion," is now six
+capability milestones plus a separate release milestone: a milestone has to
+be able to answer whether it's done, and a phase named after a release
+can't.
+
+### Wave 6 — Engine runs are honest
+
+**Goal**: an install, update or repair run always tells the user what's
+actually happening.
+
+**Promotion gate**: every install, update and repair run either streams to
+completion or reports a failure the user can act on. The launcher never
+sits idle while the engine is still working or already finished. Proven by
+the black-box PTY suite (3.3), not only by unit tests.
+
+### Wave 7 — Guided configuration
+
+**Goal**: configuration collection stops asking for things it doesn't need,
+in an order that doesn't make sense.
+
+**Promotion gate**: configuration asks the sign-in question before the
+fields whose relevance depends on the answer, never asks for a value it
+will not use, and re-reads configuration after the engine has changed it.
+Proven on a real terminal.
+
+### Wave 8 — CI charges for the diff it gates
+
+**Goal**: pipeline cost matches what a change could actually affect, not a
+flat price for every merge request.
+
+**Promotion gate**: a documentation-only merge request runs only the jobs
+its own diff could affect. Anything touching code, dependencies, containers
+or CI definitions runs the full set, and an unclassifiable diff runs the
+full set too. Shown on real pipelines both ways.
+
+### Wave 9 — Dependency currency is decided, not drifting
+
+**Goal**: dependency merge requests get a decision, not silence.
+
+**Promotion gate**: no dependency merge request sits red and unexplained.
+The major upgrades are settled either way and recorded, and grouped version
+pins move together with the tools that must match them.
+
+### Wave 10 — Governance close-out
+
+**Goal**: close out what the move to GitLab and the launcher/Orbit
+compatibility work left open.
+
+**Promotion gate**: the move to GitLab has nothing left open, and the
+launcher-and-Orbit compatibility follow-ups are either finished or
+explicitly dropped with the reason recorded.
+
+### Wave 11 — Distribution and self-update
 
 **Goal**: everything needed to point real users at the bootstrap script.
 
 - Wider Linux-distro coverage in the live matrix if warranted (e.g. Fedora,
-  Arch — driven by real usage evidence, not speculative support), update
-  self-check (orbit-launcher checks its own version against the latest
-  release and offers to self-update).
+  Arch — driven by real usage evidence, not speculative support).
+- Update self-check: orbit-launcher checks its own version against the
+  latest release and offers to self-update.
 - Documentation: README quickstart, the bootstrap one-liner, a
   `docs/releasing.md` for this repo mirroring `orbit`'s.
-- First stable `v1.0.0` promotion through the full pipeline (4.2).
+
+**Promotion gate**: the bootstrap one-liner installs on every distribution
+the live matrix claims to cover; the launcher checks its own version
+against the latest release and offers to update itself; the README carries
+a quickstart and the repository has its own releasing document.
+
+### v1.0.0 — release
+
+Not a capability and not a wave of work: it holds exactly one issue,
+promoting v1.0.0 to `main`, and requires Waves 6 to 11. No feature work
+goes in it.
 
 **Promotion gate**: a person outside this session (ideally you) runs the
 real one-line bootstrap command on a real machine they own, performs a real
