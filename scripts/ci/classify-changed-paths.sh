@@ -22,12 +22,13 @@ set -uo pipefail
 # The only paths a documentation-only change may touch. Everything else --
 # Go sources, the bootstrap script, go.mod, the pipeline's own definition,
 # this script, the design sources the visual suite screenshots -- means the
-# full gate. Add to this list only after asking what reads the path in CI.
+# full gate. Add to this list only after asking what reads the path in CI,
+# and only for a path this repository can actually produce: .agents/ was
+# listed here and could never match, because .gitignore ignores it (#167).
 is_safe_path() {
   case "$1" in
     *.md) return 0 ;;
     docs/*) return 0 ;;
-    .agents/*) return 0 ;;
     LICENSE) return 0 ;;
   esac
   return 1
