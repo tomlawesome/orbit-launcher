@@ -522,14 +522,13 @@ renovate:
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
     # Renovate reads a repository's own config from its default branch, which
-    # is `main` by design and only receives renovate.json when `dev` is
-    # promoted. Until then this job hands Renovate the copy in its own
-    # checkout -- the branch the schedule runs on -- as global config. Once
-    # the file reaches `main`, the repository copy merges over this one and
-    # they are the same file.
+    # here is `dev` and carries renovate.json. The weekly schedule runs on
+    # `dev` too, so the copy in this job's checkout is that same file, and
+    # handing it over as global config changes nothing: the repository copy
+    # merges over this one and they are identical.
     RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/renovate.json
-    # For the same reason, no onboarding merge request: a repository with no
-    # config of its own is expected here, not something to offer to fix.
+    # No onboarding merge request: the repository already has its own config,
+    # so there is nothing to offer to fix.
     RENOVATE_ONBOARDING: "false"
     RENOVATE_REQUIRE_CONFIG: "optional"
     LOG_LEVEL: info
