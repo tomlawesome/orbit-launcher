@@ -317,6 +317,10 @@ deps:
 # the build log; the log names the file and rule, never the value.
 gitleaks:
   stage: fast
+  # Starts immediately rather than queueing behind `classify`: this one is
+  # never skipped, so it has nothing to learn from the verdict, and a secret
+  # is the finding you want soonest.
+  needs: []
   tags: [light]
   image:
     name: $UBUNTU_IMAGE
