@@ -162,13 +162,15 @@ variables:
 # ci.yml `fast`, step for step.
 # --- classify ----------------------------------------------------------------
 #
-# Decides whether this pipeline's diff is documentation only, so a prose change
-# stops paying for the Go gate (#153). The decision itself lives in
-# scripts/ci/classify-changed-paths.sh and is tested by
+# Reads the diff once and answers two questions. Whether it is documentation
+# only, so a prose change stops paying for the Go gate (#153); and whether a
+# pin the live install runs on moved, so an image or toolchain bump can no
+# longer report green without ever being installed (#164). The decisions live
+# in scripts/ci/classify-changed-paths.sh and are tested by
 # scripts/test/classify-changed-paths.bats: a gate that wrongly skips still
 # looks green, so the logic is unit-tested rather than written inline here.
 #
-# The verdict reaches `fast` and `deps` as a dotenv variable. GitLab cannot
+# The verdicts reach `fast`, `deps` and `live` as dotenv variables. GitLab cannot
 # gate `rules:` on one -- rules are evaluated when the pipeline is created,
 # before any job has run -- so those two jobs start and then stop themselves in
 # their own `script:`, reporting "skipped" rather than vanishing. Orbit's
@@ -475,13 +477,40 @@ live:
     - .privileged_runner
     - .go_cache
   timeout: 35m
-  needs: []
+  needs:
+    # `optional` so a pipeline that never creates `classify` still builds; the
+    # gate below treats a missing verdict as "run".
+    - job: classify
+      artifacts: true
+      optional: true
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
+    # The third route in (#164). !157 bumped UBUNTU_IMAGE, and its pipeline was
+    # green because nothing that ran installs anything into that image -- the
+    # live job, the only one that does, was never created. `changes:` is
+    # file-level, so this admits every edit to this file and the gate below
+    # decides; creating a job costs nothing, and one that stops in its first
+    # command costs seconds.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .gitlab-ci.yml
   variables:
     ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
   before_script:
+    # Why this job exists decides whether it does the work. RUN_LIVE and the
+    # label are deliberate requests and always run. The third route is not: it
+    # fires on any edit to this file, so unless a pin the install actually runs
+    # on moved, stop here -- before the apt-get, the Go tarball and the Docker
+    # daemon below, which is where the minutes are. An unset verdict means run.
+    - |
+      if [ "${RUN_LIVE:-}" != "true" ] \
+        && ! printf '%s' "${CI_MERGE_REQUEST_LABELS:-}" \
+          | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+        && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then
+        echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
+        exit 0
+      fi
     - export DEBIAN_FRONTEND=noninteractive
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq
