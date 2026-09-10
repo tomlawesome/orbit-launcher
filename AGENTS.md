@@ -72,10 +72,11 @@ Observed convention is **Conventional Commits** with an issue reference:
 
 ## CI
 
-Six workflows, several of which are unusually expensive to break:
+Seven workflows, several of which are unusually expensive to break:
 
 - `ci.yml`, `codeql.yml` — the standard gates (dependency review moved to
   the GitLab `deps` job when merges left GitHub; see `.gitlab-ci.yml`)
+- `secret-scan.yml` — what the GitLab `gitleaks` job mirrors step for step
 - `live-install-test.yml` — a real install, end to end
 - `visual-regression.yml` — the TUI is a visual product; screenshots are
   part of the contract
