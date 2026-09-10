@@ -61,7 +61,7 @@ jobs:
           echo "/tmp/bats-core/bin" >> "$GITHUB_PATH"
 
       - name: Test bootstrap script
-        run: bats scripts/test/get-orbit-launcher.bats
+        run: bats scripts/test/
 
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0

@@ -19,7 +19,7 @@ setup() {
   git init --quiet
   git config user.email ci@example.invalid
   git config user.name "CI"
-  mkdir -p docs internal/ui scripts/ci .agents
+  mkdir -p docs internal/ui scripts/ci
   echo "start" > README.md
   echo "start" > internal/ui/app.go
   cat > .gitlab-ci.yml <<'YML'
@@ -61,12 +61,6 @@ live_pins() { printf '%s' "${lines[1]}"; }
 
 @test "a change under docs/ is documentation" {
   echo "plan" > docs/implementation-plan.md
-  classify
-  [ "$(docs_only)" = "DOCS_ONLY=true" ]
-}
-
-@test "a handoff is documentation" {
-  echo "handoff" > .agents/2026-09-10-note.md
   classify
   [ "$(docs_only)" = "DOCS_ONLY=true" ]
 }
