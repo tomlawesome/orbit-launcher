@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -78,6 +79,10 @@ type liveSession struct {
 	// constant directly) so a test can substitute a short budget to
 	// exercise the timeout path without waiting out the real one.
 	budget time.Duration
+	// stderrPath is the file the launcher's stderr is pointed at. The
+	// goroutine dump SIGQUIT produces goes there, not down the pty, so
+	// capturing it can never depend on the transport under suspicion.
+	stderrPath string
 }
 
 // expectBudget is the wall-clock ceiling for any single expectation.
@@ -128,12 +133,12 @@ func (s *liveSession) expectWithinErr(what string, expectation func() (string, e
 	select {
 	case got := <-done:
 		if got.err != nil {
-			s.diagnose(what, false)
+			s.diagnose(what)
 			return "", got.err
 		}
 		return got.out, nil
 	case <-time.After(s.budget):
-		s.diagnose(what, true)
+		s.diagnose(what)
 		return "", fmt.Errorf("no match within %s of wall clock", s.budget)
 	}
 }
@@ -151,7 +156,7 @@ func (s *liveSession) must(str string) {
 func (s *liveSession) send(str string) {
 	s.t.Helper()
 	if _, err := s.console.Send(str); err != nil {
-		s.diagnose("send "+str, false)
+		s.diagnose("send " + str)
 		s.t.Fatalf("send: %v", err)
 	}
 }
@@ -199,7 +204,7 @@ func (s *liveSession) choose(label string) {
 // range"), destroying the diagnosis. Call sites where nothing is parked
 // (an expectation's own error path, and send) pass false and keep the
 // original console.Expect-based dump capture.
-func (s *liveSession) diagnose(reason string, consoleBusy bool) {
+func (s *liveSession) diagnose(reason string) {
 	s.t.Helper()
 	if s.cmd == nil || s.cmd.Process == nil {
 		return
@@ -218,37 +223,185 @@ func (s *liveSession) diagnose(reason string, consoleBusy bool) {
 		}
 		s.t.Logf("  /proc/%d/%s:\n%s", pid, name, strings.TrimSpace(string(content)))
 	}
-	if out, err := exec.Command("ps", "-o", "pid,ppid,stat,wchan:24,etime,args", "-p", strconv.Itoa(pid)).CombinedOutput(); err == nil {
-		s.t.Logf("  ps:\n%s", strings.TrimSpace(string(out)))
+
+	// Every thread's wchan, not just the leader's. A Go process parks its
+	// main thread on a futex whatever else is happening, so the leader's
+	// wchan alone says almost nothing; the thread that is blocked writing
+	// to the pty, if there is one, shows up here and nowhere else.
+	s.t.Logf("  threads:\n%s", indent(threadStates(pid)))
+
+	// The engine and everything it started. This used to be
+	// `ps -p <launcher pid>`, which cannot show a child — it was never
+	// asked (#158). Reading that output as "no child processes listed"
+	// sent #157's investigation at the pty and the Bubble Tea loop when
+	// the engine's own reader was the problem. The engine runs
+	// session-detached (Setsid in deploy.BuildEngineCommand), so it
+	// shares neither session nor process group with the launcher and
+	// only the parent link finds it.
+	kids := descendants(pid)
+	if len(kids) == 0 {
+		s.t.Log("  descendants: none — the engine has exited or was never started")
+	} else {
+		s.t.Logf("  descendants (%d):\n%s", len(kids), indent(processTable(kids)))
 	}
 
 	// SIGQUIT makes the Go runtime dump every goroutine's stack to
-	// stderr — which is this pty. GOTRACEBACK=all is set in startLive so
-	// the dump covers runtime goroutines too.
+	// stderr, which startLive points at a file. GOTRACEBACK=all is set
+	// there so the dump covers runtime goroutines too. Nothing here
+	// touches the console: a reader may be parked inside console.Expect
+	// for the expectation that just timed out, and a second reader on
+	// the same bufio.Reader can panic ("slice bounds out of range").
 	if err := s.cmd.Process.Signal(syscall.SIGQUIT); err != nil {
 		s.t.Logf("  SIGQUIT: %v", err)
 		return
 	}
+	s.t.Logf("  goroutine dump: %s", s.awaitGoroutineDump())
+}
 
-	if consoleBusy {
-		// A reader is already parked in console.Expect for the
-		// expectation that just timed out — issuing a second Expect here
-		// would race that goroutine on the same bufio.Reader and can
-		// panic. Give the parked reader a brief grace period to drain the
-		// dump instead; it lands in the raw transcript (if configured),
-		// not the test log, since nothing here is reading it.
-		s.t.Log("  SIGQUIT sent; a reader is already parked on the console, so the goroutine dump (if any) is left for it to drain and will appear only in the raw transcript, not this log")
-		time.Sleep(2 * time.Second)
-		return
+// awaitGoroutineDump waits for the runtime's stack dump to land in the
+// stderr file and reports what arrived. Its absence is a finding, not an
+// error: a Go process that will not answer SIGQUIT is a different fault
+// from one that answers and shows a blocked goroutine.
+func (s *liveSession) awaitGoroutineDump() string {
+	if s.stderrPath == "" {
+		return "not captured — no stderr file was configured"
 	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		content, err := os.ReadFile(s.stderrPath)
+		if err == nil {
+			if i := strings.Index(string(content), "goroutine "); i >= 0 {
+				text := string(content)[i:]
+				s.t.Logf("  goroutine dump, first 120 lines:\n%s", indent(headLines(text, 120)))
+				return fmt.Sprintf("%d bytes in %s (full dump kept there)", len(text), s.stderrPath)
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Sprintf("none within 10s — the process did not answer SIGQUIT; stderr so far is in %s", s.stderrPath)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
 
-	// This read both waits for the dump and funnels it into the raw
-	// transcript. Its absence is the finding, not an error.
-	if _, err := s.console.Expect(expect.String("goroutine "), expect.WithTimeout(10*time.Second)); err != nil {
-		s.t.Logf("  no goroutine dump reached the pty within 10s (%v) — consistent with the transport, not the app, being the problem", err)
-		return
+// descendants returns pid's whole process subtree, breadth first, read
+// from /proc rather than ps so a session-detached child is still found.
+func descendants(pid int) []int {
+	var found []int
+	queue := []int{pid}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		tasks, err := filepath.Glob(filepath.Join("/proc", strconv.Itoa(parent), "task", "*", "children"))
+		if err != nil {
+			continue
+		}
+		for _, task := range tasks {
+			content, err := os.ReadFile(task)
+			if err != nil {
+				continue
+			}
+			for _, field := range strings.Fields(string(content)) {
+				child, err := strconv.Atoi(field)
+				if err != nil {
+					continue
+				}
+				found = append(found, child)
+				queue = append(queue, child)
+			}
+		}
 	}
-	s.t.Log("  goroutine dump reached the pty; full stacks are in the raw transcript")
+	return found
+}
+
+// processTable renders one line per pid: state, wchan and command. State
+// is the whole point — a child blocked writing to a full pipe (D or S on
+// pipe_write) reads completely differently from one that has exited.
+func processTable(pids []int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-8s %-6s %-24s %s\n", "PID", "STATE", "WCHAN", "COMMAND")
+	for _, pid := range pids {
+		fmt.Fprintf(&b, "%-8d %-6s %-24s %s\n", pid, stateOf(filepath.Join("/proc", strconv.Itoa(pid))), procText(pid, "wchan"), commandOf(pid))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// threadStates renders one line per thread of pid.
+func threadStates(pid int) string {
+	tasks, err := filepath.Glob(filepath.Join("/proc", strconv.Itoa(pid), "task", "*"))
+	if err != nil || len(tasks) == 0 {
+		return "unreadable"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-8s %-6s %s\n", "TID", "STATE", "WCHAN")
+	for _, task := range tasks {
+		tid, err := strconv.Atoi(filepath.Base(task))
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "%-8d %-6s %s\n", tid, stateOf(task), readTrimmed(filepath.Join(task, "wchan")))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// commandOf is a process's argv, or its comm if argv is unreadable (a
+// kernel thread, or a process that exited between listing and reading).
+func commandOf(pid int) string {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err == nil {
+		args := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
+		if len(args) > 0 {
+			return strings.Join(args, " ")
+		}
+	}
+	return "[" + procText(pid, "comm") + "]"
+}
+
+// stateOf reads a process or thread's state letter from its stat file.
+// The command sits in field 2 and can itself contain spaces and
+// brackets, so parsing starts after its last closing bracket; state is
+// the field immediately after.
+func stateOf(dir string) string {
+	content, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return "?"
+	}
+	i := strings.LastIndex(string(content), ") ")
+	if i < 0 {
+		return "?"
+	}
+	fields := strings.Fields(string(content)[i+2:])
+	if len(fields) == 0 {
+		return "?"
+	}
+	return fields[0]
+}
+
+func procText(pid int, name string) string {
+	return readTrimmed(filepath.Join("/proc", strconv.Itoa(pid), name))
+}
+
+func readTrimmed(path string) string {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "?"
+	}
+	return strings.TrimSpace(string(content))
+}
+
+func headLines(text string, n int) string {
+	lines := strings.SplitN(text, "\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indent(block string) string {
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		lines[i] = "    " + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // startLive spawns binPath with a real controlling terminal attached —
@@ -301,7 +454,27 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 	cmd.Dir = dir
 	cmd.Stdin = console.Tty()
 	cmd.Stdout = console.Tty()
-	cmd.Stderr = console.Tty()
+
+	// Stderr gets its own file rather than the pty (#158). The launcher
+	// writes two things there: logDiag's fallback reasons, and — on
+	// SIGQUIT — the goroutine dump. Both used to go down the pty, which
+	// is the transport a freeze puts under suspicion, and in jobs 9834
+	// and 10034 the dump never arrived, so the one artefact that would
+	// have shown the stall directly was the one the freeze could
+	// suppress. A file cannot block and cannot be starved by a reader.
+	// The name extends the raw log's, so CI's existing
+	// `.orbit-launcher-live-raw.log*` artifact glob keeps it too.
+	stderrPath := filepath.Join(t.TempDir(), "launcher-stderr.log")
+	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
+		suffix := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+		stderrPath = rawLogPath + "." + suffix + ".stderr"
+	}
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		t.Fatalf("create launcher stderr log: %v", err)
+	}
+	t.Cleanup(func() { stderrFile.Close() })
+	cmd.Stderr = stderrFile
 	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
 	// goroutine, not just the one that took the signal.
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all",
@@ -352,7 +525,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		_, _ = cmd.Process.Wait()
 	})
 
-	return &liveSession{t: t, console: console, cmd: cmd, budget: expectBudget}
+	return &liveSession{t: t, console: console, cmd: cmd, budget: expectBudget, stderrPath: stderrPath}
 }
 
 // acceptMenusUntil sends Enter to accept the default choice on any of
@@ -707,13 +880,56 @@ func TestLive_HangDiagnosisProducesAGoroutineDump(t *testing.T) {
 		t.Skipf("no readable /proc on this platform: %v", err)
 	}
 
-	// The pty is being drained here, so unlike the failure this
-	// instruments, the dump is expected to arrive. Nothing is parked on
-	// the console at this point, so consoleBusy is false.
-	session.diagnose("instrumentation self-test", false)
+	session.diagnose("instrumentation self-test")
+
+	// The dump goes to the stderr file now, not down the pty (#158), so
+	// this asserts the artefact the freeze path actually depends on.
+	stderr, err := os.ReadFile(session.stderrPath)
+	if err != nil {
+		t.Fatalf("read launcher stderr log: %v", err)
+	}
+	if !strings.Contains(string(stderr), "goroutine ") {
+		t.Errorf("no goroutine dump in %s; got %d bytes", session.stderrPath, len(stderr))
+	}
 
 	if err := session.cmd.Wait(); err == nil {
 		t.Error("SIGQUIT should have terminated the launcher")
+	}
+}
+
+// TestDiagnose_FindsASessionDetachedDescendant is #158 itself. The
+// engine runs under Setsid, so it shares neither session nor process
+// group with the launcher. The old diagnosis ran `ps -p <launcher pid>`,
+// which lists that one pid and nothing else, and its empty output was
+// read as "no child processes listed" — a finding it never established,
+// which sent #157's investigation to the wrong place. Only the parent
+// link finds a detached child.
+func TestDiagnose_FindsASessionDetachedDescendant(t *testing.T) {
+	if _, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(os.Getpid()), "stat")); err != nil {
+		t.Skipf("no readable /proc on this platform: %v", err)
+	}
+
+	child := exec.Command("sleep", "60")
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := child.Start(); err != nil {
+		t.Fatalf("start detached child: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	})
+
+	found := descendants(os.Getpid())
+	if !slices.Contains(found, child.Process.Pid) {
+		t.Fatalf("descendants(%d) = %v, missing the detached child %d", os.Getpid(), found, child.Process.Pid)
+	}
+
+	table := processTable([]int{child.Process.Pid})
+	if !strings.Contains(table, "sleep 60") {
+		t.Errorf("processTable did not report the child's command:\n%s", table)
+	}
+	if !strings.Contains(table, strconv.Itoa(child.Process.Pid)) {
+		t.Errorf("processTable did not report the child's pid:\n%s", table)
 	}
 }
 
@@ -762,7 +978,10 @@ func TestExpectWithin_TimeoutDiagnosesWithoutPanicking(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	})
 
-	session := &liveSession{t: t, console: console, cmd: cmd, budget: 2 * time.Second}
+	session := &liveSession{
+		t: t, console: console, cmd: cmd, budget: 2 * time.Second,
+		stderrPath: filepath.Join(t.TempDir(), "child-stderr.log"),
+	}
 
 	_, err = session.expectWithinErr("waiting for something that never arrives", func() (string, error) {
 		return session.console.Expect(expect.String("this string never appears"))
