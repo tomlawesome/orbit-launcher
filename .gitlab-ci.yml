@@ -23,6 +23,7 @@
 # not the queue for the whole pipeline.
 
 stages:
+  - classify
   - fast
   - acceptance
   - maintenance
@@ -159,6 +160,56 @@ variables:
 # --- fast --------------------------------------------------------------------
 
 # ci.yml `fast`, step for step.
+# --- classify ----------------------------------------------------------------
+#
+# Reads the diff once and answers two questions. Whether it is documentation
+# only, so a prose change stops paying for the Go gate (#153); and whether a
+# pin the live install runs on moved, so an image or toolchain bump can no
+# longer report green without ever being installed (#164). The decisions live
+# in scripts/ci/classify-changed-paths.sh and are tested by
+# scripts/test/classify-changed-paths.bats: a gate that wrongly skips still
+# looks green, so the logic is unit-tested rather than written inline here.
+#
+# The verdicts reach `fast`, `deps` and `live` as dotenv variables. GitLab cannot
+# gate `rules:` on one -- rules are evaluated when the pipeline is created,
+# before any job has run -- so those two jobs start and then stop themselves in
+# their own `script:`, reporting "skipped" rather than vanishing. Orbit's
+# classifier works the same way (ai/orbit#883).
+#
+# Only an ordinary merge request is ever classified. A push to a delivery
+# branch, the promotion into `main`, and anything else that reaches here get an
+# empty base commit, and the script answers false to every question it cannot
+# settle -- so the full gate is what happens by default, and skipping is opt-in
+# against the named safe paths in the script.
+classify:
+  stage: classify
+  tags: [light]
+  image:
+    name: $UBUNTU_IMAGE
+    pull_policy: if-not-present
+  timeout: 5m
+  variables:
+    # The base commit has to be in the checkout for the diff to read at all.
+    GIT_DEPTH: 0
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends git
+  script:
+    - |
+      set -euo pipefail
+      base=""
+      if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ] \
+        && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" != "main" ]; then
+        base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
+      fi
+      bash scripts/ci/classify-changed-paths.sh "$base" "$CI_COMMIT_SHA" \
+        | tee classify.env
+  artifacts:
+    reports:
+      dotenv: classify.env
+    expire_in: 1 day
+
 fast:
   stage: fast
   image:
@@ -166,11 +217,29 @@ fast:
     pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
+  needs:
+    - job: classify
+      artifacts: true
   before_script:
     - export DEBIAN_FRONTEND=noninteractive
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
+    # `DOCS_ONLY` comes from `classify`. Unset means run: this default is the
+    # whole point of the gate. Exiting here ends the job successfully, and
+    # every later `script:` entry with it, because the runner executes them all
+    # in one shell.
+    #
+    # coverage.out is written even when nothing ran, because the artifact is
+    # declared `when: always` and an empty upload logs an error. `mode: set`
+    # with no lines under it is a valid, honest profile: no statements were
+    # measured.
+    - |
+      if [ "${DOCS_ONLY:-false}" = "true" ]; then
+        echo "skipped: every changed path is documentation (#153)"
+        printf 'mode: set\n' > coverage.out
+        exit 0
+      fi
     - |
       # The tracked Go files, not `gofmt -l .`: GitLab's cache can only carry
       # paths inside the project directory, so GOMODCACHE lives there and a
@@ -224,7 +293,16 @@ deps:
     pull_policy: if-not-present
   extends: .go_cache
   timeout: 10m
+  needs:
+    - job: classify
+      artifacts: true
   script:
+    # As in `fast`: unset means run.
+    - |
+      if [ "${DOCS_ONLY:-false}" = "true" ]; then
+        echo "skipped: every changed path is documentation (#153)"
+        exit 0
+      fi
     - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
     - govulncheck ./...
     - go install "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
@@ -239,6 +317,10 @@ deps:
 # the build log; the log names the file and rule, never the value.
 gitleaks:
   stage: fast
+  # Starts immediately rather than queueing behind `classify`: this one is
+  # never skipped, so it has nothing to learn from the verdict, and a secret
+  # is the finding you want soonest.
+  needs: []
   tags: [light]
   image:
     name: $UBUNTU_IMAGE
@@ -399,13 +481,40 @@ live:
     - .privileged_runner
     - .go_cache
   timeout: 35m
-  needs: []
+  needs:
+    # `optional` so a pipeline that never creates `classify` still builds; the
+    # gate below treats a missing verdict as "run".
+    - job: classify
+      artifacts: true
+      optional: true
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
+    # The third route in (#164). !157 bumped UBUNTU_IMAGE, and its pipeline was
+    # green because nothing that ran installs anything into that image -- the
+    # live job, the only one that does, was never created. `changes:` is
+    # file-level, so this admits every edit to this file and the gate below
+    # decides; creating a job costs nothing, and one that stops in its first
+    # command costs seconds.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .gitlab-ci.yml
   variables:
     ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
   before_script:
+    # Why this job exists decides whether it does the work. RUN_LIVE and the
+    # label are deliberate requests and always run. The third route is not: it
+    # fires on any edit to this file, so unless a pin the install actually runs
+    # on moved, stop here -- before the apt-get, the Go tarball and the Docker
+    # daemon below, which is where the minutes are. An unset verdict means run.
+    - |
+      if [ "${RUN_LIVE:-}" != "true" ] \
+        && ! printf '%s' "${CI_MERGE_REQUEST_LABELS:-}" \
+          | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+        && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then
+        echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
+        exit 0
+      fi
     - export DEBIAN_FRONTEND=noninteractive
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq
@@ -522,14 +631,13 @@ renovate:
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
     # Renovate reads a repository's own config from its default branch, which
-    # is `main` by design and only receives renovate.json when `dev` is
-    # promoted. Until then this job hands Renovate the copy in its own
-    # checkout -- the branch the schedule runs on -- as global config. Once
-    # the file reaches `main`, the repository copy merges over this one and
-    # they are the same file.
+    # here is `dev` and carries renovate.json. The weekly schedule runs on
+    # `dev` too, so the copy in this job's checkout is that same file, and
+    # handing it over as global config changes nothing: the repository copy
+    # merges over this one and they are identical.
     RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/renovate.json
-    # For the same reason, no onboarding merge request: a repository with no
-    # config of its own is expected here, not something to offer to fix.
+    # No onboarding merge request: the repository already has its own config,
+    # so there is nothing to offer to fix.
     RENOVATE_ONBOARDING: "false"
     RENOVATE_REQUIRE_CONFIG: "optional"
     LOG_LEVEL: info

@@ -72,18 +72,22 @@ Observed convention is **Conventional Commits** with an issue reference:
 
 ## CI
 
-Six workflows, several of which are unusually expensive to break:
+Seven workflows, several of which are unusually expensive to break:
 
 - `ci.yml`, `codeql.yml` — the standard gates (dependency review moved to
   the GitLab `deps` job when merges left GitHub; see `.gitlab-ci.yml`)
+- `secret-scan.yml` — what the GitLab `gitleaks` job mirrors step for step
 - `live-install-test.yml` — a real install, end to end
 - `visual-regression.yml` — the TUI is a visual product; screenshots are
   part of the contract
 - `release-preview.yml`, `promote.yml` — the release lane
 
-`.gitlab-ci.yml` is the gate merges wait on: `fast`, `deps`, `gitleaks`, `visual`
-(when web sources change) and `live` (MR label `run-live-matrix` or
-`RUN_LIVE=true`). The GitHub workflows still run on the mirrored push as a
+`.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
+diff is documentation only; `fast` and `deps` then skip themselves when it is,
+`gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (when web sources
+change) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or a moved
+`UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin -- an image bump can no longer go
+green without being installed). The GitHub workflows still run on the mirrored push as a
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
 
