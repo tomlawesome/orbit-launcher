@@ -60,6 +60,10 @@ type InstallModel struct {
 	// prove it owns.
 	staleVolumes []deploy.DatabaseVolume
 
+	// send is the run's way back into the event loop, for the engine
+	// stream reader; set by AppModel from the program's sender.
+	send func(tea.Msg)
+
 	// checkVolumes is overridable in tests so they need no Docker
 	// daemon — production code leaves it nil and gets the real check.
 	checkVolumes func(context.Context, string) []deploy.DatabaseVolume
@@ -82,6 +86,12 @@ type engineRunSeams struct {
 	adoptConfig    adoptConfigFunc
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
+}
+
+// withSend gives the run its way back into the event loop.
+func (r engineRun) withSend(send func(tea.Msg)) engineRun {
+	r.send = send
+	return r
 }
 
 func (r engineRun) withSeams(s engineRunSeams) engineRun {
@@ -251,7 +261,7 @@ func (m InstallModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state = installStateRunning
-		m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams)
+		m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd
