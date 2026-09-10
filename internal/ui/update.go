@@ -38,6 +38,10 @@ type UpdateModel struct {
 	run engineRun
 
 	seams engineRunSeams
+
+	// send is the run's way back into the event loop, for the engine
+	// stream reader; set by AppModel from the program's sender.
+	send func(tea.Msg)
 }
 
 // NewUpdateModel constructs the Update flow for a detected deployment. A
@@ -115,7 +119,7 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.deployment != nil && m.deployment.AppURL != "" {
 			title = "Update — " + displayHost(m.deployment.AppURL)
 		}
-		m.run = newEngineRun("update", m.resolvedTargetDir(), title, m.version).withSeams(m.seams)
+		m.run = newEngineRun("update", m.resolvedTargetDir(), title, m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd

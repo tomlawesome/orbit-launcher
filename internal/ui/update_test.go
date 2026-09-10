@@ -12,11 +12,15 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
-func newTestUpdateModel(d *deploy.Deployment, seams engineRunSeams) UpdateModel {
+// newTestUpdateModel mirrors newTestInstallModel: the model gets the
+// sender AppModel would give it, and the sink it pushes into (#159).
+func newTestUpdateModel(d *deploy.Deployment, seams engineRunSeams) (UpdateModel, *sink) {
 	m := NewUpdateModel(d, "/opt/orbit", "v9.9.9")
 	m.seams = seams
+	s := newSink()
+	m.send = s.Send
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
-	return updated.(UpdateModel)
+	return updated.(UpdateModel), s
 }
 
 func testDeployment() *deploy.Deployment {
@@ -29,7 +33,7 @@ func testDeployment() *deploy.Deployment {
 }
 
 func TestUpdateModel_NoDeploymentReachesNotFoundAndOnlyQuits(t *testing.T) {
-	m := newTestUpdateModel(nil, engineRunSeams{})
+	m, _ := newTestUpdateModel(nil, engineRunSeams{})
 	if m.state != updateStateNotFound {
 		t.Fatalf("state = %v, want updateStateNotFound", m.state)
 	}
@@ -47,7 +51,7 @@ func TestUpdateModel_CancelFromConfirmNeverStartsTheEngine(t *testing.T) {
 			return nil, nil, errors.New("should not be called")
 		},
 	}
-	m := newTestUpdateModel(testDeployment(), seams)
+	m, _ := newTestUpdateModel(testDeployment(), seams)
 
 	updated, _ := m.Update(key(tea.KeyDown)) // move to Cancel
 	m = updated.(UpdateModel)
@@ -69,7 +73,7 @@ func TestUpdateModel_EscapeAtConfirmQuitsWithoutStarting(t *testing.T) {
 			return nil, nil, errors.New("should not be called")
 		},
 	}
-	m := newTestUpdateModel(testDeployment(), seams)
+	m, _ := newTestUpdateModel(testDeployment(), seams)
 
 	_, cmd := m.Update(key(tea.KeyEsc))
 
@@ -89,7 +93,7 @@ func TestUpdateModel_NeverStartsTheEngineAutomatically(t *testing.T) {
 			return nil, nil, errors.New("should not be called")
 		},
 	}
-	m := newTestUpdateModel(testDeployment(), seams)
+	m, _ := newTestUpdateModel(testDeployment(), seams)
 	_ = m.View() // rendering alone must never trigger a side effect
 	if engineCalled {
 		t.Error("the engine must only start after an explicit confirm, never as a side effect of rendering")
@@ -109,14 +113,14 @@ func TestUpdateModel_ConfirmRunsTheEngineWithUpdateAction(t *testing.T) {
 		},
 		detect: fakeDetect("https://mail.example.com"),
 	}
-	m := newTestUpdateModel(testDeployment(), seams)
+	m, s := newTestUpdateModel(testDeployment(), seams)
 
 	updated, cmd := m.Update(key(tea.KeyEnter)) // Update Orbit is selected by default
 	m = updated.(UpdateModel)
 	if m.state != updateStateRunning {
 		t.Fatalf("state = %v, want updateStateRunning", m.state)
 	}
-	m = drive(t, m, cmd).(UpdateModel)
+	m = drive(t, m, cmd, s).(UpdateModel)
 
 	if gotAction != "update" {
 		t.Errorf("engine action = %q, want update", gotAction)
@@ -132,11 +136,11 @@ func TestUpdateModel_ConfirmRunsTheEngineWithUpdateAction(t *testing.T) {
 func TestUpdateModel_ConfigurationRefusalReachesThePromptToo(t *testing.T) {
 	// A migration can surface missing fields on update as well; the
 	// same handoff stretch applies.
-	m := newTestUpdateModel(testDeployment(), engineRunSeams{
+	m, s := newTestUpdateModel(testDeployment(), engineRunSeams{
 		prepareEngine: fakeEngine(nil, configRefusalStream()...),
 	})
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = drive(t, updated, cmd).(UpdateModel)
+	m = drive(t, updated, cmd, s).(UpdateModel)
 
 	if m.run.state != runConfigPrompt {
 		t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
@@ -144,14 +148,14 @@ func TestUpdateModel_ConfigurationRefusalReachesThePromptToo(t *testing.T) {
 }
 
 func TestUpdateModel_EngineFailureReachesFailedState(t *testing.T) {
-	m := newTestUpdateModel(testDeployment(), engineRunSeams{
+	m, s := newTestUpdateModel(testDeployment(), engineRunSeams{
 		prepareEngine: fakeEngine(nil,
 			ev("database", "database", "failed", "database-auth-migration", "repair"),
 			engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1},
 		),
 	})
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = drive(t, updated, cmd).(UpdateModel)
+	m = drive(t, updated, cmd, s).(UpdateModel)
 
 	if m.run.state != runFailed {
 		t.Errorf("run state = %v, want runFailed", m.run.state)
