@@ -118,7 +118,10 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	m = m.WithVersion("v9.9.9")
 	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = seams
+	sender := &deferredSender{}
+	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+	sender.attach(tm.Send)
 	skipArrival(tm)
 
 	wait := func(want string) {

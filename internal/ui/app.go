@@ -56,6 +56,13 @@ type AppModel struct {
 	// flowCheckVolumes fakes Install's stale-database-volume pre-flight
 	// so tests need no Docker daemon; nil in production (real check).
 	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
+
+	// flowSend is how a flow's engine stream reader gets its output
+	// back into the event loop (#159). cmd/orbit-launcher supplies the
+	// running program's Send; a test either supplies its own or gets a
+	// run that reports it cannot read the engine, never one that waits
+	// in silence.
+	flowSend func(tea.Msg)
 }
 
 // NewAppModel constructs the root application model, starting at the
@@ -110,6 +117,15 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 // the one part of the Install flow whose behaviour depends on the machine
 // underneath it — which is exactly what a hermetic test suite cannot
 // have. See ORBIT_LAUNCHER_NO_VOLUME_CHECK in cmd/orbit-launcher.
+// WithSender gives the flows a way to push messages into the event
+// loop from outside it, which the engine stream reader needs (#159).
+// Without it a run cannot read the engine and says so plainly rather
+// than waiting for output that can never arrive.
+func (m AppModel) WithSender(send func(tea.Msg)) AppModel {
+	m.flowSend = send
+	return m
+}
+
 func (m AppModel) WithoutVolumeCheck() AppModel {
 	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
 	return m
@@ -272,6 +288,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams
 		m.install.checkVolumes = m.flowCheckVolumes
+		m.install.send = m.flowSend
 		m.state = appStateInstall
 		// Install's Init runs the stale-database-volume pre-flight
 		// (issue #105) — like Repair's, it is read-only, so it starts
@@ -281,6 +298,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		deployment, _ := deploy.Detect(m.resolvedTargetDir())
 		m.update = NewUpdateModel(deployment, m.resolvedTargetDir(), m.version)
 		m.update.seams = m.flowSeams
+		m.update.send = m.flowSend
 		m.state = appStateUpdate
 		return m, sizeCmd
 	default:
