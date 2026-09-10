@@ -218,7 +218,26 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, pumpEngine(r.stream)
 
 	case engineStreamMsg:
-		return r.handleStream(msg.msg)
+		run, cmd := r.handleStream(msg.msg)
+		if cmd == nil && run.state == runStreaming {
+			// Never let the chain drop while the run is still going
+			// (#159). pumpEngine is a single token: each message is
+			// fetched by a command that must hand back a fresh one, and
+			// any path through handleStream that returns nil ends the
+			// run permanently — the engine finishes, posts DoneMsg,
+			// exits, and nothing ever reads it. Under
+			// ORBIT_LAUNCHER_NO_ANIMATION there is no tick chain either,
+			// so the whole program then has nothing left to wake it and
+			// the screen freezes with the install complete underneath.
+			//
+			// handleStream deliberately returns nil once the run is
+			// over, and every one of those paths moves the state off
+			// runStreaming first, so this re-arms exactly the cases that
+			// were never meant to stop.
+			logDiag(fmt.Sprintf("engine stream: re-armed a dropped pump on %T", msg.msg))
+			cmd = pumpEngine(run.stream)
+		}
+		return run, cmd
 
 	case configPlanMsg, configStepMsg, configStreamMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
