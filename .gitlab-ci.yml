@@ -261,7 +261,7 @@ fast:
       mkdir -p /tmp/bats-core
       tar -xzf /tmp/bats.tar.gz -C /tmp/bats-core --strip-components=1
       export PATH="/tmp/bats-core/bin:${PATH}"
-      bats scripts/test/get-orbit-launcher.bats
+      bats scripts/test/
     - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
     - staticcheck ./...
     - go test -race -coverprofile=coverage.out ./...
