@@ -89,6 +89,16 @@ type engineReadyMsg struct {
 // engineStreamMsg wraps one message from the engine stream's channel.
 type engineStreamMsg struct{ msg any }
 
+// engineStreamEndedMsg reports the engine stream closing. Arriving
+// while the run is still streaming, it means the engine stopped without
+// ever saying how the run went.
+type engineStreamEndedMsg struct{ reason error }
+
+// errNoEngineSender is what a run reports when it was built without a
+// way to deliver engine output. It names the launcher, not the engine:
+// the engine did nothing wrong.
+var errNoEngineSender = errors.New("the launcher could not read the engine's output")
+
 type engineRun struct {
 	action    string // "install" or "update" — the engine flag
 	targetDir string
@@ -124,6 +134,11 @@ type engineRun struct {
 	WantsMenu bool
 	URL       string
 	Elapsed   time.Duration
+
+	// send pushes a message into the event loop from outside it, for
+	// the engine stream reader. Production wires this from the program;
+	// a run without it cannot read the engine at all and says so.
+	send func(tea.Msg)
 
 	// Test seams; nil gets the real implementations.
 	prepareEngine  prepareEngineFunc
@@ -183,14 +198,44 @@ func defaultPrepareEngine(ctx context.Context, targetDir, action string) (*engin
 	return stream, cleanup, nil
 }
 
-// pumpEngine delivers the next stream message into the event loop.
-func pumpEngine(s *engine.Stream) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-s.C
-		if !ok {
-			return nil
+// readEngineStream starts the one long-lived reader for this run.
+//
+// It replaces a chain of one-shot commands, where each message was
+// fetched by a command that had to hand back a fresh one (#159). That
+// chain held a single token, and every path that failed to pass it on
+// stopped the run for good: the engine kept writing, the channel kept
+// filling, and nothing ever read it again. Because the launcher runs
+// with no tick chain under ORBIT_LAUNCHER_NO_ANIMATION, the program
+// then had nothing at all left to wake it, and looked frozen while
+// being merely idle.
+//
+// A re-arm inside the message handler could not fix that, as the
+// compat run on 2026-09-10 showed: the handler only runs when a message
+// arrives, and the only thing that delivers messages is the pump it was
+// meant to revive.
+//
+// A goroutine reading until the channel closes holds no token to lose.
+// It ends by saying so, so a stream that stops early becomes a failure
+// the operator can see rather than a screen that never changes.
+func readEngineStream(send func(tea.Msg), s *engine.Stream) tea.Cmd {
+	if send == nil {
+		// Every production path sets this. A nil sender means the flow
+		// was built without one, and the run would otherwise wait in
+		// silence for messages nothing can deliver — the exact failure
+		// this reader exists to remove, so it fails loudly instead.
+		logDiag("engine stream: no sender wired for this run")
+		return func() tea.Msg {
+			return engineStreamEndedMsg{reason: errNoEngineSender}
 		}
-		return engineStreamMsg{msg: msg}
+	}
+	return func() tea.Msg {
+		go func() {
+			for msg := range s.C {
+				send(engineStreamMsg{msg: msg})
+			}
+			send(engineStreamEndedMsg{})
+		}()
+		return nil
 	}
 }
 
@@ -215,29 +260,13 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
 		r.state = runStreaming
-		return r, pumpEngine(r.stream)
+		return r, readEngineStream(r.send, r.stream)
 
 	case engineStreamMsg:
-		run, cmd := r.handleStream(msg.msg)
-		if cmd == nil && run.state == runStreaming {
-			// Never let the chain drop while the run is still going
-			// (#159). pumpEngine is a single token: each message is
-			// fetched by a command that must hand back a fresh one, and
-			// any path through handleStream that returns nil ends the
-			// run permanently — the engine finishes, posts DoneMsg,
-			// exits, and nothing ever reads it. Under
-			// ORBIT_LAUNCHER_NO_ANIMATION there is no tick chain either,
-			// so the whole program then has nothing left to wake it and
-			// the screen freezes with the install complete underneath.
-			//
-			// handleStream deliberately returns nil once the run is
-			// over, and every one of those paths moves the state off
-			// runStreaming first, so this re-arms exactly the cases that
-			// were never meant to stop.
-			logDiag(fmt.Sprintf("engine stream: re-armed a dropped pump on %T", msg.msg))
-			cmd = pumpEngine(run.stream)
-		}
-		return run, cmd
+		return r.handleStream(msg.msg)
+
+	case engineStreamEndedMsg:
+		return r.handleStreamEnded(msg)
 
 	case configPlanMsg, configStepMsg, configStreamMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
@@ -284,11 +313,11 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			failed := m.Event
 			r.lastFailed = &failed
 		}
-		return r, pumpEngine(r.stream)
+		return r, nil
 
 	case engine.RawLineMsg:
 		r.console = r.console.observeRaw(m.Text)
-		return r, pumpEngine(r.stream)
+		return r, nil
 
 	case engine.DoneMsg:
 		if r.cleanup != nil {
@@ -312,6 +341,31 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		r.menuSel = 0
 		return r, nil
 	}
+	return r, nil
+}
+
+// handleStreamEnded closes out a run whose stream has stopped.
+//
+// Arriving after the run resolved, it is the ordinary case: DoneMsg was
+// handled and the channel closed behind it, so there is nothing to do.
+// Arriving while the run is still streaming, the engine stopped without
+// reporting an outcome, and the honest thing is to say so — a run that
+// cannot be reported on has failed, whatever it managed to do first.
+func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.Cmd) {
+	if r.state != runStreaming {
+		return r, nil
+	}
+	logDiag("engine stream: closed while the run was still streaming")
+	if r.cleanup != nil {
+		r.cleanup()
+		r.cleanup = nil
+	}
+	r.runErr = msg.reason
+	if r.runErr == nil {
+		r.runErr = errors.New("the engine stopped without reporting how the run finished")
+	}
+	r.state = runFailed
+	r.menuSel = 0
 	return r, nil
 }
 

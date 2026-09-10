@@ -31,6 +31,24 @@ func fakeEngine(gotAction *string, msgs ...any) prepareEngineFunc {
 	}
 }
 
+// fakeEngineStreaming is fakeEngine for a run that has not finished:
+// the messages are replayed and the channel stays open, because a live
+// engine's pipe does. A closed channel now means the engine stopped,
+// which the reader reports as a failed run (#159), so a mid-flight
+// stream has to stay open to be one.
+func fakeEngineStreaming(t *testing.T, msgs ...any) prepareEngineFunc {
+	return func(context.Context, string, string) (*engine.Stream, func() error, error) {
+		ch := make(chan any, len(msgs))
+		for _, m := range msgs {
+			ch <- m
+		}
+		// The reader lives as long as the channel is open, so the test
+		// closes it on the way out rather than leaving one behind.
+		t.Cleanup(func() { close(ch) })
+		return &engine.Stream{C: ch}, func() error { return nil }, nil
+	}
+}
+
 // fakeHandoff returns a runHandoff stand-in that never touches a real
 // terminal or process — it just synchronously reports the given error.
 func fakeHandoff(err error) runHandoffFunc {
@@ -70,28 +88,67 @@ func configRefusalStream() []any {
 	}
 }
 
-func newTestInstallModel(seams engineRunSeams) InstallModel {
+// newTestInstallModel builds the model the way AppModel does, sender
+// included: the engine stream reader pushes from outside the command
+// chain, so a run without one cannot receive engine output at all
+// (#159). Tests that drive a run hand the sink to drive; the rest
+// ignore it.
+func newTestInstallModel(seams engineRunSeams) (InstallModel, *sink) {
 	m := NewInstallModel("/opt/orbit", "v9.9.9")
 	m.seams = seams
+	s := newSink()
+	m.send = s.Send
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
-	return updated.(InstallModel)
+	return updated.(InstallModel), s
 }
 
+// sink collects the messages a model pushes into the event loop from
+// outside the command chain. Only the engine stream reader does that
+// (#159); in production the same route is tea.Program.Send.
+type sink struct{ msgs chan tea.Msg }
+
+func newSink() *sink { return &sink{msgs: make(chan tea.Msg, 64)} }
+
+func (s *sink) Send(msg tea.Msg) { s.msgs <- msg }
+
 // drive feeds a command's resulting messages back into the model until
-// the command chain goes quiet — how bubbletea itself would run it.
-func drive(t *testing.T, model tea.Model, cmd tea.Cmd) tea.Model {
+// everything goes quiet — how bubbletea itself would run it. A test
+// driving an engine run passes that run's sink, which drive drains the
+// way bubbletea drains its own message queue: a command result and a
+// pushed message are the same thing once they reach Update.
+func drive(t *testing.T, model tea.Model, cmd tea.Cmd, pushed ...*sink) tea.Model {
 	t.Helper()
-	for i := 0; cmd != nil; i++ {
+	var queue *sink
+	if len(pushed) > 0 {
+		queue = pushed[0]
+	}
+	for i := 0; ; i++ {
 		if i > 1000 {
 			t.Fatal("command chain did not settle")
 		}
-		msg := cmd()
-		if msg == nil {
+		var msg tea.Msg
+		switch {
+		case cmd != nil:
+			msg, cmd = cmd(), nil
+		case queue != nil:
+			select {
+			case msg = <-queue.msgs:
+			case <-time.After(2 * time.Second):
+				return model
+			}
+		default:
 			return model
 		}
+		if msg == nil {
+			continue
+		}
 		model, cmd = model.Update(msg)
+		// Nothing follows the stream ending, so waiting for more would
+		// only spend the timeout above.
+		if _, ended := msg.(engineStreamEndedMsg); ended && cmd == nil {
+			return model
+		}
 	}
-	return model
 }
 
 func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
@@ -110,7 +167,7 @@ func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 }
 
 func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
-	m := newTestInstallModel(engineRunSeams{})
+	m, _ := newTestInstallModel(engineRunSeams{})
 	updated, _ := m.Update(key(tea.KeyEnter))
 	m = updated.(InstallModel)
 	if m.state != installStateConfirm {
@@ -120,7 +177,7 @@ func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
 
 func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
 	for _, sel := range []int{1, 2} { // AI, Full
-		m := newTestInstallModel(engineRunSeams{})
+		m, _ := newTestInstallModel(engineRunSeams{})
 		m.profileSel = sel
 		updated, _ := m.Update(key(tea.KeyEnter))
 		m = updated.(InstallModel)
@@ -131,7 +188,7 @@ func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testin
 }
 
 func TestInstallModel_EscapeFromConfirmReturnsToProfile(t *testing.T) {
-	m := newTestInstallModel(engineRunSeams{})
+	m, _ := newTestInstallModel(engineRunSeams{})
 	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
 	updated, _ = m.Update(key(tea.KeyEsc))
@@ -149,7 +206,7 @@ func TestInstallModel_ConfirmNeverStartsTheEngineAutomatically(t *testing.T) {
 			return nil, nil, errors.New("should not be called")
 		},
 	}
-	m := newTestInstallModel(seams)
+	m, _ := newTestInstallModel(seams)
 	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
 	_ = m.View() // rendering alone must never trigger a side effect
@@ -161,12 +218,12 @@ func TestInstallModel_ConfirmNeverStartsTheEngineAutomatically(t *testing.T) {
 
 func TestInstallModel_EngineSuccessConcludesTheFlow(t *testing.T) {
 	var gotAction string
-	m := newTestInstallModel(engineRunSeams{
+	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(&gotAction, successStream()...),
 		detect:        fakeDetect("https://mail.example.com"),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	if gotAction != "install" {
 		t.Errorf("engine action = %q, want install", gotAction)
@@ -183,14 +240,14 @@ func TestInstallModel_EngineSuccessConcludesTheFlow(t *testing.T) {
 func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
 	// Replay only progress events with no DoneMsg: the run is mid-
 	// flight, and the console must be showing the stream.
-	m := newTestInstallModel(engineRunSeams{
-		prepareEngine: fakeEngine(nil,
+	m, s := newTestInstallModel(engineRunSeams{
+		prepareEngine: fakeEngineStreaming(t,
 			ev("host", "host", "completed", "host-tools", "check"),
 			ev("identity", "image", "running", "image-identity", "inspect"),
 		),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	view := m.View()
 	if !strings.Contains(view, "image") || !strings.Contains(view, "running") {
@@ -219,9 +276,9 @@ func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
 		},
 		detect: fakeDetect("https://mail.example.com"),
 	}
-	m := newTestInstallModel(seams)
+	m, s := newTestInstallModel(seams)
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	if m.run.state != runConfigPrompt {
 		t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
@@ -247,7 +304,7 @@ func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
 }
 
 func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
-	m := newTestInstallModel(engineRunSeams{
+	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(nil,
 			ev("identity", "image", "failed", "image-registry", "retry"),
 			engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1,
@@ -255,7 +312,7 @@ func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
 		),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	if m.run.state != runFailed {
 		t.Fatalf("run state = %v, want runFailed", m.run.state)
@@ -283,7 +340,7 @@ func TestInstallModel_LegacyRefusalFailureScreenOpensGuidedInstaller(t *testing.
 	// which honestly lands on the failure screen — whose first option
 	// is the same guided installer the config prompt offers.
 	handoffRan := false
-	m := newTestInstallModel(engineRunSeams{
+	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(nil,
 			engine.RawLineMsg{Text: "Orbit installer: non-interactive use requires a complete .env-orbit"},
 			engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1,
@@ -299,7 +356,7 @@ func TestInstallModel_LegacyRefusalFailureScreenOpensGuidedInstaller(t *testing.
 		detect: fakeDetect("https://mail.example.com"),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	if m.run.state != runFailed {
 		t.Fatalf("run state = %v, want runFailed — no events means no config prompt", m.run.state)
@@ -322,7 +379,7 @@ func TestInstallModel_LegacyRefusalFailureScreenOpensGuidedInstaller(t *testing.
 func TestInstallModel_LegacyEngineJudgedByExitCodeAlone(t *testing.T) {
 	// orbit main's install.sh emits no events. Its prose is displayed
 	// raw; a clean exit is still success — never keyed off the prose.
-	m := newTestInstallModel(engineRunSeams{
+	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(nil,
 			engine.RawLineMsg{Text: "Pulling ghcr.io/tomlawesome/orbit:latest"},
 			engine.RawLineMsg{Text: "Orbit is ready."},
@@ -334,7 +391,7 @@ func TestInstallModel_LegacyEngineJudgedByExitCodeAlone(t *testing.T) {
 
 	// Mid-drive the raw prose must be visible; drive fully first, since
 	// the fake stream is replayed synchronously.
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 	if o := m.Outcome(); !o.Done || !o.Succeeded {
 		t.Errorf("outcome = %+v, want success on exit 0 with zero events", o)
 	}
@@ -342,7 +399,7 @@ func TestInstallModel_LegacyEngineJudgedByExitCodeAlone(t *testing.T) {
 
 func TestInstallModel_EnginePrepareFailureReachesFailedWithoutHandoff(t *testing.T) {
 	handoffCalled := false
-	m := newTestInstallModel(engineRunSeams{
+	m, _ := newTestInstallModel(engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
 			return nil, nil, errors.New("could not fetch install.sh")
 		},
@@ -366,7 +423,7 @@ func TestInstallModel_EnginePrepareFailureReachesFailedWithoutHandoff(t *testing
 }
 
 func TestInstallModel_HandoffFailureReachesFailed(t *testing.T) {
-	m := newTestInstallModel(engineRunSeams{
+	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(nil, configRefusalStream()...),
 		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
 			return exec.Command("false"), func() error { return nil }, nil
@@ -374,7 +431,7 @@ func TestInstallModel_HandoffFailureReachesFailed(t *testing.T) {
 		runHandoff: fakeHandoff(errors.New("install.sh exited 1")),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	updated, cmd := m.Update(key(tea.KeyEnter)) // Continue — guided configuration
 	m = drive(t, updated, cmd).(InstallModel)
@@ -390,7 +447,7 @@ func TestInstallModel_HandoffFailureReachesFailed(t *testing.T) {
 func TestInstallModel_SuccessElapsedComesFromTheConsoleClock(t *testing.T) {
 	base := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	current := base
-	m := newTestInstallModel(engineRunSeams{
+	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(nil, successStream()...),
 		detect:        fakeDetect("https://mail.example.com"),
 		now: func() time.Time {
@@ -402,7 +459,7 @@ func TestInstallModel_SuccessElapsedComesFromTheConsoleClock(t *testing.T) {
 		},
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd).(InstallModel)
+	m = drive(t, m, cmd, s).(InstallModel)
 
 	if got := m.Outcome().Elapsed; got != 3*time.Minute+42*time.Second {
 		t.Errorf("Elapsed = %v, want 3m42s from the injected clock", got)

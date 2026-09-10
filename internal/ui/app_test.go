@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,7 +177,10 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 
+	sender := &deferredSender{}
+	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+	sender.attach(tm.Send)
 	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
@@ -225,7 +229,10 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 
+	sender := &deferredSender{}
+	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
+	sender.attach(tm.Send)
 	skipArrival(tm)
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Install"))
@@ -280,6 +287,29 @@ func TestAppModel_WithDeploymentStatusIsANoOpWithoutADeployment(t *testing.T) {
 	}
 	if m.splash.state != stateDormant {
 		t.Errorf("state = %v, want stateDormant", m.splash.state)
+	}
+}
+
+// deferredSender is ProgramSender's teatest twin, and exists for the
+// same ordering reason: teatest.NewTestModel takes the model, so the
+// sender is built first, handed to the model, and pointed at the test
+// model's Send afterwards. Anything sent before that is dropped, which
+// is safe here — only a started engine run has a reader to send at all.
+//
+// The pointer is atomic because the reader goroutine and the test
+// goroutine that attaches reach it from different threads.
+type deferredSender struct {
+	send atomic.Pointer[func(tea.Msg)]
+}
+
+// attach points the sender at the running test model.
+func (s *deferredSender) attach(send func(tea.Msg)) { s.send.Store(&send) }
+
+// Send delivers one message into the event loop, and does nothing
+// before attach.
+func (s *deferredSender) Send(msg tea.Msg) {
+	if send := s.send.Load(); send != nil {
+		(*send)(msg)
 	}
 }
 

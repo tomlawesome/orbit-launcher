@@ -46,7 +46,15 @@ func main() {
 		app = app.WithoutVolumeCheck()
 	}
 
+	// The engine stream reader pushes into the event loop rather than
+	// being asked for each message (#159), and tea.NewProgram takes the
+	// model, so the program cannot be built into it. Build the sender
+	// first, attach it once the program exists.
+	sender := ui.NewProgramSender()
+	app = app.WithSender(sender.Send)
+
 	program := tea.NewProgram(app, tea.WithAltScreen())
+	sender.Attach(program)
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "orbit-launcher:", err)
 		os.Exit(1)
