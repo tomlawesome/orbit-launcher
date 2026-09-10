@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os/exec"
 	"strings"
@@ -474,6 +475,50 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 	case <-handoffRan:
 	case <-time.After(10 * time.Second):
 		t.Fatal("unfixable fields never fell back to the handoff")
+	}
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG exists so a CI job can prove
+// which configuration path a run actually took. With it set, the very
+// fallback the two tests above assert — a quiet switch to the terminal
+// handoff — must instead stop the run and say so. Without it (every
+// other test in this file, and every operator) the fallback still falls
+// back: that is the behaviour this must not change.
+func TestAppModel_StrictModeRefusesTheHandoffFallback(t *testing.T) {
+	t.Setenv(requireInConsoleEnv, "1")
+
+	handoffRan := make(chan struct{}, 1)
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: engineTwice(),
+		prepareConfig: func(context.Context, string) configPlanMsg {
+			return configPlanMsg{err: errors.New("staging the tree failed")}
+		},
+		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
+			return exec.Command("true"), func() error { return nil }, nil
+		},
+		runHandoff: func(*exec.Cmd) tea.Cmd {
+			return func() tea.Msg {
+				handoffRan <- struct{}{}
+				return installFinishedMsg{}
+			}
+		},
+		detect: fakeDetect("https://orbit.example.test"),
+	})
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("terminal handoff refused"))
+	}, teatest.WithDuration(10*time.Second))
+
+	select {
+	case <-handoffRan:
+		t.Fatal("strict mode ran the terminal handoff anyway")
+	default:
 	}
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
