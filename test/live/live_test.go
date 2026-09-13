@@ -149,7 +149,7 @@ func (s *liveSession) expectWithinErr(what string, expectation func() (string, e
 func (s *liveSession) must(str string) {
 	s.t.Helper()
 	s.expectWithin(fmt.Sprintf("expected %q", str), func() (string, error) {
-		return s.console.ExpectString(str)
+		return s.console.Expect(expectAny(str))
 	})
 }
 
@@ -549,15 +549,18 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 // internal/ui/install_test.go around lines 254-288 for real examples).
 var stopScreenReasonPattern = regexp.MustCompile(`Orbit installer: .*`)
 
-// signInModePattern is the M7 sign-in mode question (see acceptMenusUntil).
-var signInModePattern = regexp.MustCompile(`\[local/oidc\]`)
+// signInModeMarker is the M7 sign-in mode question (see acceptMenusUntil).
+const signInModeMarker = "[local/oidc]"
 
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
 	const stopScreen = "Installation stopped"
-	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + signInModePattern.String() + `|` + regexp.QuoteMeta(stopScreen) + `|` + regexp.QuoteMeta(target))
-	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
-	stopPattern := regexp.MustCompile(regexp.QuoteMeta(stopScreen))
+	// Plain markers through expectAny, never a regexp alternation over
+	// the whole read (match_test.go): this wait outlives the install's
+	// entire event stream, and the rescanning matcher fell so far behind
+	// the launcher's repaints that a finished install looked frozen
+	// (#159, #165).
+	markers := []string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, stopScreen, target}
 	for {
 		// No tighter budget than expectWithin's — that ceiling is
 		// deliberately generous because a real image pull plus health
@@ -566,12 +569,12 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		// runner even though the install had, in fact, not failed — just
 		// hadn't finished yet.
 		result := session.expectWithin("waiting for "+target+" or a menu", func() (string, error) {
-			return session.console.Expect(expect.Regexp(pattern))
+			return session.console.Expect(expectAny(markers...))
 		})
-		if targetPattern.MatchString(result) {
+		if strings.Contains(result, target) {
 			return
 		}
-		if stopPattern.MatchString(result) {
+		if strings.Contains(result, stopScreen) {
 			// The install genuinely stopped — sending Enter here would
 			// just cycle the menu until the 600s budget expires instead
 			// of reporting why. Fail now, with the installer's own
@@ -587,7 +590,7 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 			}
 			t.Fatalf("install stopped waiting for %s, but no reason line was captured", target)
 		}
-		if signInModePattern.MatchString(result) {
+		if strings.Contains(result, signInModeMarker) {
 			session.send("oidc\r")
 			continue
 		}
@@ -662,8 +665,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// reports nothing and lands on the failure screen. Both
 		// screens' default option leads to the guided configuration.
 		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
-			return session.console.Expect(expect.Regexp(regexp.MustCompile(
-				`Orbit needs your configuration|Installation stopped`)))
+			return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
 		})
 		sendLine("") // Continue — guided configuration / Open the guided installer
 
@@ -823,8 +825,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
 	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
-		return session.console.Expect(expect.Regexp(regexp.MustCompile(
-			`Orbit needs your configuration|Installation stopped`)))
+		return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
 	})
 	sendLine("")
 
