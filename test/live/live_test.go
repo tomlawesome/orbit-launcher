@@ -492,12 +492,16 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// and immediately sends a selection can have it eaten as the skip,
 		// leaving the menu settled with nothing chosen.
 		//
-		// Sending a separate skip key first does not fix it: bubbletea
-		// batches consecutive printable runes into one KeyRunes message,
-		// and handleKey's swallow returns before the digit shortcuts are
-		// examined (splash.go:343-380), so "s" and the selection sent
-		// back-to-back are discarded together. Measured: that attempt hung
-		// in exactly the same place as no skip key at all.
+		// Sending a separate skip key first was measured not to fix it:
+		// that attempt hung in exactly the same place as no skip key at
+		// all, because the bubbletea of the day batched consecutive
+		// printable runes into a single key message and handleKey's
+		// swallow returns before the digit shortcuts are examined
+		// (splash.go:343-380), so "s" and the selection sent back-to-back
+		// were discarded together. Each printable character is its own
+		// key press now, so the two would arrive separately — but this
+		// suite does not need the arrival either way, for the reason
+		// below.
 		//
 		// This costs no coverage. The arrival's own behaviour — any key
 		// skips and is swallowed, it finishes on its own after enough
