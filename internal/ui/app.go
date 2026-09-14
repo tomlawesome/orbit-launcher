@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
@@ -56,6 +56,12 @@ type AppModel struct {
 	// flowCheckVolumes fakes Install's stale-database-volume pre-flight
 	// so tests need no Docker daemon; nil in production (real check).
 	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
+
+	// altScreen puts the program in the terminal's alternate screen
+	// buffer. It was a tea.NewProgram option until the view started
+	// carrying it, so the root model now holds the caller's choice: the
+	// real entry point asks for it, an in-memory teatest run does not.
+	altScreen bool
 
 	// flowSend is how a flow's engine stream reader gets its output
 	// back into the event loop (#159). cmd/orbit-launcher supplies the
@@ -128,6 +134,15 @@ func (m AppModel) WithSender(send func(tea.Msg)) AppModel {
 
 func (m AppModel) WithoutVolumeCheck() AppModel {
 	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
+	return m
+}
+
+// WithAltScreen renders in the terminal's alternate screen buffer, so the
+// launcher owns the whole window and hands the user's scrollback back
+// untouched on exit. Only cmd/orbit-launcher asks for it — see
+// AppModel.View.
+func (m AppModel) WithAltScreen() AppModel {
+	m.altScreen = true
 	return m
 }
 
@@ -306,8 +321,18 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// View implements tea.Model.
-func (m AppModel) View() string {
+// View implements tea.Model. The alternate screen is a property of the
+// view rather than a program option, so this is where the caller's choice
+// (WithAltScreen) is applied — every flow below draws the same way
+// whether or not the launcher owns the whole window.
+func (m AppModel) View() tea.View {
+	v := m.screen()
+	v.AltScreen = m.altScreen
+	return v
+}
+
+// screen is the view of whichever flow currently owns the screen.
+func (m AppModel) screen() tea.View {
 	switch m.state {
 	case appStateSplash:
 		return m.splash.View()
@@ -322,5 +347,5 @@ func (m AppModel) View() string {
 	case appStateSuccess:
 		return m.success.View()
 	}
-	return ""
+	return tea.NewView("")
 }

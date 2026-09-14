@@ -3,7 +3,7 @@
 // values here must stay traceable 1:1 to that file's style-guide swatches.
 package style
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 // Palette — the starchart identity, aligned with orbit's own web
 // direction (orbit issue #307): gold is the accent, approach-blue its

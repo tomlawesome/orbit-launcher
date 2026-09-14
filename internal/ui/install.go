@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -176,14 +176,14 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		return m.handleKey(key)
 	}
 	return m, nil
 }
 
-func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
 		return m, tea.Quit
 	}
 	switch m.state {
@@ -194,7 +194,7 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case installStateUnavailableProfile:
 		// The only way out of the honest dead end is back to the
 		// choice that led in.
-		if msg.Type == tea.KeyEnter || msg.Type == tea.KeyEsc {
+		if msg.Code == tea.KeyEnter || msg.Code == tea.KeyEsc {
 			m.state = installStateProfile
 		}
 		return m, nil
@@ -208,8 +208,8 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // always offered and always works: this screen reports what the engine
 // is about to refuse, and a detection mistake here must never be able to
 // stand between someone and an install.
-func (m InstallModel) handleStaleVolumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		return m, tea.Quit
 	case tea.KeyUp, tea.KeyDown:
@@ -225,8 +225,8 @@ func (m InstallModel) handleStaleVolumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
-func (m InstallModel) handleProfileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		return m, tea.Quit
 	case tea.KeyUp:
@@ -247,8 +247,8 @@ func (m InstallModel) handleProfileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m InstallModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		m.state = installStateProfile
 		return m, nil
@@ -270,7 +270,10 @@ func (m InstallModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
-func (m InstallModel) View() string {
+func (m InstallModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m InstallModel) view() string {
 	if m.width == 0 {
 		return ""
 	}

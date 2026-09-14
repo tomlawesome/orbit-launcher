@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -84,14 +84,14 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		return m.handleKey(key)
 	}
 	return m, nil
 }
 
-func (m UpdateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
 		return m, tea.Quit
 	}
 	switch m.state {
@@ -103,8 +103,8 @@ func (m UpdateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UpdateModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		return m, tea.Quit
 	case tea.KeyUp, tea.KeyDown:
@@ -135,7 +135,10 @@ func (m UpdateModel) resolvedTargetDir() string {
 }
 
 // View implements tea.Model.
-func (m UpdateModel) View() string {
+func (m UpdateModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m UpdateModel) view() string {
 	if m.width == 0 {
 		return ""
 	}
