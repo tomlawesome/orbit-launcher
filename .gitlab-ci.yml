@@ -64,7 +64,7 @@ variables:
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
   # committed screenshot baselines were taken.
-  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
@@ -611,7 +611,7 @@ renovate:
   # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
   # gigabytes of pull on a shared runner every week.
   image:
-    name: renovate/renovate:44.62.2@sha256:757c6c3b8b63dc5b2600855f277aaababf56344c507cc9636a3b3aece5752645
+    name: renovate/renovate:44.83.2@sha256:c1cb952b2e14a112d0d0c61987a10f60a2626fe9b9c1504436be46a17bd123bc
     pull_policy: if-not-present
   timeout: 1h
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
