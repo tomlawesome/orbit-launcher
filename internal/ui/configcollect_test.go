@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -132,11 +132,11 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	}
 
 	wait("Install")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Choose a deployment profile")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Ready to install")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Orbit needs your configuration")
 	return tm
 }
@@ -172,27 +172,27 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 	}
 
 	// Continue — guided configuration (in-console).
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 
 	// A bad answer is rejected with the engine's reason, re-prompted.
 	tm.Type("orbit.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("must start with https://", "attempt 2 of 3")
 
 	tm.Type("https://orbit.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("OIDC issuer URL")
 	tm.Type("https://accounts.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("OIDC client ID")
 	tm.Type("orbit-client")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	// The secret step: hidden input, then adoption and the retry.
 	wait("OIDC client secret")
 	tm.Type("s3cret-value")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	select {
 	case <-adopted:
@@ -203,7 +203,7 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 	// The retry engine run succeeds and lands on the success screen.
 	wait("Get into Orbit", "orbit.example.test")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -237,22 +237,22 @@ func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 	tm.Type("https://orbit.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("OIDC issuer URL")
 	tm.Type("https://accounts.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("OIDC client ID")
 	tm.Type("orbit-client")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	// --init is done; the re-check must still route to the secret
 	// step rather than straight to adoptAndRetry.
 	wait("OIDC client secret")
 	tm.Type("s3cret-value")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	select {
 	case <-adopted:
@@ -262,7 +262,7 @@ func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
 
 	wait("Get into Orbit")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -294,16 +294,16 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 	tm.Type("https://orbit.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("OIDC issuer URL")
 	tm.Type("https://accounts.example.test")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("OIDC client ID")
 	tm.Type("orbit-client")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	select {
 	case <-adopted:
@@ -318,7 +318,7 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 		t.Fatal("the secret step ran even though the re-check said the secret is not in use")
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -333,13 +333,13 @@ func TestAppModel_SecretInputIsNeverEchoed(t *testing.T) {
 		detect:        fakeDetect("https://orbit.example.test"),
 	})
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("OIDC client secret"))
 	}, teatest.WithDuration(10*time.Second))
 
 	tm.Type("hunter2-super-secret")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Get into Orbit"))
@@ -351,7 +351,7 @@ func TestAppModel_SecretInputIsNeverEchoed(t *testing.T) {
 		t.Fatal("the secret was echoed to the screen")
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -377,14 +377,14 @@ func TestAppModel_LegacyConfigureFallsBackToHandoff(t *testing.T) {
 
 	// Continue: the legacy script exits with no protocol line, and the
 	// flow falls back to the terminal handoff automatically.
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	select {
 	case <-handoffRan:
 	case <-time.After(10 * time.Second):
 		t.Fatal("legacy configure never fell back to the handoff")
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -405,19 +405,19 @@ func TestAppModel_ConfigAbortReturnsToRefusalMenu(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 
 	// Three rejected answers exhaust the engine's patience: abort, and
 	// the refusal menu returns rather than pretending anything worked.
 	for i := 0; i < 3; i++ {
 		tm.Type("nope")
-		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+		tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 		time.Sleep(100 * time.Millisecond)
 	}
 	wait("Continue — guided configuration")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -438,12 +438,12 @@ func TestAppModel_EscCancelsConfigCollectToRefusalMenu(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	wait("Continue — guided configuration")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -473,14 +473,14 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	select {
 	case <-handoffRan:
 	case <-time.After(10 * time.Second):
 		t.Fatal("unfixable fields never fell back to the handoff")
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestAppModel_StrictModeRefusesTheHandoffFallback(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("terminal handoff refused"))
 	}, teatest.WithDuration(10*time.Second))
@@ -524,7 +524,7 @@ func TestAppModel_StrictModeRefusesTheHandoffFallback(t *testing.T) {
 	default:
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -604,14 +604,14 @@ func TestConfigCollect_OnlyAPPURLIsRemembered(t *testing.T) {
 
 	r.cfg.prompt = &engine.Prompt{Field: "OIDC_CLIENT_SECRET", Kind: "secret"}
 	r.cfg.input = []rune("hunter2")
-	r, _ = r.handleConfigKey(tea.KeyMsg{Type: tea.KeyEnter})
+	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "" {
 		t.Errorf("a secret was remembered as the origin: %q", r.cfg.origin)
 	}
 
 	r.cfg.prompt = &engine.Prompt{Field: "APP_URL", Kind: "url"}
 	r.cfg.input = []rune("https://orbit.example.com")
-	r, _ = r.handleConfigKey(tea.KeyMsg{Type: tea.KeyEnter})
+	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "https://orbit.example.com" {
 		t.Errorf("APP_URL was not remembered: %q", r.cfg.origin)
 	}
