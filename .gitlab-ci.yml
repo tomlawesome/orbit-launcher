@@ -83,9 +83,16 @@ variables:
   # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
   # this GitLab, not the GitHub mirror. Overridable per pipeline the way the
   # GitHub job's `orbit_branch` and `orbit_channel` inputs are.
+  #
+  # The production pair is `main` and "" (install.sh's own default, `latest`).
+  # Both sit on `preview` until orbit #1016 is fixed by the v1.3.0 release:
+  # the published `latest` names a source revision that no longer exists, so
+  # a default install fails before the launcher is involved (owner,
+  # 2026-09-14). Branch and channel move together because install.sh and the
+  # image must be one generation. Put them back when v1.3.0 ships.
   ORBIT_PROJECT: ai/orbit
-  ORBIT_BRANCH: main
-  ORBIT_CHANNEL: ""
+  ORBIT_BRANCH: preview
+  ORBIT_CHANNEL: preview
   # Set to "true" on a pipeline started by hand to run the live test without
   # the merge-request label.
   RUN_LIVE: "false"
