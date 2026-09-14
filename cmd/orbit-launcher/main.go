@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/release"
@@ -53,7 +53,11 @@ func main() {
 	sender := ui.NewProgramSender()
 	app = app.WithSender(sender.Send)
 
-	program := tea.NewProgram(app, tea.WithAltScreen())
+	// The alternate screen is asked for on the model, not the program:
+	// it is a property of the view now — see ui.AppModel.View.
+	app = app.WithAltScreen()
+
+	program := tea.NewProgram(app)
 	sender.Attach(program)
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "orbit-launcher:", err)

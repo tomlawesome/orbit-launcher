@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -319,24 +319,23 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) || msg.Code == tea.KeyEsc {
 		m.quitting = true
 		return m, tea.Quit
 	}
-	if msg.Type == tea.KeyRunes {
-		for _, r := range msg.Runes {
-			if r == 'q' {
-				m.quitting = true
-				return m, tea.Quit
-			}
+	// Text is the printable character the key produced, and is empty for
+	// every special key — so it is exactly the old "runes" case.
+	for _, r := range msg.Text {
+		if r == 'q' {
+			m.quitting = true
+			return m, tea.Quit
 		}
 	}
 
@@ -348,7 +347,7 @@ func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.Type {
+	switch msg.Code {
 	case tea.KeyUp:
 		m.userNavigated = true
 		m.selected = (m.selected - 1 + len(MainMenu)) % len(MainMenu)
@@ -365,17 +364,15 @@ func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	if msg.Type == tea.KeyRunes {
-		for _, r := range msg.Runes {
-			if r >= '1' && r <= '9' {
-				idx := int(r - '1')
-				if idx < len(MainMenu) {
-					m.userNavigated = true
-					m.selected = idx
-					m.Chosen = MainMenu[idx].Label
-					m.quitting = true
-					return m, tea.Quit
-				}
+	for _, r := range msg.Text {
+		if r >= '1' && r <= '9' {
+			idx := int(r - '1')
+			if idx < len(MainMenu) {
+				m.userNavigated = true
+				m.selected = idx
+				m.Chosen = MainMenu[idx].Label
+				m.quitting = true
+				return m, tea.Quit
 			}
 		}
 	}
@@ -412,7 +409,10 @@ func (m SplashModel) footText() string {
 }
 
 // View implements tea.Model.
-func (m SplashModel) View() string {
+func (m SplashModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m SplashModel) view() string {
 	if m.quitting {
 		return ""
 	}

@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -90,14 +90,14 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m RemoveModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
 		m.state = removeStateCancelled
 		return m, tea.Quit
 	}
@@ -111,8 +111,8 @@ func (m RemoveModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m RemoveModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		m.state = removeStateCancelled
 		return m, tea.Quit
@@ -137,8 +137,8 @@ func (m RemoveModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m RemoveModel) handleDoneKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		return m, tea.Quit
 	case tea.KeyEnter:
@@ -170,7 +170,10 @@ func copyToClipboard(text string) tea.Cmd {
 }
 
 // View implements tea.Model.
-func (m RemoveModel) View() string {
+func (m RemoveModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m RemoveModel) view() string {
 	if m.width == 0 {
 		return ""
 	}
