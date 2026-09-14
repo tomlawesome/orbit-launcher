@@ -530,11 +530,26 @@ live:
   script:
     - mkdir -p .live/install-script
     - |
+      # The whole configuration tree, not only install.sh: when the engine
+      # stops for settings, the launcher fetches configure.sh and its
+      # siblings from the same base as install.sh (internal/deploy's
+      # FetchConfigTree), and the test refuses the terminal-handoff fallback
+      # so a missing file is a red run, not a silent one. installer-ui.sh and
+      # configuration.sh are optional there, so an orbit ref without them is
+      # tolerated (main has no installer-ui.sh).
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
-      curl --fail --silent --show-error --location \
-        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        --output .live/install-script/install.sh \
-        "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${ORBIT_BRANCH}"
+      fetch_orbit_file() {
+        curl --fail --silent --show-error --location \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --output ".live/install-script/$2" \
+          "${CI_API_V4_URL}/projects/${project}/repository/files/$(printf '%s' "$1" | sed 's#/#%2F#g')/raw?ref=${ORBIT_BRANCH}"
+      }
+      fetch_orbit_file scripts/install.sh install.sh
+      fetch_orbit_file scripts/configure.sh configure.sh
+      fetch_orbit_file .env-orbit.example .env-orbit.example
+      for optional in configuration.sh installer-ui.sh; do
+        fetch_orbit_file "scripts/${optional}" "${optional}" || { rm -f ".live/install-script/${optional}"; echo "ai/orbit ${ORBIT_BRANCH} has no scripts/${optional}; the launcher treats it as optional"; }
+      done
       head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }
       python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
