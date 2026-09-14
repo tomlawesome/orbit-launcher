@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -379,8 +379,8 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 // handleConfigKey is the typing surface: append, backspace, enter
 // submits the answer line, esc cancels the whole session back to the
 // refusal menu.
-func (r engineRun) handleConfigKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
-	if msg.Type == tea.KeyEsc {
+func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
 		r.state = runConfigPrompt
 		r.menuSel = 0
@@ -389,9 +389,7 @@ func (r engineRun) handleConfigKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 	if r.cfg.prompt == nil {
 		return r, nil
 	}
-	switch msg.Type {
-	case tea.KeyRunes:
-		r.cfg.input = append(r.cfg.input, msg.Runes...)
+	switch msg.Code {
 	case tea.KeySpace:
 		r.cfg.input = append(r.cfg.input, ' ')
 	case tea.KeyBackspace:
@@ -408,6 +406,11 @@ func (r engineRun) handleConfigKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 		}
 		r.cfg.prompt = nil
 		r.cfg.input = nil
+	default:
+		// Text is the printable character the key produced and is empty
+		// for every special key, so this takes typing and ignores the
+		// rest.
+		r.cfg.input = append(r.cfg.input, []rune(msg.Text)...)
 	}
 	return r, nil
 }

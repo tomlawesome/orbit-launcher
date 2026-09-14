@@ -377,13 +377,17 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	send("\r")
 
 	// The plan proposes a safe fix; running it is the preselected act.
+	// The action's sentence is expected here, on the plan screen, because
+	// this is where it is written: each frame reaches the terminal as a
+	// diff of the cells that changed, and the after-picture keeps this
+	// sentence in the same columns — only its glyph changes, from · to ✓.
 	must("Repairs proposed")
+	must("restore safe permissions")
 	must("▸ Run the safe repairs")
 	send("\r")
 
 	// The after-picture: applied, counted, re-diagnosed clean.
 	must("Repairs applied")
-	must("restore safe permissions")
 	must("1 done · 0 failed")
 	must("diagnosis clear after repairs")
 
