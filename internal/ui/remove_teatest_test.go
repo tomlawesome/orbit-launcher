@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
@@ -23,14 +23,14 @@ func TestRemoveModel_TeaTest_FullFlowToDone(t *testing.T) {
 		return bytes.Contains(out, []byte("Stand down Orbit"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("stood down"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})  // Exit
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // quit
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})  // Exit
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // quit
 
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
