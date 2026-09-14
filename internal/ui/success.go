@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -96,15 +96,20 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m SuccessModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
+		m.Chosen = "terminal"
+		return m, tea.Quit
+	}
+
+	switch msg.Code {
+	case tea.KeyEsc:
 		m.Chosen = "terminal"
 		return m, tea.Quit
 
@@ -130,12 +135,12 @@ func (m SuccessModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if msg.Type == tea.KeyRunes {
-		for _, r := range msg.Runes {
-			if r == 'q' {
-				m.Chosen = "terminal"
-				return m, tea.Quit
-			}
+	// Text is empty for every special key, so it is exactly the old
+	// "runes" case — see SplashModel.handleKey.
+	for _, r := range msg.Text {
+		if r == 'q' {
+			m.Chosen = "terminal"
+			return m, tea.Quit
 		}
 	}
 	return m, nil
@@ -164,7 +169,10 @@ func defaultOpenURL(url string) error {
 }
 
 // View implements tea.Model.
-func (m SuccessModel) View() string {
+func (m SuccessModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m SuccessModel) view() string {
 	if m.width == 0 {
 		return ""
 	}

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -249,7 +249,7 @@ func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
 	m, cmd := startInstallRun(t, m)
 	m = drive(t, m, cmd, s).(InstallModel)
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "image") || !strings.Contains(view, "running") {
 		t.Error("expected the console to render the streamed events")
 	}
@@ -286,7 +286,7 @@ func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
 	if handoffRan || prepared {
 		t.Fatal("the handoff must wait for the user's explicit choice")
 	}
-	if !strings.Contains(m.View(), "Orbit needs your configuration") {
+	if !strings.Contains(m.View().Content, "Orbit needs your configuration") {
 		t.Error("expected the styled configuration prompt")
 	}
 
@@ -317,7 +317,7 @@ func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
 	if m.run.state != runFailed {
 		t.Fatalf("run state = %v, want runFailed", m.run.state)
 	}
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{"Installation stopped", "image-registry", "Could not pull"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("failure view missing %q", want)
@@ -361,7 +361,7 @@ func TestInstallModel_LegacyRefusalFailureScreenOpensGuidedInstaller(t *testing.
 	if m.run.state != runFailed {
 		t.Fatalf("run state = %v, want runFailed — no events means no config prompt", m.run.state)
 	}
-	if !strings.Contains(m.View(), "Open the guided installer") {
+	if !strings.Contains(m.View().Content, "Open the guided installer") {
 		t.Fatal("failure screen must offer the guided installer")
 	}
 
@@ -417,7 +417,7 @@ func TestInstallModel_EnginePrepareFailureReachesFailedWithoutHandoff(t *testing
 	if m.run.state != runFailed {
 		t.Errorf("run state = %v, want runFailed", m.run.state)
 	}
-	if !strings.Contains(m.View(), "could not fetch install.sh") {
+	if !strings.Contains(m.View().Content, "could not fetch install.sh") {
 		t.Error("expected the failure view to carry the error")
 	}
 }
@@ -481,7 +481,7 @@ func TestInstallModel_StaleVolumePreFlightNamesTheVolume(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	updated, _ = updated.Update(m.Init()())
 
-	view := updated.View()
+	view := updated.View().Content
 	for _, want := range []string{"old-tree_orbit-db-data", "old-tree", "Continue anyway"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("pre-flight screen missing %q", want)
@@ -499,7 +499,7 @@ func TestInstallModel_StaleVolumePreFlightOffersNoDestructiveAction(t *testing.T
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	updated, _ = updated.Update(m.Init()())
 
-	view := updated.View()
+	view := updated.View().Content
 	for _, forbidden := range []string{"volume rm", "docker volume", "Copy command", "delete", "Delete"} {
 		if strings.Contains(view, forbidden) {
 			t.Errorf("pre-flight screen must not offer %q", forbidden)
@@ -520,7 +520,7 @@ func TestInstallModel_StaleVolumePreFlightAlwaysLetsYouThrough(t *testing.T) {
 	if got := updated.(InstallModel).state; got != installStateProfile {
 		t.Errorf("Continue anyway left the flow in state %v, want the profile screen", got)
 	}
-	if !strings.Contains(updated.View(), "Choose a deployment profile") {
+	if !strings.Contains(updated.View().Content, "Choose a deployment profile") {
 		t.Error("expected the profile screen after continuing")
 	}
 }

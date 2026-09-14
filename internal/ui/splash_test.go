@@ -6,11 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
-func key(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
-func runeKey(r rune) tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+// A key press is a code plus the modifiers held with it, and Text is the
+// printable character it produced — empty for special keys like Enter.
+func key(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+func runeKey(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
+}
+func ctrlC() tea.KeyPressMsg { return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl} }
 
 // settled skips the arrival, as any keypress would — behaviour and view
 // tests exercise the lit room unless they are about the arrival itself.
@@ -83,11 +88,11 @@ func TestSplashModel_NumberKeyBeyondMenuLengthIsIgnored(t *testing.T) {
 }
 
 func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
-	for _, k := range []tea.KeyType{tea.KeyEsc, tea.KeyCtrlC} {
+	for _, k := range []tea.KeyPressMsg{key(tea.KeyEsc), ctrlC()} {
 		m := settled(NewSplashModel())
 		m.selected = 1
 
-		updated, cmd := m.Update(key(k))
+		updated, cmd := m.Update(k)
 		m = updated.(SplashModel)
 
 		if m.Chosen != "" {
@@ -131,7 +136,7 @@ func TestSplashModel_InitIssuesATickCommand(t *testing.T) {
 
 func TestSplashModel_ViewIsEmptyBeforeFirstWindowSize(t *testing.T) {
 	m := NewSplashModel()
-	if view := m.View(); view != "" {
+	if view := m.View().Content; view != "" {
 		t.Errorf("View() before any WindowSizeMsg = %q, want empty", view)
 	}
 }
@@ -213,14 +218,14 @@ func TestSplashModel_UpdateAvailableMsgIsShownOnScreen(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(SplashModel)
 
-	if strings.Contains(m.View(), "update available") {
+	if strings.Contains(m.View().Content, "update available") {
 		t.Fatal("did not expect an update notice before one is received")
 	}
 
 	updated, _ = m.Update(updateAvailableMsg{version: "v9.9.9"})
 	m = updated.(SplashModel)
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "update available") || !strings.Contains(view, "v9.9.9") {
 		t.Errorf("expected the view to show the update notice, got:\n%s", view)
 	}
@@ -233,7 +238,7 @@ func TestSplashModel_ViewIsEmptyAfterQuitting(t *testing.T) {
 	updated, _ = m.Update(key(tea.KeyEsc))
 	m = updated.(SplashModel)
 
-	if view := m.View(); view != "" {
+	if view := m.View().Content; view != "" {
 		t.Errorf("View() after quitting = %q, want empty", view)
 	}
 }
@@ -298,24 +303,24 @@ func TestSplashModel_ViewShowsIdentityBlockPerState(t *testing.T) {
 	updated, _ := base.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	base = updated.(SplashModel)
 
-	if view := base.View(); !strings.Contains(view, "dormant") {
+	if view := base.View().Content; !strings.Contains(view, "dormant") {
 		t.Error("dormant view must show the status word under the wordmark")
 	}
 
 	m := seedDeployment(base)
-	if view := m.View(); !strings.Contains(view, "mail.example.com") {
+	if view := m.View().Content; !strings.Contains(view, "mail.example.com") {
 		t.Error("unknown-health view must show the FQDN")
 	} else if strings.Contains(view, "alive") || strings.Contains(view, "degraded") {
 		t.Error("unknown-health view must never guess a status word")
 	}
 
 	updated, _ = m.Update(healthResultMsg{healthy: true})
-	if view := updated.(SplashModel).View(); !strings.Contains(view, "alive") {
+	if view := updated.(SplashModel).View().Content; !strings.Contains(view, "alive") {
 		t.Error("alive view must show the status word")
 	}
 
 	updated, _ = m.Update(healthResultMsg{healthy: false})
-	if view := updated.(SplashModel).View(); !strings.Contains(view, "degraded") {
+	if view := updated.(SplashModel).View().Content; !strings.Contains(view, "degraded") {
 		t.Error("degraded view must show the status word")
 	}
 }
@@ -326,7 +331,7 @@ func TestSplashModel_FootIsOneCentredVersionLineAndNothingElse(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	m = updated.(SplashModel)
 
-	view := m.View()
+	view := m.View().Content
 	lines := strings.Split(view, "\n")
 	last := lines[len(lines)-1]
 	if !strings.Contains(last, "orbit-launcher v0.1.0") {
@@ -342,7 +347,7 @@ func TestSplashModel_FootIsOneCentredVersionLineAndNothingElse(t *testing.T) {
 	// With a detected deployment the orbit version joins the same line.
 	m = seedDeployment(m)
 	m.orbitVersion = "v1.2.0"
-	lines = strings.Split(m.View(), "\n")
+	lines = strings.Split(m.View().Content, "\n")
 	last = lines[len(lines)-1]
 	if !strings.Contains(last, "orbit-launcher v0.1.0 · orbit v1.2.0") {
 		t.Errorf("foot must carry both versions once orbit is known, got %q", last)
@@ -357,7 +362,7 @@ func TestSplashModel_AnyKeySkipsTheArrivalAndIsSwallowed(t *testing.T) {
 	if m.introDone {
 		t.Fatal("the arrival should be playing on a fresh animated splash")
 	}
-	if strings.Contains(m.View(), "Install") {
+	if strings.Contains(m.View().Content, "Install") {
 		t.Fatal("the menu must not be visible at the start of the arrival")
 	}
 
@@ -369,7 +374,7 @@ func TestSplashModel_AnyKeySkipsTheArrivalAndIsSwallowed(t *testing.T) {
 	if m.selected != 0 {
 		t.Error("the skipping key must be swallowed, not treated as navigation")
 	}
-	if !strings.Contains(m.View(), "Install") {
+	if !strings.Contains(m.View().Content, "Install") {
 		t.Error("after the skip, the lit room must be fully there")
 	}
 }
@@ -386,7 +391,7 @@ func TestSplashModel_ArrivalFinishesOnItsOwnAfterEnoughTicks(t *testing.T) {
 	if !m.introDone {
 		t.Error("the arrival must conclude by itself")
 	}
-	if !strings.Contains(m.View(), "Install") || !strings.Contains(m.View(), "dormant") {
+	if !strings.Contains(m.View().Content, "Install") || !strings.Contains(m.View().Content, "dormant") {
 		t.Error("the settled view must follow the arrival")
 	}
 }
@@ -395,7 +400,7 @@ func TestSplashModel_NoAnimationNeverPlaysTheArrival(t *testing.T) {
 	m := NewSplashModelNoAnimation()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	m = updated.(SplashModel)
-	if !strings.Contains(m.View(), "Install") {
+	if !strings.Contains(m.View().Content, "Install") {
 		t.Error("reduced motion goes straight to the lit room")
 	}
 }
@@ -407,7 +412,7 @@ func TestSplashModel_ArrivalShowsTheWordsInOrder(t *testing.T) {
 
 	var sawGet, sawInto, sawOrbitAlone bool
 	for i := 0; i < 80; i++ {
-		view := m.View()
+		view := m.View().Content
 		if strings.Contains(view, "Get") {
 			sawGet = true
 		}

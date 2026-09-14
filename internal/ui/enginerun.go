@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -296,7 +296,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		return r.succeed()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return r.handleKey(msg)
 	}
 	return r, nil
@@ -422,8 +422,8 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 	return r, prepareInstallCmd(prepare, r.targetDir)
 }
 
-func (r engineRun) handleKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
+	if isCtrlC(msg) {
 		if r.stream != nil {
 			r.stream.Kill()
 		}
@@ -466,8 +466,8 @@ func (r engineRun) handleKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
-func (r engineRun) handleMenuKey(msg tea.KeyMsg, items int, choose func(int) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
-	switch msg.Type {
+func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items int, choose func(int) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		r.Done = true
 		r.WantsMenu = true

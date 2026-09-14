@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
@@ -27,15 +27,15 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 	}, teatest.WithDuration(2*time.Second))
 
 	for i := 0; i < 3; i++ { // Install, Update, Repair, Remove
-		tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+		tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("This stops Orbit and removes its containers"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // Cancel out of Remove
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // Cancel out of Remove
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -59,14 +59,14 @@ func TestAppModel_SelectingUpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Update
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown}) // Update
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("No Orbit deployment found here"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -83,20 +83,20 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 		return bytes.Contains(out, []byte("Choose a deployment profile")) || bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install is selected by default
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install is selected by default
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Choose a deployment profile"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Standard profile is selected by default
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard profile is selected by default
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Ready to install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // confirm -> profile
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // profile -> quit
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // confirm -> profile
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // profile -> quit
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -118,14 +118,14 @@ func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Update
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown}) // Update
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Pull the latest Orbit and update this deployment"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // Cancel out without ever touching Docker
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // Cancel out without ever touching Docker
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -146,21 +146,21 @@ func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.
 	}, teatest.WithDuration(2*time.Second))
 
 	for i := 0; i < 2; i++ { // Install, Update, Repair
-		tm.Send(tea.KeyMsg{Type: tea.KeyDown})
+		tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Diagnosis clear"))
 	}, teatest.WithDuration(5*time.Second))
 
 	// "Menu" is preselected: back to the splash.
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("O R B I T"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -187,17 +187,17 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Choose a deployment profile"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Standard
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Ready to install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install now -> engine runs -> success
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now -> engine runs -> success
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Get into Orbit")) &&
@@ -206,15 +206,15 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 	}, teatest.WithDuration(2*time.Second))
 
 	// Menu (third item) returns to the splash — the launcher is a loop.
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Repair")) && bytes.Contains(out, []byte("Remove"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -238,19 +238,19 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Standard
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Ready to install"))
 	}, teatest.WithDuration(2*time.Second))
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // Install now
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Get into Orbit"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // Terminal
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown}) // Terminal
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 }

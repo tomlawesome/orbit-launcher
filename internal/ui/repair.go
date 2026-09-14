@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -240,7 +240,7 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repairStreamMsg:
 		return m.handleStream(msg.msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
@@ -398,8 +398,8 @@ func (m RepairModel) planHasDangerous() bool {
 // out.
 var executedMenu = []string{"Diagnose again", "Menu", "Exit"}
 
-func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
 		if m.stream != nil {
 			m.stream.Kill()
 		}
@@ -408,7 +408,7 @@ func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch m.state {
 	case repairPreparing, repairExecuting:
-		if msg.Type == tea.KeyEsc && m.state == repairPreparing {
+		if msg.Code == tea.KeyEsc && m.state == repairPreparing {
 			// The read-only run can be abandoned freely; a running
 			// execution is left to finish — killing a mutation
 			// mid-flight is the one thing more dangerous than running
@@ -477,8 +477,8 @@ func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleMenu is the shared stacked-menu key handling, dispatching by
 // label so contextual menus can't drift out of sync with selection
 // indexes.
-func (m RepairModel) handleMenu(msg tea.KeyMsg, items []string, choose func(string) (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func(string) (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		m.Done = true
 		m.WantsMenu = true
@@ -499,8 +499,8 @@ func (m RepairModel) handleMenu(msg tea.KeyMsg, items []string, choose func(stri
 // grammar as the in-console configuration prompts. Esc abandons the
 // session; the engine treats closed input as its documented abort and
 // changes nothing.
-func (m RepairModel) handleRotateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEsc {
+func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
 		if m.stdin != nil {
 			m.stdin.Close()
 			m.stdin = nil
@@ -515,9 +515,7 @@ func (m RepairModel) handleRotateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.rotPrompt == nil {
 		return m, nil
 	}
-	switch msg.Type {
-	case tea.KeyRunes:
-		m.rotInput = append(m.rotInput, msg.Runes...)
+	switch msg.Code {
 	case tea.KeySpace:
 		m.rotInput = append(m.rotInput, ' ')
 	case tea.KeyBackspace:
@@ -530,12 +528,19 @@ func (m RepairModel) handleRotateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rotPrompt = nil
 		m.rotInput = nil
+	default:
+		// See engineRun.handleConfigKey: Text is the printable character
+		// and empty for every special key.
+		m.rotInput = append(m.rotInput, []rune(msg.Text)...)
 	}
 	return m, nil
 }
 
 // View implements tea.Model.
-func (m RepairModel) View() string {
+func (m RepairModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m RepairModel) view() string {
 	if m.width == 0 {
 		return ""
 	}

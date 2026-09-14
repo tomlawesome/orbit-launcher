@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // fakeRepairStream runs a real subprocess that speaks the repair
@@ -43,8 +44,8 @@ exit 4`)
 	}, teatest.WithDuration(5*time.Second))
 
 	// "Exit" (one down from "Menu") quits cleanly.
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -61,8 +62,8 @@ func TestRepairModel_TeaTest_HealthyDiagnosis(t *testing.T) {
 			!bytes.Contains(out, []byte("repair actions arrive"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -79,8 +80,8 @@ func TestRepairModel_UnavailableOrbitLine(t *testing.T) {
 		return bytes.Contains(out, []byte("Diagnosis needs a newer Orbit"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestRepairModel_MenuOutcomeWantsMenu(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
 	m.state = repairDiagnosis
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // "Menu" is preselected
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // "Menu" is preselected
 	got := updated.(RepairModel)
 	if !got.Done || !got.WantsMenu {
 		t.Fatalf("expected Done+WantsMenu after choosing Menu, got Done=%v WantsMenu=%v", got.Done, got.WantsMenu)
@@ -109,8 +110,8 @@ exit 5`)
 		return bytes.Contains(out, []byte("No Orbit installation here"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -140,8 +141,8 @@ exit 3`)
 			bytes.Contains(out, []byte("a safe plan is ready"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -156,8 +157,8 @@ func TestRepairModel_TeaTest_PlanEmptyIsClear(t *testing.T) {
 		return bytes.Contains(out, []byte("Diagnosis clear"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -185,8 +186,8 @@ exit 3`))
 			bytes.Contains(out, []byte("repair actions arrive with a later Orbit release"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -223,26 +224,32 @@ func TestRepairModel_TeaTest_SafeExecutionRunsAndShowsAfterPicture(t *testing.T)
 	m.prepare = modalRepairStream(safePlanStream, safeExecuteStream)
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
 
+	// The action's sentence is asserted here, on the plan screen, because
+	// it is written here: the renderer sends each frame as a cell diff, so
+	// a run of text that the next screen keeps in the same columns is not
+	// sent again. On the after-picture only its glyph changes (· to ✓),
+	// which is what the second wait below looks for.
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Repairs proposed")) &&
+			bytes.Contains(out, []byte("restore safe permissions")) &&
 			bytes.Contains(out, []byte("Run the safe repairs"))
 	}, teatest.WithDuration(5*time.Second))
 
 	// "Run the safe repairs" is preselected: the plan proposed it.
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Repairs applied")) &&
-			bytes.Contains(out, []byte("restore safe permissions")) &&
+			bytes.Contains(out, []byte(style.SymbolSuccess)) &&
 			bytes.Contains(out, []byte("1 done · 0 failed")) &&
 			bytes.Contains(out, []byte("diagnosis clear after repairs")) &&
 			bytes.Contains(out, []byte("Diagnose again"))
 	}, teatest.WithDuration(5*time.Second))
 
 	// Exit cleanly (Diagnose again, Menu, Exit).
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -262,8 +269,8 @@ exit 4`)
 			!bytes.Contains(out, []byte("Run the safe repairs"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -305,26 +312,33 @@ exit 3`)
 	}, teatest.WithDuration(5*time.Second))
 
 	// The rotation entry is preselected (only executable action).
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("The action word")) &&
 			bytes.Contains(out, []byte("type rotate to proceed"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Type("rotate")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Checkpoint passphrase"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Type("orbit-checkpoint-pass")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// "Confirm the passphrase" is centred over the same columns as
+	// "Checkpoint passphrase" before it, and shares its first letter and
+	// its last word with it, so the cell diff only ever carries the middle
+	// — see the comment in
+	// TestRepairModel_TeaTest_SafeExecutionRunsAndShowsAfterPicture. The
+	// proof that both prompts were answered is the completed run waited
+	// for below; this is only the synchronisation before typing.
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Confirm the passphrase"))
+		return bytes.Contains(out, []byte("onfirm the"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Type("orbit-checkpoint-pass")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Repairs applied")) &&
 			bytes.Contains(out, []byte("rotate database credentials")) &&
@@ -337,9 +351,9 @@ exit 3`)
 		t.Fatal("the checkpoint passphrase was echoed to the screen")
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -359,19 +373,19 @@ exit 3`)
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Rotate database credentials"))
 	}, teatest.WithDuration(5*time.Second))
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("The action word"))
 	}, teatest.WithDuration(5*time.Second))
 
 	// Esc: closed stdin is the engine's documented abort — zero
 	// mutation — and the plan screen returns.
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Repairs proposed"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}

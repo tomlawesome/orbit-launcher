@@ -3,7 +3,7 @@ package ui
 import (
 	"sync/atomic"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // ProgramSender hands a running program's Send method to code that has
