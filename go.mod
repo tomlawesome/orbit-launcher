@@ -1,6 +1,6 @@
 module github.com/tomlawesome/orbit-launcher
 
-go 1.26.8
+go 1.27.1
 
 require (
 	charm.land/bubbletea/v2 v2.0.9

@@ -55,11 +55,11 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81
+  GO_IMAGE: golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
-  GO_VERSION: "1.26.8"
-  GO_SHA256: d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
+  GO_VERSION: "1.27.1"
+  GO_SHA256: 63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
   # Ships the exact Chromium that test/visual/package-lock.json's
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
@@ -68,11 +68,11 @@ variables:
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
-  UBUNTU_IMAGE: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+  UBUNTU_IMAGE: ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
   # Same pins as the workflows.
-  STATICCHECK_VERSION: v0.7.0
+  STATICCHECK_VERSION: v0.8.1
   # The `deps` job's two tools.
-  GOVULNCHECK_VERSION: v1.7.0
+  GOVULNCHECK_VERSION: v1.8.0
   GO_LICENSES_VERSION: v2.0.1
   BATS_VERSION: "1.14.0"
   BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
