@@ -6,7 +6,7 @@ require (
 	github.com/Netflix/go-expect v0.0.0-20220104043353-73e0943537d2
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/charmbracelet/x/exp/teatest v0.0.0-20260906004030-3986e9119cf9
+	github.com/charmbracelet/x/exp/teatest v0.0.0-20260913004009-c615ff2f7805
 	github.com/creack/pty v1.1.24
 )
 
