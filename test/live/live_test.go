@@ -13,6 +13,8 @@
 package live
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -511,6 +513,15 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// install.sh handoff contract, which the animation only ever
 		// added nondeterminism to.
 		"ORBIT_LAUNCHER_NO_ANIMATION=1",
+		// The Compose project this run owns, and the whole of its
+		// isolation from any other Orbit on the daemon — see
+		// liveProjectName. It reaches the engine because nothing
+		// scrubs it on the way: deploy.BuildInstallCommand never sets
+		// cmd.Env, and the two commands that do set it
+		// (deploy/configure.go, deploy/repair.go) append to
+		// os.Environ() rather than replacing it. install.sh then reads
+		// COMPOSE_PROJECT_NAME itself and records it in .env-orbit.
+		"COMPOSE_PROJECT_NAME="+liveProjectName(dir),
 		// Prove the path, don't hope for it. Until orbit's own CI served
 		// the whole configuration tree, deploy.FetchConfigTree 404'd here
 		// and the launcher quietly switched to the terminal handoff — a
@@ -615,15 +626,49 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 // orbit repository, checked.
 const inConsolePromptMarker = "the https:// address Orbit will live at"
 
+// liveProjectName is the Compose project a run of this suite owns. The
+// test hands it to the launcher through the environment (see startLive),
+// install.sh reads it and persists it into the deployment's .env-orbit,
+// and every assertion and cleanup below then reads it back from there.
+//
+// Isolation comes from this explicit name now, not from the directory.
+// Before Orbit #999/#1043 a fresh install took its project from the
+// target directory's basename, so t.TempDir() isolated each run for
+// free. docker-compose.yml's own `name: orbit` wins instead now — so
+// without a name of its own, this suite would share one Compose project
+// with any real Orbit on the host, and its cleanup (`down -v`) would
+// destroy that deployment's containers and data volumes. On a developer
+// machine that is someone's live database.
+//
+// Derived from dir rather than drawn at random because a test's Install
+// and Remove halves start separate launcher processes against the same
+// target and have to agree on the answer. t.TempDir() is unique per test
+// per run, which is what makes the result unique — so two runs on one
+// daemon stay out of each other's way, as they did before.
+func liveProjectName(dir string) string {
+	sum := sha256.Sum256([]byte(dir))
+	return "orbit-live-" + hex.EncodeToString(sum[:4])
+}
+
 // composeProjectName reports the Compose project a deployment in dir
-// actually uses, which since Orbit #999/#1043 is no longer anything this
-// test can derive from the directory it installed into. The order that
-// matters here is: an explicit COMPOSE_PROJECT_NAME in .env-orbit, then
-// docker-compose.yml's own top-level `name: orbit`, and only then the
-// install directory's basename — reached only when there is no usable
-// compose file, which a real install never is. So .env-orbit is the one
-// file that can answer for this deployment, and "orbit" is the fallback
-// because that is what Orbit's bundled compose file declares.
+// actually uses, read from the deployment itself rather than guessed.
+// For a run of this suite that is liveProjectName's value, which
+// install.sh recorded in .env-orbit.
+//
+// The precedence it mirrors: an explicit COMPOSE_PROJECT_NAME (in
+// .env-orbit or the environment), then docker-compose.yml's own
+// top-level `name: orbit`, and only then the install directory's
+// basename — reached only when there is no usable compose file, which a
+// real install never is. "orbit" is therefore the honest fallback for a
+// directory with no .env-orbit; it is not what this suite's own runs
+// should ever return.
+//
+// Never scope a filter or a sweep with this value unless it has been
+// checked against liveProjectName first. A rolled-back install leaves
+// no .env-orbit, so the fallback is reached — and "orbit" is exactly
+// the project a real Orbit on the host uses. A live run of this suite
+// did precisely that and its "no containers left" assertion matched
+// the host's own running Orbit.
 func composeProjectName(dir string) string {
 	const declared = "orbit"
 	data, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
@@ -642,23 +687,41 @@ func composeProjectName(dir string) string {
 	return declared
 }
 
-// dockerComposeDown tears down whatever deployment lives in dir, using
-// the same shape internal/deploy's standDownCommand builds (plus -v and
-// --remove-orphans, because this is a test sweep and not the reversible
-// Remove): Compose resolves the project itself, under the precedence
-// above. Passing -p would instead assert a name this test had to guess.
+// dockerComposeDown tears down the deployment this run installed in
+// dir, using the same shape internal/deploy's standDownCommand builds
+// (plus -v and --remove-orphans, because this is a test sweep and not
+// the reversible Remove), so it sweeps exactly what was installed and
+// nothing else.
 //
 // The error is logged rather than dropped — a cleanup that silently
 // fails leaves containers and volumes on the runner for the next run to
 // trip over, and nothing in the transcript says why.
 func dockerComposeDown(t *testing.T, dir string) {
 	t.Helper()
-	out, err := exec.Command("docker", "compose",
-		"--project-directory", dir,
-		"--env-file", filepath.Join(dir, ".env-orbit"),
-		"down", "-v", "--remove-orphans").CombinedOutput()
-	if err != nil {
-		t.Logf("cleanup: docker compose down in %s failed: %v\n%s", dir, err, out)
+	project := liveProjectName(dir)
+	envFile := filepath.Join(dir, ".env-orbit")
+
+	args := []string{"compose", "--project-directory", dir, "--env-file", envFile}
+	if _, err := os.Stat(envFile); err != nil {
+		// A failed install rolls its own target back, so there may be
+		// no .env-orbit and no compose file left to sweep from.
+		// Compose can still remove a project by the labels it stamped
+		// on what it created, which collects whatever a dead compose
+		// phase left running.
+		args = []string{"compose", "-p", project}
+	}
+	args = append(args, "down", "-v", "--remove-orphans")
+
+	cmd := exec.Command("docker", args...)
+	// This command carries -v, so it must not be able to resolve to any
+	// project but this run's. A COMPOSE_PROJECT_NAME in the environment
+	// outranks both .env-orbit and the compose file's own `name:`
+	// (checked against docker compose itself), so even a deployment
+	// that somehow recorded a different project cannot redirect a
+	// volume-deleting sweep onto a real Orbit on the host.
+	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+project)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("cleanup: docker compose down for project %s in %s failed: %v\n%s", project, dir, err, out)
 	}
 }
 
@@ -679,16 +742,12 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 
 	binPath := binaryPath(t)
 	dir := t.TempDir()
-	// The Compose project is not this directory's name. Since Orbit
-	// #999/#1043 a fresh install takes docker-compose.yml's own
-	// `name: orbit` unless .env-orbit or the environment says
-	// otherwise, and the basename is reached only when there is no
-	// usable compose file — so t.TempDir() no longer isolates anything.
-	//
-	// This suite therefore cannot run twice concurrently against one
-	// Docker daemon: both runs address the same Compose project, and
-	// either one's cleanup tears down the other's containers and
-	// volumes. One run at a time, per daemon.
+	// This run's deployment is isolated by the explicit project name
+	// startLive gives it (liveProjectName), not by this directory:
+	// since Orbit #999/#1043 the directory's basename no longer names
+	// the Compose project, and without a name of its own this install —
+	// and the sweep below — would land on whatever real Orbit the host
+	// already has.
 	t.Cleanup(func() { dockerComposeDown(t, dir) })
 
 	appURL := fmt.Sprintf("https://orbit-live-test-%d.internal", time.Now().UnixNano())
@@ -810,6 +869,13 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// filter on the temp directory's name would match nothing and
 		// pass whatever Remove did.
 		project := composeProjectName(dir)
+		// If this ever stops matching, the install ignored the project
+		// name it was given and this run has been operating on some
+		// other Orbit — worth failing loudly, because the cleanup that
+		// follows carries -v.
+		if want := liveProjectName(dir); project != want {
+			t.Fatalf("deployment recorded Compose project %q, want %q: this run was not isolated", project, want)
+		}
 		out, err := exec.Command("docker", "ps", "-a",
 			"--filter", "label=com.docker.compose.project="+project,
 			"--format", "{{.Names}}").CombinedOutput()
@@ -874,7 +940,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 
 	binPath := binaryPath(t)
 	dir := t.TempDir()
-	// Same shared-project caveat as the happy path above.
+	// Isolated by its own project name, same as the happy path above.
 	t.Cleanup(func() { dockerComposeDown(t, dir) })
 
 	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
@@ -922,8 +988,14 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// Nothing half-changed: no containers left running for this
 	// project. (Stopped/created remnants are compose implementation
 	// detail; running anything would be the real lie.)
+	// liveProjectName, deliberately, not composeProjectName: this
+	// install was meant to fail, and install.sh rolls its target back,
+	// so there is usually no .env-orbit left to read. The reader would
+	// fall back to "orbit" and this assertion would then report the
+	// host's own Orbit as wreckage from a failed install — which is
+	// what it did on the first live run of this file.
 	psOut, err := exec.Command("docker", "ps",
-		"--filter", "label=com.docker.compose.project="+composeProjectName(dir),
+		"--filter", "label=com.docker.compose.project="+liveProjectName(dir),
 		"--format", "{{.Names}}").CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker ps: %v\n%s", err, psOut)
