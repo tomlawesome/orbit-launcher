@@ -316,7 +316,13 @@ func (m InstallModel) viewStaleVolume() string {
 	for _, v := range m.staleVolumes {
 		line := v.Name
 		if v.Project != "" {
-			line += "  ·  from the " + v.Project + " deployment"
+			// Named as the Compose label it is, not as "from the
+			// <project> deployment": since Orbit #999/#1043 every
+			// install declares the same project, so that phrasing
+			// read as if it identified one install when it never
+			// could. The directory sentence below is what actually
+			// tells them apart.
+			line += "  ·  Compose project " + v.Project
 		}
 		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(line))
 	}
