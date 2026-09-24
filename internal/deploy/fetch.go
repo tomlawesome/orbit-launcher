@@ -51,7 +51,7 @@ var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
 //
 // ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH points at a local install.sh instead
 // and takes priority over both the default URL and the override above: no
-// download happens at all. This is how scripts/get-orbit-launcher.sh hands
+// download happens at all. This is how Orbit's scripts/get-orbit.sh hands
 // the launcher the exact copy it already fetched and verified against
 // Orbit's signed manifest (ADR-0031) — a real install run through that
 // script always has this set, and FetchInstallScript never re-fetches
