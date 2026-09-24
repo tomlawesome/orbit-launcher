@@ -31,7 +31,7 @@ stages:
 
 workflow:
   rules:
-    # Tags publish nothing here; the release lane is GitHub's.
+    # Tags publish nothing here: Orbit builds and ships a pinned tag (#171).
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
