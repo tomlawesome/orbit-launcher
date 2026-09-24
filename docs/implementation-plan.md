@@ -459,7 +459,13 @@ keep working. Two things follow from that:
   not a pinned revision. `install.sh` itself resolves every other asset
   it needs (compose files, `configure.sh`, `configuration.sh`) from the
   exact source revision recorded in the Docker image's own OCI labels,
-  so fetching only this one file is sufficient.
+  so fetching only this one file is sufficient. The one exception is
+  `ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH`: when set, `FetchInstallScript`
+  reads that local file instead of downloading anything. It isn't
+  vendoring — it's how `scripts/get-orbit-launcher.sh` hands over the
+  exact copy it already fetched and verified against Orbit's signed
+  manifest (ADR-0031), so the launcher doesn't re-fetch something
+  already checked.
 - **No config collection, and no field knowledge at all.** Earlier
   drafts of Install had orbit-launcher collect `APP_URL`/OIDC fields
   itself via Go text inputs and write `.env-orbit` directly, running

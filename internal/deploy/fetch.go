@@ -48,12 +48,38 @@ var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
 // only so CI can run the real install flow against orbit's develop/preview
 // branches to catch drift before it reaches main; a real install never has
 // this set, so it always runs the same stable script a person would get.
+//
+// ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH points at a local install.sh instead
+// and takes priority over both the default URL and the override above: no
+// download happens at all. This is how scripts/get-orbit-launcher.sh hands
+// the launcher the exact copy it already fetched and verified against
+// Orbit's signed manifest (ADR-0031) — a real install run through that
+// script always has this set, and FetchInstallScript never re-fetches
+// something already checked.
 func FetchInstallScript(ctx context.Context) ([]byte, error) {
+	if path := os.Getenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH"); path != "" {
+		return readInstallScriptFile(path)
+	}
 	url := installScriptURL
 	if override := os.Getenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL"); override != "" {
 		url = override
 	}
 	return fetchInstallScript(ctx, url)
+}
+
+// readInstallScriptFile loads install.sh from a local path instead of
+// downloading it. It refuses clearly rather than silently falling back to
+// a download: a caller that set the path is trusting this exact file, not
+// asking for best-effort.
+func readInstallScriptFile(path string) ([]byte, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read install script from ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH=%s: %w", path, err)
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("install script at ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH=%s is empty", path)
+	}
+	return body, nil
 }
 
 // fetchError words a transport failure for the failed screen. A deadline
