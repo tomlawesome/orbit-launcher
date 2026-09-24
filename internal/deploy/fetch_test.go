@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +102,92 @@ func TestFetchInstallScript_URLOverrideRedirectsAwayFromOrbitMain(t *testing.T) 
 	}
 	if !strings.Contains(string(body), "from-override") {
 		t.Errorf("body = %q, want the overridden server's content, not orbit's real main branch", body)
+	}
+}
+
+func TestFetchInstallScript_PathOverrideSkipsTheNetworkEntirely(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no HTTP request should be made when ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH is set")
+	}))
+	defer srv.Close()
+
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\necho from-local-file\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+
+	body, err := FetchInstallScript(context.Background())
+	if err != nil {
+		t.Fatalf("FetchInstallScript: %v", err)
+	}
+	if !strings.Contains(string(body), "from-local-file") {
+		t.Errorf("body = %q, want the local file's content", body)
+	}
+}
+
+func TestFetchInstallScript_PathOverrideRefusesAMissingFile(t *testing.T) {
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", filepath.Join(t.TempDir(), "does-not-exist.sh"))
+
+	_, err := FetchInstallScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for a missing ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH")
+	}
+}
+
+func TestFetchInstallScript_PathOverrideRefusesAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\n"), 0o000); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block reads")
+	}
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+
+	_, err := FetchInstallScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an unreadable ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH")
+	}
+}
+
+func TestFetchInstallScript_PathOverrideRefusesAnEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+
+	_, err := FetchInstallScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an empty ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH")
+	}
+}
+
+func TestFetchInstallScript_UnsetPathKeepsDownloading(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Write([]byte("#!/usr/bin/env bash\necho from-network\n"))
+	}))
+	defer srv.Close()
+
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+
+	body, err := FetchInstallScript(context.Background())
+	if err != nil {
+		t.Fatalf("FetchInstallScript: %v", err)
+	}
+	if !hit {
+		t.Error("expected the launcher to fall back to downloading when the path override is unset")
+	}
+	if !strings.Contains(string(body), "from-network") {
+		t.Errorf("body = %q, want the downloaded content", body)
 	}
 }
 
