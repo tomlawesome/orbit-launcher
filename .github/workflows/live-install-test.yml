@@ -2,13 +2,13 @@ name: Live install/remove test (on demand)
 
 # The real virtualized live test — see docs/implementation-plan.md
 # section 3.5 — run on demand against a pull request, building
-# orbit-launcher fresh from that PR's source (not a published
-# artifact; that authoritative run happens as part of
-# release-preview.yml, right after a preview build actually publishes,
-# testing that exact artifact via the real bootstrap script). Opt-in
-# via the run-live-matrix label, since it's slow — real image pulls,
-# real health checks, minutes not seconds — and shouldn't burn CI time
-# on every commit.
+# orbit-launcher fresh from that PR's source. This repo no longer
+# publishes launcher binaries of its own (#171): Orbit builds, signs and
+# ships the launcher, so there is no separately-published artifact to
+# test here — only the freshly-built one. Opt-in via the
+# run-live-matrix label, since it's slow — real image pulls, real
+# health checks, minutes not seconds — and shouldn't burn CI time on
+# every commit.
 #
 # Runs on ubuntu-latest only. A debian:12 container leg was tried and
 # dropped (see issue #59): docker-compose.yml's bind-mounted volumes

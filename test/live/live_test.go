@@ -45,10 +45,10 @@ import (
 const testOIDCIssuer = "https://accounts.google.com"
 
 // binaryPath resolves the binary under test. Set
-// ORBIT_LAUNCHER_LIVE_BINARY to test a specific artifact (the CI job
-// sets this to the real, just-downloaded preview-latest binary, fetched
-// via the real bootstrap script — see the workflow); unset, it builds
-// fresh from source, which is what local runs and PR-triggered CI use.
+// ORBIT_LAUNCHER_LIVE_BINARY to test a specific pre-built artifact;
+// unset, it builds fresh from source, which is what local runs and every
+// CI job now use — this repo no longer publishes launcher binaries of
+// its own (#171), so there is nothing else to point it at.
 func binaryPath(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("ORBIT_LAUNCHER_LIVE_BINARY"); p != "" {
