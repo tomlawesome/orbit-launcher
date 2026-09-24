@@ -5,16 +5,38 @@
 # orbit-launcher itself, only once a person commits at a flow's Final
 # Review screen.
 #
+# This repo no longer publishes launcher binaries (#171, ai/orbit#1107
+# ADR-0031): Orbit builds, signs and ships the launcher alongside itself,
+# so everyone except orbit-launcher developers should use Orbit's own
+# installer instead. Set ORBIT_LAUNCHER_DEVELOPER=1 to keep using this
+# script (e.g. to test a build against a specific tag while developing
+# orbit-launcher itself).
+#
 # Usage: curl -fsSL <raw-url>/scripts/get-orbit-launcher.sh | bash
 set -Eeuo pipefail
-
-repository="${ORBIT_LAUNCHER_REPOSITORY:-tomlawesome/orbit-launcher}"
-version="${ORBIT_LAUNCHER_VERSION:-latest}"
 
 fail() {
   echo "get-orbit-launcher: $1" >&2
   exit 1
 }
+
+if [[ "${ORBIT_LAUNCHER_DEVELOPER:-}" != "1" ]]; then
+  cat >&2 <<'MSG'
+get-orbit-launcher: this script is for orbit-launcher developers only.
+orbit-launcher no longer publishes its own releases — Orbit builds,
+signs and ships it. To install Orbit (and the matching launcher), run
+Orbit's installer instead:
+
+  curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash
+
+If you're developing orbit-launcher itself and need this script's old
+behaviour, set ORBIT_LAUNCHER_DEVELOPER=1.
+MSG
+  exit 1
+fi
+
+repository="${ORBIT_LAUNCHER_REPOSITORY:-tomlawesome/orbit-launcher}"
+version="${ORBIT_LAUNCHER_VERSION:-latest}"
 
 [[ "$(uname -s)" == "Linux" ]] || fail "orbit-launcher runs on Linux only (this manages the server it's installed on, not a remote desktop tool)."
 
