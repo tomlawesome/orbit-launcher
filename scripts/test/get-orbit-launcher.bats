@@ -61,6 +61,19 @@ STUB
   chmod +x "$fake_bin/curl"
 }
 
+@test "without ORBIT_LAUNCHER_DEVELOPER, points at Orbit's installer and exits non-zero" {
+  run env PATH="/usr/bin:/bin" bash "$script"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"get-orbit.sh"* ]]
+  [[ "$output" != *"fake-orbit-launcher-ran"* ]]
+}
+
+@test "ORBIT_LAUNCHER_DEVELOPER=0 is not developer mode" {
+  run env ORBIT_LAUNCHER_DEVELOPER=0 PATH="/usr/bin:/bin" bash "$script"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"get-orbit.sh"* ]]
+}
+
 @test "rejects a non-Linux platform before any network call" {
   cat > "$fake_bin/uname" <<'STUB'
 #!/usr/bin/env bash
@@ -68,7 +81,7 @@ STUB
 STUB
   chmod +x "$fake_bin/uname"
 
-  run env PATH="$fake_bin:$PATH" bash "$script"
+  run env ORBIT_LAUNCHER_DEVELOPER=1 PATH="$fake_bin:$PATH" bash "$script"
   [ "$status" -ne 0 ]
   [[ "$output" == *"Linux only"* ]]
 }
@@ -80,21 +93,21 @@ STUB
 STUB
   chmod +x "$fake_bin/uname"
 
-  run env PATH="$fake_bin:$PATH" bash "$script"
+  run env ORBIT_LAUNCHER_DEVELOPER=1 PATH="$fake_bin:$PATH" bash "$script"
   [ "$status" -ne 0 ]
   [[ "$output" == *"unsupported architecture"* ]]
 }
 
 @test "downloads, verifies and execs into the real binary on a checksum match" {
   stub_curl "$fixtures/checksums-good.txt"
-  run env PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script" --version
+  run env ORBIT_LAUNCHER_DEVELOPER=1 PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"fake-orbit-launcher-ran: --version"* ]]
 }
 
 @test "refuses to run the binary on a checksum mismatch" {
   stub_curl "$fixtures/checksums-bad.txt"
-  run env PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script"
+  run env ORBIT_LAUNCHER_DEVELOPER=1 PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script"
   [ "$status" -ne 0 ]
   [[ "$output" == *"checksum mismatch"* ]]
   [[ "$output" != *"fake-orbit-launcher-ran"* ]]
@@ -102,7 +115,7 @@ STUB
 
 @test "refuses to run the binary when no checksum entry is found" {
   stub_curl "$fixtures/checksums-missing.txt"
-  run env PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script"
+  run env ORBIT_LAUNCHER_DEVELOPER=1 PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no checksum entry found"* ]]
   [[ "$output" != *"fake-orbit-launcher-ran"* ]]
@@ -111,7 +124,7 @@ STUB
 @test "cleans up its scratch directory after a successful run" {
   stub_curl "$fixtures/checksums-good.txt"
   before="$(find /tmp -maxdepth 1 -name 'tmp.*' 2>/dev/null | wc -l)"
-  run env PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script"
+  run env ORBIT_LAUNCHER_DEVELOPER=1 PATH="$fake_bin:/usr/bin:/bin" HOME="$work" bash "$script"
   after="$(find /tmp -maxdepth 1 -name 'tmp.*' 2>/dev/null | wc -l)"
   [ "$status" -eq 0 ]
   [ "$before" -eq "$after" ]
