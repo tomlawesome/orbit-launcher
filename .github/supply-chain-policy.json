@@ -15,14 +15,6 @@
   ],
   "actions": [
     {
-      "name": "actions/attest-build-provenance",
-      "version": "v4.2.2",
-      "commit": "4d101475d8b20a2381f78447822ac1eab6504dd8",
-      "license": "MIT",
-      "source": "https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2",
-      "updateOwner": "orbit-launcher maintainers"
-    },
-    {
       "name": "actions/checkout",
       "version": "v7.0.1",
       "commit": "3d3c42e5aac5ba805825da76410c181273ba90b1",
