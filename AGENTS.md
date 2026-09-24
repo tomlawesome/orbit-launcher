@@ -41,9 +41,11 @@ Since 2026-09-04 (#140) the project lives at
 requests, protected branches and the CI gate are there. Remote `gitlab`.
 
 GitHub `tomlawesome/orbit-launcher` (remote `origin`) is a push mirror
-GitLab updates after every merge, plus the public download source: GitHub
-Releases, `promote.yml`, `release-preview.yml` and CodeQL stay there.
-Nothing is filed, pushed or merged on GitHub by hand.
+GitLab updates after every merge, plus where CodeQL stays. Since #171
+(ai/orbit#1107, ADR-0031) this repo is not a download source at all:
+Orbit builds, signs and ships the launcher alongside itself, and this
+repo keeps only source, tags and CI. Nothing is filed, pushed or merged
+on GitHub by hand.
 
 - Mirror identity: a GitLab-generated SSH key held as a write-access deploy
   key on GitHub; "Deploy keys" is the only bypass on GitHub's rulesets.
