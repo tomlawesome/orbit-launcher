@@ -41,9 +41,11 @@ Since 2026-09-04 (#140) the project lives at
 requests, protected branches and the CI gate are there. Remote `gitlab`.
 
 GitHub `tomlawesome/orbit-launcher` (remote `origin`) is a push mirror
-GitLab updates after every merge, plus the public download source: GitHub
-Releases, `promote.yml`, `release-preview.yml` and CodeQL stay there.
-Nothing is filed, pushed or merged on GitHub by hand.
+GitLab updates after every merge, plus where CodeQL stays. Since #171
+(ai/orbit#1107, ADR-0031) this repo is not a download source at all:
+Orbit builds, signs and ships the launcher alongside itself, and this
+repo keeps only source, tags and CI. Nothing is filed, pushed or merged
+on GitHub by hand.
 
 - Mirror identity: a GitLab-generated SSH key held as a write-access deploy
   key on GitHub; "Deploy keys" is the only bypass on GitHub's rulesets.
@@ -72,7 +74,7 @@ Observed convention is **Conventional Commits** with an issue reference:
 
 ## CI
 
-Seven workflows, several of which are unusually expensive to break:
+Five workflows, several of which are unusually expensive to break:
 
 - `ci.yml`, `codeql.yml` — the standard gates (dependency review moved to
   the GitLab `deps` job when merges left GitHub; see `.gitlab-ci.yml`)
@@ -80,7 +82,10 @@ Seven workflows, several of which are unusually expensive to break:
 - `live-install-test.yml` — a real install, end to end
 - `visual-regression.yml` — the TUI is a visual product; screenshots are
   part of the contract
-- `release-preview.yml`, `promote.yml` — the release lane
+
+Since #171 (ai/orbit#1107, ADR-0031) this repo no longer publishes
+runnable launcher binaries — Orbit builds, signs and ships the launcher
+alongside itself. There is no release lane here any more.
 
 `.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
 diff is documentation only; `fast` and `deps` then skip themselves when it is,

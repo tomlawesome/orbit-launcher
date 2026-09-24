@@ -11,29 +11,23 @@ orbit-launcher is a proper TUI application instead.
 
 ## Quickstart
 
-No stable release has shipped yet (see [`docs/releasing.md`](docs/releasing.md)
-for what that means and how one gets there), so the bootstrap script
-isn't on `main` yet either — it only exists on `dev`/`preview` so
-far. Until v1.0.0, fetch it from `dev` and pin to the current
-preview build explicitly:
+orbit-launcher isn't installed from this repo. Orbit builds, signs and
+ships it alongside itself, so the way to get both is Orbit's own
+installer:
 
 ```
-ORBIT_LAUNCHER_VERSION=preview-latest curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit-launcher/dev/scripts/get-orbit-launcher.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash
 ```
 
-Once v1.0.0 ships, the permanent quickstart becomes:
+This repo keeps orbit-launcher's source, version tags and CI tests (see
+[`docs/releasing.md`](docs/releasing.md)) — it doesn't publish a
+downloadable binary of its own. `scripts/get-orbit-launcher.sh` here is
+for orbit-launcher developers only (`ORBIT_LAUNCHER_DEVELOPER=1`).
 
-```
-curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit-launcher/main/scripts/get-orbit-launcher.sh | bash
-```
-
-Either way, this downloads the right binary for your machine (amd64 or
-arm64), verifies its checksum, and runs it — nothing else is installed.
-Run it again any time to re-launch; it caches the binary at
-`~/.cache/orbit-launcher`. From the menu: **Install** deploys Orbit for
-the first time, **Update** pulls the latest image into an existing
-deployment, **Remove** stands the containers down, **Repair** isn't
-built yet.
+Once installed, run orbit-launcher again any time to re-launch it. From
+the menu: **Install** deploys Orbit for the first time, **Update** pulls
+the latest image into an existing deployment, **Remove** stands the
+containers down, **Repair** isn't built yet.
 
 On launch, orbit-launcher makes one non-blocking check against GitHub
 for a newer stable release, showing a small notice on the splash
