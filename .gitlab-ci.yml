@@ -58,7 +58,7 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
+  GO_IMAGE: golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
   GO_VERSION: "1.27.1"
@@ -71,7 +71,7 @@ variables:
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
-  UBUNTU_IMAGE: ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
+  UBUNTU_IMAGE: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
   # Same pins as the workflows.
   STATICCHECK_VERSION: v0.8.1
   # The `deps` job's two tools.
@@ -567,7 +567,7 @@ renovate:
   # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
   # gigabytes of pull on a shared runner every week.
   image:
-    name: renovate/renovate:44.83.2@sha256:c1cb952b2e14a112d0d0c61987a10f60a2626fe9b9c1504436be46a17bd123bc
+    name: renovate/renovate:44.115.13@sha256:0c04185c9e7ea5284da22ea0b2a2c88dcd3687badd8feb6c71691659b380df9b
     pull_policy: if-not-present
   timeout: 1h
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
