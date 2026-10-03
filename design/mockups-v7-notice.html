@@ -52,7 +52,7 @@
 <section>
   <h2><span>a</span> First view — 80×26, the house minimum</h2>
   <div class="term scene" id="scene-a"><pre class="cells" id="n-a" role="img"
-    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then prose whose last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 0:38 at its end, the accept choice drawn faint, and the caret on Go back."></pre></div>
+    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then prose with three phrases in bold bright ink; the last visible row is faint and cut mid-sentence, its emphasised phrase Never expose Orbit directly to the internet still bold one step brighter. Pinned beneath: a thin timer line just starting to fill gold with 0:38 at its end, the accept choice drawn faint, and the caret on Go back."></pre></div>
   <div class="cap">Header and the bottom region (timer, two choices) are pinned; only the prose between
     them scrolls. The last visible prose row steps down to faint and is cut mid-sentence: the sign
     there is more. The countdown is already running; Go back carries the caret; the accept row is
@@ -179,6 +179,18 @@
     (scene f). Timer first: the line vanishes while they are still reading; accept brightens the
     moment the last line scrolls in. Either way the caret is on Go back until they move it.</p>
 
+  <h3>7 · Emphasis (owner, 2026-10-03)</h3>
+  <p>Three phrases, wording untouched: "I'm not a professional software engineer", "use it at your own
+    risk", "Never expose Orbit directly to the internet". Drawn <b>bold, one ink step up from the row
+    they sit in</b>: on a normal (muted) row that is bold <code>Text</code> — the exact style every
+    flow screen's title already uses — and on a faded row (the cut-off bottom line, the top line when
+    scrolled) it is bold <code>TextMuted</code>, so the phrase steps down with its row and still
+    stands one step above it. Whole cells, two existing tokens, no new colour: gold is the caret's
+    and amber is state, and a warning phrase in either would read as a link or a fault. Under
+    <code>NO_COLOR</code> the steps vanish and bold alone carries it, which is why bold is part of
+    the rule and not a fallback. Scene a shows the hardest case: the hanging "Never expose" line is
+    faint, and its phrase is still the brightest thing on that row.</p>
+
   <div class="prop">
     <h3>Proposal · choice wording</h3>
     <p>The draft labels are drawn as given. One alternative for the first, flagged only: <b>"I've read
@@ -201,7 +213,9 @@
     never enters.<br>
     · The renderer clipped wide glyphs, so the em dash and ● drew as a short dash and a half disc;
     cells no longer clip. The labels use the em dash as approved.<br>
-    · Arrow keys: a simpler rule now that the choices do not scroll (see 4).</p>
+    · Arrow keys: a simpler rule now that the choices do not scroll (see 4).<br>
+    · Third pass: the owner's three phrases are emphasised (see 7), in every scene including the
+    faded rows.</p>
 </aside>
 </div>
 
@@ -267,25 +281,39 @@ const PARAS=[
   "Never expose Orbit directly to the internet. Keep it on your own network, and reach it from outside through a VPN back to that network."
 ];
 const CHOICES=["I understand — install Orbit","Go back"];
+// Owner-chosen emphasis (2026-10-03): three phrases, wording untouched.
+const EMPH=["I'm not a professional software engineer","use it at your own risk","Never expose Orbit directly to the internet"];
 const MEASURE=56;
 const TIMER_S=40;          // 144 words / 238 wpm = 36.3 s, rounded up to the next ten
 const BAR_CELLS=MEASURE-6; // the line, then two spaces and m:ss
 const GUTTER=2;            // every view line is padded to MEASURE+2*GUTTER; the sky stays outside
+// wrap: rows of segments {text, em}; markers bracket the emphasised phrases
+// before splitting so the flag rides with each word and never costs a cell
 function wrap(s,w){
-  const out=[]; let line="";
-  s.split(" ").forEach(function(word){
-    if(line&&(line+" "+word).length>w){out.push(line);line=word;}
-    else line=line?line+" "+word:word;
+  EMPH.forEach(function(ph){s=s.split(ph).join("\u0001"+ph+"\u0002");});
+  const words=[]; let em=false;
+  s.split(" ").forEach(function(raw){
+    const inside=em||raw.indexOf("\u0001")>=0;   // decided before the closing marker is consumed
+    let word="";
+    for(const ch of raw){ if(ch==="\u0001")em=true; else if(ch==="\u0002")em=false; else word+=ch; }
+    words.push({text:word, em:inside});
   });
-  if(line)out.push(line);
-  return out;
+  const rows=[]; let row=[], len=0;
+  words.forEach(function(wd){
+    const need=len?len+1+wd.text.length:wd.text.length;
+    if(len&&need>w){rows.push(row);row=[];len=0;}
+    if(len){row.push({text:" ",em:false});len++;}
+    row.push(wd); len+=wd.text.length;
+  });
+  if(row.length)rows.push(row);
+  return rows.map(function(r){return {text:r.map(function(x){return x.text;}).join(""),segs:r};});
 }
 // document rows (the prose only): {kind:"prose"|"blank", text}
 function buildDoc(){
   const d=[];
   PARAS.forEach(function(p,i){
     if(i)d.push({kind:"blank"});
-    wrap(p,MEASURE).forEach(function(l){d.push({kind:"prose",text:l});});
+    wrap(p,MEASURE).forEach(function(l){d.push({kind:"prose",text:l.text,segs:l.segs});});
   });
   return d;
 }
@@ -334,7 +362,16 @@ function noticeScreen(id,W,H,state){
     S.str(r,sx,STATE_LABEL,MUTED); S.str(r,sx+STATE_LABEL.length,STATE_WORD,AMBER); r+=2;
     visible.forEach(function(row,i){
       const faded=(i===fadeTop||i===fadeBot);
-      if(row.kind==="prose")S.str(r+i,left,row.text,faded?FAINT:MUTED);
+      if(row.kind==="prose"){
+        // emphasis is one ink step up from its row, and bold: Text bold on a
+        // muted row (the title's own style), Muted bold on a faded row — so
+        // it survives both fades, and under NO_COLOR bold alone still carries it
+        let x=left;
+        row.segs.forEach(function(seg){
+          const col=seg.em?(faded?MUTED:TEXT):(faded?FAINT:MUTED);
+          S.str(r+i,x,seg.text,col,seg.em?{b:1}:undefined); x+=seg.text.length;
+        });
+      }
     });
     r+=visible.length;
     // bottom region: timer row (blank once done — the gate is gone, so is its object), then the choices
