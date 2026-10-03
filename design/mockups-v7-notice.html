@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orbit-launcher — v7 mockups: the development notice (#175, cell-truth)</title>
+<style>
+  body{background:#060b1c;color:#e7e9ee;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+       margin:0;padding:48px 24px 120px;display:flex;flex-direction:column;align-items:center;}
+  h1{font-size:15px;letter-spacing:.22em;text-transform:uppercase;color:#d8b45a;font-weight:600;text-align:center}
+  .sub{font-size:12px;color:#7c8699;max-width:78ch;text-align:center;line-height:1.7;margin-bottom:40px}
+  .sub b{color:#e7e9ee;font-weight:600}
+  .layout{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap;justify-content:center;max-width:1360px}
+  .frames{display:flex;flex-direction:column;gap:0}
+  section{margin-bottom:56px}
+  section>h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#4a5468;
+             border-bottom:1px solid #14203e;padding-bottom:8px;margin:0 0 16px}
+  section>h2 span{color:#d8b45a}
+  .term{background:#05070d;border:1px solid #14203e;border-radius:8px;padding:10px 8px;width:fit-content;
+        box-shadow:0 18px 60px rgba(0,0,0,.5)}
+  .cap{font-size:11px;color:#4a5468;margin:6px 2px 0;letter-spacing:.05em;max-width:72ch;line-height:1.6}
+  pre.cells{margin:0;font-size:12px;line-height:15px;letter-spacing:0}
+  pre.cells span{display:inline-block;width:7.2px;overflow:hidden;text-align:center;
+                 font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
+  .panel{font-size:12.5px;color:#7c8699;line-height:1.75;width:380px;max-width:100%;
+         border:1px solid #14203e;border-radius:8px;padding:14px 20px 18px;position:sticky;top:24px}
+  .panel h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#d8b45a;margin:0 0 10px;font-weight:600}
+  .panel h3{font-size:12px;color:#e7e9ee;margin:16px 0 4px;font-weight:600}
+  .panel p{margin:0 0 6px}
+  .panel b{color:#e7e9ee;font-weight:600}
+  .panel .prop{border-left:2px solid #d8b45a;padding-left:10px;margin-top:14px}
+  .panel .prop h3{color:#d8b45a;margin-top:0}
+  .panel kbd,.cap kbd{color:#e7e9ee;font-family:inherit;font-size:11.5px;border:1px solid #2a3244;border-radius:3px;padding:0 4px}
+  footer{font-size:11px;color:#4a5468;max-width:78ch;text-align:center;line-height:1.7;margin-top:24px}
+</style>
+</head>
+<body>
+
+<h1>orbit-launcher · v7 — the development notice · #175</h1>
+<div class="sub">
+  One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
+  Two things gate the install: the notice has been on screen to its end, and a 40-second timer has run out.
+  Cell-truth renders, colours from <code>internal/ui/style/style.go</code>, every glyph one the app already draws.
+  The sky and the countdown animate as the app would (10 fps, whole-cell steps); both stop under
+  <code>prefers-reduced-motion</code>. Nothing here is approved yet.
+</div>
+
+<div class="layout">
+<div class="frames">
+
+<section>
+  <h2><span>a</span> First view — 80×26, the house minimum</h2>
+  <div class="term scene" id="scene-a"><pre class="cells" id="n-a" role="img"
+    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, five paragraphs of prose; the last visible row is drawn faint. The timer and the two choices are below the bottom edge, out of view."></pre></div>
+  <div class="cap">Header pinned; prose fills the rest. The last visible row steps down to faint — the
+    only sign needed that there is more. The timer and the choices are below the edge; the timer is
+    already running.</div>
+</section>
+
+<section>
+  <h2><span>b</span> Scrolled partway — one row down</h2>
+  <div class="term scene" id="scene-b"><pre class="cells" id="n-b" role="img"
+    aria-label="Same screen scrolled one row: the first visible prose row is faint; the timer row has scrolled into view at the bottom, a thin line part filled in gold with the seconds left at its right end. The choices are still hidden."></pre></div>
+  <div class="cap">Faint at both edges now: text above, more below. The timer row has entered the
+    viewport — a thin line filling gold, the seconds left at its end — and the choices are still
+    below it.</div>
+</section>
+
+<section>
+  <h2><span>f</span> End reached, timer still running</h2>
+  <div class="term scene" id="scene-f"><pre class="cells" id="n-f" role="img"
+    aria-label="Scrolled to the end: the timer line is about two thirds gold with the seconds left at its end; beneath it the accept choice is drawn faint and inert, and the caret sits on Go back. The countdown animates to zero, then the line disappears and the accept choice brightens."></pre></div>
+  <div class="cap">A fast scroller. Go back already carries the caret; the accept row is faint — not
+    yet a choice. The line fills a cell every 0.8 s and the number ticks each second. At 0:00 the row
+    goes blank and the accept row brightens to muted: now selectable. The caret does not move by
+    itself. (Animates here; loops.)</div>
+</section>
+
+<section>
+  <h2><span>c</span> Timer done, end reached — accept selected</h2>
+  <div class="term scene" id="scene-c"><pre class="cells" id="n-c" role="img"
+    aria-label="Scrolled to the end with no timer row: the caret is on I understand, install Orbit, drawn bright; Go back muted beneath it."></pre></div>
+  <div class="cap">Both gates passed; the person pressed <kbd>↑</kbd> to move the caret from Go back
+    onto the accept row. <kbd>↵</kbd> now starts the install. The timer row is simply blank.</div>
+</section>
+
+<section>
+  <h2><span>d</span> Go back selected</h2>
+  <div class="term scene" id="scene-d"><pre class="cells" id="n-d" role="img"
+    aria-label="Scrolled to the end with the caret on Go back; the accept choice is muted above it."></pre></div>
+  <div class="cap">Where the caret rests by default. <kbd>↵</kbd> returns to Ready to install, exactly
+    as <kbd>esc</kbd> does at any moment on this screen.</div>
+</section>
+
+<section>
+  <h2><span>e</span> A tall terminal — 120×50, everything fits</h2>
+  <div class="term scene" id="scene-e"><pre class="cells" id="n-e" role="img"
+    aria-label="Notice at 120 by 50 cells on arrival: the whole block sits at the optical centre, no faint rows, the timer line just starting at 0:40, caret on Go back, accept faint. The countdown animates to zero here."></pre></div>
+  <div class="cap">No scrolling exists, so none is asked for; the timer is the only gate. The block sits
+    at the 0.42 optical centre like every other screen; the measure stays 56 columns. (Animates here
+    from 0:40; loops.)</div>
+</section>
+
+</div>
+
+<aside class="panel" aria-label="Design decisions for owner review">
+  <h2>Decisions, for review</h2>
+  <p>Each is a proposal with its reasoning. None is approved.</p>
+
+  <h3>1 · Showing there is more</h3>
+  <p>The last visible prose row is drawn <b>faint</b> instead of muted, and the sentence is cut by the
+    edge. Scrolled down, the top row goes faint too. That is the whole signal: no hint text, no corner
+    glyph, no scroll track — the house has none, and a cut-off sentence is a thing everyone knows how
+    to finish. A scroll track was considered and dropped: it adds a column of noise to say "a little
+    more", and position does not matter for a text this short.</p>
+
+  <h3>2 · Where the choices live, and the three states of accept</h3>
+  <p>The timer row and the two choices are the <b>last three rows of the document</b>, so they scroll
+    in with the text. Go back is live whenever it is on screen and takes the caret by default. The
+    accept row has three looks: <b>faint</b> while either gate is open (not a choice yet),
+    <b>muted</b> once both gates are passed (selectable), <b>bright with the gold caret</b> when
+    selected. The caret never moves on its own: when accept opens up, the person moves to it with
+    <kbd>↑</kbd>. Nothing is pinned under the text: a second fixed region breaks the one-block
+    grammar every screen shares, and a greyed-out button with no hint allowed is a mystery; a row
+    that brightens next to a line that just finished filling explains itself.</p>
+
+  <h3>3 · Every install</h3>
+  <p><b>Every install</b>, not once per machine. The notice is the install's own gate, like the
+    confirm screen, and costs under a minute. A remembered "already agreed" needs a file somewhere
+    that can be wrong — another user on the box, a copied image — and would make the launcher
+    stateful for nothing. Update and repair never see it.</p>
+
+  <h3>4 · Keys</h3>
+  <p><kbd>↓</kbd> <kbd>↑</kbd> one row. <kbd>PgDn</kbd> <kbd>space</kbd> one screen; <kbd>PgUp</kbd>
+    back. <kbd>Home</kbd> <kbd>End</kbd> top and bottom — End is a legitimate way to reach the end;
+    blocking it would be pretend security, and the timer covers the reading time anyway. Wheel:
+    three rows a notch, with mouse reporting switched on for this view only (Bubble Tea v2 sets it
+    per view), so text selection on other screens is untouched. Arrows move the caret when the row
+    they would land on is a live choice, and scroll the text otherwise — so <kbd>↑</kbd> from Go back
+    goes to accept once it is open, and scrolls the prose back up while it is not. <b><kbd>↵</kbd>
+    acts on the caret only</b>: before Go back is on screen it does nothing — it is the commit key
+    everywhere else, and letting it page would turn a quick triple <kbd>↵</kbd> from the confirm
+    screen into something it should not be. <b><kbd>esc</kbd> is Go back at any moment</b>, timer or
+    no timer: one step, to Ready to install, the same step the confirm screen's own <kbd>esc</kbd>
+    takes.</p>
+
+  <h3>5 · 80×26, and tall</h3>
+  <p>At 80×26 the header (⟡, title, state, with a blank row above and below) takes six rows, two
+    rows of sky stay clear beneath the block, and the viewport is the eighteen between; the document
+    is twenty-one rows, so <b>the timer and the two choices hang below the edge</b> and three rows
+    of scrolling reveal them. (At 80×24, a common default, the final paragraph hides too.) On a tall
+    terminal nothing scrolls and nothing pretends to: the block centres as on every screen, Go back
+    carries the caret, and the timer is the only gate. The scroll requirement is "the whole notice
+    has been on screen", not "a scroll happened" — a forced scroll with nothing to scroll would be
+    theatre.</p>
+
+  <h3>6 · The timer</h3>
+  <p><b>40 seconds.</b> 144 words at 238 words a minute (Brysbaert 2019, average adult silent
+    reading) is 36.3 s. Rounded <b>up</b> to the next ten: up because the average is the midpoint
+    and half of readers are slower; to a round number because 0:36 looks computed and 0:40 looks
+    chosen, and a countdown should look chosen. It starts when the screen appears, not on a key.
+    <b>Look:</b> one row, in the block, between the prose and the choices — a thin line of
+    <code>─</code> cells filling gold over the <code>BorderSoft</code> track (the mission console's
+    own bar, at 50 cells one cell per 0.8 s, whole-cell steps) with the seconds left as a faint
+    <code>m:ss</code> at its end (the console's clock format). No percentage. When it reaches 0:00
+    the row goes blank — the gate is gone, so its object is gone — and the accept row brightens.
+    <b>Why in the block and not pinned:</b> pinned, it would tick in the corner of the eye for the
+    whole read, which is a cookie-banner timer; in the block it is seen by exactly the people it
+    affects, the ones who reach the end before the time is up. On a tall terminal it is in view
+    from the start, next to the thing it gates. It is not a motion beat, so
+    <code>ORBIT_LAUNCHER_NO_ANIMATION</code> does not skip it — without the sky's tick chain it
+    needs its own one-second tick.</p>
+  <p><b>Order does not matter.</b> End first: the person waits by the choices with the line filling
+    (scene f). Timer first: the line has already vanished when they scroll to the end, and the
+    accept row is already muted — to a slow reader at 80×26 the timer never existed. Either way the
+    caret is on Go back until they move it.</p>
+
+  <div class="prop">
+    <h3>Proposal · choice wording</h3>
+    <p>The draft labels are drawn as given. One alternative for the first, flagged only: <b>"I've read
+      this — install Orbit"</b> says exactly what the two gates can prove. "Go back" stays.</p>
+  </div>
+
+  <h3>In-grammar details</h3>
+  <p>Amber ⟡, as the flow's two other cautionary screens use (stale volume, unavailable profile).
+    "alpha" in the same amber — the one state colour, twice, as the splash pairs mark and status word.
+    Prose left-aligned as one 56-column block, centred as a block: the sign-in screen's ratified
+    grammar. No foot. The timer length should be a variable so tests can shorten it.</p>
+</aside>
+</div>
+
+<footer>
+  v7 · #175 · 80×26 and 120×50 · 10 fps · colour steps and whole-cell moves only. Nothing approved;
+  design/DECISIONS.md is untouched until the owner rules.
+</footer>
+
+<script>
+// ---- shared cell renderer (same as v6) -------------------------------------
+function esc(ch){return ch==="<"?"&lt;":ch==="&"?"&amp;":ch;}
+function mkScreen(id,W,H){
+  const el=document.getElementById(id); if(!el) return null;
+  const S={el:el,W:W,H:H,buf:null};
+  S.reset=function(){S.buf=[];for(let r=0;r<H;r++)S.buf.push(new Array(W).fill(null));};
+  S.put=function(r,c,ch,f,o){ if(r<0||r>=H||c<0||c>=W)return; S.buf[r][c]=Object.assign({c:ch,f:f},o||{}); };
+  S.str=function(r,c,s,f,o){for(let i=0;i<s.length;i++)if(s[i]!==" ")S.put(r,c+i,s[i],f,o);};
+  S.render=function(){
+    let h="";
+    for(let r=0;r<H;r++){for(let c=0;c<W;c++){const x=S.buf[r][c];
+      h+=x?'<span style="color:'+x.f+(x.b?";font-weight:700":"")+'">'+esc(x.c)+"</span>":"<span> </span>";}
+      h+="\n";}
+    S.el.innerHTML=h;
+  };
+  return S;
+}
+function mkStars(n,rmin,rmax){
+  const a=[];
+  for(let i=0;i<n;i++)a.push({r:rmin+(i*17.23)%(rmax-rmin),a0:i*2.399963,layer:i%2,tp:5+(i%7),tph:i*1.7});
+  return a;
+}
+const STEP_S=2.5;
+function drawStars(S,stars,t,CX,CY){
+  const step=Math.floor(t/STEP_S);
+  const angNear=step*2*Math.PI*STEP_S/360, angFar=step*2*Math.PI*STEP_S/520;
+  stars.forEach(function(st){
+    const ang=st.a0+(st.layer?angFar:angNear);
+    const col=Math.round(CX+st.r*Math.cos(ang)), row=Math.round(CY+st.r*Math.sin(ang)/2);
+    const b=0.5*(0.55+0.45*Math.sin(2*Math.PI*t/st.tp+st.tph));
+    if(b>0.1)S.put(row,col,"·","rgba(231,233,238,"+b.toFixed(2)+")");
+  });
+}
+function drawSystems(S,t){
+  const bx=Math.round(S.W*0.78), by=Math.round(S.H*0.2), ba=2*Math.PI*t/34;
+  S.put(Math.round(by+3*Math.sin(ba)), Math.round(bx+6*Math.cos(ba)),"●","#d8b45a");
+  S.put(Math.round(by+3*Math.sin(ba+Math.PI)), Math.round(bx+6*Math.cos(ba+Math.PI)),"●","#8fb8ff");
+  const px=Math.round(S.W*0.16), py=Math.round(S.H*0.78), ma=2*Math.PI*t/13;
+  S.put(py,px,"●","#cbd5e1");
+  S.put(Math.round(py+1.6*Math.sin(ma)), Math.round(px+3.5*Math.cos(ma)),"·","#fb7185");
+}
+
+// ---- palette: internal/ui/style/style.go ----------------------------------
+const TEXT="#e7e9ee", MUTED="#7c8699", FAINT="#4a5468", GOLD="#d8b45a", AMBER="#fb923c", TRACK="#151b28";
+
+// ---- the copy, verbatim (owner, 2026-10-03, #175); line breaks are ours ----
+const TITLE="A note before you install";
+const STATE_LABEL="Project state: ", STATE_WORD="alpha";
+const PARAS=[
+  "I designed Orbit. Claude, an AI model, wrote the code.",
+  "I'm not a professional software engineer. I built Orbit for myself, because keeping track of so many life admin tasks is hard. I've released it under the GNU AGPL v3.0 so anyone can use it for free.",
+  "If you find it useful, that's great. Please understand though that you use it at your own risk: it comes with no warranty, and there's no one on call to support it.",
+  "I've poured significant effort and resources into trying to make it as robust and secure as I can, but you should not trust that it is safe to expose to the internet.",
+  "Never expose Orbit directly to the internet. Keep it on your own network, and reach it from outside through a VPN back to that network."
+];
+const CHOICES=["I understand — install Orbit","Go back"];
+const MEASURE=56;
+const TIMER_S=40;          // 144 words / 238 wpm = 36.3 s, rounded up to the next ten
+const BAR_CELLS=MEASURE-6; // the line, then two spaces and m:ss
+function wrap(s,w){
+  const out=[]; let line="";
+  s.split(" ").forEach(function(word){
+    if(line&&(line+" "+word).length>w){out.push(line);line=word;}
+    else line=line?line+" "+word:word;
+  });
+  if(line)out.push(line);
+  return out;
+}
+// document rows: {kind:"prose"|"blank"|"timer"|"choice", text, idx}
+function buildDoc(){
+  const d=[];
+  PARAS.forEach(function(p,i){
+    if(i)d.push({kind:"blank"});
+    wrap(p,MEASURE).forEach(function(l){d.push({kind:"prose",text:l});});
+  });
+  d.push({kind:"timer"});
+  CHOICES.forEach(function(c,i){d.push({kind:"choice",text:c,idx:i});});
+  return d;
+}
+const DOC=buildDoc();
+function clock(sec){const m=Math.floor(sec/60),s=sec%60;return m+":"+(s<10?"0":"")+s;}
+
+// ---- the screen ------------------------------------------------------------
+// state: offset (first visible document row), sel (0 accept, 1 go back),
+// elapsed (seconds since the screen appeared; the timer runs from there),
+// run (animate the countdown from `elapsed`, looping).
+// Header: blank, ⟡, blank, title, state, blank — the pinned rows the Go
+// view would emit; viewport = H - 8 rows (two rows of sky stay clear
+// beneath the block); skyBlock's 0.42 optical centre
+// positions the whole content block when it is shorter than the screen.
+function noticeScreen(id,W,H,state){
+  const S=mkScreen(id,W,H); if(!S)return;
+  const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
+  const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
+  const viewport=H-8;                           // header 6 rows + a two-row margin below
+  const fits=DOC.length<=viewport;
+  const offset=fits?0:Math.min(state.offset, DOC.length-viewport);
+  const endReached=fits||offset+viewport>=DOC.length;
+  const visible=DOC.slice(offset, offset+viewport);
+  const nLines=6+visible.length;                 // blank + 5 header rows + viewport rows
+  const top=Math.floor(0.42*(H-1-nLines));
+  const left=CX-Math.floor(MEASURE/2);          // the block's left edge
+
+  // the faint step: first/last prose row when rows are hidden that side
+  let fadeTop=-1, fadeBot=-1;
+  if(offset>0){for(let i=0;i<visible.length;i++)if(visible[i].kind==="prose"){fadeTop=i;break;}}
+  if(!endReached){for(let i=visible.length-1;i>=0;i--)if(visible[i].kind==="prose"){fadeBot=i;break;}}
+
+  let t=0, elapsed=state.elapsed||0;
+  function clear(row,c,n){for(let x=0;x<n;x++)S.put(row,c+x," ",TEXT);}
+  function frame(){
+    const timerDone=elapsed>=TIMER_S;
+    const acceptLive=timerDone&&endReached;
+    S.reset();
+    drawStars(S,stars,t,CX,CY);
+    drawSystems(S,t);
+    let r=top+1;
+    S.put(r,CX,"⟡",AMBER); r+=2;
+    clear(r,CX-Math.floor(TITLE.length/2),TITLE.length);
+    S.str(r,CX-Math.floor(TITLE.length/2),TITLE,TEXT,{b:1}); r++;
+    const st=STATE_LABEL+STATE_WORD, sx=CX-Math.floor(st.length/2);
+    clear(r,sx,st.length);
+    S.str(r,sx,STATE_LABEL,MUTED); S.str(r,sx+STATE_LABEL.length,STATE_WORD,AMBER); r+=2;
+    visible.forEach(function(row,i){
+      clear(r+i,left,MEASURE);                     // every line is padded to the block width, so it covers the sky
+      const faded=(i===fadeTop||i===fadeBot);
+      if(row.kind==="prose"){S.str(r+i,left,row.text,faded?FAINT:MUTED);}
+      else if(row.kind==="timer"){
+        if(timerDone)return;                       // the gate is gone, so is its object
+        const fill=Math.floor(elapsed/TIMER_S*BAR_CELLS);
+        for(let x=0;x<BAR_CELLS;x++)S.put(r+i,left+x,"─",x<fill?GOLD:TRACK);
+        S.str(r+i,left+BAR_CELLS+2,clock(Math.ceil(TIMER_S-elapsed)),FAINT);
+      }
+      else if(row.kind==="choice"){
+        const isAccept=row.idx===0;
+        const live=isAccept?acceptLive:true;
+        const selected=live&&row.idx===state.sel;
+        if(selected)S.put(r+i,left,"▸",GOLD);
+        S.str(r+i,left+2,row.text,selected?TEXT:(live?MUTED:FAINT));
+      }
+    });
+    S.render();
+  }
+  frame();
+  const still=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(!still)setInterval(function(){
+    t+=.1;
+    if(state.run){ elapsed+=.1; if(elapsed>=TIMER_S+4)elapsed=state.elapsed||0; } // hold the open state, then loop
+    frame();
+  },100);
+}
+
+noticeScreen("n-a",80,26,{offset:0,  sel:1, elapsed:2});
+noticeScreen("n-b",80,26,{offset:1,  sel:1, elapsed:12});
+noticeScreen("n-f",80,26,{offset:99, sel:1, elapsed:26, run:true});
+noticeScreen("n-c",80,26,{offset:99, sel:0, elapsed:TIMER_S});
+noticeScreen("n-d",80,26,{offset:99, sel:1, elapsed:TIMER_S});
+noticeScreen("n-e",120,50,{offset:0, sel:1, elapsed:0, run:true});
+</script>
+</body>
+</html>
