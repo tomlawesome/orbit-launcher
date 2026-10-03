@@ -20,7 +20,7 @@
         box-shadow:0 18px 60px rgba(0,0,0,.5)}
   .cap{font-size:11px;color:#4a5468;margin:6px 2px 0;letter-spacing:.05em;max-width:72ch;line-height:1.6}
   pre.cells{margin:0;font-size:12px;line-height:15px;letter-spacing:0}
-  pre.cells span{display:inline-block;width:7.2px;overflow:hidden;text-align:center;
+  pre.cells span{display:inline-block;width:7.2px;overflow:visible;text-align:center;
                  font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
   .panel{font-size:12.5px;color:#7c8699;line-height:1.75;width:380px;max-width:100%;
          border:1px solid #14203e;border-radius:8px;padding:14px 20px 18px;position:sticky;top:24px}
@@ -39,7 +39,8 @@
 <h1>orbit-launcher · v7 — the development notice · #175</h1>
 <div class="sub">
   One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
-  Two things gate the install: the notice has been on screen to its end, and a 40-second timer has run out.
+  Two things gate the install: the prose has been on screen to its last line, and a 40-second timer has run out.
+  The timer and the two choices are pinned in view from the first frame; only the prose scrolls.
   Cell-truth renders, colours from <code>internal/ui/style/style.go</code>, every glyph one the app already draws.
   The sky and the countdown animate as the app would (10 fps, whole-cell steps); both stop under
   <code>prefers-reduced-motion</code>. Nothing here is approved yet.
@@ -51,37 +52,38 @@
 <section>
   <h2><span>a</span> First view — 80×26, the house minimum</h2>
   <div class="term scene" id="scene-a"><pre class="cells" id="n-a" role="img"
-    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, five paragraphs of prose; the last visible row is drawn faint. The timer and the two choices are below the bottom edge, out of view."></pre></div>
-  <div class="cap">Header pinned; prose fills the rest. The last visible row steps down to faint — the
-    only sign needed that there is more. The timer and the choices are below the edge; the timer is
-    already running.</div>
+    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then prose whose last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 0:38 at its end, the accept choice drawn faint, and the caret on Go back."></pre></div>
+  <div class="cap">Header and the bottom region (timer, two choices) are pinned; only the prose between
+    them scrolls. The last visible prose row steps down to faint and is cut mid-sentence: the sign
+    there is more. The countdown is already running; Go back carries the caret; the accept row is
+    faint — not a choice yet.</div>
 </section>
 
 <section>
   <h2><span>b</span> Scrolled partway — one row down</h2>
   <div class="term scene" id="scene-b"><pre class="cells" id="n-b" role="img"
-    aria-label="Same screen scrolled one row: the first visible prose row is faint; the timer row has scrolled into view at the bottom, a thin line part filled in gold with the seconds left at its right end. The choices are still hidden."></pre></div>
-  <div class="cap">Faint at both edges now: text above, more below. The timer row has entered the
-    viewport — a thin line filling gold, the seconds left at its end — and the choices are still
-    below it.</div>
+    aria-label="Same screen scrolled one row: the first visible prose row is faint, the last visible prose row is faint; the pinned timer line is a little fuller."></pre></div>
+  <div class="cap">Faint at both edges now: text above, more below. The pinned region has not moved;
+    the line has filled a little further.</div>
 </section>
 
 <section>
   <h2><span>f</span> End reached, timer still running</h2>
   <div class="term scene" id="scene-f"><pre class="cells" id="n-f" role="img"
-    aria-label="Scrolled to the end: the timer line is about two thirds gold with the seconds left at its end; beneath it the accept choice is drawn faint and inert, and the caret sits on Go back. The countdown animates to zero, then the line disappears and the accept choice brightens."></pre></div>
-  <div class="cap">A fast scroller. Go back already carries the caret; the accept row is faint — not
-    yet a choice. The line fills a cell every 0.8 s and the number ticks each second. At 0:00 the row
-    goes blank and the accept row brightens to muted: now selectable. The caret does not move by
-    itself. (Animates here; loops.)</div>
+    aria-label="Scrolled to the end: no faint row at the bottom, the last line of prose is fully in view; the timer line is about two thirds gold with the seconds left at its end; the accept choice is still faint, the caret on Go back. The countdown animates to zero, then the line disappears and the accept choice brightens."></pre></div>
+  <div class="cap">A fast scroller: the prose has reached its last line, so the bottom fade is gone,
+    but the timer is still running. The line fills a cell every 0.8 s and the number ticks each
+    second. At 0:00 the row goes blank and the accept row brightens to muted: now selectable. The
+    caret does not move by itself. (Animates here; loops.)</div>
 </section>
 
 <section>
   <h2><span>c</span> Timer done, end reached — accept selected</h2>
   <div class="term scene" id="scene-c"><pre class="cells" id="n-c" role="img"
-    aria-label="Scrolled to the end with no timer row: the caret is on I understand, install Orbit, drawn bright; Go back muted beneath it."></pre></div>
+    aria-label="Scrolled to the end with the timer row blank: the caret is on I understand, install Orbit, drawn bright; Go back muted beneath it."></pre></div>
   <div class="cap">Both gates passed; the person pressed <kbd>↑</kbd> to move the caret from Go back
-    onto the accept row. <kbd>↵</kbd> now starts the install. The timer row is simply blank.</div>
+    onto the accept row. <kbd>↵</kbd> now starts the install. The timer row is simply blank, the
+    gap it always was.</div>
 </section>
 
 <section>
@@ -96,9 +98,9 @@
   <h2><span>e</span> A tall terminal — 120×50, everything fits</h2>
   <div class="term scene" id="scene-e"><pre class="cells" id="n-e" role="img"
     aria-label="Notice at 120 by 50 cells on arrival: the whole block sits at the optical centre, no faint rows, the timer line just starting at 0:40, caret on Go back, accept faint. The countdown animates to zero here."></pre></div>
-  <div class="cap">No scrolling exists, so none is asked for; the timer is the only gate. The block sits
-    at the 0.42 optical centre like every other screen; the measure stays 56 columns. (Animates here
-    from 0:40; loops.)</div>
+  <div class="cap">Nothing to scroll, so nothing is asked for; the timer is the only gate. Header, prose
+    and bottom region are one block at the 0.42 optical centre like every other screen; the measure
+    stays 56 columns. (Animates here from 0:40; loops.)</div>
 </section>
 
 </div>
@@ -112,17 +114,21 @@
     edge. Scrolled down, the top row goes faint too. That is the whole signal: no hint text, no corner
     glyph, no scroll track — the house has none, and a cut-off sentence is a thing everyone knows how
     to finish. A scroll track was considered and dropped: it adds a column of noise to say "a little
-    more", and position does not matter for a text this short.</p>
+    more", and position does not matter for a text this short. Where the cut lands depends on the
+    terminal's height; the faint row is the cue that is always there, the hanging sentence a bonus
+    (at 80×26 it is the first line of the "Never expose" paragraph).</p>
 
   <h3>2 · Where the choices live, and the three states of accept</h3>
-  <p>The timer row and the two choices are the <b>last three rows of the document</b>, so they scroll
-    in with the text. Go back is live whenever it is on screen and takes the caret by default. The
-    accept row has three looks: <b>faint</b> while either gate is open (not a choice yet),
-    <b>muted</b> once both gates are passed (selectable), <b>bright with the gold caret</b> when
-    selected. The caret never moves on its own: when accept opens up, the person moves to it with
-    <kbd>↑</kbd>. Nothing is pinned under the text: a second fixed region breaks the one-block
-    grammar every screen shares, and a greyed-out button with no hint allowed is a mystery; a row
-    that brightens next to a line that just finished filling explains itself.</p>
+  <p>The timer row and the two choices are <b>pinned at the bottom of the frame</b>, in view from the
+    first frame at every size; only the prose between the header and them scrolls. Go back takes the
+    caret from the start, so the way out is visible before anything is read. The accept row has
+    three looks: <b>faint</b> while either gate is open (not a choice yet), <b>muted</b> once both
+    are passed (selectable), <b>bright with the gold caret</b> when selected. The caret never moves
+    on its own: when accept opens up, the person moves to it with <kbd>↑</kbd>. A faint row that
+    brightens beside a line that just finished filling explains itself without a hint. In the view
+    this is still one content block (header lines, the visible prose rows, the bottom rows) handed to
+    the same centring as every screen; the "pinning" is only that the first and last rows never
+    scroll.</p>
 
   <h3>3 · Every install</h3>
   <p><b>Every install</b>, not once per machine. The notice is the install's own gate, like the
@@ -135,20 +141,21 @@
     back. <kbd>Home</kbd> <kbd>End</kbd> top and bottom — End is a legitimate way to reach the end;
     blocking it would be pretend security, and the timer covers the reading time anyway. Wheel:
     three rows a notch, with mouse reporting switched on for this view only (Bubble Tea v2 sets it
-    per view), so text selection on other screens is untouched. Arrows move the caret when the row
-    they would land on is a live choice, and scroll the text otherwise — so <kbd>↑</kbd> from Go back
-    goes to accept once it is open, and scrolls the prose back up while it is not. <b><kbd>↵</kbd>
-    acts on the caret only</b>: before Go back is on screen it does nothing — it is the commit key
-    everywhere else, and letting it page would turn a quick triple <kbd>↵</kbd> from the confirm
-    screen into something it should not be. <b><kbd>esc</kbd> is Go back at any moment</b>, timer or
-    no timer: one step, to Ready to install, the same step the confirm screen's own <kbd>esc</kbd>
-    takes.</p>
+    per view), so text selection on other screens is untouched. <kbd>↓</kbd> <kbd>↑</kbd> scroll
+    the prose until its last line has been on screen; from then on they move the caret between the
+    two choices (<kbd>↑</kbd> onto accept only once it is open), and PgUp/PgDn/Home/End/wheel keep
+    scrolling the prose. <b><kbd>↵</kbd> acts on the caret</b>, which starts on Go back — so a
+    quick triple <kbd>↵</kbd> from the confirm screen lands back on Ready to install, never in an
+    install. <b><kbd>esc</kbd> is Go back at any moment</b>, timer or no timer: one step, to Ready to
+    install, the same step the confirm screen's own <kbd>esc</kbd> takes.</p>
 
   <h3>5 · 80×26, and tall</h3>
-  <p>At 80×26 the header (⟡, title, state, with a blank row above and below) takes six rows, two
-    rows of sky stay clear beneath the block, and the viewport is the eighteen between; the document
-    is twenty-one rows, so <b>the timer and the two choices hang below the edge</b> and three rows
-    of scrolling reveal them. (At 80×24, a common default, the final paragraph hides too.) On a tall
+  <p>At 80×26 the header (blank, ⟡, blank, title, state, blank) takes six rows and the bottom
+    region (timer, accept, Go back, blank) four, leaving a sixteen-row viewport for eighteen rows of
+    prose: <b>the "Never expose" paragraph hangs below the edge</b> and two rows of scrolling reveal
+    it. "The end" is the prose's last line having been on screen. (At 80×24, a common default, the
+    viewport is fourteen rows.) At the minimum size the block fills the frame top to bottom, so
+    the 0.42 placement collapses to zero — there is no spare room, and none is needed. On a tall
     terminal nothing scrolls and nothing pretends to: the block centres as on every screen, Go back
     carries the caret, and the timer is the only gate. The scroll requirement is "the whole notice
     has been on screen", not "a scroll happened" — a forced scroll with nothing to scroll would be
@@ -163,17 +170,14 @@
     <code>─</code> cells filling gold over the <code>BorderSoft</code> track (the mission console's
     own bar, at 50 cells one cell per 0.8 s, whole-cell steps) with the seconds left as a faint
     <code>m:ss</code> at its end (the console's clock format). No percentage. When it reaches 0:00
-    the row goes blank — the gate is gone, so its object is gone — and the accept row brightens.
-    <b>Why in the block and not pinned:</b> pinned, it would tick in the corner of the eye for the
-    whole read, which is a cookie-banner timer; in the block it is seen by exactly the people it
-    affects, the ones who reach the end before the time is up. On a tall terminal it is in view
-    from the start, next to the thing it gates. It is not a motion beat, so
-    <code>ORBIT_LAUNCHER_NO_ANIMATION</code> does not skip it — without the sky's tick chain it
-    needs its own one-second tick.</p>
+    the row goes blank — the gate is gone, so its object is gone — and, if the prose has also been
+    read to its end, the accept row brightens. It sits directly under the prose and directly above
+    the thing it gates, in view from the first frame at every size, faint enough not to pull the eye
+    off the text. It is not a motion beat, so <code>ORBIT_LAUNCHER_NO_ANIMATION</code> does not skip
+    it — without the sky's tick chain it needs its own one-second tick.</p>
   <p><b>Order does not matter.</b> End first: the person waits by the choices with the line filling
-    (scene f). Timer first: the line has already vanished when they scroll to the end, and the
-    accept row is already muted — to a slow reader at 80×26 the timer never existed. Either way the
-    caret is on Go back until they move it.</p>
+    (scene f). Timer first: the line vanishes while they are still reading; accept brightens the
+    moment the last line scrolls in. Either way the caret is on Go back until they move it.</p>
 
   <div class="prop">
     <h3>Proposal · choice wording</h3>
@@ -185,7 +189,19 @@
   <p>Amber ⟡, as the flow's two other cautionary screens use (stale volume, unavailable profile).
     "alpha" in the same amber — the one state colour, twice, as the splash pairs mark and status word.
     Prose left-aligned as one 56-column block, centred as a block: the sign-in screen's ratified
-    grammar. No foot. The timer length should be a variable so tests can shorten it.</p>
+    grammar. Every line of the view, header included, is padded to the block's width plus a two-cell
+    gutter each side (60 cells), so <code>compositeScene</code> keeps the sky — stars and planets —
+    out of that rectangle, as it does under any padded line today. No foot. The timer length should
+    be a variable so tests can shorten it.</p>
+
+  <h3>Changed since the first pass</h3>
+  <p>· Timer and choices were the document's tail and started below the fold at 80×26; now they are
+    pinned and in view from the first frame, and only the prose scrolls.<br>
+    · Planets sat flush against the text; every line is now padded to a 60-cell rectangle the sky
+    never enters.<br>
+    · The renderer clipped wide glyphs, so the em dash and ● drew as a short dash and a half disc;
+    cells no longer clip. The labels use the em dash as approved.<br>
+    · Arrow keys: a simpler rule now that the choices do not scroll (see 4).</p>
 </aside>
 </div>
 
@@ -254,6 +270,7 @@ const CHOICES=["I understand — install Orbit","Go back"];
 const MEASURE=56;
 const TIMER_S=40;          // 144 words / 238 wpm = 36.3 s, rounded up to the next ten
 const BAR_CELLS=MEASURE-6; // the line, then two spaces and m:ss
+const GUTTER=2;            // every view line is padded to MEASURE+2*GUTTER; the sky stays outside
 function wrap(s,w){
   const out=[]; let line="";
   s.split(" ").forEach(function(word){
@@ -263,15 +280,13 @@ function wrap(s,w){
   if(line)out.push(line);
   return out;
 }
-// document rows: {kind:"prose"|"blank"|"timer"|"choice", text, idx}
+// document rows (the prose only): {kind:"prose"|"blank", text}
 function buildDoc(){
   const d=[];
   PARAS.forEach(function(p,i){
     if(i)d.push({kind:"blank"});
     wrap(p,MEASURE).forEach(function(l){d.push({kind:"prose",text:l});});
   });
-  d.push({kind:"timer"});
-  CHOICES.forEach(function(c,i){d.push({kind:"choice",text:c,idx:i});});
   return d;
 }
 const DOC=buildDoc();
@@ -281,20 +296,20 @@ function clock(sec){const m=Math.floor(sec/60),s=sec%60;return m+":"+(s<10?"0":"
 // state: offset (first visible document row), sel (0 accept, 1 go back),
 // elapsed (seconds since the screen appeared; the timer runs from there),
 // run (animate the countdown from `elapsed`, looping).
-// Header: blank, ⟡, blank, title, state, blank — the pinned rows the Go
-// view would emit; viewport = H - 8 rows (two rows of sky stay clear
-// beneath the block); skyBlock's 0.42 optical centre
-// positions the whole content block when it is shorter than the screen.
+// The view is one content block: header (blank, ⟡, blank, title, state,
+// blank), the visible prose rows, then the bottom region (timer, accept,
+// Go back, blank). Viewport = H - 10 rows; skyBlock's 0.42 optical centre
+// positions the block when it is shorter than the screen.
 function noticeScreen(id,W,H,state){
   const S=mkScreen(id,W,H); if(!S)return;
   const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
   const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
-  const viewport=H-8;                           // header 6 rows + a two-row margin below
+  const viewport=H-10;                          // header 6 rows + bottom region 4 rows
   const fits=DOC.length<=viewport;
   const offset=fits?0:Math.min(state.offset, DOC.length-viewport);
   const endReached=fits||offset+viewport>=DOC.length;
   const visible=DOC.slice(offset, offset+viewport);
-  const nLines=6+visible.length;                 // blank + 5 header rows + viewport rows
+  const nLines=6+visible.length+4;               // header + viewport rows + bottom region
   const top=Math.floor(0.42*(H-1-nLines));
   const left=CX-Math.floor(MEASURE/2);          // the block's left edge
 
@@ -304,37 +319,36 @@ function noticeScreen(id,W,H,state){
   if(!endReached){for(let i=visible.length-1;i>=0;i--)if(visible[i].kind==="prose"){fadeBot=i;break;}}
 
   let t=0, elapsed=state.elapsed||0;
-  function clear(row,c,n){for(let x=0;x<n;x++)S.put(row,c+x," ",TEXT);}
+  function clear(row){for(let x=left-GUTTER;x<left+MEASURE+GUTTER;x++)S.put(row,x," ",TEXT);}
   function frame(){
     const timerDone=elapsed>=TIMER_S;
     const acceptLive=timerDone&&endReached;
     S.reset();
     drawStars(S,stars,t,CX,CY);
     drawSystems(S,t);
+    for(let y=top;y<top+nLines;y++)clear(y);     // the whole block is padded: no sky inside it
     let r=top+1;
     S.put(r,CX,"⟡",AMBER); r+=2;
-    clear(r,CX-Math.floor(TITLE.length/2),TITLE.length);
     S.str(r,CX-Math.floor(TITLE.length/2),TITLE,TEXT,{b:1}); r++;
     const st=STATE_LABEL+STATE_WORD, sx=CX-Math.floor(st.length/2);
-    clear(r,sx,st.length);
     S.str(r,sx,STATE_LABEL,MUTED); S.str(r,sx+STATE_LABEL.length,STATE_WORD,AMBER); r+=2;
     visible.forEach(function(row,i){
-      clear(r+i,left,MEASURE);                     // every line is padded to the block width, so it covers the sky
       const faded=(i===fadeTop||i===fadeBot);
-      if(row.kind==="prose"){S.str(r+i,left,row.text,faded?FAINT:MUTED);}
-      else if(row.kind==="timer"){
-        if(timerDone)return;                       // the gate is gone, so is its object
-        const fill=Math.floor(elapsed/TIMER_S*BAR_CELLS);
-        for(let x=0;x<BAR_CELLS;x++)S.put(r+i,left+x,"─",x<fill?GOLD:TRACK);
-        S.str(r+i,left+BAR_CELLS+2,clock(Math.ceil(TIMER_S-elapsed)),FAINT);
-      }
-      else if(row.kind==="choice"){
-        const isAccept=row.idx===0;
-        const live=isAccept?acceptLive:true;
-        const selected=live&&row.idx===state.sel;
-        if(selected)S.put(r+i,left,"▸",GOLD);
-        S.str(r+i,left+2,row.text,selected?TEXT:(live?MUTED:FAINT));
-      }
+      if(row.kind==="prose")S.str(r+i,left,row.text,faded?FAINT:MUTED);
+    });
+    r+=visible.length;
+    // bottom region: timer row (blank once done — the gate is gone, so is its object), then the choices
+    if(!timerDone){
+      const fill=Math.floor(elapsed/TIMER_S*BAR_CELLS);
+      for(let x=0;x<BAR_CELLS;x++)S.put(r,left+x,"─",x<fill?GOLD:TRACK);
+      S.str(r,left+BAR_CELLS+2,clock(Math.ceil(TIMER_S-elapsed)),FAINT);
+    }
+    r++;
+    CHOICES.forEach(function(label,idx){
+      const live=idx===0?acceptLive:true;
+      const selected=live&&idx===state.sel;
+      if(selected)S.put(r+idx,left,"▸",GOLD);
+      S.str(r+idx,left+2,label,selected?TEXT:(live?MUTED:FAINT));
     });
     S.render();
   }
