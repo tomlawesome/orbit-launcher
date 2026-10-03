@@ -290,8 +290,17 @@ func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
 		t.Error("expected the styled configuration prompt")
 	}
 
-	// Accept the default: Continue — guided configuration.
+	// Accept the default: Continue — guided configuration. That lands on
+	// the sign-in-mode screen (issue #154) before --init ever runs.
 	updated, cmd := m.Update(key(tea.KeyEnter))
+	m = drive(t, updated, cmd).(InstallModel)
+
+	if m.run.state != runConfigSignInMode {
+		t.Fatalf("run state = %v, want runConfigSignInMode", m.run.state)
+	}
+
+	// Accept the default there too: Local accounts.
+	updated, cmd = m.Update(key(tea.KeyEnter))
 	m = drive(t, updated, cmd).(InstallModel)
 
 	if !prepared || !handoffRan {
@@ -434,6 +443,9 @@ func TestInstallModel_HandoffFailureReachesFailed(t *testing.T) {
 	m = drive(t, m, cmd, s).(InstallModel)
 
 	updated, cmd := m.Update(key(tea.KeyEnter)) // Continue — guided configuration
+	m = drive(t, updated, cmd).(InstallModel)
+
+	updated, cmd = m.Update(key(tea.KeyEnter)) // sign-in mode: default local
 	m = drive(t, updated, cmd).(InstallModel)
 
 	if m.run.state != runFailed {
