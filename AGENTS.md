@@ -29,10 +29,13 @@ Layout:
 - `docs/implementation-plan.md`, `docs/releasing.md` — the roadmap and
   the release contract
 
-## This repo installs Orbit; it does not edit Orbit
+## Orbit and this repo are one project
 
-This project's whole purpose is acting **on** Orbit, so reading the Orbit
-repo as reference is expected; modifying it is not.
+`ai/orbit` and this repo are one project, not siblings (owner, 2026-10-03).
+When one needs something from the other, or something there is not working
+as intended, act on it -- file the issue, tell the Orbit session -- without
+asking first. Asking costs the owner a round trip on a question with only
+one answer.
 
 ## Hosts: GitLab first, GitHub is the mirror
 
