@@ -67,7 +67,7 @@ type configRecheckMsg struct {
 // Seams so flow tests drive the whole session with fakes.
 type (
 	prepareConfigFunc func(ctx context.Context, targetDir string) configPlanMsg
-	startConfigFunc   func(treeDir string, step deploy.ConfigStep) (*engine.Stream, io.WriteCloser, error)
+	startConfigFunc   func(treeDir string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error)
 	adoptConfigFunc   func(treeDir, targetDir string) error
 	recheckConfigFunc func(ctx context.Context, treeDir string) (deploy.ConfigCheck, error)
 )
@@ -87,6 +87,13 @@ type configCollect struct {
 	// guidance can name this deployment's real callback URL. Only ever
 	// set from a non-secret field.
 	origin string
+
+	// authModeSel is the highlighted row on the sign-in-mode screen
+	// (issue #154): 0 = Local accounts (the default), 1 = SSO.
+	authModeSel int
+	// authMode is the answer, once chosen, threaded into BuildConfigureCommand
+	// for the --init step it gates. Empty until the person chooses.
+	authMode deploy.AuthMode
 }
 
 // close releases the session's process and staged tree.
@@ -128,8 +135,8 @@ func defaultPrepareConfig(ctx context.Context, targetDir string) configPlanMsg {
 	}}
 }
 
-func defaultStartConfig(treeDir string, step deploy.ConfigStep) (*engine.Stream, io.WriteCloser, error) {
-	return engine.StartInteractive(deploy.BuildConfigureCommand(treeDir, step))
+func defaultStartConfig(treeDir string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+	return engine.StartInteractive(deploy.BuildConfigureCommand(treeDir, step, mode))
 }
 
 // beginConfigCollect starts the in-console path: prepare the session in
@@ -211,6 +218,14 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			// produced a complete configuration): adopt and retry.
 			return r.adoptAndRetry()
 		}
+		if msg.plan.needInit {
+			// Issue #154: before the first --init, ask how people will
+			// sign in. Local accounts is the default; choosing either
+			// row starts --init with that mode (handleConfigSignInModeKey).
+			r.state = runConfigSignInMode
+			r.cfg.authModeSel = 0
+			return r, nil
+		}
 		return r.startNextConfigStep()
 
 	case configStepMsg:
@@ -270,9 +285,9 @@ func (r engineRun) startNextConfigStep() (engineRun, tea.Cmd) {
 	if start == nil {
 		start = defaultStartConfig
 	}
-	treeDir := r.cfg.plan.treeDir
+	treeDir, mode := r.cfg.plan.treeDir, r.cfg.authMode
 	return r, func() tea.Msg {
-		stream, stdin, err := start(treeDir, step)
+		stream, stdin, err := start(treeDir, step, mode)
 		return configStepMsg{stream: stream, stdin: stdin, err: err}
 	}
 }
@@ -374,6 +389,32 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.runErr = nil
 	r.menuSel = 0
 	return r.start(r.width, r.height)
+}
+
+// handleConfigSignInModeKey drives the sign-in-mode screen (issue #154):
+// up/down move the highlight between the two rows, enter chooses it and
+// starts --init with that mode, esc cancels the whole session back to
+// the refusal menu — the same cancel handleConfigKey gives the rest of
+// this session.
+func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
+	switch msg.Code {
+	case tea.KeyEsc:
+		r.cfg.close()
+		r.state = runConfigPrompt
+		r.menuSel = 0
+		return r, nil
+	case tea.KeyUp, tea.KeyDown:
+		r.cfg.authModeSel = 1 - r.cfg.authModeSel
+		return r, nil
+	case tea.KeyEnter:
+		r.cfg.authMode = deploy.AuthModeLocal
+		if r.cfg.authModeSel == 1 {
+			r.cfg.authMode = deploy.AuthModeOIDC
+		}
+		r.state = runConfigCollect
+		return r.startNextConfigStep()
+	}
+	return r, nil
 }
 
 // handleConfigKey is the typing surface: append, backspace, enter
@@ -501,6 +542,62 @@ func rejectionWords(reason string) string {
 	default:
 		return reason
 	}
+}
+
+// configSignInRows is the sign-in-mode screen's copy, ratified 2026-09-09
+// on issue #154 and reproduced here exactly — not to be reworded without
+// a fresh ratification. Local accounts is first (and the default); both
+// rows are otherwise shown as equals.
+var configSignInRows = []struct {
+	label string
+	desc  []string
+}{
+	{"Local accounts", []string{
+		"People get a password managed by Orbit. Nothing else to set up.",
+		"A provider can be added later with configure.sh.",
+	}},
+	{"Single sign-on (SSO) with an identity provider", []string{
+		"People sign in through your OIDC provider — Authentik, Keycloak,",
+		"Entra ID and the like. Orbit asks for its address and client",
+		"details next. Local accounts stay available as well.",
+	}},
+}
+
+// viewConfigSignInMode renders the sign-in-mode screen (issue #154):
+// the question --init is about to be answered for, asked before --init
+// ever runs so the right ORBIT_CONFIGURE_AUTH_MODE can be set on it.
+func (r engineRun) viewConfigSignInMode(width, height int) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("How will people sign in?"))
+	fmt.Fprintln(&b)
+
+	// Unlike menuRow's individually centred labels, the two choices and
+	// their descriptions are one left-aligned block, as ratified: every
+	// line is padded to the block's width so skyBlock's per-line centring
+	// moves the block as a whole and the descriptions stay under their
+	// label.
+	var block []string
+	for i, row := range configSignInRows {
+		label := "  " + style.MenuUnselected.Render(row.label)
+		if i == r.cfg.authModeSel {
+			label = style.MenuCaret.Render(style.SymbolSelected) + " " + style.MenuSelected.Render(row.label)
+		}
+		block = append(block, label)
+		for _, line := range row.desc {
+			block = append(block, style.MutedText.Render("    "+line))
+		}
+		block = append(block, "")
+	}
+	blockWidth := 0
+	for _, line := range block {
+		blockWidth = max(blockWidth, lipgloss.Width(line))
+	}
+	for _, line := range block {
+		fmt.Fprintln(&b, line+strings.Repeat(" ", blockWidth-lipgloss.Width(line)))
+	}
+	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 // viewConfigCollect renders the session: preparing, or one field being

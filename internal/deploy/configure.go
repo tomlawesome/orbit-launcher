@@ -262,6 +262,22 @@ const (
 	ConfigStepSecret ConfigStep = "--set-oidc-secret"
 )
 
+// AuthMode is the sign-in choice the launcher's own screen collects
+// before a guided --init (issue #154), passed through to configure.sh
+// as ORBIT_CONFIGURE_AUTH_MODE. The zero value means "not chosen yet" —
+// the state the very first readiness check is made in, before the
+// person has ever seen the question.
+type AuthMode string
+
+const (
+	// AuthModeLocal asks configure.sh to collect APP_URL only and leave
+	// ORBIT_AUTH_OIDC off.
+	AuthModeLocal AuthMode = "local"
+	// AuthModeOIDC asks configure.sh to collect APP_URL, OIDC_ISSUER and
+	// OIDC_CLIENT_ID, same as every --init before this issue.
+	AuthModeOIDC AuthMode = "oidc"
+)
+
 // BuildConfigureCommand builds one machine-prompt configure run in the
 // staged tree. Setsid is load-bearing exactly as it is for the engine
 // run: a legacy configure.sh (orbit main) ignores
@@ -269,10 +285,21 @@ const (
 // straight through the alt screen; detached, it fails fast with no
 // protocol line — which is precisely the launcher's signal to fall
 // back to the terminal handoff.
-func BuildConfigureCommand(treeDir string, step ConfigStep) *exec.Cmd {
+//
+// mode only matters for the --init step: it is the answer to the
+// launcher's own sign-in-mode screen, and configure.sh's machine mode
+// honours ORBIT_CONFIGURE_AUTH_MODE to skip asking the OIDC fields
+// itself when local accounts were chosen. --set-oidc-secret needs no
+// mode — it only ever runs because the previous --init already decided
+// OIDC is on.
+func BuildConfigureCommand(treeDir string, step ConfigStep, mode AuthMode) *exec.Cmd {
 	cmd := exec.Command("bash", "scripts/configure.sh", string(step))
 	cmd.Dir = treeDir
-	cmd.Env = append(os.Environ(), "ORBIT_CONFIGURE_PROMPTS=machine")
+	env := append(os.Environ(), "ORBIT_CONFIGURE_PROMPTS=machine")
+	if step == ConfigStepInit && mode != "" {
+		env = append(env, "ORBIT_CONFIGURE_AUTH_MODE="+string(mode))
+	}
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }

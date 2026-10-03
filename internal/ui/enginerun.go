@@ -43,6 +43,7 @@ const (
 	runPreparing engineRunState = iota
 	runStreaming
 	runConfigPrompt
+	runConfigSignInMode
 	runConfigCollect
 	runHandoffRunning
 	runFailed
@@ -432,6 +433,9 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	}
 
 	switch r.state {
+	case runConfigSignInMode:
+		return r.handleConfigSignInModeKey(msg)
+
 	case runConfigCollect:
 		return r.handleConfigKey(msg)
 
@@ -503,6 +507,8 @@ func (r engineRun) view(width, height int) string {
 		return r.console.view(width, height)
 	case runConfigPrompt:
 		return r.viewConfigPrompt(width, height)
+	case runConfigSignInMode:
+		return r.viewConfigSignInMode(width, height)
 	case runConfigCollect:
 		return r.viewConfigCollect(width, height)
 	case runHandoffRunning:

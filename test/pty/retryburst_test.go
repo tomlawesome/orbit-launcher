@@ -82,6 +82,12 @@ func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
 	must("Continue — guided configuration")
 	send("\r")
 
+	// The sign-in-mode screen (issue #154), asked before --init ever
+	// runs. fakeMachineConfigure's --init doesn't branch on the answer,
+	// so the default (local accounts) is fine here.
+	must("How will people sign in?")
+	send("\r")
+
 	must("Public Orbit origin")
 	send("https://longline.example.test\r")
 
