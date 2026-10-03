@@ -89,11 +89,12 @@
 <section>
   <h2><span>g</span> Wrong phrase, after Enter</h2>
   <div class="term scene" id="scene-g"><pre class="cells" id="n-g" role="img"
-    aria-label="Field shows I have read this and I understand with the cursor still at its end; beneath it an amber line reads That isn't the phrase yet, type it exactly as shown; Go back muted beneath."></pre></div>
-  <div class="cap">"I have" is a different word from "I've", so <kbd>↵</kbd> is refused in amber, in the
-    row that is otherwise the gap. The typed text stays for fixing; the next keystroke clears the
-    message. A missing or curly apostrophe, any capitals, a trailing full stop or spaces would all
-    have passed (owner ruling: capitals and apostrophes don't matter, words do).</div>
+    aria-label="Field shows I read this and I understand with the cursor still at its end; beneath it an amber line reads That isn't the phrase yet, type it exactly as shown; Go back muted beneath."></pre></div>
+  <div class="cap">A word is missing ("read" for "I've read"), so <kbd>↵</kbd> is refused in amber, in
+    the row that is otherwise the gap. The typed text stays for fixing; the next keystroke clears the
+    message. "I have read this and I understand", a missing or curly apostrophe, any capitals, a
+    trailing full stop or spaces would all have passed (owner rulings: capitals and apostrophes
+    don't matter, "I have" equals "I've", other words do matter).</div>
 </section>
 
 <section>
@@ -203,9 +204,11 @@
     waking is the "something changed" the person is watching for. <b>What matches</b> (owner ruling,
     2026-10-03: capitals and apostrophes don't matter, words do): both sides are compared after
     lower-casing, removing every apostrophe-like mark (' ’ ‘ ´ `), collapsing runs of spaces to one,
-    trimming the ends and dropping one trailing full stop; then they must be identical. So
-    "ive read this and i understand", "I'VE READ THIS AND I UNDERSTAND" and a curly ’ all pass;
-    "I have read this" fails, and so does a missing word. <b><kbd>↵</kbd> on an empty field does
+    trimming the ends and dropping one trailing full stop; then they must be identical, with one
+    further ruling: "I have read this and I understand" is accepted as the same phrase, so after
+    normalising, a leading "i have" counts as "ive". So "ive read this and i understand", "I'VE READ
+    THIS AND I UNDERSTAND", "I have read this and I understand" and a curly ’ all pass; a missing or
+    different word — "I read this and I understand", "I've read it" — fails. <b><kbd>↵</kbd> on an empty field does
     nothing</b>; on a partial or wrong phrase it shows <i>That isn't the phrase yet — type it exactly
     as shown</i> in amber, keeps the typed text for fixing, and the next keystroke clears the message.
     No attempt counter: nothing is at stake in retrying. <b>Go back stays a visible row</b>: Esc
@@ -444,7 +447,7 @@ noticeScreen("n-a",80,26,{offset:0,  elapsed:2});
 noticeScreen("n-b",80,26,{offset:1,  elapsed:12});
 noticeScreen("n-f",80,26,{offset:99, elapsed:26, run:true});
 noticeScreen("n-c",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I've read th"});
-noticeScreen("n-g",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I have read this and I understand", refused:true});
+noticeScreen("n-g",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I read this and I understand", refused:true});
 noticeScreen("n-d",80,26,{offset:99, elapsed:TIMER_S, focus:"back"});
 noticeScreen("n-e",120,50,{offset:0, elapsed:0, run:true});
 </script>
