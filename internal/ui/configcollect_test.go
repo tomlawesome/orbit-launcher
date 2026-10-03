@@ -55,8 +55,11 @@ echo "Orbit configuration: Guided configuration needs a controlling terminal." >
 exit 1`
 
 // scriptedConfig returns a startConfig seam running real subprocesses.
+// The fake scripts here don't branch on mode themselves (they speak a
+// fixed protocol regardless), so mode is accepted and ignored — it only
+// matters to the tests that specifically assert on it.
 func scriptedConfig(initScript, secretScript string) startConfigFunc {
-	return func(_ string, step deploy.ConfigStep) (*engine.Stream, io.WriteCloser, error) {
+	return func(_ string, step deploy.ConfigStep, _ deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
 		script := initScript
 		if step == deploy.ConfigStepSecret {
 			script = secretScript
@@ -64,6 +67,22 @@ func scriptedConfig(initScript, secretScript string) startConfigFunc {
 		return engine.StartInteractive(exec.Command("bash", "-c", script))
 	}
 }
+
+// machineInitScriptLocal is orbit's configure.sh under
+// ORBIT_CONFIGURE_AUTH_MODE=local (issue #154): APP_URL only, no OIDC
+// fields asked.
+const machineInitScriptLocal = `
+attempt=1
+while :; do
+  echo "prompt field=APP_URL kind=url required=true attempt=$attempt"
+  read -r a || { echo "prompt-abort field=APP_URL"; exit 1; }
+  case "$a" in
+    https://*) echo "prompt-accept field=APP_URL"; break ;;
+    *) echo "prompt-reject field=APP_URL reason=not-https"; attempt=$((attempt+1)) ;;
+  esac
+  if [ "$attempt" -gt 3 ]; then echo "prompt-abort field=APP_URL"; exit 1; fi
+done
+exit 0`
 
 func planned(needInit, needSecret bool) prepareConfigFunc {
 	return func(context.Context, string) configPlanMsg {
@@ -171,7 +190,11 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	// Continue — guided configuration (in-console).
+	// Continue — guided configuration (in-console), then the sign-in-mode
+	// screen: this journey drives the full OIDC path, so pick the SSO row.
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 
@@ -238,6 +261,9 @@ func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 	tm.Type("https://orbit.example.test")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -294,6 +320,9 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Public Orbit origin")
 	tm.Type("https://orbit.example.test")
@@ -375,8 +404,13 @@ func TestAppModel_LegacyConfigureFallsBackToHandoff(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
-	// Continue: the legacy script exits with no protocol line, and the
-	// flow falls back to the terminal handoff automatically.
+	// Continue: the sign-in-mode screen appears first (default: local),
+	// then the legacy script exits with no protocol line, and the flow
+	// falls back to the terminal handoff automatically.
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("How will people sign in?"))
+	}, teatest.WithDuration(10*time.Second))
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	select {
 	case <-handoffRan:
@@ -406,6 +440,8 @@ func TestAppModel_ConfigAbortReturnsToRefusalMenu(t *testing.T) {
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // default: local
 	wait("Public Orbit origin")
 
 	// Three rejected answers exhaust the engine's patience: abort, and
@@ -439,7 +475,39 @@ func TestAppModel_EscCancelsConfigCollectToRefusalMenu(t *testing.T) {
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // default: local
 	wait("Public Orbit origin")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
+	wait("Continue — guided configuration")
+
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// TestAppModel_EscCancelsSignInModeToRefusalMenu: esc at the sign-in-mode
+// screen itself — before any step has started — must cancel the same
+// way esc does everywhere else in this session, back to the refusal
+// menu (issue #154).
+func TestAppModel_EscCancelsSignInModeToRefusalMenu(t *testing.T) {
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: engineTwice(),
+		prepareConfig: planned(true, false),
+		startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+		detect:        fakeDetect("https://orbit.example.test"),
+	})
+
+	wait := func(want string) {
+		t.Helper()
+		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+			return bytes.Contains(out, []byte(want))
+		}, teatest.WithDuration(10*time.Second))
+	}
+
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	wait("Continue — guided configuration")
 
@@ -614,5 +682,191 @@ func TestConfigCollect_OnlyAPPURLIsRemembered(t *testing.T) {
 	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "https://orbit.example.com" {
 		t.Errorf("APP_URL was not remembered: %q", r.cfg.origin)
+	}
+}
+
+// lineContaining returns the first line in lines that contains sub, or
+// "" if none does — a small helper for asserting on one row of a
+// rendered screen without caring about its surrounding centring.
+func lineContaining(lines []string, sub string) string {
+	for _, l := range lines {
+		if strings.Contains(l, sub) {
+			return l
+		}
+	}
+	return ""
+}
+
+func signInModeRun() engineRun {
+	return engineRun{
+		state:   runConfigSignInMode,
+		console: newConsole("Install", "test", time.Now).setSize(80, 30),
+	}
+}
+
+// TestConfigSignInMode_RendersBothRowsLocalDefault is the issue #154
+// screen itself: both rows render, with Local accounts — the default —
+// carrying the caret and Single sign-on not.
+func TestConfigSignInMode_RendersBothRowsLocalDefault(t *testing.T) {
+	r := signInModeRun()
+	out := r.view(80, 30)
+	if !strings.Contains(out, "How will people sign in?") {
+		t.Fatalf("missing the question: %q", out)
+	}
+	lines := strings.Split(out, "\n")
+	local := lineContaining(lines, "Local accounts")
+	sso := lineContaining(lines, "Single sign-on (SSO) with an identity provider")
+	if local == "" || sso == "" {
+		t.Fatalf("missing a row — local=%q sso=%q", local, sso)
+	}
+	if !strings.Contains(local, "▸") {
+		t.Errorf("Local accounts should carry the caret by default: %q", local)
+	}
+	if strings.Contains(sso, "▸") {
+		t.Errorf("Single sign-on should not carry the caret by default: %q", sso)
+	}
+}
+
+// TestConfigSignInMode_ArrowsMoveSelection: up/down move the highlight
+// between the two rows, and it shows up in the render.
+func TestConfigSignInMode_ArrowsMoveSelection(t *testing.T) {
+	r := signInModeRun()
+	r, _ = r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if r.cfg.authModeSel != 1 {
+		t.Fatalf("authModeSel = %d after down, want 1", r.cfg.authModeSel)
+	}
+	lines := strings.Split(r.view(80, 30), "\n")
+	if !strings.Contains(lineContaining(lines, "Single sign-on"), "▸") {
+		t.Error("the caret should have followed the highlight to Single sign-on")
+	}
+
+	r, _ = r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if r.cfg.authModeSel != 0 {
+		t.Fatalf("authModeSel = %d after up, want 0", r.cfg.authModeSel)
+	}
+}
+
+// TestConfigSignInMode_EnterStartsInitWithChosenMode: whichever row was
+// highlighted, enter starts --init with that mode threaded through the
+// startConfig seam, and the screen hands back to the ordinary
+// configCollect state.
+func TestConfigSignInMode_EnterStartsInitWithChosenMode(t *testing.T) {
+	cases := []struct {
+		sel  int
+		want deploy.AuthMode
+	}{
+		{0, deploy.AuthModeLocal},
+		{1, deploy.AuthModeOIDC},
+	}
+	for _, tc := range cases {
+		var gotMode deploy.AuthMode
+		var gotStep deploy.ConfigStep
+		start := func(_ string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+			gotStep, gotMode = step, mode
+			ch := make(chan any)
+			close(ch)
+			return &engine.Stream{C: ch}, nopWriteCloser{&bytes.Buffer{}}, nil
+		}
+		r := signInModeRun()
+		r.startConfig = start
+		r.cfg.authModeSel = tc.sel
+		r.cfg.plan = configPlan{needInit: true, treeDir: "/nonexistent"}
+
+		r, cmd := r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if r.state != runConfigCollect {
+			t.Fatalf("sel=%d: state = %v, want runConfigCollect", tc.sel, r.state)
+		}
+		if r.cfg.authMode != tc.want {
+			t.Fatalf("sel=%d: cfg.authMode = %q, want %q", tc.sel, r.cfg.authMode, tc.want)
+		}
+		if cmd == nil {
+			t.Fatalf("sel=%d: expected a command to start --init", tc.sel)
+		}
+		cmd()
+		if gotStep != deploy.ConfigStepInit {
+			t.Errorf("sel=%d: step = %q, want --init", tc.sel, gotStep)
+		}
+		if gotMode != tc.want {
+			t.Errorf("sel=%d: startConfig saw mode %q, want %q", tc.sel, gotMode, tc.want)
+		}
+	}
+}
+
+// TestConfigSignInMode_EscCancelsAndCleansUp: esc releases the staged
+// tree and returns to the refusal menu, same as the rest of this
+// session's cancel.
+func TestConfigSignInMode_EscCancelsAndCleansUp(t *testing.T) {
+	cleaned := false
+	r := signInModeRun()
+	r.cfg.plan = configPlan{needInit: true, cleanup: func() { cleaned = true }}
+
+	r, _ = r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if r.state != runConfigPrompt {
+		t.Errorf("state = %v, want runConfigPrompt", r.state)
+	}
+	if !cleaned {
+		t.Error("the staged tree was not cleaned up on cancel")
+	}
+}
+
+// TestAppModel_LocalSignInSkipsOIDCAndSecret drives the local-accounts
+// path end to end: the default row, an --init that (per the ratified
+// behaviour) asks for APP_URL only, and a post-init re-check that finds
+// the secret not in use — so adoption follows with no OIDC prompt and
+// no secret step at all.
+func TestAppModel_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
+	adopted := make(chan struct{}, 1)
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: engineTwice(),
+		prepareConfig: planned(true, false),
+		startConfig:   scriptedConfig(machineInitScriptLocal, machineSecretScript),
+		recheckConfig: secretNotOwed,
+		adoptConfig: func(_, _ string) error {
+			adopted <- struct{}{}
+			return nil
+		},
+		detect: fakeDetect("https://orbit.example.test"),
+	})
+
+	wait := func(wants ...string) {
+		t.Helper()
+		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+			for _, want := range wants {
+				if !bytes.Contains(out, []byte(want)) {
+					return false
+				}
+			}
+			return true
+		}, teatest.WithDuration(10*time.Second))
+	}
+
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wait("How will people sign in?", "Local accounts")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // default: local, no arrow press
+	wait("Public Orbit origin")
+	tm.Type("https://orbit.example.test")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	select {
+	case <-adopted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("configuration was never adopted into the target")
+	}
+
+	wait("Get into Orbit")
+
+	out, err := io.ReadAll(tm.Output())
+	if err == nil {
+		if bytes.Contains(out, []byte("OIDC issuer")) || bytes.Contains(out, []byte("OIDC client ID")) {
+			t.Error("local sign-in reached an OIDC prompt")
+		}
+		if bytes.Contains(out, []byte("OIDC client secret")) {
+			t.Error("local sign-in reached the secret step")
+		}
+	}
+
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
 	}
 }

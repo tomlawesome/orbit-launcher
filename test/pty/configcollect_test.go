@@ -144,6 +144,14 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	must("Continue — guided configuration")
 	send("\r")
 
+	// The sign-in-mode screen (issue #154), asked before --init ever
+	// runs. This journey drives the full OIDC path, so pick SSO —
+	// down to the second row, then choose it.
+	must("How will people sign in?")
+	must("Local accounts")
+	send("\x1b[B")
+	send("\r")
+
 	// The engine's own prompt for the public origin, answered in-TUI —
 	// with the worked example that tells someone what shape to type.
 	must("Public Orbit origin")
@@ -193,6 +201,122 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	}
 	if got := string(args); got != "--plain --install\n--plain --install\n" {
 		t.Errorf("engine args = %q, want two --plain --install runs", got)
+	}
+}
+
+// fakeMachineConfigureModeAware is fakeMachineConfigure's sibling for
+// issue #154: --init honours ORBIT_CONFIGURE_AUTH_MODE exactly as
+// orbit's configure.sh does — local asks APP_URL only and writes
+// ORBIT_AUTH_OIDC=false, anything else keeps asking for the secret as
+// before. --check reflects that: once a target has recorded
+// ORBIT_AUTH_OIDC=false, the secret line reports "not in use" rather
+// than missing — the line format RunConfigCheck already ignores.
+const fakeMachineConfigureModeAware = `#!/usr/bin/env bash
+case "$1" in
+  --check)
+    rc=0
+    if [[ -f .env-orbit ]]; then echo "ready APP_URL"; else echo "missing APP_URL"; rc=1; fi
+    if grep -q '^ORBIT_AUTH_OIDC=false$' .env-orbit 2>/dev/null; then
+      echo "not in use OIDC_CLIENT_SECRET"
+    elif [[ -f .orbit-secrets/oidc-client-secret ]]; then
+      echo "ready OIDC_CLIENT_SECRET"
+    else
+      echo "missing OIDC_CLIENT_SECRET"; rc=1
+    fi
+    exit $rc
+    ;;
+  --init)
+    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || { echo "Orbit configuration: needs a terminal." >&2; exit 1; }
+    echo "prompt field=APP_URL kind=url required=true attempt=1"
+    read -r answer || { echo "prompt-abort field=APP_URL"; exit 1; }
+    echo "prompt-accept field=APP_URL"
+    if [[ "${ORBIT_CONFIGURE_AUTH_MODE:-}" == local ]]; then
+      printf 'APP_URL=%s\nORBIT_AUTH_OIDC=false\n' "$answer" > .env-orbit
+    else
+      printf 'APP_URL=%s\nORBIT_AUTH_OIDC=true\n' "$answer" > .env-orbit
+    fi
+    chmod 600 .env-orbit
+    exit 0
+    ;;
+  --set-oidc-secret)
+    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || exit 1
+    echo "prompt field=OIDC_CLIENT_SECRET kind=secret required=true attempt=1"
+    read -r secret || { echo "prompt-abort field=OIDC_CLIENT_SECRET"; exit 1; }
+    echo "prompt-accept field=OIDC_CLIENT_SECRET"
+    mkdir -p .orbit-secrets && chmod 700 .orbit-secrets
+    printf '%s\n' "$secret" > .orbit-secrets/oidc-client-secret
+    chmod 600 .orbit-secrets/oidc-client-secret
+    exit 0
+    ;;
+esac
+exit 2
+`
+
+// TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret is issue #154 end to
+// end: the sign-in-mode screen's default (local accounts), a real
+// subprocess --init that honours ORBIT_CONFIGURE_AUTH_MODE=local by
+// asking for APP_URL only, and a post-init re-check that finds the
+// secret not in use — so the launcher adopts and retries with no OIDC
+// prompt and no secret step at all.
+func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
+	binPath := buildBinary(t)
+	dir := t.TempDir()
+	scriptURL := serveOrbitTree(t, map[string]string{
+		"/scripts/install.sh":   fakeConfigAwareEngine,
+		"/scripts/configure.sh": fakeMachineConfigureModeAware,
+		"/.env-orbit.example":   "APP_URL=\n",
+	})
+	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
+
+	driveToInstallNow(t, console)
+
+	must := func(s string) {
+		t.Helper()
+		if _, err := console.ExpectString(s); err != nil {
+			t.Fatalf("expected %q: %v", s, err)
+		}
+	}
+	send := func(s string) {
+		t.Helper()
+		if _, err := console.Send(s); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+
+	must("Orbit needs your configuration")
+	must("Continue — guided configuration")
+	send("\r")
+
+	// The sign-in-mode screen: accept the default (Local accounts) with
+	// no arrow press at all.
+	must("How will people sign in?")
+	must("Local accounts")
+	send("\r")
+
+	must("Public Orbit origin")
+	send("https://pty-local.example.test\r")
+
+	// Straight to adoption and the retry — no OIDC prompt, no secret
+	// step.
+	must("https://pty-local.example.test")
+	must("Get into Orbit")
+
+	send("\x1b[B")
+	send("\r")
+	waitForExit(t, cmd)
+
+	env, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
+	if err != nil {
+		t.Fatalf("adopted .env-orbit: %v", err)
+	}
+	if !strings.Contains(string(env), "APP_URL=https://pty-local.example.test") {
+		t.Errorf(".env-orbit = %q", env)
+	}
+	if !strings.Contains(string(env), "ORBIT_AUTH_OIDC=false") {
+		t.Errorf(".env-orbit never recorded local accounts: %q", env)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".orbit-secrets", "oidc-client-secret")); !os.IsNotExist(err) {
+		t.Errorf("the secret step ran for a local-only sign-in: stat err = %v", err)
 	}
 }
 
