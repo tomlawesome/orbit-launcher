@@ -39,12 +39,12 @@
 <h1>orbit-launcher · v7 — the development notice · #175</h1>
 <div class="sub">
   One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
-  Three things gate the install: the prose has been on screen to its last line, a 40-second timer has run
+  Three things gate the install: the prose has been on screen to its last line, a 70-second timer has run
   out, and the person has typed <b>I've read this and I understand</b>. The timer, the typed field and Go
-  back are pinned in view from the first frame; only the prose scrolls. Cell-truth renders, colours from
-  <code>internal/ui/style/style.go</code>, every glyph one the app already draws. The sky and the countdown
-  animate as the app would (10 fps, whole-cell steps); both stop under <code>prefers-reduced-motion</code>.
-  Nothing here is approved yet.
+  back are pinned in view from the first frame; only the prose scrolls. Copy is the owner's approved final
+  text, verbatim. Cell-truth renders, colours from <code>internal/ui/style/style.go</code>, every glyph one
+  the app already draws. The sky and the countdown animate as the app would (10 fps, whole-cell steps);
+  both stop under <code>prefers-reduced-motion</code>. Nothing else here is approved yet.
 </div>
 
 <div class="layout">
@@ -53,25 +53,26 @@
 <section>
   <h2><span>a</span> First view — 80×26, the house minimum</h2>
   <div class="term scene" id="scene-a"><pre class="cells" id="n-a" role="img"
-    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then prose with three phrases in bold bright ink; the last visible row is faint. Pinned beneath: a thin timer line just starting to fill gold with 0:38 at its end, a faint prompt To install, type I've read this and I understand, an empty row where the field will wake, and the caret on Go back."></pre></div>
+    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then the first fourteen rows of prose with the emphasised phrase I'm not a professional software engineer in bold; the last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 1:08 at its end, a faint prompt To install, type I've read this and I understand, an empty row where the field will wake, and the caret on Go back."></pre></div>
   <div class="cap">Header and the bottom region (timer, prompt, field, Go back) are pinned; only the prose
-    between them scrolls. The last visible prose row steps down to faint: the sign there is more
-    (here the cut happens to land at a sentence end, so the faint step is doing all the work). The countdown is already running; the prompt is faint and the field row empty —
-    not yet awake; Go back carries the caret.</div>
+    between them scrolls — here fourteen of its thirty-eight rows. The last visible prose row steps
+    down to faint and is cut mid-sentence: the sign there is more. The countdown is already running;
+    the prompt is faint and the field row empty — not yet awake; Go back carries the caret.</div>
 </section>
 
 <section>
-  <h2><span>b</span> Scrolled partway — one row down</h2>
+  <h2><span>b</span> Scrolled partway — a screen down</h2>
   <div class="term scene" id="scene-b"><pre class="cells" id="n-b" role="img"
-    aria-label="Same screen scrolled one row: the first visible prose row is faint, the last visible prose row is faint; the pinned region has not moved and the timer line is a little fuller."></pre></div>
-  <div class="cap">Faint at both edges now: text above, more below. The pinned region has not moved; the
-    line has filled a little further.</div>
+    aria-label="Same screen after one PgDn: the first visible prose row is faint, the last visible prose row is faint; the pinned region has not moved and the timer line is a little fuller."></pre></div>
+  <div class="cap">One <kbd>PgDn</kbd> (a viewport less one row, so the last line read is the first
+    line seen). Faint at both edges now: text above, more below. The pinned region has not moved;
+    the line has filled a little further.</div>
 </section>
 
 <section>
   <h2><span>f</span> End reached, timer still running</h2>
   <div class="term scene" id="scene-f"><pre class="cells" id="n-f" role="img"
-    aria-label="Scrolled to the end: no faint row at the bottom; the timer line is about two thirds gold with the seconds left at its end; the prompt is still faint and the field row empty; the caret on Go back. The countdown animates to zero, then the line disappears, the prompt brightens and the field shows a gold caret and cursor."></pre></div>
+    aria-label="Scrolled to the end: no faint row at the bottom, the security paragraph fully in view; the timer line is about four fifths gold with the seconds left at its end; the prompt is still faint and the field row empty; the caret on Go back. The countdown animates to zero, then the line disappears, the prompt brightens and the field shows a gold caret and cursor."></pre></div>
   <div class="cap">A fast scroller: the prose has reached its last line, so the bottom fade is gone, but
     the timer is still running and the field is still asleep. At 0:00 the line goes blank, the prompt
     brightens and the field wakes with its gold caret and cursor. (Animates here; loops.)</div>
@@ -106,27 +107,32 @@
 </section>
 
 <section>
-  <h2><span>e</span> A tall terminal — 120×50, everything fits</h2>
+  <h2><span>e</span> A tall terminal — 120×50, everything just fits</h2>
   <div class="term scene" id="scene-e"><pre class="cells" id="n-e" role="img"
-    aria-label="Notice at 120 by 50 cells on arrival: the whole block sits at the optical centre, no faint rows, the timer line just starting at 0:40, faint prompt, empty field row, caret on Go back. The countdown animates to zero here, then the field wakes."></pre></div>
-  <div class="cap">Nothing to scroll, so nothing is asked for; the timer is the only wait. Header, prose
-    and bottom region are one block at the 0.42 optical centre like every other screen; the measure
-    stays 56 columns. (Animates here from 0:40; loops.)</div>
+    aria-label="Notice at 120 by 50 cells on arrival: the whole block fills the frame top to bottom, no faint rows, the timer line just starting at 1:10, faint prompt, empty field row, caret on Go back. The countdown animates to zero here, then the field wakes."></pre></div>
+  <div class="cap">Thirty-eight rows of prose in a thirty-eight-row viewport: it fits with no row to spare,
+    so the block fills the frame and nothing scrolls. One row shorter and the last line would hang faint
+    below the edge like scene a — the same screen, the same cue. The timer is the only wait here.
+    (Animates from 1:10; loops.)</div>
 </section>
 
 </div>
 
 <aside class="panel" aria-label="Design decisions for owner review">
   <h2>Decisions, for review</h2>
-  <p>Each is a proposal with its reasoning. None is approved.</p>
+  <p>Each is a proposal with its reasoning. The copy, the phrase and the prompt label are approved;
+    the rest is not.</p>
 
   <h3>1 · Showing there is more</h3>
   <p>The last visible prose row is drawn <b>faint</b> instead of muted, and the sentence is cut by the
     edge. Scrolled down, the top row goes faint too. That is the whole signal: no hint text, no corner
     glyph, no scroll track — the house has none, and a cut-off sentence is a thing everyone knows how
     to finish. A scroll track was considered and dropped: it adds a column of noise to say "a little
-    more", and position does not matter for a text this short. Where the cut lands depends on the
-    terminal's height; the faint row is the cue that is always there, the hanging sentence a bonus.</p>
+    more", and position does not matter for a text this short. One rule keeps the cue honest at every
+    height: <b>a paragraph gap is never the viewport's last row while more follows</b> — the next
+    line is pulled up into its place — so the bottom row is always a line of text, faint, and usually
+    cut mid-sentence. Without it, the 80×26 first view of this copy would have ended on a blank row
+    after "up to you.", which reads as an ending.</p>
 
   <h3>2 · The bottom region and its states</h3>
   <p>Pinned at the bottom of the frame, in view from the first frame at every size: the timer row,
@@ -141,48 +147,51 @@
 
   <h3>3 · Every install</h3>
   <p><b>Every install</b>, not once per machine. The notice is the install's own gate, like the
-    confirm screen, and costs under a minute. A remembered "already agreed" needs a file somewhere
+    confirm screen, and costs about a minute. A remembered "already agreed" needs a file somewhere
     that can be wrong — another user on the box, a copied image — and would make the launcher
     stateful for nothing. Update and repair never see it.</p>
 
   <h3>4 · Keys</h3>
   <p><kbd>PgDn</kbd> <kbd>space</kbd>-before-the-field-wakes, <kbd>PgUp</kbd>, <kbd>Home</kbd>
     <kbd>End</kbd> and the wheel (three rows a notch, mouse reporting on for this view only) always
-    scroll the prose. <kbd>↓</kbd> <kbd>↑</kbd> scroll it too, except that <kbd>↓</kbd> from the
-    awake field steps the caret onto Go back, and <kbd>↑</kbd> from Go back steps it into the awake
-    field — the caret walks the page: prose, then field, then Go back. Letters and <kbd>space</kbd>
-    go to the field whenever it is awake, wherever the caret is; typing is what claims it. The field
-    has no cursor movement, so <kbd>Home</kbd> <kbd>End</kbd> stay with the prose, and
-    <kbd>backspace</kbd> trims — the configure screen's field works the same way. <b><kbd>↵</kbd></b>
-    on Go back goes back; in the field it submits (see 8); a quick triple <kbd>↵</kbd> from the
-    confirm screen lands back on Ready to install, never in an install. <b><kbd>esc</kbd> is Go
-    back at any moment</b>: one step, to Ready to install, the same step the confirm screen's own
-    <kbd>esc</kbd> takes.</p>
+    scroll the prose; a page is the viewport less one row, so the last line read is the first line
+    seen. <kbd>↓</kbd> <kbd>↑</kbd> scroll it too, except that <kbd>↓</kbd> from the awake field
+    steps the caret onto Go back, and <kbd>↑</kbd> from Go back steps it into the awake field — the
+    caret walks the page: prose, then field, then Go back. Letters and <kbd>space</kbd> go to the
+    field whenever it is awake, wherever the caret is; typing is what claims it. The field has no
+    cursor movement, so <kbd>Home</kbd> <kbd>End</kbd> stay with the prose, and <kbd>backspace</kbd>
+    trims — the configure screen's field works the same way. <b><kbd>↵</kbd></b> on Go back goes
+    back; in the field it submits (see 8); a quick triple <kbd>↵</kbd> from the confirm screen lands
+    back on Ready to install, never in an install. <b><kbd>esc</kbd> is Go back at any moment</b>:
+    one step, to Ready to install, the same step the confirm screen's own <kbd>esc</kbd> takes.</p>
 
   <h3>5 · 80×26, and tall</h3>
-  <p>At 80×26 the header (blank, ⟡, blank, title, state, blank) takes six rows and the bottom region
-    (timer, prompt, field, feedback, Go back, blank) six, leaving a fourteen-row viewport for eighteen
-    rows of prose: <b>the last paragraph and a half hang below the edge</b> and four rows of
-    scrolling reveal them. "The end" is the prose's last line having been on screen. (At 80×24, a
-    common default, the viewport is twelve rows.) At the minimum size the block fills the frame top
-    to bottom, so the 0.42 placement collapses to zero — there is no spare room, and none is needed.
-    On a tall terminal nothing scrolls and nothing pretends to: the block centres as on every screen
-    and the timer is the only wait. The scroll requirement is "the whole notice has been on
-    screen", not "a scroll happened".</p>
+  <p>The approved copy wraps to <b>thirty-eight rows</b> at the 56-column measure (nine paragraphs,
+    eight gaps). At 80×26 the header (blank, ⟡, blank, title, state, blank) takes six rows and the
+    bottom region (timer, prompt, field, feedback, Go back, blank) six, leaving a fourteen-row
+    viewport: <b>twenty-four rows hang below the edge</b> — two <kbd>PgDn</kbd>, or one
+    <kbd>End</kbd>, to reach the last line. "The end" is the prose's last line having been on screen.
+    (At 80×24, a common default, the viewport is twelve rows.) At the minimum size the block fills
+    the frame top to bottom, so the 0.42 placement collapses to zero — there is no spare room, and
+    none is needed. At 120×50 the viewport is thirty-eight rows: <b>it fits exactly</b>, with no row
+    to spare, so the block fills that frame too and nothing scrolls; at 120×49 the last line hangs
+    faint below the edge and one <kbd>↓</kbd> shows it — the same screen, no special case. The scroll
+    requirement is "the whole notice has been on screen", not "a scroll happened".</p>
 
   <h3>6 · The timer</h3>
-  <p><b>40 seconds.</b> 144 words at 238 words a minute (Brysbaert 2019, average adult silent
-    reading) is 36.3 s. Rounded <b>up</b> to the next ten: up because the average is the midpoint
-    and half of readers are slower; to a round number because 0:36 looks computed and 0:40 looks
-    chosen. It starts when the screen appears, not on a key. <b>Look:</b> one row, directly under the
-    prose — a thin line of <code>─</code> cells filling gold over the <code>BorderSoft</code> track
-    (the mission console's own bar, at 50 cells one cell per 0.8 s, whole-cell steps) with the
-    seconds left as a faint <code>m:ss</code> at its end (the console's clock format). No percentage.
-    When it reaches 0:00 the row goes blank — the gate is gone, so its object is gone. It is not a
-    motion beat, so <code>ORBIT_LAUNCHER_NO_ANIMATION</code> does not skip it — without the sky's
-    tick chain it needs its own one-second tick. <b>Order does not matter:</b> end first, the person
-    waits by the sleeping field with the line filling (scene f); timer first, the line vanishes while
-    they are still reading and the field wakes the moment the last line scrolls in.</p>
+  <p><b>70 seconds.</b> The approved copy is 257 words (title and state line included, since they
+    are read too); at 238 words a minute (Brysbaert 2019, average adult silent reading) that is
+    64.8 s. Rounded <b>up</b> to the next ten, as before: up because the average is the midpoint and
+    half of readers are slower; to a round number because 1:05 looks computed and 1:10 looks chosen.
+    It starts when the screen appears, not on a key. <b>Look:</b> one row, directly under the prose —
+    a thin line of <code>─</code> cells filling gold over the <code>BorderSoft</code> track (the
+    mission console's own bar; 50 cells, so one cell every 1.4 s, whole-cell steps) with the seconds
+    left as a faint <code>m:ss</code> at its end (the console's clock format), counting from 1:10.
+    No percentage. When it reaches 0:00 the row goes blank — the gate is gone, so its object is gone.
+    It is not a motion beat, so <code>ORBIT_LAUNCHER_NO_ANIMATION</code> does not skip it — without
+    the sky's tick chain it needs its own one-second tick. <b>Order does not matter:</b> end first,
+    the person waits by the sleeping field with the line filling (scene f); timer first, the line
+    vanishes while they are still reading and the field wakes the moment the last line scrolls in.</p>
 
   <h3>7 · Emphasis (owner, 2026-10-03)</h3>
   <p>Three phrases, wording untouched: "I'm not a professional software engineer", "use it at your own
@@ -191,7 +200,8 @@
     title already uses — and bold <code>TextMuted</code> on a faded row, so the phrase steps down
     with its row and still stands one step above it. Whole cells, two existing tokens, no new colour:
     gold is the caret's and amber is state. Under <code>NO_COLOR</code> the steps vanish and bold
-    alone carries it, which is why bold is part of the rule and not a fallback.</p>
+    alone carries it, which is why bold is part of the rule and not a fallback. The new paragraphs
+    carry no emphasis; the owner chose three phrases and three is what makes them stand out.</p>
 
   <h3>8 · The typed confirmation (owner, 2026-10-03)</h3>
   <p><b>Look:</b> the configure screen's field, unchanged — gold <code>▸</code>, the typed text in
@@ -200,35 +210,30 @@
     row, <code>To install, type</code> in muted ink and the phrase itself in bright ink, so the thing
     to type is unmistakable without quotes. That is the question, not a key hint, so the house rule
     allows it. <b>Asleep until both gates pass</b>, then awake: typing takes five seconds against a
-    forty-second wait, a field that accepts letters it cannot yet submit invites a puzzled wait, and
-    waking is the "something changed" the person is watching for. <b>What matches</b> (owner ruling,
-    2026-10-03: capitals and apostrophes don't matter, words do): both sides are compared after
-    lower-casing, removing every apostrophe-like mark (' ’ ‘ ´ `), collapsing runs of spaces to one,
-    trimming the ends and dropping one trailing full stop; then they must be identical, with one
-    further ruling: "I have read this and I understand" is accepted as the same phrase, so after
-    normalising, a leading "i have" counts as "ive". So "ive read this and i understand", "I'VE READ
-    THIS AND I UNDERSTAND", "I have read this and I understand" and a curly ’ all pass; a missing or
-    different word — "I read this and I understand", "I've read it" — fails. <b><kbd>↵</kbd> on an empty field does
-    nothing</b>; on a partial or wrong phrase it shows <i>That isn't the phrase yet — type it exactly
-    as shown</i> in amber, keeps the typed text for fixing, and the next keystroke clears the message.
-    No attempt counter: nothing is at stake in retrying. <b>Go back stays a visible row</b>: Esc
-    needs no hint, but a visible way out is what every flow screen offers, and a text field with no
-    neighbour would leave a stuck person with nothing to try but keys they cannot be told about.</p>
-
-  <div class="prop">
-    <h3>Proposal · prompt wording</h3>
-    <p>The phrase is the owner's, verbatim. The prompt label <b>"To install, type"</b> is mine and
-      open to change; it is the only new copy on the screen.</p>
-  </div>
+    seventy-second wait, a field that accepts letters it cannot yet submit invites a puzzled wait, and
+    waking is the "something changed" the person is watching for. <b>What matches</b> (owner rulings,
+    2026-10-03: capitals and apostrophes don't matter, "I have" equals "I've", words do matter): both
+    sides are compared after lower-casing, removing every apostrophe-like mark (' ’ ‘ ´ `),
+    collapsing runs of spaces to one, trimming the ends and dropping one trailing full stop; then they
+    must be identical, except that after normalising, a leading "i have" counts as "ive". So
+    "ive read this and i understand", "I'VE READ THIS AND I UNDERSTAND", "I have read this and I
+    understand" and a curly ’ all pass; a missing or different word — "I read this and I
+    understand", "I've read it" — fails. <b><kbd>↵</kbd> on an empty field does nothing</b>; on a
+    partial or wrong phrase it shows <i>That isn't the phrase yet — type it exactly as shown</i> in
+    amber, keeps the typed text for fixing, and the next keystroke clears the message. No attempt
+    counter: nothing is at stake in retrying. <b>Go back stays a visible row</b>: Esc needs no hint,
+    but a visible way out is what every flow screen offers, and a text field with no neighbour would
+    leave a stuck person with nothing to try but keys they cannot be told about.</p>
 
   <h3>In-grammar details</h3>
   <p>Amber ⟡, as the flow's two other cautionary screens use (stale volume, unavailable profile).
     "alpha" in the same amber — the one state colour, twice, as the splash pairs mark and status word.
     Prose left-aligned as one 56-column block, centred as a block: the sign-in screen's ratified
-    grammar. Every line of the view, header included, is padded to the block's width plus a two-cell
-    gutter each side (60 cells), so <code>compositeScene</code> keeps the sky — stars and planets —
-    out of that rectangle, as it does under any padded line today. No foot. The timer length should
-    be a variable so tests can shorten it.</p>
+    grammar; the security address <code>github.com/tomlawesome/orbit/security</code> is 37 cells and
+    never breaks across rows at that measure. Every line of the view, header included, is padded to
+    the block's width plus a two-cell gutter each side (60 cells), so <code>compositeScene</code>
+    keeps the sky — stars and planets — out of that rectangle, as it does under any padded line
+    today. No foot. The timer length should be a variable so tests can shorten it.</p>
 
   <h3>Changed since the first pass</h3>
   <p>· Timer and choices were the document's tail and started below the fold at 80×26; now they are
@@ -240,15 +245,18 @@
     · Third pass: the owner's three phrases are emphasised (see 7), in every scene including the
     faded rows.<br>
     · Fourth pass: the accept choice is gone; in its place the typed confirmation (see 8) — prompt,
-    field and feedback rows — with the bottom region now six rows and the 80×26 viewport fourteen.
-    Keys re-cut around a field that has focus (see 4). Two scenes added: partly typed (c) and a
-    wrong phrase after Enter (g).</p>
+    field and feedback rows. Keys re-cut around a field that has focus (see 4). Two scenes added:
+    partly typed (c) and a wrong phrase after Enter (g). Owner rulings on matching folded in.<br>
+    · Fifth pass: the approved final copy, verbatim (nine paragraphs, 38 rows). Timer re-derived:
+    257 words → 64.8 s → <b>70 s</b>, one bar cell per 1.4 s. 80×26 now hides 24 rows (two pages);
+    120×50 fits exactly. New rule in 1 so the bottom cue never lands on a paragraph gap. Scene b is
+    now a page down rather than a row.</p>
 </aside>
 </div>
 
 <footer>
-  v7 · #175 · 80×26 and 120×50 · 10 fps · colour steps and whole-cell moves only. Nothing approved;
-  design/DECISIONS.md is untouched until the owner rules.
+  v7 · #175 · 80×26 and 120×50 · 10 fps · colour steps and whole-cell moves only. Copy, phrase and
+  prompt approved; design/DECISIONS.md is untouched until the owner rules on the rest.
 </footer>
 
 <script>
@@ -297,26 +305,30 @@ function drawSystems(S,t){
 // ---- palette: internal/ui/style/style.go ----------------------------------
 const TEXT="#e7e9ee", MUTED="#7c8699", FAINT="#4a5468", GOLD="#d8b45a", AMBER="#fb923c", TRACK="#151b28";
 
-// ---- the copy, verbatim (owner, 2026-10-03, #175); line breaks are ours ----
+// ---- the approved copy, verbatim (owner, 2026-10-03, #175); line breaks are ours ----
 const TITLE="A note before you install";
 const STATE_LABEL="Project state: ", STATE_WORD="alpha";
 const PARAS=[
   "I designed Orbit. Claude, an AI model, wrote the code.",
   "I'm not a professional software engineer. I built Orbit for myself, because keeping track of so many life admin tasks is hard. I've released it under the GNU AGPL v3.0 so anyone can use it for free.",
   "If you find it useful, that's great. Please understand though that you use it at your own risk: it comes with no warranty, and there's no one on call to support it.",
+  "Everything Orbit stores stays on your own machine, and backing it up is up to you.",
+  "Because Orbit is in alpha, upgrading it is not guaranteed to keep your data. Always back up before you upgrade.",
+  "Orbit sends no data or telemetry about you or your installation anywhere. It does reach the internet for a few things, and sends none of your data when it does: installing and upgrading downloads files from GitHub and Docker Hub, the launcher checks GitHub for a newer version when it starts, and the virus scanner downloads new signatures.",
   "I've poured significant effort and resources into trying to make it as robust and secure as I can, but you should not trust that it is safe to expose to the internet.",
-  "Never expose Orbit directly to the internet. Keep it on your own network, and reach it from outside through a VPN back to that network."
+  "Never expose Orbit directly to the internet. Keep it on your own network, and reach it from outside through a VPN back to that network.",
+  "If you find a security problem, please report it privately on GitHub at github.com/tomlawesome/orbit/security, not in a public issue."
 ];
 // Owner-chosen emphasis (2026-10-03): three phrases, wording untouched.
 const EMPH=["I'm not a professional software engineer","use it at your own risk","Never expose Orbit directly to the internet"];
-// The typed confirmation (owner, 2026-10-03): the phrase is verbatim; the prompt label is a proposal.
+// The typed confirmation (owner, 2026-10-03): phrase and prompt label both approved.
 const PHRASE="I've read this and I understand";
 const PROMPT_LABEL="To install, type  ";
 const REFUSAL="That isn't the phrase yet — type it exactly as shown";
 const GO_BACK="Go back";
 const MEASURE=56;
-const TIMER_S=40;          // 144 words / 238 wpm = 36.3 s, rounded up to the next ten
-const BAR_CELLS=MEASURE-6; // the line, then two spaces and m:ss
+const TIMER_S=70;          // 257 words / 238 wpm = 64.8 s, rounded up to the next ten
+const BAR_CELLS=MEASURE-6; // the line, then two spaces and m:ss — one cell per 1.4 s
 const GUTTER=2;            // every view line is padded to MEASURE+2*GUTTER; the sky stays outside
 
 // wrap: rows of segments {text, em}; markers bracket the emphasised phrases
@@ -367,8 +379,15 @@ function noticeScreen(id,W,H,state){
   const viewport=H-12;                          // header 6 rows + bottom region 6 rows
   const fits=DOC.length<=viewport;
   const offset=fits?0:Math.min(state.offset, DOC.length-viewport);
-  const endReached=fits||offset+viewport>=DOC.length;
   const visible=DOC.slice(offset, offset+viewport);
+  let lastShown=offset+visible.length-1;
+  // a paragraph gap is never the viewport's last row while more follows: the
+  // next line is pulled up into its place, so the bottom cue is always a line
+  // of text (faint, usually cut mid-sentence), never a blank that reads as an end
+  if(!fits&&lastShown<DOC.length-1&&visible[visible.length-1].kind==="blank"){
+    lastShown++; visible[visible.length-1]=DOC[lastShown];
+  }
+  const endReached=fits||lastShown>=DOC.length-1;
   const nLines=6+visible.length+6;               // header + viewport rows + bottom region
   const top=Math.floor(0.42*(H-1-nLines));
   const left=CX-Math.floor(MEASURE/2);          // the block's left edge
@@ -444,8 +463,8 @@ function noticeScreen(id,W,H,state){
 }
 
 noticeScreen("n-a",80,26,{offset:0,  elapsed:2});
-noticeScreen("n-b",80,26,{offset:1,  elapsed:12});
-noticeScreen("n-f",80,26,{offset:99, elapsed:26, run:true});
+noticeScreen("n-b",80,26,{offset:13, elapsed:20});          // one PgDn: viewport (14) less one row
+noticeScreen("n-f",80,26,{offset:99, elapsed:56, run:true});
 noticeScreen("n-c",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I've read th"});
 noticeScreen("n-g",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I read this and I understand", refused:true});
 noticeScreen("n-d",80,26,{offset:99, elapsed:TIMER_S, focus:"back"});
