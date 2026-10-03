@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -244,7 +245,7 @@ func TestRunConfigCheck_NoReportIsAnError(t *testing.T) {
 }
 
 func TestBuildConfigureCommand_Shape(t *testing.T) {
-	cmd := BuildConfigureCommand("/tmp/tree", ConfigStepInit)
+	cmd := BuildConfigureCommand("/tmp/tree", ConfigStepInit, AuthModeLocal)
 	want := []string{"bash", "scripts/configure.sh", "--init"}
 	if len(cmd.Args) != len(want) {
 		t.Fatalf("args = %v", cmd.Args)
@@ -268,5 +269,53 @@ func TestBuildConfigureCommand_Shape(t *testing.T) {
 	}
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
 		t.Error("Setsid must be set — a legacy configure.sh would otherwise reach /dev/tty")
+	}
+}
+
+// envHas reports whether cmd's environment carries exactly this entry.
+func envHas(cmd *exec.Cmd, entry string) bool {
+	for _, e := range cmd.Env {
+		if e == entry {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBuildConfigureCommand_InitCarriesAuthModeEnv(t *testing.T) {
+	local := BuildConfigureCommand("/tmp/tree", ConfigStepInit, AuthModeLocal)
+	if !envHas(local, "ORBIT_CONFIGURE_AUTH_MODE=local") {
+		t.Errorf("local --init env = %v, missing ORBIT_CONFIGURE_AUTH_MODE=local", local.Env)
+	}
+
+	oidc := BuildConfigureCommand("/tmp/tree", ConfigStepInit, AuthModeOIDC)
+	if !envHas(oidc, "ORBIT_CONFIGURE_AUTH_MODE=oidc") {
+		t.Errorf("oidc --init env = %v, missing ORBIT_CONFIGURE_AUTH_MODE=oidc", oidc.Env)
+	}
+}
+
+// TestBuildConfigureCommand_SecretStepOmitsAuthModeEnv: the secret step
+// only ever runs because a prior --init already decided OIDC is on, so
+// it needs no mode of its own — and must not pick up a stray local one
+// from the same session.
+func TestBuildConfigureCommand_SecretStepOmitsAuthModeEnv(t *testing.T) {
+	cmd := BuildConfigureCommand("/tmp/tree", ConfigStepSecret, AuthModeLocal)
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "ORBIT_CONFIGURE_AUTH_MODE=") {
+			t.Errorf("--set-oidc-secret env carried a mode: %v", cmd.Env)
+		}
+	}
+}
+
+// TestBuildConfigureCommand_UnknownModeOmitsEnv: an --init built before
+// the sign-in screen has an answer (mode "") must not invent a mode —
+// the launcher never calls this with an unknown mode for --init in
+// practice, but the command builder itself should stay honest either way.
+func TestBuildConfigureCommand_UnknownModeOmitsEnv(t *testing.T) {
+	cmd := BuildConfigureCommand("/tmp/tree", ConfigStepInit, "")
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "ORBIT_CONFIGURE_AUTH_MODE=") {
+			t.Errorf("an unknown mode must not set ORBIT_CONFIGURE_AUTH_MODE: %v", cmd.Env)
+		}
 	}
 }

@@ -139,6 +139,10 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 	must("Continue — guided configuration")
 	send("\r")
 
+	// The sign-in-mode screen (issue #154); the default is fine here.
+	must("How will people sign in?")
+	send("\r")
+
 	must("Public Orbit origin")
 	send("https://pumpdrop.example.test\r")
 
