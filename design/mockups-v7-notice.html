@@ -40,8 +40,8 @@
 <div class="sub">
   One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
   Three things gate the install: the prose has been on screen to its last line, a 70-second timer has run
-  out, and the person has typed <b>I've read this and I understand</b>. The timer, the typed field and Go
-  back are pinned in view from the first frame; only the prose scrolls. Copy is the owner's approved final
+  out, and the person has typed <b>I've read this and I understand</b> into a text box. The timer, the
+  box and Go back are pinned in view from the first frame; only the prose scrolls. Copy is the owner's approved final
   text, verbatim. Cell-truth renders, colours from <code>internal/ui/style/style.go</code>, every glyph one
   the app already draws. The sky and the countdown animate as the app would (10 fps, whole-cell steps);
   both stop under <code>prefers-reduced-motion</code>. Nothing else here is approved yet.
@@ -53,11 +53,12 @@
 <section>
   <h2><span>a</span> First view — 80×26, the house minimum</h2>
   <div class="term scene" id="scene-a"><pre class="cells" id="n-a" role="img"
-    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then the first fourteen rows of prose with the emphasised phrase I'm not a professional software engineer in bold; the last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 1:08 at its end, a faint prompt To install, type I've read this and I understand, an empty row where the field will wake, and the caret on Go back."></pre></div>
-  <div class="cap">Header and the bottom region (timer, prompt, field, Go back) are pinned; only the prose
-    between them scrolls — here fourteen of its thirty-eight rows. The last visible prose row steps
-    down to faint and is cut mid-sentence: the sign there is more. The countdown is already running;
-    the prompt is faint and the field row empty — not yet awake; Go back carries the caret.</div>
+    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then the first fourteen rows of prose with the emphasised sentence I'm a mechatronics engineer by trade, not a professional software engineer in bold across two rows; the last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 1:08 at its end, a faint prompt To install, type I've read this and I understand, a rounded text box drawn in the console frame's quiet border with the same phrase inside it as example text, and the caret on Go back."></pre></div>
+  <div class="cap">Header and the bottom region (timer, prompt, text box, Go back) are pinned; only the
+    prose between them scrolls — here twelve of its thirty-nine rows. The last visible prose row
+    steps down to faint and is cut mid-sentence: the sign there is more. The countdown is already
+    running; the prompt is faint, the box's border is the console frame's quiet colour and the
+    example phrase sits inside the box — asleep; Go back carries the caret.</div>
 </section>
 
 <section>
@@ -72,27 +73,30 @@
 <section>
   <h2><span>f</span> End reached, timer still running</h2>
   <div class="term scene" id="scene-f"><pre class="cells" id="n-f" role="img"
-    aria-label="Scrolled to the end: no faint row at the bottom, the security paragraph fully in view; the timer line is about four fifths gold with the seconds left at its end; the prompt is still faint and the field row empty; the caret on Go back. The countdown animates to zero, then the line disappears, the prompt brightens and the field shows a gold caret and cursor."></pre></div>
+    aria-label="Scrolled to the end: no faint row at the bottom, the security paragraph fully in view; the timer line is about four fifths gold with the seconds left at its end; the prompt is still faint and the box asleep; the caret on Go back. The countdown animates to zero, then the line disappears, the prompt and the box's border brighten a step."></pre></div>
   <div class="cap">A fast scroller: the prose has reached its last line, so the bottom fade is gone, but
-    the timer is still running and the field is still asleep. At 0:00 the line goes blank, the prompt
-    brightens and the field wakes with its gold caret and cursor. (Animates here; loops.)</div>
+    the timer is still running and the box is still asleep. At 0:00 the line goes blank and the
+    prompt and border brighten a step: awake. The cursor arrives only when typing claims the box.
+    (Animates here; loops.)</div>
 </section>
 
 <section>
   <h2><span>c</span> Both gates passed — typing the phrase</h2>
   <div class="term scene" id="scene-c"><pre class="cells" id="n-c" role="img"
-    aria-label="Timer row blank; prompt bright: To install, type I've read this and I understand; the field row shows a gold caret, the partly typed text I've read th and a gold cursor; Go back muted beneath."></pre></div>
-  <div class="cap">The field is awake: gold <kbd>▸</kbd>, typed text in bright ink, gold <kbd>▏</kbd>
-    cursor — the configure screen's own field. Typing a letter is what moved the caret off Go back.
+    aria-label="Timer row blank; prompt bright: To install, type I've read this and I understand; the text box has the gold caret at its left, the partly typed text I've read th inside and a gold cursor after it; the example text is gone; Go back muted beneath."></pre></div>
+  <div class="cap">The box is focused: gold <kbd>▸</kbd> at its left, typed text in bright ink with the
+    gold <kbd>▏</kbd> cursor after it — the configure screen's field, boxed.
+    The example phrase vanished on the first keypress; the prompt above still shows it.
     <kbd>↑</kbd> <kbd>PgUp</kbd> and the wheel still scroll the prose while typing.</div>
 </section>
 
 <section>
   <h2><span>g</span> Wrong phrase, after Enter</h2>
   <div class="term scene" id="scene-g"><pre class="cells" id="n-g" role="img"
-    aria-label="Field shows I read this and I understand with the cursor still at its end; beneath it an amber line reads That isn't the phrase yet, type it exactly as shown; Go back muted beneath."></pre></div>
-  <div class="cap">A word is missing ("read" for "I've read"), so <kbd>↵</kbd> is refused in amber, in
-    the row that is otherwise the gap. The typed text stays for fixing; the next keystroke clears the
+    aria-label="The box shows I read this and I understand with the cursor still at its end; directly beneath the box an amber line reads Please type the phrase as shown above; the prompt above the box still shows the phrase; Go back muted beneath."></pre></div>
+  <div class="cap">A word is missing ("read" for "I've read"), so <kbd>↵</kbd> is refused in amber on the
+    row directly under the box, aligned with its text — the row that is otherwise the gap. "As shown
+    above" points at the prompt line, which always carries the phrase. The typed text stays for fixing; the next keystroke clears the
     message. "I have read this and I understand", a missing or curly apostrophe, any capitals, a
     trailing full stop or spaces would all have passed (owner rulings: capitals and apostrophes
     don't matter, "I have" equals "I've", other words do matter).</div>
@@ -101,19 +105,19 @@
 <section>
   <h2><span>d</span> Go back selected</h2>
   <div class="term scene" id="scene-d"><pre class="cells" id="n-d" role="img"
-    aria-label="Both gates passed, the field awake but empty and without a cursor, the caret on Go back."></pre></div>
-  <div class="cap">Where the caret rests until the person types. <kbd>↓</kbd> from the field returns
-    here; <kbd>↵</kbd> goes back to Ready to install, exactly as <kbd>esc</kbd> does at any moment.</div>
+    aria-label="Both gates passed, the box awake with the example text inside and no cursor, the caret on Go back."></pre></div>
+  <div class="cap">Where the caret rests until the person types: the box is awake but not focused, so the
+    example phrase stays and there is no cursor. <kbd>↓</kbd> from the box returns here; <kbd>↵</kbd> goes back to Ready to install, exactly as <kbd>esc</kbd> does at any moment.</div>
 </section>
 
 <section>
-  <h2><span>e</span> A tall terminal — 120×50, everything just fits</h2>
+  <h2><span>e</span> A tall terminal — 120×50, three rows short</h2>
   <div class="term scene" id="scene-e"><pre class="cells" id="n-e" role="img"
-    aria-label="Notice at 120 by 50 cells on arrival: the whole block fills the frame top to bottom, no faint rows, the timer line just starting at 1:10, faint prompt, empty field row, caret on Go back. The countdown animates to zero here, then the field wakes."></pre></div>
-  <div class="cap">Thirty-eight rows of prose in a thirty-eight-row viewport: it fits with no row to spare,
-    so the block fills the frame and nothing scrolls. One row shorter and the last line would hang faint
-    below the edge like scene a — the same screen, the same cue. The timer is the only wait here.
-    (Animates from 1:10; loops.)</div>
+    aria-label="Notice at 120 by 50 cells on arrival: the block fills the frame top to bottom; the last three rows of prose hang below the edge, so the last visible row is faint; the timer line just starting at 1:10, faint prompt, the sleeping text box with its example text, caret on Go back. The countdown animates to zero here; the box wakes only once the last line has been scrolled in."></pre></div>
+  <div class="cap">Thirty-nine rows of prose in a thirty-six-row viewport: the security paragraph's tail
+    hangs below the edge and the row above it goes faint — the same screen and the same cue as
+    80×26, three <kbd>↓</kbd> deep. At 120×53 it would fit exactly. The box wakes only once that line
+    has been seen and the timer is out. (Animates from 1:10; loops.)</div>
 </section>
 
 </div>
@@ -136,12 +140,15 @@
 
   <h3>2 · The bottom region and its states</h3>
   <p>Pinned at the bottom of the frame, in view from the first frame at every size: the timer row,
-    the prompt, the field, a feedback row (usually blank: the gap) and Go back. Only the prose
-    between the header and them scrolls. Go back takes the caret from the start, so the way out is
-    visible before anything is read. The field has two states: <b>asleep</b> while either gate is
-    open (prompt faint, field row empty, letters ignored) and <b>awake</b> once both are passed
-    (prompt brightens, the gold caret and cursor appear). Nothing moves on its own when it wakes:
-    the caret stays on Go back until the person types. In the view this is still one content block
+    the prompt, the three-row text box, a feedback row (usually blank: the gap) and Go back. Only the
+    prose between the header and them scrolls. Go back takes the caret from the start, so the way
+    out is visible before anything is read. The box has three states: <b>asleep</b> while either
+    gate is open (prompt faint, border in <code>Border</code>, example phrase inside, letters
+    ignored), <b>awake</b> once both are passed (prompt and border one step brighter, example still
+    inside, no cursor) and <b>focused</b> once typing claims it (gold caret at its left, the example
+    gone, cursor after the text; the border stays as awake — the caret and cursor are the focus
+    signal, as on every other screen). Nothing moves on its own when it wakes: the
+    caret stays on Go back until the person types. In the view this is still one content block
     handed to the same centring as every screen; the "pinning" is only that the first and last rows
     never scroll.</p>
 
@@ -155,10 +162,10 @@
   <p><kbd>PgDn</kbd> <kbd>space</kbd>-before-the-field-wakes, <kbd>PgUp</kbd>, <kbd>Home</kbd>
     <kbd>End</kbd> and the wheel (three rows a notch, mouse reporting on for this view only) always
     scroll the prose; a page is the viewport less one row, so the last line read is the first line
-    seen. <kbd>↓</kbd> <kbd>↑</kbd> scroll it too, except that <kbd>↓</kbd> from the awake field
-    steps the caret onto Go back, and <kbd>↑</kbd> from Go back steps it into the awake field — the
-    caret walks the page: prose, then field, then Go back. Letters and <kbd>space</kbd> go to the
-    field whenever it is awake, wherever the caret is; typing is what claims it. The field has no
+    seen. <kbd>↓</kbd> <kbd>↑</kbd> scroll it too, except that <kbd>↓</kbd> from the focused box
+    steps the caret onto Go back, and <kbd>↑</kbd> from Go back steps it into the awake box — the
+    caret walks the page: prose, then box, then Go back. Letters and <kbd>space</kbd> go to the
+    box whenever it is awake, wherever the caret is; typing is what claims it. The box has no
     cursor movement, so <kbd>Home</kbd> <kbd>End</kbd> stay with the prose, and <kbd>backspace</kbd>
     trims — the configure screen's field works the same way. <b><kbd>↵</kbd></b> on Go back goes
     back; in the field it submits (see 8); a quick triple <kbd>↵</kbd> from the confirm screen lands
@@ -166,22 +173,23 @@
     one step, to Ready to install, the same step the confirm screen's own <kbd>esc</kbd> takes.</p>
 
   <h3>5 · 80×26, and tall</h3>
-  <p>The approved copy wraps to <b>thirty-eight rows</b> at the 56-column measure (nine paragraphs,
+  <p>The approved copy wraps to <b>thirty-nine rows</b> at the 56-column measure (nine paragraphs,
     eight gaps). At 80×26 the header (blank, ⟡, blank, title, state, blank) takes six rows and the
-    bottom region (timer, prompt, field, feedback, Go back, blank) six, leaving a fourteen-row
-    viewport: <b>twenty-four rows hang below the edge</b> — two <kbd>PgDn</kbd>, or one
-    <kbd>End</kbd>, to reach the last line. "The end" is the prose's last line having been on screen.
-    (At 80×24, a common default, the viewport is twelve rows.) At the minimum size the block fills
+    bottom region (timer, prompt, the box's three rows, feedback, Go back, blank) eight — the box
+    costs two rows more than a bare field — leaving a twelve-row viewport: <b>twenty-seven rows hang
+    below the edge</b> — three <kbd>PgDn</kbd>, or one <kbd>End</kbd>, to reach the last line. "The
+    end" is the prose's last line having been on screen. (At 80×24, a common default, the viewport is
+    ten rows.) At the minimum size the block fills
     the frame top to bottom, so the 0.42 placement collapses to zero — there is no spare room, and
-    none is needed. At 120×50 the viewport is thirty-eight rows: <b>it fits exactly</b>, with no row
-    to spare, so the block fills that frame too and nothing scrolls; at 120×49 the last line hangs
-    faint below the edge and one <kbd>↓</kbd> shows it — the same screen, no special case. The scroll
+    none is needed. At 120×50 the viewport is thirty-six rows, <b>three short</b>: the tail of the
+    last paragraph hangs faint below the edge and three <kbd>↓</kbd> (or one page) show it — the
+    same screen, no special case; at 120×53 it fits exactly and nothing scrolls. The scroll
     requirement is "the whole notice has been on screen", not "a scroll happened".</p>
 
   <h3>6 · The timer</h3>
-  <p><b>70 seconds.</b> The approved copy is 257 words (title and state line included, since they
+  <p><b>70 seconds.</b> The approved copy is 262 words (title and state line included, since they
     are read too); at 238 words a minute (Brysbaert 2019, average adult silent reading) that is
-    64.8 s. Rounded <b>up</b> to the next ten, as before: up because the average is the midpoint and
+    66.0 s. Rounded <b>up</b> to the next ten, as before: up because the average is the midpoint and
     half of readers are slower; to a round number because 1:05 looks computed and 1:10 looks chosen.
     It starts when the screen appears, not on a key. <b>Look:</b> one row, directly under the prose —
     a thin line of <code>─</code> cells filling gold over the <code>BorderSoft</code> track (the
@@ -194,8 +202,10 @@
     vanishes while they are still reading and the field wakes the moment the last line scrolls in.</p>
 
   <h3>7 · Emphasis (owner, 2026-10-03)</h3>
-  <p>Three phrases, wording untouched: "I'm not a professional software engineer", "use it at your own
-    risk", "Never expose Orbit directly to the internet". Drawn <b>bold, one ink step up from the row
+  <p>Three phrases, wording untouched: the whole sentence "I'm a mechatronics engineer by trade, not
+    a professional software engineer." (owner, 2026-10-04), "use it at your own risk", "Never expose
+    Orbit directly to the internet". A phrase may break across rows — the first one does at this
+    measure — and each word carries the emphasis with it. Drawn <b>bold, one ink step up from the row
     they sit in</b>: bold <code>Text</code> on a normal (muted) row — the style every flow screen's
     title already uses — and bold <code>TextMuted</code> on a faded row, so the phrase steps down
     with its row and still stands one step above it. Whole cells, two existing tokens, no new colour:
@@ -204,23 +214,35 @@
     carry no emphasis; the owner chose three phrases and three is what makes them stand out.</p>
 
   <h3>8 · The typed confirmation (owner, 2026-10-03)</h3>
-  <p><b>Look:</b> the configure screen's field, unchanged — gold <code>▸</code>, the typed text in
-    <code>Text</code>, a gold <code>▏</code> cursor, and a refusal in amber <code>DegradedText</code>
-    on the row beneath, exactly as <code>viewConfigCollect</code> draws a reason. Above it one prompt
-    row, <code>To install, type</code> in muted ink and the phrase itself in bright ink, so the thing
-    to type is unmistakable without quotes. That is the question, not a key hint, so the house rule
-    allows it. <b>Asleep until both gates pass</b>, then awake: typing takes five seconds against a
-    seventy-second wait, a field that accepts letters it cannot yet submit invites a puzzled wait, and
-    waking is the "something changed" the person is watching for. <b>What matches</b> (owner rulings,
+  <p><b>Look</b> (owner, 2026-10-04: a visible text box): a 54-cell rounded box drawn with the
+    console frame's own glyphs <code>╭─╮│╰╯</code>, one cell of padding inside, sitting two cells in
+    from the block's edge so the gold <code>▸</code> lands in the same column as Go back's. Its
+    border uses two existing tokens: <code>Border</code> asleep — the console frame's own colour,
+    quiet but a box — and <code>TextFaint</code> awake, one step up. (<code>BorderSoft</code>, the
+    timer track's colour, was tried for the asleep state and all but vanished on the background; a
+    box the owner asked to be visible cannot start invisible.) No new colour. Inside it the phrase as example text in <code>TextFaint</code>, there from
+    the first frame; it disappears on the first keypress and the typed text takes its place in
+    <code>Text</code>, with the gold <code>▏</code> cursor after it — the configure screen's field,
+    boxed. While the box is focused and still empty the cursor sits in the first cell and the
+    example starts in the next, so the first letter lands where the cursor is. Above the box the
+    approved prompt row, <code>To install, type</code> in muted ink and the phrase in bright ink:
+    <b>the phrase never leaves the screen</b>, which is what lets the refusal say "as shown above"
+    after the example inside the box has gone. The refusal, the owner's words <i>Please type the
+    phrase as shown above</i>, goes in amber <code>DegradedText</code> on the row directly under the
+    box, aligned with its text, exactly as <code>viewConfigCollect</code> draws a reason. The prompt
+    is the question, not a key hint, so the house rule allows it. <b>Asleep until both gates
+    pass</b>, then awake: typing takes five seconds against a seventy-second wait, a box that accepts
+    letters it cannot yet submit invites a puzzled wait, and waking is the "something changed" the
+    person is watching for. <b>What matches</b> (owner rulings,
     2026-10-03: capitals and apostrophes don't matter, "I have" equals "I've", words do matter): both
     sides are compared after lower-casing, removing every apostrophe-like mark (' ’ ‘ ´ `),
     collapsing runs of spaces to one, trimming the ends and dropping one trailing full stop; then they
     must be identical, except that after normalising, a leading "i have" counts as "ive". So
     "ive read this and i understand", "I'VE READ THIS AND I UNDERSTAND", "I have read this and I
     understand" and a curly ’ all pass; a missing or different word — "I read this and I
-    understand", "I've read it" — fails. <b><kbd>↵</kbd> on an empty field does nothing</b>; on a
-    partial or wrong phrase it shows <i>That isn't the phrase yet — type it exactly as shown</i> in
-    amber, keeps the typed text for fixing, and the next keystroke clears the message. No attempt
+    understand", "I've read it" — fails. <b><kbd>↵</kbd> on an empty box does nothing</b>; on a
+    partial or wrong phrase it shows <i>Please type the phrase as shown above</i> in amber, keeps the
+    typed text for fixing, and the next keystroke clears the message. No attempt
     counter: nothing is at stake in retrying. <b>Go back stays a visible row</b>: Esc needs no hint,
     but a visible way out is what every flow screen offers, and a text field with no neighbour would
     leave a stuck person with nothing to try but keys they cannot be told about.</p>
@@ -250,7 +272,14 @@
     · Fifth pass: the approved final copy, verbatim (nine paragraphs, 38 rows). Timer re-derived:
     257 words → 64.8 s → <b>70 s</b>, one bar cell per 1.4 s. 80×26 now hides 24 rows (two pages);
     120×50 fits exactly. New rule in 1 so the bottom cue never lands on a paragraph gap. Scene b is
-    now a page down rather than a row.</p>
+    now a page down rather than a row.<br>
+    · Sixth pass (2026-10-04): second paragraph reworded by the owner ("I'm a mechatronics engineer
+    by trade, not a professional software engineer."), emphasised in full as one sentence. 262 words
+    → 66.0 s, so 70 s stands. Now 39 rows.<br>
+    · Seventh pass (2026-10-04): the bare field is a drawn text box with the phrase inside as example
+    text (see 8); the prompt keeps the phrase so "as shown above" always holds; the refusal is the
+    owner's "Please type the phrase as shown above". Two rows dearer: the 80×26 viewport is twelve
+    rows and hides 27; 120×50 is three rows short and scrolls (scene e).</p>
 </aside>
 </div>
 
@@ -310,7 +339,7 @@ const TITLE="A note before you install";
 const STATE_LABEL="Project state: ", STATE_WORD="alpha";
 const PARAS=[
   "I designed Orbit. Claude, an AI model, wrote the code.",
-  "I'm not a professional software engineer. I built Orbit for myself, because keeping track of so many life admin tasks is hard. I've released it under the GNU AGPL v3.0 so anyone can use it for free.",
+  "I'm a mechatronics engineer by trade, not a professional software engineer. I built Orbit for myself, because keeping track of so many life admin tasks is hard. I've released it under the GNU AGPL v3.0 so anyone can use it for free.",
   "If you find it useful, that's great. Please understand though that you use it at your own risk: it comes with no warranty, and there's no one on call to support it.",
   "Everything Orbit stores stays on your own machine, and backing it up is up to you.",
   "Because Orbit is in alpha, upgrading it is not guaranteed to keep your data. Always back up before you upgrade.",
@@ -320,16 +349,18 @@ const PARAS=[
   "If you find a security problem, please report it privately on GitHub at github.com/tomlawesome/orbit/security, not in a public issue."
 ];
 // Owner-chosen emphasis (2026-10-03): three phrases, wording untouched.
-const EMPH=["I'm not a professional software engineer","use it at your own risk","Never expose Orbit directly to the internet"];
+const EMPH=["I'm a mechatronics engineer by trade, not a professional software engineer","use it at your own risk","Never expose Orbit directly to the internet"];
 // The typed confirmation (owner, 2026-10-03): phrase and prompt label both approved.
 const PHRASE="I've read this and I understand";
 const PROMPT_LABEL="To install, type  ";
-const REFUSAL="That isn't the phrase yet — type it exactly as shown";
+const REFUSAL="Please type the phrase as shown above";   // owner's words, 2026-10-04
 const GO_BACK="Go back";
 const MEASURE=56;
 const TIMER_S=70;          // 257 words / 238 wpm = 64.8 s, rounded up to the next ten
 const BAR_CELLS=MEASURE-6; // the line, then two spaces and m:ss — one cell per 1.4 s
 const GUTTER=2;            // every view line is padded to MEASURE+2*GUTTER; the sky stays outside
+const BOX_W=MEASURE-2;     // the text box: two cells in from the block's edge, so ▸ shares Go back's column
+const BORDER="#1c2434";    // style.Border — the console frame's colour
 
 // wrap: rows of segments {text, em}; markers bracket the emphasised phrases
 // before splitting so the flag rides with each word and never costs a cell
@@ -370,13 +401,14 @@ function clock(sec){const m=Math.floor(sec/60),s=sec%60;return m+":"+(s<10?"0":"
 // the screen appeared), run (animate the countdown from `elapsed`, looping).
 // The view is one content block: header (blank, ⟡, blank, title, state,
 // blank), the visible prose rows, then the bottom region (timer, prompt,
-// field, feedback, Go back, blank). Viewport = H - 12 rows; skyBlock's 0.42
-// optical centre positions the block when it is shorter than the screen.
+// box top, box middle, box bottom, feedback, Go back, blank). Viewport =
+// H - 14 rows; skyBlock's 0.42 optical centre positions the block when it
+// is shorter than the screen.
 function noticeScreen(id,W,H,state){
   const S=mkScreen(id,W,H); if(!S)return;
   const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
   const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
-  const viewport=H-12;                          // header 6 rows + bottom region 6 rows
+  const viewport=H-14;                          // header 6 rows + bottom region 8 rows
   const fits=DOC.length<=viewport;
   const offset=fits?0:Math.min(state.offset, DOC.length-viewport);
   const visible=DOC.slice(offset, offset+viewport);
@@ -388,7 +420,7 @@ function noticeScreen(id,W,H,state){
     lastShown++; visible[visible.length-1]=DOC[lastShown];
   }
   const endReached=fits||lastShown>=DOC.length-1;
-  const nLines=6+visible.length+6;               // header + viewport rows + bottom region
+  const nLines=6+visible.length+8;               // header + viewport rows + bottom region
   const top=Math.floor(0.42*(H-1-nLines));
   const left=CX-Math.floor(MEASURE/2);          // the block's left edge
 
@@ -437,18 +469,29 @@ function noticeScreen(id,W,H,state){
     S.str(r,left,PROMPT_LABEL,awake?MUTED:FAINT);
     S.str(r,left+PROMPT_LABEL.length,PHRASE,awake?TEXT:MUTED);
     r++;
-    // row 3: the field — the configure screen's own: gold ▸, typed text, gold ▏ cursor while focused
-    if(awake){
+    // rows 3–5: the text box. Border: style.Border asleep, TextFaint awake (BorderSoft was tried and vanished).
+    // Inside: the example phrase in TextFaint until the first keypress; then the typed
+    // text in Text with the gold ▏ cursor after it. ▸ at the block's edge while focused.
+    const bc=awake?FAINT:BORDER;   // Border asleep (the console frame's own), TextFaint awake; focus is ▸ + cursor
+    const bx=left+2;
+    S.put(r,bx,"╭",bc); for(let x=1;x<BOX_W-1;x++)S.put(r,bx+x,"─",bc); S.put(r,bx+BOX_W-1,"╮",bc);
+    r++;
+    S.put(r,bx,"│",bc); S.put(r,bx+BOX_W-1,"│",bc);
+    if(focus==="field"){
       const typed=state.typed||"";
-      if(focus==="field")S.put(r,left,"▸",GOLD);
-      S.str(r,left+2,typed,TEXT);
-      if(focus==="field")S.put(r,left+2+typed.length,"▏",GOLD);
+      S.put(r,left,"▸",GOLD);
+      if(typed.length){ S.str(r,bx+2,typed,TEXT); S.put(r,bx+2+typed.length,"▏",GOLD); }
+      else { S.put(r,bx+2,"▏",GOLD); S.str(r,bx+3,PHRASE,FAINT); }
+    } else {
+      S.str(r,bx+2,PHRASE,FAINT);
     }
     r++;
-    // row 4: feedback — amber refusal after a wrong Enter, otherwise the gap
-    if(awake&&state.refused)S.str(r,left,REFUSAL,AMBER);
+    S.put(r,bx,"╰",bc); for(let x=1;x<BOX_W-1;x++)S.put(r,bx+x,"─",bc); S.put(r,bx+BOX_W-1,"╯",bc);
     r++;
-    // row 5: Go back
+    // row 6: feedback — amber refusal after a wrong Enter, aligned with the box's text; otherwise the gap
+    if(awake&&state.refused)S.str(r,bx+2,REFUSAL,AMBER);
+    r++;
+    // row 7: Go back
     if(focus==="back")S.put(r,left,"▸",GOLD);
     S.str(r,left+2,GO_BACK,focus==="back"?TEXT:MUTED);
     S.render();
@@ -463,7 +506,7 @@ function noticeScreen(id,W,H,state){
 }
 
 noticeScreen("n-a",80,26,{offset:0,  elapsed:2});
-noticeScreen("n-b",80,26,{offset:13, elapsed:20});          // one PgDn: viewport (14) less one row
+noticeScreen("n-b",80,26,{offset:11, elapsed:20});          // one PgDn: viewport (12) less one row
 noticeScreen("n-f",80,26,{offset:99, elapsed:56, run:true});
 noticeScreen("n-c",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I've read th"});
 noticeScreen("n-g",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I read this and I understand", refused:true});
