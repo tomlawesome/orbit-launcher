@@ -492,7 +492,9 @@ keep working. Two things follow from that:
 Screens from `design/mockups.html` sections 03–08, implemented against
 this: profile selection (Standard only, for now — AI/Full are honest
 "not available yet" stubs); a confirm screen explaining the handoff (no
-config-collection screen at all, per the above); completion/failure
+config-collection screen at all, per the above); then a development
+notice that must be read and acknowledged by typing a phrase before the
+console starts (#175, `design/mockups-v7-notice.html`); completion/failure
 based on `install.sh`'s own exit code.
 
 **v5 mission console (issue #73, layered on top without reversing #51).**

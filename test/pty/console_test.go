@@ -1,6 +1,7 @@
 package pty
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,9 +111,64 @@ func driveToInstallNow(t *testing.T, console *expect.Console) {
 	if _, err := console.Send("\r"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
+	passNotice(t, console)
 }
 
+// noticeWait outlasts the development notice's countdown (#175). The
+// binary keeps its full 70 s — nothing outside it can shorten an
+// approved gate — so a run through Install now waits it out.
+const noticeWait = 72 * time.Second
+
+// passNotice gets past the development notice the way a person does:
+// End shows the whole notice, the countdown runs out, the phrase is
+// typed and Enter accepts it. The wait keeps reading the pty rather
+// than sleeping: a reader that stops lets the binary block on its own
+// output while the countdown redraws.
+func passNotice(t *testing.T, console *expect.Console) {
+	t.Helper()
+	if _, err := console.ExpectString("A note before you install"); err != nil {
+		t.Fatalf("expected the development notice: %v", err)
+	}
+	if _, err := console.Send("\x1b[F"); err != nil { // End
+		t.Fatalf("send: %v", err)
+	}
+	deadline := time.Now().Add(noticeWait)
+	for time.Now().Before(deadline) {
+		// A quiet second (no redraw) is a read timeout, not a failure.
+		_, err := console.Expect(passedMatcher(deadline), expect.WithTimeout(time.Second))
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("waiting out the notice's countdown: %v", err)
+		}
+	}
+	if _, err := console.Send("I've read this and I understand\r"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+}
+
+// passedMatcher matches whatever has been read once deadline passes.
+func passedMatcher(deadline time.Time) expect.ExpectOpt {
+	return func(opts *expect.ExpectOpts) error {
+		opts.Matchers = append(opts.Matchers, deadlineMatcher(deadline))
+		return nil
+	}
+}
+
+type deadlineMatcher time.Time
+
+func (d deadlineMatcher) Match(v any) bool {
+	if _, isErr := v.(error); isErr {
+		return false
+	}
+	return !time.Now().Before(time.Time(d))
+}
+
+func (d deadlineMatcher) Criteria() any { return time.Time(d) }
+
 func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
+	// Parallel: each run waits out the development notice's real
+	// countdown (passNotice), and six of those in series would
+	// spend most of the package's default timeout.
+	t.Parallel()
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	console, cmd := startConsolePTY(t, binPath, dir, serveScript(t, fakeEngineScript))
@@ -159,6 +215,10 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 }
 
 func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
+	// Parallel: each run waits out the development notice's real
+	// countdown (passNotice), and six of those in series would
+	// spend most of the package's default timeout.
+	t.Parallel()
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	console, cmd := startConsolePTY(t, binPath, dir, serveScript(t, fakeRefusalScript))
