@@ -48,10 +48,10 @@
     },
     {
       "name": "github/codeql-action",
-      "version": "v4.38.0",
-      "commit": "b96794f015dfd88f77b49b1c93e0fa7110f94c63",
+      "version": "v4.38.2",
+      "commit": "2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2",
       "license": "MIT",
-      "source": "https://github.com/github/codeql-action/releases/tag/v4.38.0",
+      "source": "https://github.com/github/codeql-action/releases/tag/v4.38.2",
       "updateOwner": "orbit-launcher maintainers",
       "note": "Used via the init and analyze subpaths. Both must move together; splitting them fails CodeQL."
     }
