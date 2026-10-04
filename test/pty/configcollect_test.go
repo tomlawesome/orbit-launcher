@@ -115,6 +115,10 @@ func serveOrbitTree(t *testing.T, files map[string]string) string {
 }
 
 func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
+	// Parallel: each run waits out the development notice's real
+	// countdown (passNotice), and six of those in series would
+	// spend most of the package's default timeout.
+	t.Parallel()
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
@@ -259,6 +263,10 @@ exit 2
 // secret not in use — so the launcher adopts and retries with no OIDC
 // prompt and no secret step at all.
 func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
+	// Parallel: each run waits out the development notice's real
+	// countdown (passNotice), and six of those in series would
+	// spend most of the package's default timeout.
+	t.Parallel()
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
