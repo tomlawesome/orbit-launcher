@@ -94,6 +94,10 @@ variables:
   # 2026-09-14). Branch and channel move together because install.sh and the
   # image must be one generation. Put them back when v1.3.0 ships.
   ORBIT_PROJECT: ai/orbit
+  # Orbit's public GitHub mirror, used only when GitLab refuses the job
+  # token (Renovate's merge requests, #173) or ORBIT_FILES_SOURCE says so.
+  ORBIT_GITHUB_REPO: tomlawesome/orbit
+  ORBIT_FILES_SOURCE: auto
   ORBIT_BRANCH: preview
   ORBIT_CHANNEL: preview
   # Set to "true" on a pipeline started by hand to run the live test without
@@ -471,13 +475,51 @@ live:
       # so a missing file is a red run, not a silent one. installer-ui.sh and
       # configuration.sh are optional there, so an orbit ref without them is
       # tolerated (main has no installer-ui.sh).
+      #
+      # Where the files come from (#173): ai/orbit on this GitLab, read with
+      # the job token. That token carries the access of whoever started the
+      # pipeline, and Renovate's project bot can never read another project,
+      # so on its merge requests GitLab answers 403. Then, and only then,
+      # every file comes from Orbit's public GitHub mirror instead, at the
+      # same branch: GitLab pushes it after each Orbit merge, so it trails by
+      # minutes at most. One source for the whole tree, never a mix.
+      # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path.
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
-      fetch_orbit_file() {
-        curl --fail --silent --show-error --location \
-          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-          --output ".live/install-script/$2" \
-          "${CI_API_V4_URL}/projects/${project}/repository/files/$(printf '%s' "$1" | sed 's#/#%2F#g')/raw?ref=${ORBIT_BRANCH}"
+      gitlab_orbit_url() {
+        printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
       }
+      orbit_source="${ORBIT_FILES_SOURCE:-auto}"
+      if [ "$orbit_source" = "auto" ]; then
+        probe="$(curl --silent --location --output /dev/null --write-out '%{http_code}' \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"
+        case "$probe" in
+          401|403) orbit_source=github ;;
+          *) orbit_source=gitlab ;;
+        esac
+        echo "ai/orbit on GitLab answered ${probe} for install.sh"
+      fi
+      case "$orbit_source" in
+        gitlab)
+          echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab, ${ORBIT_BRANCH}"
+          fetch_orbit_file() {
+            curl --fail --silent --show-error --location \
+              --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+              --output ".live/install-script/$2" "$(gitlab_orbit_url "$1")"
+          }
+          ;;
+        github)
+          echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO}, ${ORBIT_BRANCH} at $(git ls-remote "https://github.com/${ORBIT_GITHUB_REPO}.git" "refs/heads/${ORBIT_BRANCH}" | cut -f1)"
+          fetch_orbit_file() {
+            curl --fail --silent --show-error --location \
+              --output ".live/install-script/$2" \
+              "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1"
+          }
+          ;;
+        *)
+          echo "ORBIT_FILES_SOURCE must be auto, gitlab or github, not ${orbit_source}"
+          exit 1
+          ;;
+      esac
       fetch_orbit_file scripts/install.sh install.sh
       fetch_orbit_file scripts/configure.sh configure.sh
       fetch_orbit_file .env-orbit.example .env-orbit.example
