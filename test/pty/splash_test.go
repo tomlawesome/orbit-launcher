@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	expect "github.com/Netflix/go-expect"
-	"github.com/creack/pty"
+	"github.com/charmbracelet/x/vttest"
+
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // buildBinary compiles cmd/orbit-launcher once per test run and returns
@@ -36,7 +37,73 @@ func buildBinary(t *testing.T) string {
 	return binPath
 }
 
-func startUnderPTY(t *testing.T, binPath string) (*expect.Console, *exec.Cmd) {
+// vtConsole is one orbit-launcher process on a virtual terminal: Charm's
+// vttest runs it on a real pty and keeps the rendered screen, and every
+// expectation here is about that screen (#181). It replaces go-expect's
+// Console, which matched the raw byte stream instead.
+type vtConsole struct {
+	term *vttest.Terminal
+	// timeout is the wall-clock ceiling for one expectation. go-expect's
+	// own timeout measured idleness between reads, which a repainting
+	// screen never reaches; this is a real deadline.
+	timeout time.Duration
+}
+
+// newConsole opens a cols x rows virtual terminal and closes it when the
+// test ends. vttest sizes the pty itself, so the program's first
+// WindowSizeMsg reports a real size and bubbletea renders (see
+// SplashModel.View).
+func newConsole(t *testing.T, cols, rows int, timeout time.Duration) *vtConsole {
+	t.Helper()
+	term, err := vttest.NewTerminal(t, cols, rows)
+	if err != nil {
+		t.Fatalf("create virtual terminal: %v", err)
+	}
+	t.Cleanup(func() { _ = term.Close() })
+	return &vtConsole{term: term, timeout: timeout}
+}
+
+// start runs cmd on the console's pty. Stdin, stdout and stderr default
+// to the pty; a stream the caller already set is left alone.
+func (c *vtConsole) start(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	if err := c.term.Start(cmd); err != nil {
+		t.Fatalf("start orbit-launcher: %v", err)
+	}
+	// A failed expectation exits the test through t.Fatalf without ever
+	// reaching waitForExit — without this, that run leaks a live binary
+	// parked on a dead pty (found as five real strays after a local
+	// iteration session). Registered after the terminal's own Close, so
+	// it runs first.
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+}
+
+// expectString waits up to the console's timeout for s on screen.
+func (c *vtConsole) expectString(s string) error {
+	return c.expectWithin(c.timeout, vtscreen.ContainsAny(s))
+}
+
+// expectScreen waits up to the console's timeout for one screen showing
+// every one of texts — for an assertion that two things share a screen,
+// where separate waits could each be satisfied by a different one.
+func (c *vtConsole) expectScreen(texts ...string) error {
+	return c.expectWithin(c.timeout, vtscreen.ContainsAll(texts...))
+}
+
+func (c *vtConsole) expectWithin(d time.Duration, match vtscreen.Match) error {
+	_, err := vtscreen.Wait(c.term, d, match)
+	return err
+}
+
+// send types s as raw input, escape sequences and all.
+func (c *vtConsole) send(s string) {
+	vtscreen.Send(c.term, s)
+}
+
+func startUnderPTY(t *testing.T, binPath string) (*vtConsole, *exec.Cmd) {
 	t.Helper()
 	return startUnderPTYInDir(t, binPath, "")
 }
@@ -45,28 +112,13 @@ func startUnderPTY(t *testing.T, binPath string) (*expect.Console, *exec.Cmd) {
 // working directory set to dir — needed to exercise flows (like Update)
 // whose behaviour depends on what's already at the target directory. An
 // empty dir inherits the test process's own working directory.
-func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *exec.Cmd) {
+func startUnderPTYInDir(t *testing.T, binPath, dir string) (*vtConsole, *exec.Cmd) {
 	t.Helper()
 
-	console, err := expect.NewConsole(expect.WithDefaultTimeout(5 * time.Second))
-	if err != nil {
-		t.Fatalf("create console: %v", err)
-	}
-	t.Cleanup(func() { console.Close() })
-
-	// A freshly opened pty reports a 0x0 window size until told otherwise;
-	// bubbletea renders nothing until its first WindowSizeMsg reports a
-	// real size (see SplashModel.View), so the program would otherwise
-	// sit there forever with nothing to Expect against.
-	if err := pty.Setsize(console.Tty(), &pty.Winsize{Rows: 24, Cols: 80}); err != nil {
-		t.Fatalf("set pty size: %v", err)
-	}
+	console := newConsole(t, 80, 24, 10*time.Second)
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	cmd.Stdin = console.Tty()
-	cmd.Stdout = console.Tty()
-	cmd.Stderr = console.Tty()
 	// NO_COLOR keeps assertions to plain text: this layer proves
 	// behaviour (does navigation work, does the terminal restore), not
 	// appearance — that's test/visual's job.
@@ -77,18 +129,7 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
 		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
 		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1")
-
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start orbit-launcher: %v", err)
-	}
-	// A failed expectation exits the test through t.Fatalf without ever
-	// reaching waitForExit — without this, that run leaks a live binary
-	// parked on a dead pty (found as five real strays after a local
-	// iteration session).
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
+	console.start(t, cmd)
 	return console, cmd
 }
 
@@ -96,11 +137,9 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*expect.Console, *ex
 // animation and is swallowed, putting the lit room on screen for the
 // assertions that follow — the arrival itself is covered by internal/ui's
 // own unit tests.
-func skipArrival(t *testing.T, console *expect.Console) {
+func skipArrival(t *testing.T, console *vtConsole) {
 	t.Helper()
-	if _, err := console.Send("s"); err != nil {
-		t.Fatalf("send skip key: %v", err)
-	}
+	console.send("s")
 }
 
 func waitForExit(t *testing.T, cmd *exec.Cmd) {
@@ -126,16 +165,14 @@ func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
 	skipArrival(t, console)
 
 	// The wordmark is the letter-spaced normal-size ORBIT.
-	if _, err := console.ExpectString("O R B I T"); err != nil {
+	if err := console.expectString("O R B I T"); err != nil {
 		t.Fatalf("did not see the wordmark: %v", err)
 	}
-	if _, err := console.ExpectString("Install"); err != nil {
+	if err := console.expectString("Install"); err != nil {
 		t.Fatalf("did not see the menu: %v", err)
 	}
 
-	if _, err := console.Send("\x1b"); err != nil { // Escape
-		t.Fatalf("send Escape: %v", err)
-	}
+	console.send("\x1b") // Escape
 
 	waitForExit(t, cmd)
 }
@@ -145,21 +182,17 @@ func TestSplash_RealPTY_ArrowNavigationMovesTheCaret(t *testing.T) {
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
 
-	if _, err := console.ExpectString("▸ Install"); err != nil {
+	if err := console.expectString("▸ Install"); err != nil {
 		t.Fatalf("did not see the initial selection on Install: %v", err)
 	}
 
-	if _, err := console.Send("\x1b[B"); err != nil { // Down
-		t.Fatalf("send Down: %v", err)
-	}
+	console.send("\x1b[B") // Down
 
-	if _, err := console.ExpectString("▸ Update"); err != nil {
+	if err := console.expectString("▸ Update"); err != nil {
 		t.Fatalf("caret did not move to Update after Down: %v", err)
 	}
 
-	if _, err := console.Send("\x1b"); err != nil { // Escape
-		t.Fatalf("send Escape: %v", err)
-	}
+	console.send("\x1b") // Escape
 
 	waitForExit(t, cmd)
 }

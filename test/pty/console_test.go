@@ -1,7 +1,6 @@
 package pty
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,9 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	expect "github.com/Netflix/go-expect"
-	"github.com/creack/pty"
 )
 
 // fakeEngineScript is a stand-in install.sh that speaks engine event
@@ -27,7 +23,9 @@ sleep 0.05
 echo "phase=identity component=image state=completed reason=image-identity action=verify elapsed=0s"
 sleep 0.05
 echo "phase=application component=application state=healthy reason=application-health action=health elapsed=1s"
-sleep 0.05
+# A second on the application stage: the test reads the screen, not the
+# byte stream, and a stage overdrawn within 50 ms can fall between looks.
+sleep 1
 printf 'APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n' > .env-orbit
 echo "phase=complete component=installer state=completed reason=deployment-ready action=complete elapsed=1s"
 exit 0
@@ -56,61 +54,39 @@ func serveScript(t *testing.T, script string) string {
 	return server.URL
 }
 
-func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*expect.Console, *exec.Cmd) {
+func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, *exec.Cmd) {
 	t.Helper()
 
-	console, err := expect.NewConsole(expect.WithDefaultTimeout(10 * time.Second))
-	if err != nil {
-		t.Fatalf("create console: %v", err)
-	}
-	t.Cleanup(func() { console.Close() })
-	if err := pty.Setsize(console.Tty(), &pty.Winsize{Rows: 26, Cols: 80}); err != nil {
-		t.Fatalf("set pty size: %v", err)
-	}
+	console := newConsole(t, 80, 26, 10*time.Second)
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	cmd.Stdin = console.Tty()
-	cmd.Stdout = console.Tty()
-	cmd.Stderr = console.Tty()
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
 		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
 		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
 		"ORBIT_LAUNCHER_INSTALL_SCRIPT_URL="+scriptURL)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start orbit-launcher: %v", err)
-	}
 	// Same leak guard as startUnderPTYInDir: a t.Fatalf exit must not
 	// leave the spawned binary alive on a dead pty.
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
+	console.start(t, cmd)
 	return console, cmd
 }
 
 // driveToInstallNow walks splash -> profile -> confirm and confirms.
-func driveToInstallNow(t *testing.T, console *expect.Console) {
+func driveToInstallNow(t *testing.T, console *vtConsole) {
 	t.Helper()
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
 	skipArrival(t, console)
 	must("▸ Install")
-	if _, err := console.Send("\r"); err != nil {
-		t.Fatalf("send: %v", err)
-	}
+	console.send("\r")
 	must("Choose a deployment profile")
-	if _, err := console.Send("\r"); err != nil {
-		t.Fatalf("send: %v", err)
-	}
+	console.send("\r")
 	must("Ready to install")
-	if _, err := console.Send("\r"); err != nil {
-		t.Fatalf("send: %v", err)
-	}
+	console.send("\r")
 	passNotice(t, console)
 }
 
@@ -121,48 +97,19 @@ const noticeWait = 72 * time.Second
 
 // passNotice gets past the development notice the way a person does:
 // End shows the whole notice, the countdown runs out, the phrase is
-// typed and Enter accepts it. The wait keeps reading the pty rather
-// than sleeping: a reader that stops lets the binary block on its own
-// output while the countdown redraws.
-func passNotice(t *testing.T, console *expect.Console) {
+// typed and Enter accepts it. Nothing here has to keep reading the pty
+// while the countdown redraws: vttest's emulator drains the program's
+// output into the virtual screen on its own goroutine, so the binary
+// can never block on its own output while this waits.
+func passNotice(t *testing.T, console *vtConsole) {
 	t.Helper()
-	if _, err := console.ExpectString("A note before you install"); err != nil {
+	if err := console.expectString("A note before you install"); err != nil {
 		t.Fatalf("expected the development notice: %v", err)
 	}
-	if _, err := console.Send("\x1b[F"); err != nil { // End
-		t.Fatalf("send: %v", err)
-	}
-	deadline := time.Now().Add(noticeWait)
-	for time.Now().Before(deadline) {
-		// A quiet second (no redraw) is a read timeout, not a failure.
-		_, err := console.Expect(passedMatcher(deadline), expect.WithTimeout(time.Second))
-		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-			t.Fatalf("waiting out the notice's countdown: %v", err)
-		}
-	}
-	if _, err := console.Send("I've read this and I understand\r"); err != nil {
-		t.Fatalf("send: %v", err)
-	}
+	console.send("\x1b[F") // End
+	time.Sleep(noticeWait)
+	console.send("I've read this and I understand\r")
 }
-
-// passedMatcher matches whatever has been read once deadline passes.
-func passedMatcher(deadline time.Time) expect.ExpectOpt {
-	return func(opts *expect.ExpectOpts) error {
-		opts.Matchers = append(opts.Matchers, deadlineMatcher(deadline))
-		return nil
-	}
-}
-
-type deadlineMatcher time.Time
-
-func (d deadlineMatcher) Match(v any) bool {
-	if _, isErr := v.(error); isErr {
-		return false
-	}
-	return !time.Now().Before(time.Time(d))
-}
-
-func (d deadlineMatcher) Criteria() any { return time.Time(d) }
 
 func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 	// Parallel: each run waits out the development notice's real
@@ -177,7 +124,7 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
@@ -195,12 +142,8 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 	must("Orbit achieved in")
 
 	// Terminal quits cleanly, restoring the terminal.
-	if _, err := console.Send("\x1b[B"); err != nil {
-		t.Fatalf("send Down: %v", err)
-	}
-	if _, err := console.Send("\r"); err != nil {
-		t.Fatalf("send Enter: %v", err)
-	}
+	console.send("\x1b[B")
+	console.send("\r")
 	waitForExit(t, cmd)
 
 	// The engine really was invoked in contract mode: plain, with the
@@ -225,23 +168,19 @@ func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
 
 	driveToInstallNow(t, console)
 
-	if _, err := console.ExpectString("Orbit needs your configuration"); err != nil {
+	if err := console.expectString("Orbit needs your configuration"); err != nil {
 		t.Fatalf("expected the styled configuration prompt: %v", err)
 	}
-	if _, err := console.ExpectString("Continue — guided configuration"); err != nil {
+	if err := console.expectString("Continue — guided configuration"); err != nil {
 		t.Fatalf("expected the handoff option: %v", err)
 	}
 
 	// Escape returns to the menu (the refusal rolled the target back;
 	// nothing was changed), and Escape again quits cleanly.
-	if _, err := console.Send("\x1b"); err != nil {
-		t.Fatalf("send Escape: %v", err)
-	}
-	if _, err := console.ExpectString("▸ Install"); err != nil {
+	console.send("\x1b")
+	if err := console.expectString("▸ Install"); err != nil {
 		t.Fatalf("expected the splash again after Menu: %v", err)
 	}
-	if _, err := console.Send("\x1b"); err != nil {
-		t.Fatalf("send Escape: %v", err)
-	}
+	console.send("\x1b")
 	waitForExit(t, cmd)
 }

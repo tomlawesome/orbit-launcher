@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	expect "github.com/Netflix/go-expect"
-	"github.com/creack/pty"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // Issue #159: the launcher stops asking the engine for its next message
@@ -33,17 +32,10 @@ import (
 // startCIShapedPTY is startConsolePTY with startLive's environment and
 // process attributes, so a failure here is the CI failure and not a
 // different one.
-func startCIShapedPTY(t *testing.T, binPath, dir, scriptURL string) (*expect.Console, *exec.Cmd) {
+func startCIShapedPTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, *exec.Cmd) {
 	t.Helper()
 
-	console, err := expect.NewConsole(expect.WithDefaultTimeout(30 * time.Second))
-	if err != nil {
-		t.Fatalf("create console: %v", err)
-	}
-	t.Cleanup(func() { console.Close() })
-	if err := pty.Setsize(console.Tty(), &pty.Winsize{Rows: 40, Cols: 120}); err != nil {
-		t.Fatalf("set pty size: %v", err)
-	}
+	console := newConsole(t, 120, 40, 30*time.Second)
 
 	stderrFile, err := os.Create(filepath.Join(t.TempDir(), "launcher-stderr.log"))
 	if err != nil {
@@ -53,9 +45,7 @@ func startCIShapedPTY(t *testing.T, binPath, dir, scriptURL string) (*expect.Con
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	cmd.Stdin = console.Tty()
-	cmd.Stdout = console.Tty()
-	cmd.Stderr = stderrFile
+	cmd.Stderr = stderrFile // stdin and stdout stay the pty
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm", "NO_COLOR=1",
 		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1",
@@ -63,14 +53,10 @@ func startCIShapedPTY(t *testing.T, binPath, dir, scriptURL string) (*expect.Con
 		"ORBIT_LAUNCHER_NO_ANIMATION=1",
 		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1",
 		"ORBIT_LAUNCHER_INSTALL_SCRIPT_URL="+scriptURL)
+	// Setctty makes the pty, the child's stdin, its controlling
+	// terminal.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start orbit-launcher: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
+	console.start(t, cmd)
 	return console, cmd
 }
 
@@ -126,16 +112,11 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	driveToInstallNow(t, console)
 
@@ -153,7 +134,7 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 	must("OIDC client secret")
 	send("pumpdrop-secret-value\r")
 
-	if _, err := console.Expect(expect.String("Get into Orbit"), expect.WithTimeout(60*time.Second)); err != nil {
+	if err := console.expectWithin(60*time.Second, vtscreen.ContainsAny("Get into Orbit")); err != nil {
 		t.Fatalf("launcher never reached the success screen — the engine pump was dropped (#159): %v", err)
 	}
 
