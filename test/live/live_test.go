@@ -191,6 +191,18 @@ func (s *liveSession) passNotice() {
 	s.send("I've read this and I understand\r")
 }
 
+// chooseSSO answers the launcher's own sign-in question (#154), asked
+// before the guided configuration's first --init on a fresh target. The
+// suite drives the OIDC prompts, so it picks the second row, SSO, the
+// way test/pty's full-OIDC journey does: Local accounts is the default.
+func (s *liveSession) chooseSSO() {
+	s.t.Helper()
+	s.must("How will people sign in?")
+	s.must("Local accounts")
+	s.send("\x1b[B") // Down to Single sign-on (SSO)
+	s.send("\r")
+}
+
 // passedMatcher matches whatever has been read once deadline passes.
 func passedMatcher(deadline time.Time) expect.ExpectOpt {
 	return func(opts *expect.ExpectOpts) error {
@@ -829,6 +841,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 			return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
 		})
 		sendLine("") // Continue — guided configuration / Open the guided installer
+		session.chooseSSO()
 
 		// Strict mode is on, so the only guided configuration available
 		// is the in-console one, and this marker says it is the one that
@@ -1002,7 +1015,8 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	session.must("Choose a deployment profile")
 	sendLine("")
 	session.must("Ready to install")
-	sendLine("")
+	sendLine("") // confirm — the development notice opens first (#175)
+	session.passNotice()
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
@@ -1010,6 +1024,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 		return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
 	})
 	sendLine("")
+	session.chooseSSO()
 
 	acceptMenusUntil(t, session, inConsolePromptMarker)
 	sendLine(appURL)
