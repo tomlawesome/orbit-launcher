@@ -111,6 +111,10 @@ exit 0
 // it: the launcher must reach its success screen with no tick chain to
 // carry it, which means it must keep reading the engine to the end.
 func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
+	// Parallel: each run waits out the development notice's real
+	// countdown (passNotice), and six of those in series would
+	// spend most of the package's default timeout.
+	t.Parallel()
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{

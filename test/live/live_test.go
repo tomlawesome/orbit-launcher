@@ -15,6 +15,7 @@ package live
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -162,6 +163,64 @@ func (s *liveSession) send(str string) {
 		s.t.Fatalf("send: %v", err)
 	}
 }
+
+// noticeWait outlasts the development notice's 70 s countdown (#175). The
+// binary keeps its full countdown -- nothing outside it can shorten an
+// approved gate -- so a run through Install now waits it out, exactly as
+// test/pty does.
+const noticeWait = 72 * time.Second
+
+// passNotice gets past the development notice the way a person does: End
+// shows the whole notice, the countdown runs out, the phrase is typed and
+// Enter accepts it. The wait keeps reading the pty rather than sleeping: a
+// reader that stops lets the binary block on its own output while the
+// countdown redraws every second.
+func (s *liveSession) passNotice() {
+	s.t.Helper()
+	s.must("A note before you install")
+	s.send("\x1b[F") // End
+	deadline := time.Now().Add(noticeWait)
+	for time.Now().Before(deadline) {
+		// A quiet second (no redraw) is a read timeout, not a failure.
+		_, err := s.console.Expect(passedMatcher(deadline), expect.WithTimeout(time.Second))
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			s.diagnose("waiting out the notice's countdown")
+			s.t.Fatalf("waiting out the notice's countdown: %v", err)
+		}
+	}
+	s.send("I've read this and I understand\r")
+}
+
+// chooseSSO answers the launcher's own sign-in question (#154), asked
+// before the guided configuration's first --init on a fresh target. The
+// suite drives the OIDC prompts, so it picks the second row, SSO, the
+// way test/pty's full-OIDC journey does: Local accounts is the default.
+func (s *liveSession) chooseSSO() {
+	s.t.Helper()
+	s.must("How will people sign in?")
+	s.must("Local accounts")
+	s.send("\x1b[B") // Down to Single sign-on (SSO)
+	s.send("\r")
+}
+
+// passedMatcher matches whatever has been read once deadline passes.
+func passedMatcher(deadline time.Time) expect.ExpectOpt {
+	return func(opts *expect.ExpectOpts) error {
+		opts.Matchers = append(opts.Matchers, deadlineMatcher(deadline))
+		return nil
+	}
+}
+
+type deadlineMatcher time.Time
+
+func (d deadlineMatcher) Match(v any) bool {
+	if _, isErr := v.(error); isErr {
+		return false
+	}
+	return !time.Now().Before(time.Time(d))
+}
+
+func (d deadlineMatcher) Criteria() any { return time.Time(d) }
 
 // choose selects a top-level menu row by its digit shortcut rather than by
 // counting arrow presses from an assumed caret position (issue #122).
@@ -767,7 +826,9 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		session.must("Choose a deployment profile")
 		sendLine("") // Standard selected by default
 		session.must("Ready to install")
-		sendLine("") // confirm — the mission console's piped engine run starts
+		sendLine("") // confirm — the development notice opens first (#175)
+		session.passNotice()
+		// the mission console's piped engine run starts
 
 		// The piped, terminal-less first attempt cannot prompt, so on a
 		// fresh target it ends in the engine's non-interactive
@@ -780,6 +841,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 			return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
 		})
 		sendLine("") // Continue — guided configuration / Open the guided installer
+		session.chooseSSO()
 
 		// Strict mode is on, so the only guided configuration available
 		// is the in-console one, and this marker says it is the one that
@@ -953,7 +1015,8 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	session.must("Choose a deployment profile")
 	sendLine("")
 	session.must("Ready to install")
-	sendLine("")
+	sendLine("") // confirm — the development notice opens first (#175)
+	session.passNotice()
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
@@ -961,6 +1024,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 		return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
 	})
 	sendLine("")
+	session.chooseSSO()
 
 	acceptMenusUntil(t, session, inConsolePromptMarker)
 	sendLine(appURL)

@@ -155,8 +155,7 @@ func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 	t.Helper()
 	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
 	m = updated.(InstallModel)
-	updated, cmd := m.Update(key(tea.KeyEnter)) // confirm -> running
-	m = updated.(InstallModel)
+	m, cmd := acceptNotice(t, m) // confirm -> notice -> running
 	if m.state != installStateRunning {
 		t.Fatalf("state = %v, want installStateRunning", m.state)
 	}
@@ -164,6 +163,32 @@ func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 		t.Fatal("expected a command to start the engine")
 	}
 	return m, cmd
+}
+
+// acceptNotice takes a model on the confirm screen through the
+// development notice (#175) the way a person does: Install now, the
+// countdown runs out, End shows the whole notice, the phrase is typed,
+// Enter. The notice reads a clock of its own here and the flow's clock
+// is handed back just before the accepting Enter, so a test that counts
+// calls on seams.now (the console's elapsed clock) sees only the run's.
+func acceptNotice(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
+	t.Helper()
+	flowClock := m.seams.now
+	noticeTime := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	m.seams.now = func() time.Time { return noticeTime }
+	updated, _ := m.Update(key(tea.KeyEnter)) // Install now -> notice
+	m = updated.(InstallModel)
+	if m.state != installStateNotice {
+		t.Fatalf("state = %v, want installStateNotice", m.state)
+	}
+	noticeTime = noticeTime.Add(m.noticeDur())
+	updated, _ = m.Update(key(tea.KeyEnd))
+	m = updated.(InstallModel)
+	updated, _ = m.Update(tea.KeyPressMsg{Text: noticePhrase})
+	m = updated.(InstallModel)
+	m.seams.now = flowClock
+	updated, cmd := m.Update(key(tea.KeyEnter))
+	return updated.(InstallModel), cmd
 }
 
 func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {

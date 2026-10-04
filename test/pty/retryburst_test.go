@@ -54,6 +54,10 @@ exit 0
 // success screen is the whole assertion: reaching it means the launcher
 // kept draining the engine to its exit.
 func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
+	// Parallel: each run waits out the development notice's real
+	// countdown (passNotice), and six of those in series would
+	// spend most of the package's default timeout.
+	t.Parallel()
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
