@@ -82,6 +82,9 @@ type liveSession struct {
 	// constant directly) so a test can substitute a short budget to
 	// exercise the timeout path without waiting out the real one.
 	budget time.Duration
+	// screenBudget is the much shorter ceiling for the launcher's own
+	// screens (#166); a field for the same reason as budget.
+	screenBudget time.Duration
 	// stderrPath is the file the launcher's stderr is pointed at. The
 	// goroutine dump SIGQUIT produces goes there, not down the pty, so
 	// capturing it can never depend on the transport under suspicion.
@@ -99,6 +102,16 @@ type liveSession struct {
 // Matches the console's configured default so a healthy slow run (real
 // image pull, real health checks) is unaffected.
 const expectBudget = 600 * time.Second
+
+// screenBudget is the ceiling for a wait on the launcher's own screen --
+// a menu, the notice, the sign-in question, the mission console opening --
+// rather than on the engine (#166). Those answer a keypress in well under a
+// second on a green run, so a launcher that has not drawn one after this
+// long is broken, not slow, and failing here saves the rest of the
+// 600 s expectBudget. Waits on the engine (image pull, health checks, its
+// own prompts) keep expectBudget. Each wait's elapsed time is logged, so
+// this number can be checked against the latest green run.
+const screenBudget = 90 * time.Second
 
 // expectWithin runs one blocking expectation under a real wall-clock
 // deadline, diagnosing the hang before failing.
@@ -124,6 +137,15 @@ func (s *liveSession) expectWithin(what string, expectation func() (string, erro
 // be exercised and asserted on by a test.
 func (s *liveSession) expectWithinErr(what string, expectation func() (string, error)) (string, error) {
 	s.t.Helper()
+	return s.expectWithinBudget(what, s.budget, expectation)
+}
+
+// expectWithinBudget is expectWithinErr with the ceiling chosen by the
+// caller: s.budget for waits on the engine, s.screenBudget for the
+// launcher's own screens (#166).
+func (s *liveSession) expectWithinBudget(what string, budget time.Duration, expectation func() (string, error)) (string, error) {
+	s.t.Helper()
+	start := time.Now()
 	type outcome struct {
 		out string
 		err error
@@ -139,10 +161,12 @@ func (s *liveSession) expectWithinErr(what string, expectation func() (string, e
 			s.diagnose(what)
 			return "", got.err
 		}
+		// The evidence screenBudget is calibrated against (#166).
+		s.t.Logf("%s: matched after %s (budget %s)", what, time.Since(start).Round(100*time.Millisecond), budget)
 		return got.out, nil
-	case <-time.After(s.budget):
+	case <-time.After(budget):
 		s.diagnose(what)
-		return "", fmt.Errorf("no match within %s of wall clock", s.budget)
+		return "", fmt.Errorf("no match within %s of wall clock", budget)
 	}
 }
 
@@ -154,6 +178,18 @@ func (s *liveSession) must(str string) {
 	s.expectWithin(fmt.Sprintf("expected %q", str), func() (string, error) {
 		return s.console.Expect(expectAny(str))
 	})
+}
+
+// mustSoon is must for the launcher's own screens: the same diagnosis on
+// failure, but under screenBudget instead of expectBudget (#166).
+func (s *liveSession) mustSoon(str string) {
+	s.t.Helper()
+	what := fmt.Sprintf("expected %q", str)
+	if _, err := s.expectWithinBudget(what, s.screenBudget, func() (string, error) {
+		return s.console.Expect(expectAny(str))
+	}); err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
 }
 
 func (s *liveSession) send(str string) {
@@ -177,7 +213,7 @@ const noticeWait = 72 * time.Second
 // countdown redraws every second.
 func (s *liveSession) passNotice() {
 	s.t.Helper()
-	s.must("A note before you install")
+	s.mustSoon("A note before you install")
 	s.send("\x1b[F") // End
 	deadline := time.Now().Add(noticeWait)
 	for time.Now().Before(deadline) {
@@ -191,14 +227,24 @@ func (s *liveSession) passNotice() {
 	s.send("I've read this and I understand\r")
 }
 
+// runStarted waits, under screenBudget, for the mission console to say the
+// engine run has begun. It sits in each test right after Install now, not
+// inside passNotice, so a run stuck before the console -- a notice that
+// never lets go, as on pipeline 2063 -- fails in screenBudget instead of
+// in the 600 s engine wait that follows (#166).
+func (s *liveSession) runStarted() {
+	s.t.Helper()
+	s.mustSoon("Contacting the engine")
+}
+
 // chooseSSO answers the launcher's own sign-in question (#154), asked
 // before the guided configuration's first --init on a fresh target. The
 // suite drives the OIDC prompts, so it picks the second row, SSO, the
 // way test/pty's full-OIDC journey does: Local accounts is the default.
 func (s *liveSession) chooseSSO() {
 	s.t.Helper()
-	s.must("How will people sign in?")
-	s.must("Local accounts")
+	s.mustSoon("How will people sign in?")
+	s.mustSoon("Local accounts")
 	s.send("\x1b[B") // Down to Single sign-on (SSO)
 	s.send("\r")
 }
@@ -599,7 +645,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		_, _ = cmd.Process.Wait()
 	})
 
-	return &liveSession{t: t, console: console, cmd: cmd, budget: expectBudget, stderrPath: stderrPath}
+	return &liveSession{t: t, console: console, cmd: cmd, budget: expectBudget, screenBudget: screenBudget, stderrPath: stderrPath}
 }
 
 // acceptMenusUntil sends Enter to accept the default choice on any of
@@ -821,14 +867,14 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 
 		sendLine := func(s string) { session.send(s + "\r") }
 
-		session.must("Install")
+		session.mustSoon("Install")
 		session.choose("Install") // by digit, not by trusting the preselection
-		session.must("Choose a deployment profile")
+		session.mustSoon("Choose a deployment profile")
 		sendLine("") // Standard selected by default
-		session.must("Ready to install")
+		session.mustSoon("Ready to install")
 		sendLine("") // confirm — the development notice opens first (#175)
 		session.passNotice()
-		// the mission console's piped engine run starts
+		session.runStarted() // the mission console's piped engine run starts
 
 		// The piped, terminal-less first attempt cannot prompt, so on a
 		// fresh target it ends in the engine's non-interactive
@@ -914,9 +960,9 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// interleave within the FQDN and ExpectString cannot match it
 		// there. The confirm screen below carries the bare FQDN and
 		// proves the same thing.
-		session.must("Install")
+		session.mustSoon("Install")
 		session.choose("Remove")
-		session.must("This stops Orbit and removes its containers")
+		session.mustSoon("This stops Orbit and removes its containers")
 		// The confirm screen's identity line carries the bare FQDN —
 		// the scheme is launcher noise at a glance, same as the splash.
 		// Matching it still proves deploy.Detect read the real
@@ -1010,13 +1056,14 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 
 	sendLine := func(s string) { session.send(s + "\r") }
 
-	session.must("Install")
+	session.mustSoon("Install")
 	session.choose("Install") // by digit, not by trusting the preselection
-	session.must("Choose a deployment profile")
+	session.mustSoon("Choose a deployment profile")
 	sendLine("")
-	session.must("Ready to install")
+	session.mustSoon("Ready to install")
 	sendLine("") // confirm — the development notice opens first (#175)
 	session.passNotice()
+	session.runStarted()
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
@@ -1185,7 +1232,7 @@ func TestExpectWithin_TimeoutDiagnosesWithoutPanicking(t *testing.T) {
 	})
 
 	session := &liveSession{
-		t: t, console: console, cmd: cmd, budget: 2 * time.Second,
+		t: t, console: console, cmd: cmd, budget: 2 * time.Second, screenBudget: 2 * time.Second,
 		stderrPath: filepath.Join(t.TempDir(), "child-stderr.log"),
 	}
 
