@@ -60,6 +60,9 @@ on GitHub by hand.
   helper for the `gitlab` remote is `!glab auth git-credential`.
 - Start a pipeline by hand with `gl-pipeline-run ai/orbit-launcher <ref>
   RUN_LIVE=true` to include the live test.
+- Renovate's pipelines are started by the project bot, which cannot read
+  ai/orbit; the live job then takes Orbit's files from the GitHub mirror
+  (#173). `ORBIT_FILES_SOURCE=github` forces that route.
 
 ## Branching and review
 
@@ -88,7 +91,9 @@ Five workflows, several of which are unusually expensive to break:
 
 Since #171 (ai/orbit#1107, ADR-0031) this repo no longer publishes
 runnable launcher binaries — Orbit builds, signs and ships the launcher
-alongside itself. There is no release lane here any more.
+alongside itself. What is left is the version tag Orbit pins: it is cut
+by pressing `release:version` on a green `dev` pipeline (#178,
+`docs/releasing.md`), never by hand, and the owner presses it.
 
 `.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
 diff is documentation only; `fast` and `deps` then skip themselves when it is,
