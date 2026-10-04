@@ -20,6 +20,7 @@ const (
 	installStateProfile installState = iota
 	installStateUnavailableProfile
 	installStateConfirm
+	installStateNotice
 	installStateRunning
 	installStateStaleVolume
 )
@@ -67,6 +68,15 @@ type InstallModel struct {
 	// checkVolumes is overridable in tests so they need no Docker
 	// daemon — production code leaves it nil and gets the real check.
 	checkVolumes func(context.Context, string) []deploy.DatabaseVolume
+
+	// notice is the development notice (#175) between the confirm
+	// screen and the run; rebuilt fresh on every Install now.
+	notice noticeModel
+
+	// noticeDuration is the notice's reading countdown; zero means
+	// noticeDefaultDuration. Copied from AppModel.flowNoticeDuration so
+	// tests can shorten it.
+	noticeDuration time.Duration
 
 	run engineRun
 
@@ -149,12 +159,36 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
 		m.star = starfield.New(resized.Width, resized.Height, 1)
+		if m.state == installStateNotice {
+			// A resize can reveal the end, which opens the scroll gate.
+			m.notice = m.notice.resize(resized.Width, resized.Height)
+		}
 	}
 	if _, ok := msg.(tickMsg); ok {
 		m.star = m.star.Advance()
 		if m.state != installStateRunning {
 			return m, tick()
 		}
+	}
+
+	// The notice's countdown redraws on its own one-second chain. A
+	// tick from an earlier visit (Go back, then Install now again)
+	// carries that visit's start and is dropped, so two chains never
+	// run; the chain ends when the countdown does.
+	if t, ok := msg.(noticeTickMsg); ok {
+		if m.state != installStateNotice || !t.start.Equal(m.notice.start) || m.notice.timerDone(m.now(), m.noticeDur()) {
+			return m, nil
+		}
+		return m, noticeTick(m.notice.start)
+	}
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok && m.state == installStateNotice {
+		switch wheel.Button {
+		case tea.MouseWheelUp:
+			m.notice = m.notice.scrollBy(-noticeWheelRows)
+		case tea.MouseWheelDown:
+			m.notice = m.notice.scrollBy(noticeWheelRows)
+		}
+		return m, nil
 	}
 
 	if found, ok := msg.(staleVolumesMsg); ok {
@@ -200,6 +234,8 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installStateConfirm:
 		return m.handleConfirmKey(msg)
+	case installStateNotice:
+		return m.handleNoticeKey(msg)
 	}
 	return m, nil
 }
@@ -260,17 +296,66 @@ func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 			m.state = installStateProfile
 			return m, nil
 		}
-		m.state = installStateRunning
-		m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
-		var cmd tea.Cmd
-		m.run, cmd = m.run.start(m.width, m.height)
-		return m, cmd
+		// Install now opens the development notice (#175), fresh every
+		// time: going back and coming again restarts the countdown and
+		// closes the scroll gate.
+		m.state = installStateNotice
+		m.notice = newNotice(m.now(), m.width, m.height)
+		return m, noticeTick(m.notice.start)
 	}
 	return m, nil
 }
 
+// handleNoticeKey wires the notice: Esc or Go back returns to the
+// confirm screen, a correct phrase starts the run, nothing else leaves.
+func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	var out noticeOutcome
+	m.notice, out = m.notice.handleKey(msg, m.now, m.noticeDur())
+	switch out {
+	case noticeBack:
+		m.state = installStateConfirm
+		return m, nil
+	case noticeAccept:
+		m.state = installStateRunning
+		return m.startRun()
+	}
+	return m, nil
+}
+
+// startRun builds and starts the engine run.
+func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
+	m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
+	var cmd tea.Cmd
+	m.run, cmd = m.run.start(m.width, m.height)
+	return m, cmd
+}
+
+// now is the flow's clock: the injected seam, or the real one.
+func (m InstallModel) now() time.Time {
+	if m.seams.now != nil {
+		return m.seams.now()
+	}
+	return time.Now()
+}
+
+func (m InstallModel) noticeDur() time.Duration {
+	if m.noticeDuration > 0 {
+		return m.noticeDuration
+	}
+	return noticeDefaultDuration
+}
+
 // View implements tea.Model.
-func (m InstallModel) View() tea.View { return tea.NewView(m.view()) }
+//
+// Mouse reporting is on for the notice only, so the wheel scrolls it;
+// every other screen leaves the terminal's own mouse handling alone.
+func (m InstallModel) View() tea.View {
+	v := tea.NewView(m.view())
+	if m.state == installStateNotice {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
+	return v
+}
 
 // view renders the screen's content.
 func (m InstallModel) view() string {
@@ -286,6 +371,8 @@ func (m InstallModel) view() string {
 		return m.viewUnavailableProfile()
 	case installStateConfirm:
 		return m.viewConfirm()
+	case installStateNotice:
+		return m.viewNotice()
 	case installStateRunning:
 		return m.run.view(m.width, m.height)
 	}
@@ -371,6 +458,11 @@ func (m InstallModel) viewUnavailableProfile() string {
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Back"}, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// viewNotice is the development notice (#175, notice.go) over the sky.
+func (m InstallModel) viewNotice() string {
+	return skyBlock(m.star, m.width, m.height, m.notice.view(m.now(), m.noticeDur()))
 }
 
 func (m InstallModel) viewConfirm() string {

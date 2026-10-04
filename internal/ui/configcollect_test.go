@@ -137,6 +137,7 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	m = m.WithVersion("v9.9.9")
 	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = seams
+	m.flowNoticeDuration = time.Millisecond
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))
@@ -156,6 +157,7 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Ready to install")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	passNotice(t, tm)
 	wait("Orbit needs your configuration")
 	return tm
 }

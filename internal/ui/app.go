@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -56,6 +57,10 @@ type AppModel struct {
 	// flowCheckVolumes fakes Install's stale-database-volume pre-flight
 	// so tests need no Docker daemon; nil in production (real check).
 	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
+
+	// flowNoticeDuration shortens Install's development-notice countdown
+	// (#175) in tests; zero in production (the 70 s default).
+	flowNoticeDuration time.Duration
 
 	// altScreen puts the program in the terminal's alternate screen
 	// buffer. It was a tea.NewProgram option until the view started
@@ -303,6 +308,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams
 		m.install.checkVolumes = m.flowCheckVolumes
+		m.install.noticeDuration = m.flowNoticeDuration
 		m.install.send = m.flowSend
 		m.state = appStateInstall
 		// Install's Init runs the stale-database-volume pre-flight

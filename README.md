@@ -25,7 +25,8 @@ downloadable binary of its own. `scripts/get-orbit-launcher.sh` here is
 for orbit-launcher developers only (`ORBIT_LAUNCHER_DEVELOPER=1`).
 
 Once installed, run orbit-launcher again any time to re-launch it. From
-the menu: **Install** deploys Orbit for the first time, **Update** pulls
+the menu: **Install** deploys Orbit for the first time, after a short
+development notice you read and acknowledge, **Update** pulls
 the latest image into an existing deployment, **Remove** stands the
 containers down, **Repair** isn't built yet.
 

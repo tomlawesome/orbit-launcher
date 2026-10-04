@@ -176,6 +176,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		prepareEngine: fakeEngine(nil, successStream()...),
 		detect:        fakeDetect("https://mail.example.com"),
 	}
+	m.flowNoticeDuration = time.Millisecond
 
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
@@ -197,7 +198,8 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		return bytes.Contains(out, []byte("Ready to install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now -> engine runs -> success
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now -> notice
+	passNotice(t, tm)                            // -> engine runs -> success
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Get into Orbit")) &&
@@ -228,6 +230,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 		prepareEngine: fakeEngine(nil, successStream()...),
 		detect:        fakeDetect("https://mail.example.com"),
 	}
+	m.flowNoticeDuration = time.Millisecond
 
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
@@ -244,6 +247,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 		return bytes.Contains(out, []byte("Ready to install"))
 	}, teatest.WithDuration(2*time.Second))
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now
+	passNotice(t, tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Get into Orbit"))
