@@ -3,10 +3,10 @@ module github.com/tomlawesome/orbit-launcher
 go 1.27.1
 
 require (
-	charm.land/bubbletea/v2 v2.0.9
+	charm.land/bubbletea/v2 v2.0.10
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/Netflix/go-expect v0.0.0-20220104043353-73e0943537d2
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260913004009-c615ff2f7805
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260927004216-9c77d672503d
 	github.com/creack/pty v1.1.24
 )
 
