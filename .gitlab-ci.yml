@@ -7,7 +7,8 @@
 # running the same commands against the same pinned tool versions, so a
 # finding on one host means the same thing on the other. GitHub still runs
 # its workflows on the mirrored push as a second opinion; nothing here
-# publishes or promotes.
+# publishes or promotes, except the release button below (#178), which the
+# owner presses to cut a version tag.
 #
 # Deliberately not here:
 #
@@ -27,6 +28,7 @@ stages:
   - classify
   - fast
   - acceptance
+  - release
   - maintenance
 
 workflow:
@@ -605,3 +607,76 @@ renovate:
         echo "renovate: dry run (${RENOVATE_DRY_RUN}), nothing will be created"
       fi
       renovate
+
+# --- Release: the version-tag button (#178) ----------------------------------
+#
+# Since #171 nothing here publishes a binary, but Orbit pins launcher tags,
+# so a tag is still how a launcher version is cut. These two jobs are
+# gauntlet's release:version / release:gitlab pair: a manual button on a dev
+# pipeline that tags that commit, so nobody creates a v* tag by hand.
+#
+# release:version works out the next minor version with
+# tools/calculateversion and refuses unless that tag does not exist yet,
+# sorts above every tag already cut, and the commit is still the tip of dev
+# (scripts/ci/release-tag-check.sh, tested by
+# scripts/test/release-tag-check.bats). It has no `needs:`, so the button is
+# not playable until every earlier stage has passed. release:gitlab then
+# creates the annotated tag and its GitLab release with release-cli, acting
+# with the rights of whoever pressed the button. Tag pipelines run nothing
+# (workflow: above); GitLab's push mirror carries the tag to GitHub.
+release:version:
+  stage: release
+  image:
+    name: $GO_IMAGE
+    pull_policy: if-not-present
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      # A manual job is allow_failure by default; forcing it false would
+      # leave every dev pipeline reading "blocked" for a tag nobody intends
+      # to cut yet.
+      allow_failure: true
+  cache: []
+  script:
+    - |
+      set -eu
+      # calculateversion reads local tags; a CI clone may not hold them all.
+      git fetch --quiet --force --tags origin
+      version="$(go run ./tools/calculateversion)"
+      remote_tags="$(git ls-remote --tags origin)"
+      dev_sha="$(git ls-remote origin refs/heads/dev | cut -f1)"
+      bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" "$dev_sha" "$CI_COMMIT_SHA" > release.env
+      cat release.env
+  artifacts:
+    reports:
+      dotenv: release.env
+    expire_in: 90 days
+
+release:gitlab:
+  stage: release
+  # The same pin as gauntlet's release:gitlab, by tag and digest, because
+  # this job creates the tag. release-cli is published only on GitLab's own
+  # registry, so it cannot come through a Docker Hub proxy.
+  image:
+    name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
+    pull_policy: if-not-present
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+  needs:
+    - job: release:version
+      artifacts: true
+  cache: []
+  script:
+    - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
+  release:
+    tag_name: $RELEASE_TAG
+    tag_message: $RELEASE_TAG
+    ref: $CI_COMMIT_SHA
+    name: orbit-launcher $RELEASE_TAG
+    description: |
+      orbit-launcher $RELEASE_TAG, a source revision for Orbit to pin.
+
+      This repo publishes no binaries (#171): Orbit builds, signs and ships
+      the launcher alongside itself.
