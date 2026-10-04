@@ -19,6 +19,22 @@ stay version-matched.
   exists, the baseline is `0.1.0`. A tag here marks a source revision
   Orbit can pin to build from — it doesn't publish a binary itself.
 
+## Cutting a tag
+
+Tags are cut from CI, never by hand (#178).
+
+1. Merge what the release needs into `dev` and wait for that `dev`
+   pipeline to go green.
+2. Open that pipeline and press **release:version**. It works out the
+   next version and refuses if the tag already exists, if it would sort
+   below a tag already cut, or if `dev` has moved past this commit (then
+   use the newest `dev` pipeline instead).
+3. **release:gitlab** runs by itself and creates the annotated tag
+   `v<version>` and its GitLab release at that commit, as whoever pressed
+   the button. GitLab's push mirror carries the tag to GitHub.
+4. Move Orbit's pin to the new tag with Orbit's
+   `scripts/bump-launcher-pin.sh v<version>`.
+
 ## What moved to Orbit
 
 Orbit's own pipeline pins a launcher tag and commit, builds it, signs a
