@@ -15,7 +15,6 @@ package live
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -30,10 +29,10 @@ import (
 	"testing"
 	"time"
 
-	expect "github.com/Netflix/go-expect"
-	"github.com/creack/pty"
+	"github.com/charmbracelet/x/vttest"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // testOIDCIssuer is a real, public, stable OIDC discovery endpoint.
@@ -73,10 +72,14 @@ func binaryPath(t *testing.T) string {
 // expectations driven against it. It exists so every expectation in this
 // file runs the same hang diagnosis on timeout (issue #100) instead of
 // each subtest re-declaring its own bare must/send closures.
+//
+// The pty sits inside Charm's vttest virtual terminal (#181), and every
+// expectation reads the screen it renders rather than the raw byte
+// stream go-expect matched before.
 type liveSession struct {
-	t       *testing.T
-	console *expect.Console
-	cmd     *exec.Cmd
+	t    *testing.T
+	term *vttest.Terminal
+	cmd  *exec.Cmd
 	// budget is the wall-clock ceiling used by expectWithin. It exists
 	// as a field (rather than expectWithin reading the expectBudget
 	// constant directly) so a test can substitute a short budget to
@@ -91,16 +94,27 @@ type liveSession struct {
 	stderrPath string
 }
 
-// expectBudget is the wall-clock ceiling for any single expectation.
+// expectBudget is the wall-clock ceiling for any single wait on the
+// engine.
 //
-// go-expect's own timeout cannot serve as this (issue #121): it resets
-// the read deadline before every rune (expect.go:82), so it measures
-// idleness *between characters*, not total time waiting for a match.
-// The starfield repaints continuously, so runes never stop arriving and
-// an expectation that will never match never times out — the run dies at
-// the job timeout instead, and diagnose below never gets to say anything.
-// Matches the console's configured default so a healthy slow run (real
-// image pull, real health checks) is unaffected.
+// install.sh's own readiness wait defaults to 180s
+// (ORBIT_INSTALLER_READINESS_TIMEOUT_SECONDS) counted from a later
+// starting point than this wait (after config collection, image
+// resolve, and asset staging) — a first boot's ClamAV virus-database
+// download in particular can approach that budget on its own. 180s here
+// genuinely wasn't enough and caused a false failure on an install that
+// had, in fact, fully succeeded (confirmed by Remove finding a real,
+// complete deployment afterward) — verified by actually running this
+// against real Docker before trusting the number. The mission console's
+// piped first attempt (which, on a fresh target, does the image pull and
+// asset staging before its configuration refusal) front-loads more of
+// that work, so the budget is higher still.
+//
+// It is a real wall-clock deadline, kept by vtscreen.Wait. Under
+// go-expect it had to be built by hand around each expectation (#121):
+// go-expect's own timeout measured idleness between runes, and the
+// starfield's repaints meant an expectation that would never match
+// never timed out.
 const expectBudget = 600 * time.Second
 
 // screenBudget is the ceiling for a wait on the launcher's own screen --
@@ -113,19 +127,11 @@ const expectBudget = 600 * time.Second
 // this number can be checked against the latest green run.
 const screenBudget = 90 * time.Second
 
-// expectWithin runs one blocking expectation under a real wall-clock
-// deadline, diagnosing the hang before failing.
-//
-// On the timeout path the expectation's goroutine is still parked inside
-// go-expect reading runes, so it competes with diagnose for the pty.
-// diagnose is told which case it is (consoleBusy) so it never issues its
-// own console.Expect on top of the parked reader on the timeout path —
-// doing so raced two goroutines against the same bufio.Reader and could
-// panic ("slice bounds out of range"), destroying the diagnosis the code
-// exists to produce.
-func (s *liveSession) expectWithin(what string, expectation func() (string, error)) string {
+// expectWithin waits under s.budget for a screen match accepts, and
+// returns that screen, diagnosing the hang before failing.
+func (s *liveSession) expectWithin(what string, match vtscreen.Match) string {
 	s.t.Helper()
-	out, err := s.expectWithinErr(what, expectation)
+	out, err := s.expectWithinErr(what, match)
 	if err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
@@ -135,39 +141,31 @@ func (s *liveSession) expectWithin(what string, expectation func() (string, erro
 // expectWithinErr holds all of expectWithin's logic but returns the
 // failure instead of calling t.Fatalf, so the timeout/diagnose path can
 // be exercised and asserted on by a test.
-func (s *liveSession) expectWithinErr(what string, expectation func() (string, error)) (string, error) {
+func (s *liveSession) expectWithinErr(what string, match vtscreen.Match) (string, error) {
 	s.t.Helper()
-	return s.expectWithinBudget(what, s.budget, expectation)
+	return s.expectWithinBudget(what, s.budget, match)
 }
 
 // expectWithinBudget is expectWithinErr with the ceiling chosen by the
 // caller: s.budget for waits on the engine, s.screenBudget for the
 // launcher's own screens (#166).
-func (s *liveSession) expectWithinBudget(what string, budget time.Duration, expectation func() (string, error)) (string, error) {
+//
+// The wait looks at the screen and never reads the pty itself — vttest's
+// emulator does that on its own goroutine — so diagnose can run while
+// the wait is still parked. go-expect's reader could not share the pty
+// that way: two readers on its bufio.Reader panicked ("slice bounds out
+// of range") and destroyed the diagnosis.
+func (s *liveSession) expectWithinBudget(what string, budget time.Duration, match vtscreen.Match) (string, error) {
 	s.t.Helper()
 	start := time.Now()
-	type outcome struct {
-		out string
-		err error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		out, err := expectation()
-		done <- outcome{out: out, err: err}
-	}()
-	select {
-	case got := <-done:
-		if got.err != nil {
-			s.diagnose(what)
-			return "", got.err
-		}
-		// The evidence screenBudget is calibrated against (#166).
-		s.t.Logf("%s: matched after %s (budget %s)", what, time.Since(start).Round(100*time.Millisecond), budget)
-		return got.out, nil
-	case <-time.After(budget):
+	screen, err := vtscreen.Wait(s.term, budget, match)
+	if err != nil {
 		s.diagnose(what)
-		return "", fmt.Errorf("no match within %s of wall clock", budget)
+		return "", err
 	}
+	// The evidence screenBudget is calibrated against (#166).
+	s.t.Logf("%s: matched after %s (budget %s)", what, time.Since(start).Round(100*time.Millisecond), budget)
+	return screen, nil
 }
 
 // must waits for str, and on failure diagnoses the hang before failing —
@@ -175,29 +173,35 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, expe
 // reproduced locally.
 func (s *liveSession) must(str string) {
 	s.t.Helper()
-	s.expectWithin(fmt.Sprintf("expected %q", str), func() (string, error) {
-		return s.console.Expect(expectAny(str))
-	})
+	s.expectWithin(fmt.Sprintf("expected %q", str), vtscreen.ContainsAny(str))
 }
 
 // mustSoon is must for the launcher's own screens: the same diagnosis on
 // failure, but under screenBudget instead of expectBudget (#166).
 func (s *liveSession) mustSoon(str string) {
 	s.t.Helper()
-	what := fmt.Sprintf("expected %q", str)
-	if _, err := s.expectWithinBudget(what, s.screenBudget, func() (string, error) {
-		return s.console.Expect(expectAny(str))
-	}); err != nil {
+	s.mustSoonScreen(str)
+}
+
+// mustSoonScreen is mustSoon for one screen showing every one of texts.
+func (s *liveSession) mustSoonScreen(texts ...string) {
+	s.t.Helper()
+	what := fmt.Sprintf("expected %q", texts)
+	if len(texts) == 1 {
+		what = fmt.Sprintf("expected %q", texts[0])
+	}
+	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAll(texts...)); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
 
+// send types str as raw input. It cannot fail the way go-expect's Send
+// could: the text goes into the virtual terminal's input, and a launcher
+// that never reads it shows up as the next wait's timeout, which
+// diagnoses.
 func (s *liveSession) send(str string) {
 	s.t.Helper()
-	if _, err := s.console.Send(str); err != nil {
-		s.diagnose("send " + str)
-		s.t.Fatalf("send: %v", err)
-	}
+	vtscreen.Send(s.term, str)
 }
 
 // noticeWait outlasts the development notice's 70 s countdown (#175). The
@@ -208,22 +212,15 @@ const noticeWait = 72 * time.Second
 
 // passNotice gets past the development notice the way a person does: End
 // shows the whole notice, the countdown runs out, the phrase is typed and
-// Enter accepts it. The wait keeps reading the pty rather than sleeping: a
-// reader that stops lets the binary block on its own output while the
-// countdown redraws every second.
+// Enter accepts it. The wait does not have to keep reading the pty to
+// stop the binary blocking on its own output while the countdown redraws
+// every second: vttest's emulator drains the pty into the virtual screen
+// on its own goroutine for as long as the session lives.
 func (s *liveSession) passNotice() {
 	s.t.Helper()
 	s.mustSoon("A note before you install")
 	s.send("\x1b[F") // End
-	deadline := time.Now().Add(noticeWait)
-	for time.Now().Before(deadline) {
-		// A quiet second (no redraw) is a read timeout, not a failure.
-		_, err := s.console.Expect(passedMatcher(deadline), expect.WithTimeout(time.Second))
-		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-			s.diagnose("waiting out the notice's countdown")
-			s.t.Fatalf("waiting out the notice's countdown: %v", err)
-		}
-	}
+	time.Sleep(noticeWait)
 	s.send("I've read this and I understand\r")
 }
 
@@ -232,9 +229,19 @@ func (s *liveSession) passNotice() {
 // inside passNotice, so a run stuck before the console -- a notice that
 // never lets go, as on pipeline 2063 -- fails in screenBudget instead of
 // in the 600 s engine wait that follows (#166).
+//
+// "Contacting the engine" alone is not enough on a screen: it shows only
+// until the engine's first line arrives, which the byte stream always
+// carried but a look every vtscreen.PollInterval can miss. The console's
+// title row stays for the whole run, and the two screens a run ends on
+// prove it began just as well.
 func (s *liveSession) runStarted() {
 	s.t.Helper()
-	s.mustSoon("Contacting the engine")
+	const what = "expected the mission console"
+	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
+		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Installation stopped")); err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
 }
 
 // chooseSSO answers the launcher's own sign-in question (#154), asked
@@ -248,25 +255,6 @@ func (s *liveSession) chooseSSO() {
 	s.send("\x1b[B") // Down to Single sign-on (SSO)
 	s.send("\r")
 }
-
-// passedMatcher matches whatever has been read once deadline passes.
-func passedMatcher(deadline time.Time) expect.ExpectOpt {
-	return func(opts *expect.ExpectOpts) error {
-		opts.Matchers = append(opts.Matchers, deadlineMatcher(deadline))
-		return nil
-	}
-}
-
-type deadlineMatcher time.Time
-
-func (d deadlineMatcher) Match(v any) bool {
-	if _, isErr := v.(error); isErr {
-		return false
-	}
-	return !time.Now().Before(time.Time(d))
-}
-
-func (d deadlineMatcher) Criteria() any { return time.Time(d) }
 
 // choose selects a top-level menu row by its digit shortcut rather than by
 // counting arrow presses from an assumed caret position (issue #122).
@@ -299,18 +287,11 @@ func (s *liveSession) choose(label string) {
 //
 // Order matters here. The kernel-level state is read first and goes to
 // the test log, because it survives a dead pty; the goroutine dump is
-// asked for second and can only land in the raw transcript, which is
-// exactly the channel under suspicion. If /proc says the process is
-// blocked writing and no dump arrives, the transport is the bug and the
-// launcher is innocent. If the dump arrives and shows the app wedged in
+// asked for second and lands in the stderr file (#158), never on the
+// pty, which is exactly the channel under suspicion. If /proc says the
+// process is blocked writing and no dump arrives, the transport is the
+// bug and the launcher is innocent. If the dump arrives and shows the app wedged in
 // its own code, this stops being a test problem.
-// consoleBusy tells diagnose whether a reader is already parked on
-// s.console (the expectWithinErr timeout path). When it is, diagnose must
-// not issue its own console.Expect — two goroutines reading the same
-// underlying bufio.Reader at once can panic ("slice bounds out of
-// range"), destroying the diagnosis. Call sites where nothing is parked
-// (an expectation's own error path, and send) pass false and keep the
-// original console.Expect-based dump capture.
 func (s *liveSession) diagnose(reason string) {
 	s.t.Helper()
 	if s.cmd == nil || s.cmd.Process == nil {
@@ -355,9 +336,8 @@ func (s *liveSession) diagnose(reason string) {
 	// SIGQUIT makes the Go runtime dump every goroutine's stack to
 	// stderr, which startLive points at a file. GOTRACEBACK=all is set
 	// there so the dump covers runtime goroutines too. Nothing here
-	// touches the console: a reader may be parked inside console.Expect
-	// for the expectation that just timed out, and a second reader on
-	// the same bufio.Reader can panic ("slice bounds out of range").
+	// touches the pty or the screen, so it works whatever state the
+	// transport under suspicion is in.
 	if err := s.cmd.Process.Signal(syscall.SIGQUIT); err != nil {
 		s.t.Logf("  SIGQUIT: %v", err)
 		return
@@ -514,53 +494,30 @@ func indent(block string) string {
 // startLive spawns binPath with a real controlling terminal attached —
 // not just a pty on stdin/stdout, but a real session controlling
 // terminal, which install.sh's has_controlling_terminal() (opens
-// /dev/tty directly) actually requires. go-expect's Console alone does
-// not establish this; creack/pty's own Start() helper does, via
-// Setsid+Setctty — discovered the hard way verifying this test
-// manually before writing it (see orbit-launcher issue #51/#52).
+// /dev/tty directly) actually requires. A pty on the standard streams
+// alone does not establish this; Setsid+Setctty below do — discovered
+// the hard way verifying this test manually before writing it (see
+// orbit-launcher issue #51/#52). vttest's Start keeps both, and points
+// whichever standard streams are still unset at the pty.
 func startLive(t *testing.T, binPath, dir string) *liveSession {
 	t.Helper()
 
-	// install.sh's own readiness wait defaults to 180s
-	// (ORBIT_INSTALLER_READINESS_TIMEOUT_SECONDS) counted from a later
-	// starting point than this console (after config collection, image
-	// resolve, and asset staging) — a first boot's ClamAV virus-database
-	// download in particular can approach that budget on its own. 180s
-	// here (measured from process start) genuinely wasn't enough and
-	// caused a false failure on an install that had, in fact, fully
-	// succeeded (confirmed by Remove finding a real, complete
-	// deployment afterward) — verified by actually running this against
-	// real Docker before trusting the number. The mission console's
-	// piped first attempt (which, on a fresh target, does the image
-	// pull and asset staging before its configuration refusal) front-
-	// loads more of that work, so the budget is higher still.
-	opts := []expect.ConsoleOpt{expect.WithDefaultTimeout(600 * time.Second)}
+	term, err := vttest.NewTerminal(t, 120, 40)
+	if err != nil {
+		t.Fatalf("create virtual terminal: %v", err)
+	}
+	t.Cleanup(func() { _ = term.Close() })
 	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
 		// Suffixed per (sub)test — Install and Remove each call startLive
 		// once, and os.Create truncates, so a single shared path would
 		// silently let Remove's log erase Install's, exactly the run
 		// that matters most when Install is the one hanging or failing.
 		suffix := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-		rawLog, err := os.Create(rawLogPath + "." + suffix)
-		if err != nil {
-			t.Fatalf("create raw log: %v", err)
-		}
-		t.Cleanup(func() { rawLog.Close() })
-		opts = append(opts, expect.WithStdout(rawLog))
-	}
-	console, err := expect.NewConsole(opts...)
-	if err != nil {
-		t.Fatalf("create console: %v", err)
-	}
-	t.Cleanup(func() { console.Close() })
-	if err := pty.Setsize(console.Tty(), &pty.Winsize{Rows: 40, Cols: 120}); err != nil {
-		t.Fatalf("set pty size: %v", err)
+		recordScreens(t, term, rawLogPath+"."+suffix)
 	}
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	cmd.Stdin = console.Tty()
-	cmd.Stdout = console.Tty()
 
 	// Stderr gets its own file rather than the pty (#158). The launcher
 	// writes two things there: logDiag's fallback reasons, and — on
@@ -581,7 +538,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		t.Fatalf("create launcher stderr log: %v", err)
 	}
 	t.Cleanup(func() { stderrFile.Close() })
-	cmd.Stderr = stderrFile
+	cmd.Stderr = stderrFile // stdin and stdout are left to vttest: the pty
 	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
 	// goroutine, not just the one that took the signal.
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all",
@@ -637,15 +594,75 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// unset (the default), a fallback still falls back.
 		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	if err := cmd.Start(); err != nil {
+	if err := term.Start(cmd); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
 	}
+	// Registered after the terminal's Close and the screen log, so it
+	// runs before both: the log's last screen is the one the launcher
+	// left, and the pty is not closed under a live process.
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
 
-	return &liveSession{t: t, console: console, cmd: cmd, budget: expectBudget, screenBudget: screenBudget, stderrPath: stderrPath}
+	return &liveSession{t: t, term: term, cmd: cmd, budget: expectBudget, screenBudget: screenBudget, stderrPath: stderrPath}
+}
+
+// screenLogInterval is how often recordScreens looks for a new screen.
+const screenLogInterval = 500 * time.Millisecond
+
+// recordScreens keeps the ORBIT_LAUNCHER_LIVE_RAW_LOG artefact CI
+// uploads (live-raw.log.*). It used to be the raw byte stream, copied
+// out of go-expect as it read the pty. vttest does not expose that
+// stream — its emulator reads the pty directly — so the file now holds
+// screens instead: every screen that differs from the last one written,
+// looked for every screenLogInterval for the whole session, each headed
+// by its time since the session started, and the screen the launcher was
+// left on when the test ends. A brief screen between two looks is not
+// in it.
+func recordScreens(t *testing.T, term *vttest.Terminal, path string) {
+	t.Helper()
+	log, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create screen log: %v", err)
+	}
+	start := time.Now()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(screenLogInterval)
+		defer ticker.Stop()
+		last := ""
+		write := func(label string) {
+			screen := vtscreen.Screen(term)
+			if screen == last && label == "" {
+				return
+			}
+			last = screen
+			fmt.Fprintf(log, "=== screen at +%s%s ===\n%s\n", time.Since(start).Round(100*time.Millisecond), label, screen)
+		}
+		for {
+			select {
+			case <-stop:
+				write(", test ending")
+				return
+			case <-ticker.C:
+				write("")
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		// A screen read waits on the emulator's lock; an emulator wedged
+		// writing to a pty nobody drains would hold this cleanup for
+		// ever, so it is given a few seconds and then left.
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		_ = log.Close()
+	})
 }
 
 // acceptMenusUntil sends Enter to accept the default choice on any of
@@ -675,12 +692,17 @@ const signInModeMarker = "[local/oidc]"
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
 	const stopScreen = "Installation stopped"
-	// Plain markers through expectAny, never a regexp alternation over
-	// the whole read (match_test.go): this wait outlives the install's
-	// entire event stream, and the rescanning matcher fell so far behind
-	// the launcher's repaints that a finished install looked frozen
-	// (#159, #165).
+	// Each look is at one 120x40 screen, so it costs the same however
+	// much the install has printed. The stream matcher that once fell so
+	// far behind the launcher's repaints that a finished install looked
+	// frozen (#159, #165) has nothing left to fall behind.
 	markers := []string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, stopScreen, target}
+	// acted is the screen the last Enter was sent on. The stream gave
+	// each marker once, as it was drawn; a screen goes on showing it
+	// until the launcher moves on. A screen identical to that one is the
+	// same menu not yet answered, never a new one, so it is not answered
+	// again.
+	acted := ""
 	for {
 		// No tighter budget than expectWithin's — that ceiling is
 		// deliberately generous because a real image pull plus health
@@ -688,8 +710,8 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		// 60s here, causing a real CI failure on a resource-constrained
 		// runner even though the install had, in fact, not failed — just
 		// hadn't finished yet.
-		result := session.expectWithin("waiting for "+target+" or a menu", func() (string, error) {
-			return session.console.Expect(expectAny(markers...))
+		result := session.expectWithin("waiting for "+target+" or a menu", func(screen string) bool {
+			return screen != acted && vtscreen.ContainsAny(markers...)(screen)
 		})
 		if strings.Contains(result, target) {
 			return
@@ -702,7 +724,7 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 			if reasons := stopScreenReasonPattern.FindAllString(result, -1); len(reasons) > 0 {
 				t.Fatalf("install stopped waiting for %s: %s", target, reasons[len(reasons)-1])
 			}
-			more, err := session.console.Expect(expect.Regexp(stopScreenReasonPattern), expect.WithTimeout(10*time.Second))
+			more, err := vtscreen.Wait(session.term, 10*time.Second, stopScreenReasonPattern.MatchString)
 			if err == nil {
 				if reasons := stopScreenReasonPattern.FindAllString(more, -1); len(reasons) > 0 {
 					t.Fatalf("install stopped waiting for %s: %s", target, reasons[len(reasons)-1])
@@ -710,6 +732,7 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 			}
 			t.Fatalf("install stopped waiting for %s, but no reason line was captured", target)
 		}
+		acted = result
 		if strings.Contains(result, signInModeMarker) {
 			session.send("oidc\r")
 			continue
@@ -883,9 +906,8 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// the styled configuration prompt; a legacy engine (orbit main)
 		// reports nothing and lands on the failure screen. Both
 		// screens' default option leads to the guided configuration.
-		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
-			return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
-		})
+		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
+			vtscreen.ContainsAny("Orbit needs your configuration", "Installation stopped"))
 		sendLine("") // Continue — guided configuration / Open the guided installer
 		session.chooseSSO()
 
@@ -955,19 +977,18 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// row is preselected is therefore a race, so the row is chosen by
 		// digit instead of by counting arrows from an assumed start.
 		//
-		// Detection is not asserted on this screen either: the splash's
-		// identity line is styled and centred, so escape sequences
-		// interleave within the FQDN and ExpectString cannot match it
-		// there. The confirm screen below carries the bare FQDN and
-		// proves the same thing.
-		session.mustSoon("Install")
+		// Detection is asserted here, on the splash: its identity line
+		// carries the bare FQDN — the scheme is launcher noise at a
+		// glance — which proves deploy.Detect read the real .env-orbit
+		// this Install wrote. Against go-expect's byte stream it could
+		// not be: the line is styled and centred, so escape sequences
+		// interleaved within the FQDN. The screen holds it whole (#181).
+		fqdn := strings.TrimPrefix(appURL, "https://")
+		session.mustSoonScreen("Install", fqdn)
 		session.choose("Remove")
 		session.mustSoon("This stops Orbit and removes its containers")
-		// The confirm screen's identity line carries the bare FQDN —
-		// the scheme is launcher noise at a glance, same as the splash.
-		// Matching it still proves deploy.Detect read the real
-		// .env-orbit this Install wrote.
-		session.must(strings.TrimPrefix(appURL, "https://"))
+		// The confirm screen's identity line carries the same FQDN.
+		session.must(fqdn)
 		session.send("\r") // Stand down Orbit selected by default
 		session.must("Orbit has been stood down")
 		session.send("\r") // Exit
@@ -1067,9 +1088,8 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
-	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt", func() (string, error) {
-		return session.console.Expect(expectAny("Orbit needs your configuration", "Installation stopped"))
-	})
+	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
+		vtscreen.ContainsAny("Orbit needs your configuration", "Installation stopped"))
 	sendLine("")
 	session.chooseSSO()
 
@@ -1186,44 +1206,34 @@ func TestDiagnose_FindsASessionDetachedDescendant(t *testing.T) {
 	}
 }
 
-// TestExpectWithin_TimeoutDiagnosesWithoutPanicking reproduces the race
-// fixed above: on the timeout path, the expectation's goroutine is still
-// parked inside console.Expect reading runes when diagnose runs. Before
-// the fix, diagnose issued its own console.Expect on top of that parked
-// reader — two goroutines pulling from the same bufio.Reader at once,
-// which panics ("slice bounds out of range") instead of producing a
-// diagnosis. This drives expectWithinErr into that exact timeout path
-// with a short budget and asserts it returns an error instead of
-// panicking.
+// TestExpectWithin_TimeoutProducesTheHangDiagnosis drives
+// expectWithinErr into its timeout path with a short budget and requires
+// the two things that path promises: an error that says the wall clock
+// ran out, and the hang diagnosis run before it returns — seen here as
+// the SIGQUIT diagnose sends, which ends the child.
 //
 // It needs no Docker, network or the real launcher binary — just any
 // process on a real pty that keeps producing output. The child's tight
-// echo loop is deliberate and load-bearing: it keeps the expectation's
-// reader inside a blocking ReadRune for the whole budget, which is what
-// puts two goroutines in the same bufio.Reader. Measured against the
-// unfixed code: a tight loop panics on every run, the same loop with a
-// 50ms sleep passes every run — enough idle time between ticks and the
-// two readers simply take turns. A slower child would make this a test
-// that always passes and proves nothing.
-//
-// Verified by reverting the fix (passing false at the timeout call site
-// in expectWithinErr): three of three runs die with the issue's exact
-// panic, "slice bounds out of range [:32] with capacity 16" in
-// bufio.(*Reader).ReadRune via go-expect's Console.Expect. With the fix
-// in place, three of three pass, as does -race.
-func TestExpectWithin_TimeoutDiagnosesWithoutPanicking(t *testing.T) {
-	console, err := expect.NewConsole()
+// echo loop is deliberate: it keeps the virtual terminal writing,
+// scrolling and moving its cursor for the whole budget, which is when a
+// screen read and the emulator contend. Under go-expect the same loop
+// kept a reader parked in bufio.Reader.ReadRune and made a second reader
+// in diagnose panic ("slice bounds out of range"). Under vttest, reading
+// through Terminal.Snapshot deadlocked against the emulator's own
+// callbacks, and reading cell by cell starved behind the emulator's
+// writes (vtscreen.Screen says how). Each fails this test: the panic as
+// a panic, the deadlock as a wait that never returns, the starvation as
+// a last screen with no "tick" on it, which is how this test caught it.
+func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
+	term, err := vttest.NewTerminal(t, 80, 24)
 	if err != nil {
-		t.Fatalf("create console: %v", err)
+		t.Fatalf("create virtual terminal: %v", err)
 	}
-	t.Cleanup(func() { console.Close() })
+	t.Cleanup(func() { _ = term.Close() })
 
 	cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
-	cmd.Stdin = console.Tty()
-	cmd.Stdout = console.Tty()
-	cmd.Stderr = console.Tty()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	if err := cmd.Start(); err != nil {
+	if err := term.Start(cmd); err != nil {
 		t.Fatalf("start noisy child: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1232,17 +1242,25 @@ func TestExpectWithin_TimeoutDiagnosesWithoutPanicking(t *testing.T) {
 	})
 
 	session := &liveSession{
-		t: t, console: console, cmd: cmd, budget: 2 * time.Second, screenBudget: 2 * time.Second,
+		t: t, term: term, cmd: cmd, budget: 2 * time.Second, screenBudget: 2 * time.Second,
 		stderrPath: filepath.Join(t.TempDir(), "child-stderr.log"),
 	}
 
-	_, err = session.expectWithinErr("waiting for something that never arrives", func() (string, error) {
-		return session.console.Expect(expect.String("this string never appears"))
-	})
+	_, err = session.expectWithinErr("waiting for something that never arrives", vtscreen.ContainsAny("this string never appears"))
 	if err == nil {
 		t.Fatal("expected a timeout error, got nil")
 	}
 	if !strings.Contains(err.Error(), "no match within") {
 		t.Errorf("error = %q, want it to contain %q", err.Error(), "no match within")
+	}
+	if !strings.Contains(err.Error(), "tick") {
+		t.Errorf("error = %q, want it to carry the last screen", err.Error())
+	}
+
+	// diagnose ended the child with SIGQUIT before the error came back.
+	_ = cmd.Wait()
+	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGQUIT {
+		t.Errorf("child state = %v, want it ended by the diagnosis's SIGQUIT", cmd.ProcessState)
 	}
 }

@@ -132,16 +132,11 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	// The refusal, then Continue into the in-console prompts.
 	must("Orbit needs your configuration")
@@ -168,9 +163,12 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	must("issued with the client ID")
 	send("pty-secret-value\r")
 
-	// Adoption + automatic retry: the engine now proceeds to success.
-	must("https://pty.example.test")
-	must("Get into Orbit")
+	// Adoption + automatic retry: the engine now proceeds to success,
+	// whose hero carries the adopted origin. One screen for both: the
+	// origin is on screen earlier too, in the answer as it was typed.
+	if err := console.expectScreen("Get into Orbit", "https://pty.example.test"); err != nil {
+		t.Fatalf("expected the success screen with the adopted origin: %v", err)
+	}
 
 	// Terminal quits cleanly.
 	send("\x1b[B")
@@ -280,16 +278,11 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	must("Orbit needs your configuration")
 	must("Continue — guided configuration")
@@ -306,8 +299,9 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 
 	// Straight to adoption and the retry — no OIDC prompt, no secret
 	// step.
-	must("https://pty-local.example.test")
-	must("Get into Orbit")
+	if err := console.expectScreen("Get into Orbit", "https://pty-local.example.test"); err != nil {
+		t.Fatalf("expected the success screen with the adopted origin: %v", err)
+	}
 
 	send("\x1b[B")
 	send("\r")
@@ -342,16 +336,11 @@ func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	skipArrival(t, console)
 	must("▸ Update")
@@ -385,16 +374,11 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	skipArrival(t, console)
 	must("▸ Update") // deployment detected preselects Update
@@ -434,16 +418,11 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	skipArrival(t, console)
 	must("▸ Update")
@@ -492,16 +471,11 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	skipArrival(t, console)
 	must("▸ Update")

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	expect "github.com/Netflix/go-expect"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // Issue #157: in CI the launcher's screen stopped changing about twenty
@@ -69,16 +69,11 @@ func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
 
 	must := func(s string) {
 		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
+		if err := console.expectString(s); err != nil {
 			t.Fatalf("expected %q: %v", s, err)
 		}
 	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := console.send
 
 	driveToInstallNow(t, console)
 
@@ -98,7 +93,7 @@ func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
 	must("OIDC client secret")
 	send("longline-secret-value\r")
 
-	if _, err := console.Expect(expect.String("Get into Orbit"), expect.WithTimeout(60*time.Second)); err != nil {
+	if err := console.expectWithin(60*time.Second, vtscreen.ContainsAny("Get into Orbit")); err != nil {
 		t.Fatalf("launcher never reached the success screen after the retried run's over-long line (#157): %v", err)
 	}
 
