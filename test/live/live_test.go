@@ -1062,7 +1062,6 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	sendLine("")
 	session.mustSoon("Ready to install")
 	sendLine("") // confirm — the development notice opens first (#175)
-	session.passNotice()
 	session.runStarted()
 
 	// The piped attempt's configuration refusal, then guided
