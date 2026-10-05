@@ -109,7 +109,7 @@ func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t
 		t.Fatalf("failed to write fixture .env-orbit: %v", err)
 	}
 
-	m := NewAppModel()
+	m := NewAppModel().WithoutVolumeCheck() // the Update screen looks up the install date in Docker
 	m.targetDir = dir
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	skipArrival(tm)

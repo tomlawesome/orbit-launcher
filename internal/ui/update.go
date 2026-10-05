@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -35,6 +37,10 @@ type UpdateModel struct {
 	state         updateState
 	confirmSel    int // 0 = Update Orbit, 1 = Cancel
 
+	// installedAt and lookupInstalledAt: see RemoveModel.
+	installedAt       time.Time
+	lookupInstalledAt func(context.Context, *deploy.Deployment) time.Time
+
 	run engineRun
 
 	seams engineRunSeams
@@ -59,8 +65,14 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 // Outcome surfaces the engine run's result to AppModel.
 func (m UpdateModel) Outcome() flowOutcome { return outcomeOf(m.run) }
 
-// Init implements tea.Model.
-func (m UpdateModel) Init() tea.Cmd { return nil }
+// Init implements tea.Model. On the confirm screen it starts the
+// read-only install-date lookup, as RemoveModel.Init does.
+func (m UpdateModel) Init() tea.Cmd {
+	if m.state != updateStateConfirm {
+		return nil
+	}
+	return installedAtCmd(m.lookupInstalledAt, m.deployment)
+}
 
 // Update implements tea.Model.
 func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -76,6 +88,13 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != updateStateRunning {
 			return m, tick()
 		}
+	}
+
+	// The lookup may answer after the run has started; it is this
+	// model's message, never the engine run's.
+	if at, ok := msg.(installedAtMsg); ok {
+		m.installedAt = at.at
+		return m, nil
 	}
 
 	if m.state == updateStateRunning {
@@ -177,11 +196,7 @@ func (m UpdateModel) viewConfirm() string {
 	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Pull the latest Orbit and update this deployment"))
 	fmt.Fprintln(&b)
 
-	identity := "no deployment details found"
-	if m.deployment != nil && m.deployment.AppURL != "" {
-		identity = displayHost(m.deployment.AppURL) + " · installed " + m.deployment.InstalledAt.Format("2006-01-02")
-	}
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identity))
+	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
 	if image := m.deploymentImage(); image != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(image))
 	}

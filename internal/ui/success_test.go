@@ -128,3 +128,10 @@ func TestSuccessModel_WordmarkIsGreen(t *testing.T) {
 		t.Error("success screen must not render identically to the splash")
 	}
 }
+
+// A terminal can report zero rows mid-resize; the success screen must
+// still render rather than panic.
+func TestSuccessModel_ZeroHeightWindowDoesNotPanic(t *testing.T) {
+	updated, _ := NewSuccessModel("https://mail.example.com", 0, "v9.9.9").Update(tea.WindowSizeMsg{Width: 80, Height: 0})
+	_ = updated.(SuccessModel).View()
+}

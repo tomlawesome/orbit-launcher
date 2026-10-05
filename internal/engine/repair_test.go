@@ -148,8 +148,12 @@ func TestParseExecutionSummary(t *testing.T) {
 	if !ok {
 		t.Fatal("expected the summary to parse")
 	}
-	if s.Result != "complete" || s.Done != 2 || s.Failed != 0 {
+	if s.Result != "complete" || s.Done != 2 || s.Failed != 0 || s.Reason != "" {
 		t.Fatalf("unexpected summary: %+v", s)
+	}
+	r, ok := ParseExecutionSummary("execution result=refused done=0 failed=0 reason=deployment-version-unsupported")
+	if !ok || r.Result != "refused" || r.Reason != "deployment-version-unsupported" {
+		t.Fatalf("refused summary: ok=%v %+v", ok, r)
 	}
 	if _, ok := ParseExecutionSummary("execute action=x resolves=y result=done"); ok {
 		t.Error("expected an execute line to be rejected by the summary parser")

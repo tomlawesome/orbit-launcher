@@ -478,6 +478,9 @@ func (m SplashModel) centreBlockLines() []string {
 // settled view will hold it at — no jump at the handover.
 func (m SplashModel) viewIntro() string {
 	bodyHeight := m.height - 1
+	if bodyHeight <= 0 {
+		return "" // no row to draw in yet — same as before the first size
+	}
 	s := m.introSeconds()
 
 	settledLines := m.centreBlockLines()

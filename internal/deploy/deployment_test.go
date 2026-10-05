@@ -45,8 +45,37 @@ func TestDetect_ParsesRecognisedFields(t *testing.T) {
 	if d.Image != "ghcr.io/tomlawesome/orbit@sha256:abc" {
 		t.Errorf("Image = %q, want the fixture image", d.Image)
 	}
-	if d.InstalledAt.IsZero() {
-		t.Error("InstalledAt should be set from the file's mtime")
+}
+
+// The installer persists the Compose project name it used into
+// .env-orbit, so the launcher reads it rather than guessing which
+// project's volumes belong to this deployment.
+func TestDetect_ReadsTheComposeProjectName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("COMPOSE_PROJECT_NAME=\"my-orbit\"\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	d, err := Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if d.Project != "my-orbit" {
+		t.Errorf("Project = %q, want my-orbit", d.Project)
+	}
+}
+
+// Without the key, Compose uses the compose file's own top-level name.
+func TestDetect_ProjectDefaultsToTheComposeFilesName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://orbit.example.com\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	d, err := Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if d.Project != "orbit" {
+		t.Errorf("Project = %q, want orbit", d.Project)
 	}
 }
 
@@ -67,7 +96,7 @@ func TestDetect_EmptyProfilesIsNil(t *testing.T) {
 
 func TestRemovalCommand_IsExactAndScopedToTheTarget(t *testing.T) {
 	got := RemovalCommand("/opt/orbit")
-	want := "docker compose --project-directory /opt/orbit down -v && sudo rm -rf /opt/orbit"
+	want := "docker compose --project-directory /opt/orbit --env-file /opt/orbit/.env-orbit down -v && sudo rm -rf /opt/orbit"
 	if got != want {
 		t.Errorf("RemovalCommand(%q) = %q, want %q", "/opt/orbit", got, want)
 	}
@@ -129,6 +158,22 @@ func TestDetect_InaccessibleTargetIsAnErrorNotAbsence(t *testing.T) {
 	d, err := Detect(dir)
 	if err == nil {
 		t.Fatal("expected an error for a target that cannot be inspected")
+	}
+	if d != nil {
+		t.Errorf("Detect = %+v, want nil alongside the error", d)
+	}
+}
+
+// The root-proof counterpart of the test above, which skips in CI: a
+// target path that is a file is an error, not "no deployment here".
+func TestDetect_TargetThatIsAFileIsAnErrorNotAbsence(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "orbit")
+	if err := os.WriteFile(target, []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := Detect(target)
+	if err == nil {
+		t.Fatal("expected an error for a target that is a file")
 	}
 	if d != nil {
 		t.Errorf("Detect = %+v, want nil alongside the error", d)

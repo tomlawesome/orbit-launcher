@@ -10,6 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 // AppModel's options and routing edges, driven by plain Update calls.
@@ -52,6 +54,28 @@ func appDrive(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
 		queue = append(queue, more)
 	}
 	return m
+}
+
+// appMessages runs cmd and every command in its batches, without
+// feeding the results back, and returns every message produced.
+func appMessages(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	var msgs []tea.Msg
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		if next == nil {
+			continue
+		}
+		msg := next()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
+			continue
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs
 }
 
 func writeEnv(t *testing.T, dir, content string) {
@@ -101,6 +125,46 @@ func TestAppModel_WithoutVolumeCheckNeverInterruptsInstall(t *testing.T) {
 	m = appDrive(t, m, cmd)
 	if m.install.state != installStateProfile || !strings.Contains(stripANSI(m.View().Content), "Choose a deployment profile") {
 		t.Fatalf("the install flow was interrupted: state = %v", m.install.state)
+	}
+}
+
+// Remove and Update both confirm against the deployment's identity, so
+// both start the install-date lookup the moment they take the screen.
+func TestAppModel_RemoveAndUpdateStartTheInstallDateLookup(t *testing.T) {
+	want := time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)
+	flows := map[string][]tea.Msg{
+		"Remove": {key(tea.KeyUp), key(tea.KeyUp)}, // Install wraps to Exit, then Remove
+		"Update": {key(tea.KeyDown)},
+	}
+	for name, keys := range flows {
+		for _, hermetic := range []bool{false, true} {
+			dir := t.TempDir()
+			writeEnv(t, dir, "APP_URL=https://mail.example.test\n")
+			m := NewAppModelNoAnimation()
+			m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return want }
+			if hermetic {
+				m = m.WithoutVolumeCheck()
+			}
+			m.targetDir = dir
+			m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+			m, _ = appUpdate(t, m, keys...)
+			_, cmd := appUpdate(t, m, key(tea.KeyEnter))
+
+			var got *installedAtMsg
+			for _, msg := range appMessages(t, cmd) {
+				if at, ok := msg.(installedAtMsg); ok {
+					got = &at
+				}
+			}
+			switch {
+			case got == nil:
+				t.Errorf("%s (hermetic %v): no install-date lookup started", name, hermetic)
+			case hermetic && !got.at.IsZero():
+				t.Errorf("%s: WithoutVolumeCheck still asked Docker, got %v", name, got.at)
+			case !hermetic && !got.at.Equal(want):
+				t.Errorf("%s: install date = %v, want %v", name, got.at, want)
+			}
+		}
 	}
 }
 

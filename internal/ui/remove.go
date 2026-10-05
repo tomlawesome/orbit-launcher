@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -49,6 +50,13 @@ type RemoveModel struct {
 	// daemon — production code always leaves this nil and gets
 	// deploy.StandDown.
 	standDown func(context.Context, string) error
+
+	// installedAt is when Docker created the deployment's database
+	// volume, zero until the lookup Init starts answers (or if it
+	// cannot). lookupInstalledAt is the same kind of seam as standDown:
+	// nil in production, which means deploy.InstalledAt.
+	installedAt       time.Time
+	lookupInstalledAt func(context.Context, *deploy.Deployment) time.Time
 }
 
 // NewRemoveModel constructs the Remove flow for a detected deployment.
@@ -63,8 +71,9 @@ func (m RemoveModel) standDownFunc() func(context.Context, string) error {
 	return deploy.StandDown
 }
 
-// Init implements tea.Model.
-func (m RemoveModel) Init() tea.Cmd { return nil }
+// Init implements tea.Model. It starts the read-only install-date
+// lookup; the confirm screen shows the date only once Docker answers.
+func (m RemoveModel) Init() tea.Cmd { return installedAtCmd(m.lookupInstalledAt, m.deployment) }
 
 // Update implements tea.Model.
 func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -80,6 +89,10 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.star = m.star.Advance()
 		return m, tick()
+
+	case installedAtMsg:
+		m.installedAt = msg.at
+		return m, nil
 
 	case standDownResultMsg:
 		if msg.err != nil {
@@ -202,11 +215,7 @@ func (m RemoveModel) viewConfirm() string {
 	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This stops Orbit and removes its containers"))
 	fmt.Fprintln(&b)
 
-	identity := "no deployment details found"
-	if m.deployment != nil && m.deployment.AppURL != "" {
-		identity = displayHost(m.deployment.AppURL) + " · installed " + m.deployment.InstalledAt.Format("2006-01-02")
-	}
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identity))
+	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("Your mail, documents, and configuration are not deleted"))
 	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))

@@ -58,6 +58,10 @@ type AppModel struct {
 	// so tests need no Docker daemon; nil in production (real check).
 	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
 
+	// flowInstalledAt fakes Remove's and Update's install-date lookup
+	// the same way; nil in production (asks Docker).
+	flowInstalledAt func(context.Context, *deploy.Deployment) time.Time
+
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 70 s default).
 	flowNoticeDuration time.Duration
@@ -123,11 +127,6 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 	return m
 }
 
-// WithoutVolumeCheck disables Install's stale-database-volume pre-flight
-// (issue #105). Its answer comes from the local Docker daemon, so it is
-// the one part of the Install flow whose behaviour depends on the machine
-// underneath it — which is exactly what a hermetic test suite cannot
-// have. See ORBIT_LAUNCHER_NO_VOLUME_CHECK in cmd/orbit-launcher.
 // WithSender gives the flows a way to push messages into the event
 // loop from outside it, which the engine stream reader needs (#159).
 // Without it a run cannot read the engine and says so plainly rather
@@ -137,8 +136,16 @@ func (m AppModel) WithSender(send func(tea.Msg)) AppModel {
 	return m
 }
 
+// WithoutVolumeCheck disables Install's stale-database-volume pre-flight
+// (issue #105). Its answer comes from the local Docker daemon, so it is
+// the one part of the Install flow whose behaviour depends on the machine
+// underneath it — which is exactly what a hermetic test suite cannot
+// have. See ORBIT_LAUNCHER_NO_VOLUME_CHECK in cmd/orbit-launcher.
+// It also leaves the install date off Remove's and Update's confirm
+// screens: that date is read from the same daemon's volumes.
 func (m AppModel) WithoutVolumeCheck() AppModel {
 	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
+	m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	return m
 }
 
@@ -297,8 +304,11 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// proceeding with what we have.
 		deployment, _ := deploy.Detect(m.resolvedTargetDir())
 		m.remove = NewRemoveModel(deployment)
+		m.remove.lookupInstalledAt = m.flowInstalledAt
 		m.state = appStateRemove
-		return m, sizeCmd
+		// Init looks up the install date — read-only, so like Install's
+		// pre-flight it starts with the flow.
+		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 		m.repair.prepare = m.flowSeams.prepareRepair
@@ -320,8 +330,9 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.update = NewUpdateModel(deployment, m.resolvedTargetDir(), m.version)
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
+		m.update.lookupInstalledAt = m.flowInstalledAt
 		m.state = appStateUpdate
-		return m, sizeCmd
+		return m, tea.Batch(sizeCmd, m.update.Init())
 	default:
 		return m, tea.Quit
 	}

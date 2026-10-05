@@ -142,9 +142,12 @@ type ExecuteResult struct {
 
 // ExecutionSummary is the `execution result=…` terminal line.
 type ExecutionSummary struct {
-	Result string // empty | complete | unactionable | declined | failed
+	Result string // empty | complete | unactionable | declined | failed | refused
 	Done   int
 	Failed int
+	// Reason is set only for result=refused, currently
+	// deployment-version-unsupported; empty when the line carries none.
+	Reason string
 }
 
 // ParseExecuteResult parses one `execute …` line. ok is false for
@@ -176,7 +179,7 @@ func ParseExecutionSummary(line string) (s ExecutionSummary, ok bool) {
 	if err != nil || failed < 0 {
 		failed = 0
 	}
-	return ExecutionSummary{Result: fields["result"], Done: done, Failed: failed}, true
+	return ExecutionSummary{Result: fields["result"], Done: done, Failed: failed, Reason: fields["reason"]}, true
 }
 
 // Dangerous is the `dangerous result=…` terminal line printed once by
