@@ -1,27 +1,25 @@
 # orbit-launcher security policy
 
-orbit-launcher downloads and runs a privileged installer that configures
-Docker, writes secrets, and manages a personal server's deployment.
-Security reports are taken seriously, and reporters should allow time for
-coordinated investigation and remediation.
+orbit-launcher runs Orbit's install script on your server. That script sets
+up Docker and stores secrets, so security reports are taken seriously.
+Please allow time for investigation and a fix.
 
 ## Supported versions
 
-orbit-launcher has not yet published a stable v1 release. Until then,
-fixes are developed on the active development line and included in
-subsequent preview releases. Preview releases are evaluation artifacts,
-not supported stable releases.
+orbit-launcher ships inside Orbit's releases. Its own version numbers are
+the `vX.Y.Z` source tags in this repository, which Orbit pins and builds.
+No launcher 1.0 has been tagged yet, so all versions are still early.
 
-After v1, the latest stable release receives security fixes. An older
-release is supported only when its release notes explicitly designate a
-maintenance line.
+Security fixes go into the development line first and then into the next
+tagged version. After a launcher 1.0, the version shipped in the latest
+Orbit release is the supported one. An older version is supported only
+when its release notes say so.
 
-| Release | Security support |
+| Version | Security support |
 | --- | --- |
-| Active pre-v1 development and versioned preview releases | Fixes are developed and validated here |
-| Preview releases | Evaluation only; reports are welcome |
-| Latest stable release after v1 | Supported |
-| Older commits and superseded releases | Unsupported unless release notes say otherwise |
+| Development line (`dev`) and tagged versions before launcher 1.0 | Fixes are made and tested here; reports are welcome |
+| The launcher in the latest Orbit release after launcher 1.0 | Supported |
+| Older commits and superseded versions | Unsupported unless release notes say otherwise |
 
 Install orbit-launcher only through Orbit's installer, which checks the
 signature on Orbit's release before it runs anything. This repository
@@ -62,8 +60,10 @@ orbit-launcher does not currently operate a paid bug-bounty programme.
 
 Useful reports include:
 
-- checksum/signature verification bypass in the bootstrap script or
-  self-update path, or any path that could execute unverified code;
+- any way to make the launcher run code that was not checked first;
+- the launcher's update check (it reads Orbit's latest release to say
+  whether a newer launcher exists) being tricked into showing a false
+  notice or reaching somewhere it should not;
 - credential or secret handling during install (staged config, OIDC
   secrets, database passwords) being written insecurely, logged, or left
   behind after a cancelled flow;
@@ -71,8 +71,14 @@ Useful reports include:
   the application itself ever executing it directly rather than only
   displaying it for the operator to run;
 - privilege escalation via Docker/Compose orchestration;
-- supply-chain weaknesses in the release/provenance pipeline; and
+- weaknesses in this repository's CI, its version-tag button or its
+  dependency pins; and
 - terminal-escape-sequence injection from any rendered value.
+
+Orbit builds, signs and ships the launcher. Problems with that signing,
+Orbit's installer or Orbit's release pipeline belong with Orbit: report
+them through
+[Orbit's private reporting form](https://github.com/tomlawesome/orbit/security/advisories/new).
 
 For a vulnerability solely in an upstream dependency, report it to that
 project first. Also report it privately here when orbit-launcher's use

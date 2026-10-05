@@ -1,8 +1,6 @@
 # orbit-launcher agent instructions
 
-Created 2026-08-22 because the repo had no agent file at all. It records
-what was observable from the repository itself; anything marked **(to
-confirm)** is an inference the owner should correct or ratify.
+Created 2026-08-22 because the repo had no agent file at all.
 
 ## What this project is for
 
@@ -99,9 +97,10 @@ by pressing `release:version` on a green `dev` pipeline (#178,
 
 `.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
 diff is documentation only; `fast` and `deps` then skip themselves when it is,
-`gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (when web sources
-change) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or a moved
-`UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin -- an image bump can no longer go
+`gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (hand-started
+pipelines, or MR pipelines touching `internal/ui`, `test/visual` or
+`.gitlab-ci.yml`) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or
+a moved `UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin -- an image bump can no longer go
 green without being installed). The GitHub workflows still run on the mirrored push as a
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
