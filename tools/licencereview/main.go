@@ -16,21 +16,13 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
 	"github.com/tomlawesome/orbit-launcher/tools/licencereview/review"
 )
-
-// platforms are the GOOS/GOARCH pairs Orbit builds the launcher for, with
-// CGO_ENABLED=0 as it builds them.
-var platforms = [][2]string{{"linux", "amd64"}, {"linux", "arm64"}}
 
 func main() {
 	reviewPath := flag.String("review", ".github/licence-review.txt", "the recorded reviews")
@@ -44,13 +36,9 @@ func main() {
 }
 
 func run(reviewPath string, list bool, out io.Writer) error {
-	var pkgs []review.Package
-	for _, p := range platforms {
-		got, err := linked("./cmd/orbit-launcher", p[0], p[1])
-		if err != nil {
-			return err
-		}
-		pkgs = append(pkgs, got...)
+	pkgs, err := review.Shipped()
+	if err != nil {
+		return err
 	}
 	findings, err := review.Scan(pkgs)
 	if err != nil {
@@ -83,28 +71,4 @@ func run(reviewPath string, list bool, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "%d findings, all reviewed\n", len(findings))
 	return nil
-}
-
-// linked lists the packages pkg links on goos/goarch.
-func linked(pkg, goos, goarch string) ([]review.Package, error) {
-	cmd := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles,SFiles,EmbedFiles,Module", pkg)
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("go list for %s/%s: %w\n%s", goos, goarch, err, stderr.String())
-	}
-	var pkgs []review.Package
-	dec := json.NewDecoder(bytes.NewReader(stdout))
-	for {
-		var p review.Package
-		if err := dec.Decode(&p); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, fmt.Errorf("go list for %s/%s: %w", goos, goarch, err)
-		}
-		pkgs = append(pkgs, p)
-	}
-	return pkgs, nil
 }
