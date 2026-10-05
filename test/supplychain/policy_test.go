@@ -40,7 +40,8 @@ func TestGeneratedFieldsAreUpToDate(t *testing.T) {
 		t.Fatalf("loading the policy: %v", err)
 	}
 
-	want := policy.DerivedActions(pins)
+	// Excepted actions are deliberately not recorded; see WithoutExceptions.
+	want := policy.WithoutExceptions(policy.DerivedActions(pins), pol.Exceptions)
 	if len(pol.Actions) != len(want) {
 		t.Fatalf("the policy records %d actions, the workflows pin %d.\n"+
 			"Regenerate the policy: go run ./tools/supplychainpolicy -write",

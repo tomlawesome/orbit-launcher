@@ -216,6 +216,23 @@ func DerivedActions(pins []Pin) []Action {
 	return out
 }
 
+// WithoutExceptions drops the actions pol.Exceptions names: an excepted
+// action is deliberately not recorded, so neither the generator nor the
+// currency gate expects it in Actions.
+func WithoutExceptions(actions []Action, exceptions []Exception) []Action {
+	excepted := map[string]bool{}
+	for _, e := range exceptions {
+		excepted[e.Name] = true
+	}
+	out := make([]Action, 0, len(actions))
+	for _, a := range actions {
+		if !excepted[a.Name] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // Marshal renders a policy exactly as it is written to disk, so a comparison
 // against the committed bytes is meaningful.
 func Marshal(p Policy) ([]byte, error) {

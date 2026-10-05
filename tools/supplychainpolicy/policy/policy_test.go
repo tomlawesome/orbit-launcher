@@ -326,6 +326,26 @@ func TestExceptionExcusesTheRecordButNotAFloatingTag(t *testing.T) {
 	}
 }
 
+func TestWithoutExceptionsDropsOnlyTheNamedActions(t *testing.T) {
+	actions := []Action{{Name: "a/one"}, {Name: "b/two"}, {Name: "c/three"}, {Name: "d/four"}}
+	got := WithoutExceptions(actions, []Exception{{Name: "b/two"}, {Name: "d/four"}, {Name: "z/unused"}})
+	if len(got) != 2 || got[0].Name != "a/one" || got[1].Name != "c/three" {
+		t.Errorf("WithoutExceptions = %+v, want a/one then c/three", got)
+	}
+	if len(actions) != 4 || actions[1].Name != "b/two" {
+		t.Errorf("the input was modified: %+v", actions)
+	}
+
+	all := WithoutExceptions(actions, nil)
+	if len(all) != len(actions) {
+		t.Fatalf("with no exceptions, got %d actions, want %d", len(all), len(actions))
+	}
+	all[0].Name = "changed"
+	if actions[0].Name != "a/one" {
+		t.Error("the result shares the input's backing array; it must be a new slice")
+	}
+}
+
 func TestProblemStringOmitsLocationWhenThereIsNone(t *testing.T) {
 	withFile := Problem{File: "ci.yml", Line: 12, Msg: "boom"}
 	if got := withFile.String(); got != "ci.yml:12: boom" {

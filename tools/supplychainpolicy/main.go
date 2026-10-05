@@ -118,14 +118,20 @@ func regenerate(root string, pins []scp.Pin, stdout io.Writer) error {
 	}
 
 	actions := scp.DerivedActions(pins)
-	for i := range actions {
-		a := &actions[i]
+	// The pin rules hold for every action, excepted or not, as in VerifyPins;
+	// an exception only excuses the record, so excepted actions are dropped
+	// before anything is fetched for them.
+	for _, a := range actions {
 		if !scp.IsSHA(a.Commit) {
 			return fmt.Errorf("%s is pinned to %q, not a commit SHA; fix the workflow before regenerating", a.Name, a.Commit)
 		}
 		if a.Version == "" {
 			return fmt.Errorf("%s has no `# vX.Y.Z` comment beside its pin; add one so the version is recorded", a.Name)
 		}
+	}
+	actions = scp.WithoutExceptions(actions, previous.Exceptions)
+	for i := range actions {
+		a := &actions[i]
 		lic, err := license(a.Name)
 		if err != nil {
 			return err
