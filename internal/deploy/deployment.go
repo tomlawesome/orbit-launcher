@@ -8,18 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Deployment describes a recognised existing Orbit install, read from its
 // .env-orbit file — see orbit's .env-orbit.example for the authoritative
 // format this parses a practical subset of.
 type Deployment struct {
-	TargetDir   string
-	AppURL      string
-	Profiles    []string
-	Image       string
-	InstalledAt time.Time
+	TargetDir string
+	AppURL    string
+	Profiles  []string
+	Image     string
+
+	// Project is the Compose project name, which prefixes the names of
+	// the deployment's volumes. The installer persists the name it used
+	// as COMPOSE_PROJECT_NAME in .env-orbit, so this is read, not
+	// guessed; without that key Compose falls back to the compose
+	// file's own top-level name, defaultComposeProject.
+	Project string
 
 	// Version is orbit's own applied version (ORBIT_CONFIG_APPLIED_VERSION,
 	// e.g. "v1.2.0"), recorded by the installer's configuration
@@ -27,12 +32,17 @@ type Deployment struct {
 	Version string
 }
 
+// defaultComposeProject is the top-level `name:` in orbit's
+// docker-compose.yml: the project Compose uses when .env-orbit sets no
+// COMPOSE_PROJECT_NAME, the same precedence orbit's installer applies.
+const defaultComposeProject = "orbit"
+
 // Detect looks for a recognised Orbit deployment in targetDir. It returns
 // (nil, nil) — not an error — when there simply isn't one there; an error
 // return means something went wrong trying to read a file that exists.
 func Detect(targetDir string) (*Deployment, error) {
 	envPath := filepath.Join(targetDir, ".env-orbit")
-	info, err := os.Stat(envPath)
+	_, err := os.Stat(envPath)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -46,7 +56,7 @@ func Detect(targetDir string) (*Deployment, error) {
 	}
 	defer f.Close()
 
-	d := &Deployment{TargetDir: targetDir, InstalledAt: info.ModTime()}
+	d := &Deployment{TargetDir: targetDir, Project: defaultComposeProject}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -64,6 +74,10 @@ func Detect(targetDir string) (*Deployment, error) {
 			d.Image = value
 		case "COMPOSE_PROFILES":
 			d.Profiles = splitProfiles(value)
+		case "COMPOSE_PROJECT_NAME":
+			if name := strings.Trim(strings.TrimSpace(value), `"'`); name != "" {
+				d.Project = name
+			}
 		case "ORBIT_CONFIG_APPLIED_VERSION":
 			d.Version = strings.TrimSpace(value)
 		}

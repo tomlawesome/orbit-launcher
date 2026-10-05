@@ -45,8 +45,37 @@ func TestDetect_ParsesRecognisedFields(t *testing.T) {
 	if d.Image != "ghcr.io/tomlawesome/orbit@sha256:abc" {
 		t.Errorf("Image = %q, want the fixture image", d.Image)
 	}
-	if d.InstalledAt.IsZero() {
-		t.Error("InstalledAt should be set from the file's mtime")
+}
+
+// The installer persists the Compose project name it used into
+// .env-orbit, so the launcher reads it rather than guessing which
+// project's volumes belong to this deployment.
+func TestDetect_ReadsTheComposeProjectName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("COMPOSE_PROJECT_NAME=\"my-orbit\"\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	d, err := Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if d.Project != "my-orbit" {
+		t.Errorf("Project = %q, want my-orbit", d.Project)
+	}
+}
+
+// Without the key, Compose uses the compose file's own top-level name.
+func TestDetect_ProjectDefaultsToTheComposeFilesName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://orbit.example.com\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	d, err := Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if d.Project != "orbit" {
+		t.Errorf("Project = %q, want orbit", d.Project)
 	}
 }
 

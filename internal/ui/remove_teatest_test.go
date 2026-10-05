@@ -16,6 +16,7 @@ func TestRemoveModel_TeaTest_FullFlowToDone(t *testing.T) {
 	d := &deploy.Deployment{TargetDir: "/opt/orbit", AppURL: "https://mail.example.com"}
 	m := NewRemoveModel(d)
 	m.standDown = func(context.Context, string) error { return nil }
+	m.lookupInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
