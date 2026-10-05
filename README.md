@@ -48,8 +48,9 @@ browser).
 Go, using [`charmbracelet/bubbletea`](https://github.com/charmbracelet/bubbletea)
 for the full-screen event loop and
 [`charmbracelet/lipgloss`](https://github.com/charmbracelet/lipgloss)
-for layout and styling. Linux only (Debian, Ubuntu and similar) — this
-runs on the server being managed, not as a cross-platform desktop tool.
+for layout and styling. Linux only — this runs on the server being
+managed, not as a cross-platform desktop tool. Tested on Ubuntu; Debian
+and similar distributions should work but are not tested.
 
 ## Licence
 
