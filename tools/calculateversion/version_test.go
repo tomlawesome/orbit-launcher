@@ -53,3 +53,62 @@ func TestNextVersion_IgnoresHigherPatchOnLowerMinor(t *testing.T) {
 		t.Errorf("NextVersion() = %v, want 0.3.0", got)
 	}
 }
+
+// A component too large for an int matches the tag pattern's digits but is
+// not a version anyone can increment, so it must be ignored rather than
+// silently wrapped or truncated.
+func TestParseStableTagRejectsComponentsThatOverflow(t *testing.T) {
+	const huge = "99999999999999999999"
+	for _, tag := range []string{
+		"v" + huge + ".0.0",
+		"v0." + huge + ".0",
+		"v0.0." + huge,
+	} {
+		if got, ok := ParseStableTag(tag); ok {
+			t.Errorf("ParseStableTag(%q) = %v, true; want it rejected", tag, got)
+		}
+	}
+}
+
+func TestHighestStableReportsWhetherAnyStableTagExists(t *testing.T) {
+	if _, found := HighestStable([]string{"preview", "v1.0.0-rc.1"}); found {
+		t.Error("HighestStable found a stable tag among only non-stable ones")
+	}
+	if _, found := HighestStable(nil); found {
+		t.Error("HighestStable found a stable tag in an empty list")
+	}
+}
+
+// The ordering must compare major first, then minor, then patch, whatever
+// order the tags arrive in.
+func TestHighestStableOrdersByMajorThenMinorThenPatch(t *testing.T) {
+	for _, c := range []struct {
+		tags []string
+		want string
+	}{
+		{[]string{"v2.0.0", "v1.9.9"}, "2.0.0"},
+		{[]string{"v1.9.9", "v2.0.0"}, "2.0.0"},
+		{[]string{"v1.10.0", "v1.9.0"}, "1.10.0"}, // numeric, not lexical
+		{[]string{"v1.2.3", "v1.2.10", "v1.2.4"}, "1.2.10"},
+		{[]string{"v1.2.10", "v1.2.3"}, "1.2.10"},
+	} {
+		got, found := HighestStable(c.tags)
+		if !found || got.String() != c.want {
+			t.Errorf("HighestStable(%q) = %v, %v; want %s, true", c.tags, got, found, c.want)
+		}
+	}
+}
+
+func TestNextVersion_OrdinaryTrainResetsPatch(t *testing.T) {
+	got := NextVersion([]string{"v1.4.7"}, false)
+	if got.String() != "1.5.0" {
+		t.Errorf("NextVersion() = %v, want 1.5.0", got)
+	}
+}
+
+func TestNextVersion_HotfixBeforeAnyStableTagIsTheBaseline(t *testing.T) {
+	got := NextVersion(nil, true)
+	if got.String() != "0.1.0" {
+		t.Errorf("NextVersion(nil, hotfix) = %v, want 0.1.0", got)
+	}
+}

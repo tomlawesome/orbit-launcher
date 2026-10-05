@@ -12,11 +12,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,31 +42,46 @@ var fileComment = []string{
 }
 
 func main() {
-	write := flag.Bool("write", false, "regenerate the policy file (requires network access)")
-	root := flag.String("root", ".", "repository root")
-	flag.Parse()
-
-	if err := run(*root, *write); err != nil {
-		fmt.Fprintf(os.Stderr, "supplychainpolicy: %v\n", err)
-		os.Exit(1)
-	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(root string, write bool) error {
+// run is main with its arguments and outputs passed in, so tests can drive
+// the command and read what it printed. It behaves as the command did when
+// this lived in main: exit 2 on a bad flag, 0 for -h, 1 on any failure.
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("supplychainpolicy", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	write := fs.Bool("write", false, "regenerate the policy file (requires network access)")
+	root := fs.String("root", ".", "repository root")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+
+	if err := execute(*root, *write, stdout); err != nil {
+		fmt.Fprintf(stderr, "supplychainpolicy: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func execute(root string, write bool, stdout io.Writer) error {
 	if !write {
-		return check(root)
+		return check(root, stdout)
 	}
 	pins, err := scp.CollectPins(root)
 	if err != nil {
 		return err
 	}
-	return regenerate(root, pins)
+	return regenerate(root, pins, stdout)
 }
 
 // check is the offline gate. The rules live in the policy package so this
 // command and test/supplychain enforce one implementation rather than two
 // that agree until the day they do not.
-func check(root string) error {
+func check(root string, stdout io.Writer) error {
 	problems, err := scp.Verify(root)
 	if err != nil {
 		return err
@@ -77,11 +94,11 @@ func check(root string) error {
 		return fmt.Errorf("the policy no longer matches the workflows:\n  %s\n\nRegenerate it:\n  go run ./tools/supplychainpolicy -write",
 			strings.Join(lines, "\n  "))
 	}
-	fmt.Println("supply-chain policy matches the workflows")
+	fmt.Fprintln(stdout, "supply-chain policy matches the workflows")
 	return nil
 }
 
-func regenerate(root string, pins []scp.Pin) error {
+func regenerate(root string, pins []scp.Pin, stdout io.Writer) error {
 	previous, _ := scp.Load(root) // absent or older schema is fine; nothing to carry over
 	carriedAction := map[string]scp.Action{}
 	for _, a := range previous.Actions {
@@ -164,17 +181,23 @@ func regenerate(root string, pins []scp.Pin) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(scp.PolicyPath, body, 0o644); err != nil {
+	path := filepath.Join(root, scp.PolicyPath)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("writing the policy: %w", err)
 	}
-	fmt.Printf("wrote %s: %d actions, %d tools\n", scp.PolicyPath, len(out.Actions), len(out.Tools))
+	fmt.Fprintf(stdout, "wrote %s: %d actions, %d tools\n", path, len(out.Actions), len(out.Tools))
 	return nil
 }
 
-var client = &http.Client{Timeout: 20 * time.Second}
+// client and apiBase are variables only so tests can point the command at a
+// local httptest server; nothing in the command changes them.
+var (
+	client  = &http.Client{Timeout: 20 * time.Second}
+	apiBase = "https://api.github.com"
+)
 
 func api(path string, into any) error {
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com"+path, nil)
+	req, err := http.NewRequest(http.MethodGet, apiBase+path, nil)
 	if err != nil {
 		return err
 	}

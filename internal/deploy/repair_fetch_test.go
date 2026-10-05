@@ -3,8 +3,11 @@ package deploy
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -103,5 +106,59 @@ func TestBuildRepairCommand_Shape(t *testing.T) {
 	}
 	if !machine {
 		t.Error("dangerous mode requires the machine prompt transport or the script refuses (exit 6)")
+	}
+}
+
+// A network failure is not "this orbit line has no repair.sh": the person
+// must see that the fetch failed, not be told diagnosis doesn't exist.
+func TestFetchRepairScript_TransportFailureIsNotUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL+"/scripts/install.sh")
+	srv.Close()
+
+	_, err := FetchRepairScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an unreachable source")
+	}
+	if errors.Is(err, ErrRepairUnavailable) {
+		t.Errorf("a transport failure was reported as ErrRepairUnavailable: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fetch repair.sh") {
+		t.Errorf("error should name repair.sh, got: %v", err)
+	}
+}
+
+func TestStageRepairScript_ScriptsPathThatIsAFileIsAnError(t *testing.T) {
+	targetDir := t.TempDir()
+	blocker := filepath.Join(targetDir, "scripts")
+	if err := os.WriteFile(blocker, []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := StageRepairScript(targetDir, []byte("#!/bin/bash\n"))
+	if err == nil || !strings.Contains(err.Error(), "stage repair.sh") {
+		t.Fatalf("expected a staging error, got %v", err)
+	}
+	if body, _ := os.ReadFile(blocker); string(body) != "keep me\n" {
+		t.Errorf("the file at scripts was changed: %q", body)
+	}
+}
+
+func TestStageRepairScript_UnwritableScriptsDirIsAnError(t *testing.T) {
+	targetDir := t.TempDir()
+	scriptsDir := filepath.Join(targetDir, "scripts")
+	if err := os.Mkdir(scriptsDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block writes")
+	}
+	t.Cleanup(func() { os.Chmod(scriptsDir, 0o700) })
+
+	err := StageRepairScript(targetDir, []byte("#!/bin/bash\n"))
+	if err == nil || !strings.Contains(err.Error(), "stage repair.sh") {
+		t.Fatalf("expected a staging error, got %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(scriptsDir, "repair.sh")); !os.IsNotExist(err) {
+		t.Error("repair.sh appeared despite the failed write")
 	}
 }
