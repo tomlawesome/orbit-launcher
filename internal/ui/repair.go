@@ -443,6 +443,14 @@ var executedMenu = []string{"Diagnose again", "Menu", "Exit"}
 
 func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isCtrlC(msg) {
+		switch m.state {
+		case repairExecuting:
+			// A running mutation is never signalled: stopping it halfway
+			// is the one thing more dangerous than letting it finish.
+			return m, nil
+		case repairRotating:
+			return m.stopRotation()
+		}
 		if m.stream != nil {
 			m.stream.Kill()
 			return m, tea.Quit
@@ -549,21 +557,13 @@ func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func
 }
 
 // handleRotateKey is the rotation session's typing surface — the same
-// grammar as the in-console configuration prompts. Esc abandons the
-// session; the engine treats closed input as its documented abort and
-// changes nothing.
+// grammar as the in-console configuration prompts. Esc closes the
+// session's input, which the engine treats as its documented abort at
+// its next prompt; a rotation already past its prompts is left to
+// finish. Either way the run ends on the after-picture.
 func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		if m.stdin != nil {
-			m.stdin.Close()
-			m.stdin = nil
-		}
-		if m.stream != nil {
-			m.stream.Kill()
-		}
-		m.state = repairDiagnosis
-		m.menuSel = 0
-		return m, nil
+		return m.stopRotation()
 	}
 	if m.rotPrompt == nil {
 		return m, nil
@@ -589,6 +589,20 @@ func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// stopRotation closes the rotation's input and waits: the engine is
+// never signalled, because what it already began must be backed out or
+// finished by the engine itself. With input already closed, or not yet
+// open, there is nothing to do.
+func (m RepairModel) stopRotation() (tea.Model, tea.Cmd) {
+	if m.stdin == nil {
+		return m, nil
+	}
+	m.stdin.Close()
+	m.stdin = nil
+	m.rotPrompt, m.rotInput, m.rotReason = nil, nil, ""
+	return m, nil
+}
+
 // View implements tea.Model.
 func (m RepairModel) View() tea.View { return tea.NewView(m.view()) }
 
@@ -601,7 +615,8 @@ func (m RepairModel) view() string {
 	case repairPreparing:
 		return skyBlock(m.star, m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
 	case repairExecuting:
-		return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first"))
+		return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first")+
+			"\n"+style.Tagline.Render("can't be stopped from here — stopping halfway is the one unsafe step"))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -626,6 +641,13 @@ func (m RepairModel) viewRotating() string {
 	fmt.Fprintln(&b, style.MutedText.Render("A passphrase-protected backup of the current credential is"))
 	fmt.Fprintln(&b, style.MutedText.Render("taken and verified before anything changes."))
 	fmt.Fprintln(&b)
+
+	if m.stream != nil && m.stdin == nil {
+		// Input closed, engine still running: it is backing out at its
+		// next prompt or finishing a step it already began.
+		fmt.Fprintln(&b, style.Tagline.Render("stopping — waiting for the engine to back out or finish what it began"))
+		return skyBlock(m.star, m.width, m.height, b.String())
+	}
 
 	p := m.rotPrompt
 	if p == nil {

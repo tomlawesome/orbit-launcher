@@ -503,14 +503,20 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 		t.Fatalf("after abort:\n%s", repairScreen(m))
 	}
 
-	// Esc closes stdin — the engine's documented abort — and returns to
-	// the plan.
+	// Esc closes stdin — the engine's documented abort — and waits for
+	// the engine to exit rather than leaving the session behind.
 	m, _ = repairUpdate(t, m, key(tea.KeyEsc))
 	if !stdin.closed {
 		t.Fatal("Esc did not close the session's stdin")
 	}
-	if m.state != repairDiagnosis {
-		t.Fatalf("state = %v, want repairDiagnosis", m.state)
+	if m.state != repairRotating {
+		t.Fatalf("state = %v, want repairRotating until the engine exits", m.state)
+	}
+
+	// A second Esc with input already closed does nothing.
+	m, cmd := repairUpdate(t, m, key(tea.KeyEsc))
+	if cmd != nil || m.state != repairRotating {
+		t.Fatalf("a second Esc changed the flow: cmd=%v state=%v", cmd != nil, m.state)
 	}
 }
 
@@ -804,3 +810,80 @@ func TestDefaultPrepareRotate_FetchAndStageFailures(t *testing.T) {
 
 // isQuit reports whether cmd is bubbletea's quit command.
 func isQuit(cmd tea.Cmd) bool { return cmd != nil && cmd() == tea.Quit() }
+
+func TestRepairModel_CtrlCWhileExecutingDoesNotKillTheRepair(t *testing.T) {
+	m := sizedRepair(t)
+	m.state = repairExecuting
+	s := sleepingStream(t)
+	m, _ = repairUpdate(t, m, repairReadyMsg{stream: s})
+
+	m, cmd := repairUpdate(t, m, ctrlC())
+	if isQuit(cmd) {
+		t.Fatal("Ctrl+C during a mutation quit the launcher")
+	}
+	if m.Done || m.state != repairExecuting {
+		t.Fatalf("Ctrl+C during a mutation changed the flow: Done=%v state=%v", m.Done, m.state)
+	}
+	select {
+	case msg := <-s.C:
+		t.Fatalf("the running repair was interrupted: %#v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRepairModel_ExecutingScreenSaysItCannotBeStopped(t *testing.T) {
+	m := sizedRepair(t)
+	m.state = repairExecuting
+	if s := repairScreen(m); !strings.Contains(s, "can't be stopped from here") {
+		t.Fatalf("executing screen does not say it cannot be stopped:\n%s", s)
+	}
+}
+
+func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		k    tea.KeyPressMsg
+	}{
+		{"esc", key(tea.KeyEsc)},
+		{"ctrl+c", ctrlC()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sizedRepair(t)
+			m.state = repairRotating
+			s := sleepingStream(t)
+			stdin := &recordingStdin{}
+			m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: s, stdin: stdin})
+			m = repairLines(t, m, "prompt field=action-word kind=typed-word required=true attempt=1")
+
+			m, cmd := repairUpdate(t, m, tc.k)
+			if !stdin.closed {
+				t.Fatal("the key did not close the session's input")
+			}
+			if isQuit(cmd) {
+				t.Fatal("the key quit the launcher while the engine was still running")
+			}
+			if m.state != repairRotating {
+				t.Fatalf("state = %v, want repairRotating until the engine exits", m.state)
+			}
+			if sc := repairScreen(m); !strings.Contains(sc, "stopping — waiting for the engine") {
+				t.Fatalf("screen does not say it is waiting for the engine:\n%s", sc)
+			}
+			select {
+			case msg := <-s.C:
+				t.Fatalf("the rotation was killed instead of left to back out: %#v", msg)
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			// The engine backs out at its prompt and exits 6: the run ends
+			// on the after-picture like every execution.
+			m = repairLines(t, m, "dangerous result=refused done=0 failed=0 reason=refused-by-operator")
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 6})
+			if m.state != repairExecuted {
+				t.Fatalf("state = %v, want repairExecuted", m.state)
+			}
+			if sc := repairScreen(m); !strings.Contains(sc, "credentials left as they were — nothing was rotated") {
+				t.Fatalf("after-picture does not say nothing was rotated:\n%s", sc)
+			}
+		})
+	}
+}

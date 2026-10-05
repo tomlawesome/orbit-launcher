@@ -278,10 +278,11 @@ exit 4`)
 
 // rotationScript speaks the dangerous session's machine prompts
 // exactly as repair.sh does: typed action word, passphrase twice, then
-// execution and the re-diagnosis.
+// execution and the re-diagnosis. EOF at the first prompt is the
+// contract's abort: prompt-abort, a refused dangerous batch, exit 6.
 const rotationScript = `
 echo "prompt field=action-word kind=typed-word required=true attempt=1"
-read -r word || exit 1
+read -r word || { echo "prompt-abort field=action-word"; echo "dangerous result=refused done=0 failed=0 reason=refused-by-operator"; exit 6; }
 [ "$word" = "rotate" ] || { echo "prompt-abort field=action-word"; exit 1; }
 echo "prompt-accept field=action-word"
 echo "prompt field=checkpoint-passphrase kind=secret required=true attempt=1"
@@ -379,10 +380,11 @@ exit 3`)
 	}, teatest.WithDuration(5*time.Second))
 
 	// Esc: closed stdin is the engine's documented abort — zero
-	// mutation — and the plan screen returns.
+	// mutation. The engine is left to exit on its own, and its refusal
+	// is the after-picture.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Repairs proposed"))
+		return bytes.Contains(out, []byte("nothing was rotated"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
