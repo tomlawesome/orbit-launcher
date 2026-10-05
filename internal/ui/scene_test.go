@@ -124,3 +124,12 @@ func TestFlowModels_TickBeforeFirstResize(t *testing.T) {
 		_ = updated.View()
 	}
 }
+
+// A terminal can report zero rows mid-resize, which makes every scene
+// screen's body height -1; the compositor must draw nothing, not panic.
+func TestCompositeScene_NegativeBodyHeightRendersNoRows(t *testing.T) {
+	rows := compositeScene(starfield.New(80, 0, 1), true, 80, -1, []string{"x"}, 0)
+	if len(rows) != 0 {
+		t.Errorf("compositeScene at body height -1 = %d rows, want 0", len(rows))
+	}
+}
