@@ -96,6 +96,8 @@ variables:
   ORBIT_PROJECT: ai/orbit
   # Orbit's public GitHub mirror, used only when GitLab refuses the job
   # token (Renovate's merge requests, #173) or ORBIT_FILES_SOURCE says so.
+  # A preview channel cannot use it: the mirror has no release manifest, so
+  # the live job fails instead (#194).
   ORBIT_GITHUB_REPO: tomlawesome/orbit
   ORBIT_FILES_SOURCE: auto
   ORBIT_BRANCH: preview
@@ -486,7 +488,7 @@ live:
       fi
     - export DEBIAN_FRONTEND=noninteractive
     - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
     - *go_tarball
     - *docker_in_job
   script:
@@ -498,9 +500,11 @@ live:
       # so on its merge requests GitLab answers 403. Then, and only then,
       # install.sh comes from Orbit's public GitHub mirror instead, at the
       # same branch: GitLab pushes it after each Orbit merge, so it trails by
-      # minutes at most. install.sh is the only file fetched: the configure
-      # tree reaches the launcher through install.sh's own handover (#190).
-      # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path.
+      # minutes at most. The configure tree reaches the launcher through
+      # install.sh's own handover (#190); the only other files fetched are the
+      # preview release manifest and what verifies it (#194, below).
+      # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path; with
+      # a preview channel that now fails, so prove it on a stable one.
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
       gitlab_orbit_url() {
         printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
@@ -521,14 +525,14 @@ live:
           fetch_orbit_file() {
             curl --fail --silent --show-error --location \
               --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-              --output ".live/install-script/$2" "$(gitlab_orbit_url "$1")"
+              --output "${3:-.live/install-script}/$2" "$(gitlab_orbit_url "$1")"
           }
           ;;
         github)
           echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO}, ${ORBIT_BRANCH} at $(git ls-remote "https://github.com/${ORBIT_GITHUB_REPO}.git" "refs/heads/${ORBIT_BRANCH}" | cut -f1)"
           fetch_orbit_file() {
             curl --fail --silent --show-error --location \
-              --output ".live/install-script/$2" \
+              --output "${3:-.live/install-script}/$2" \
               "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1"
           }
           ;;
@@ -539,15 +543,62 @@ live:
       esac
       fetch_orbit_file scripts/install.sh install.sh
       head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }
+      # A preview install gets its release manifest from this job, not from
+      # install.sh (#194). install.sh fetches a manifest on its own only for
+      # the stable channel, whose manifest is a GitHub release asset; for
+      # preview it refuses and wants one handed over, already verified, in
+      # ORBIT_RELEASE_MANIFEST (ai/orbit#1107, ADR-0031). So the job does
+      # what get-orbit.sh does for stable: read the manifest and its
+      # signature, verify both with Orbit's own verifier and key from the
+      # same branch as install.sh, then hand the path over. Preview's
+      # manifest exists only as job artifacts of ai/orbit's preview pipeline
+      # (record_image writes it, sign_evidence its signature), read with the
+      # job token like the files above.
+      #
+      # The GitHub mirror has no pipeline artifacts, so a preview run that
+      # can only reach the mirror fails here rather than skipping: a skip
+      # would let an image bump go green with nothing installed into it,
+      # which is how #164 happened. A pipeline the owner starts by hand with
+      # RUN_LIVE=true carries the owner's access and reads ai/orbit directly.
+      if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
+        if [ "$orbit_source" = "github" ]; then
+          echo "the preview release manifest cannot be read from ${ORBIT_PROJECT} with this job's token, and the GitHub mirror has none; start the pipeline by hand with RUN_LIVE=true (#194)"
+          exit 1
+        fi
+        mkdir -p .live/orbit/scripts/ci .live/orbit/release
+        fetch_orbit_file scripts/ci/verify-release-manifest.sh verify-release-manifest.sh .live/orbit/scripts/ci
+        fetch_orbit_file scripts/ci/ensure-cosign.sh ensure-cosign.sh .live/orbit/scripts/ci
+        fetch_orbit_file cosign.pub cosign.pub .live/orbit
+        for script in verify-release-manifest.sh ensure-cosign.sh; do
+          head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${ORBIT_BRANCH}"; exit 1; }
+        done
+        head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${ORBIT_BRANCH}"; exit 1; }
+        curl --fail --silent --show-error --location \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --output .live/orbit/release/orbit-release-manifest.json \
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
+        curl --fail --silent --show-error --location \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --output .live/orbit/release/orbit-release-manifest.json.sig \
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+        jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${ORBIT_BRANCH} is not a JSON release manifest"; exit 1; }
+        [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${ORBIT_BRANCH} is an empty signature"; exit 1; }
+        COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+          bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+          || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
+        export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
+        echo "the verified preview release manifest names image $(jq -r .digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
+      fi
       python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
         curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
         sleep 1
       done
       export ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=http://127.0.0.1:8765/install.sh
-      # install.sh reads ORBIT_CHANNEL itself; the launcher never sets the
-      # engine's environment, so the job's own environment reaches it
-      # unchanged through every spawn. Empty means install.sh's own default.
+      # install.sh reads ORBIT_CHANNEL and ORBIT_RELEASE_MANIFEST itself; the
+      # launcher never sets the engine's environment, so the job's own
+      # environment reaches it unchanged through every spawn. An empty
+      # ORBIT_CHANNEL means install.sh's own default.
       [ -n "$ORBIT_CHANNEL" ] || unset ORBIT_CHANNEL
       go build -o /tmp/orbit-launcher ./cmd/orbit-launcher
       export ORBIT_LAUNCHER_LIVE_BINARY=/tmp/orbit-launcher
