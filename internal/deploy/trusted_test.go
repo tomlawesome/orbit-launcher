@@ -455,3 +455,142 @@ func TestUntrustedPathError_ReasonBeforePath(t *testing.T) {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
+
+// asLauncherUser makes RequireTrustedPath see the launcher running as
+// uid, so the owner rules are tested whoever runs the suite (CI runs
+// as root, a developer usually doesn't).
+func asLauncherUser(t *testing.T, uid int) {
+	t.Helper()
+	saved := launcherEUID
+	launcherEUID = func() int { return uid }
+	t.Cleanup(func() { launcherEUID = saved })
+}
+
+func TestRequireTrustedPath_OwnerRules(t *testing.T) {
+	t.Run("a deployment another user owns is refused", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		owner := os.Geteuid()
+		asLauncherUser(t, owner+1)
+		err := RequireTrustedPath(dir, "scripts/repair.sh")
+		var untrusted *UntrustedPathError
+		if !errors.As(err, &untrusted) || untrusted.Path != dir || !strings.Contains(err.Error(), "not by the user running the launcher") {
+			t.Fatalf("err = %v, want the owner refusal naming %s", err, dir)
+		}
+	})
+	t.Run("root may run a deployment another user owns", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		asLauncherUser(t, 0)
+		if err := RequireTrustedPath(dir, "scripts/repair.sh"); err != nil {
+			t.Fatalf("root refused a consistently owned deployment: %v", err)
+		}
+	})
+	t.Run("the same user's deployment is accepted", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		asLauncherUser(t, os.Geteuid())
+		if err := RequireTrustedPath(dir, "scripts/repair.sh"); err != nil {
+			t.Fatalf("refused the launcher user's own deployment: %v", err)
+		}
+	})
+}
+
+// Repair, the configure tree and the configuration import all apply
+// the owner rule, not only RequireTrustedPath on its own.
+func TestOwnerRuleGuardsEveryEntryPoint(t *testing.T) {
+	asLauncherUser(t, os.Geteuid()+1)
+	var untrusted *UntrustedPathError
+	if _, err := RepairCommand(trustedDeployment(t), RepairPlan); !errors.As(err, &untrusted) {
+		t.Errorf("RepairCommand: err = %v, want the owner refusal", err)
+	}
+	if _, err := OpenConfigTree(handedOverTree(t)); !errors.As(err, &untrusted) {
+		t.Errorf("OpenConfigTree: err = %v, want the owner refusal", err)
+	}
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tree := t.TempDir()
+	if err := ImportTargetConfig(tree, target); !errors.As(err, &untrusted) {
+		t.Errorf("ImportTargetConfig: err = %v, want the owner refusal", err)
+	}
+	if _, err := os.Lstat(filepath.Join(tree, ".env-orbit")); !os.IsNotExist(err) {
+		t.Error("another user's configuration was imported")
+	}
+	if err := os.WriteFile(filepath.Join(tree, ".env-orbit"), []byte("APP_URL=y\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := AdoptConfig(tree, target); !errors.As(err, &untrusted) {
+		t.Errorf("AdoptConfig: err = %v, want the owner refusal", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(target, ".env-orbit")); string(got) != "APP_URL=x\n" {
+		t.Errorf("another user's configuration was replaced: %q", got)
+	}
+}
+
+func TestRequireTrustedPath_MissingDirIsNotExist(t *testing.T) {
+	err := RequireTrustedPath(filepath.Join(t.TempDir(), "gone"), "scripts/repair.sh")
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("err = %v, want not-exist", err)
+	}
+}
+
+// A target that is a file is an error, not "this deployment has no
+// repair diagnosis": the person pointed the launcher at the wrong path.
+func TestRepairCommand_TargetThatIsAFileIsAnError(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "orbit")
+	if err := os.WriteFile(target, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RepairCommand(target, RepairPlan)
+	if err == nil || errors.Is(err, ErrRepairUnavailable) || !strings.Contains(err.Error(), "repair.sh") {
+		t.Fatalf("err = %v, want an error naming repair.sh", err)
+	}
+}
+
+// Likewise a configure tree path that is a file is broken, not merely
+// an install.sh that handed nothing over.
+func TestOpenConfigTree_TreeThatIsAFileIsAnError(t *testing.T) {
+	tree := filepath.Join(t.TempDir(), "tree")
+	if err := os.WriteFile(tree, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := OpenConfigTree(tree)
+	if err == nil || errors.Is(err, ErrNoConfigTree) || !strings.Contains(err.Error(), "configuration tree") {
+		t.Fatalf("err = %v, want a configuration-tree error", err)
+	}
+}
+
+// A target that doesn't exist yet (a fresh install into a new
+// directory) has nothing to import and nothing to distrust.
+func TestImportTargetConfig_MissingTargetImportsNothing(t *testing.T) {
+	tree := t.TempDir()
+	if err := ImportTargetConfig(tree, filepath.Join(t.TempDir(), "new")); err != nil {
+		t.Fatalf("ImportTargetConfig: %v", err)
+	}
+	if entries, _ := os.ReadDir(tree); len(entries) != 0 {
+		t.Errorf("imported %v from a target that does not exist", entries)
+	}
+}
+
+// Each secret is checked on its own: a trusted .orbit-secrets can still
+// hold one file anybody could have written.
+func TestImportTargetConfig_RefusesAWorldWritableSecret(t *testing.T) {
+	target := t.TempDir()
+	secrets := filepath.Join(target, ".orbit-secrets")
+	if err := os.Mkdir(secrets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(secrets, "oidc-client-secret")
+	if err := os.WriteFile(secret, []byte("s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chmod(t, secret, 0o666)
+	tree := t.TempDir()
+	err := ImportTargetConfig(tree, target)
+	var untrusted *UntrustedPathError
+	if !errors.As(err, &untrusted) || untrusted.Path != secret {
+		t.Fatalf("err = %v, want a refusal naming %s", err, secret)
+	}
+	if _, err := os.Lstat(filepath.Join(tree, ".orbit-secrets", "oidc-client-secret")); !os.IsNotExist(err) {
+		t.Error("the untrusted secret was imported")
+	}
+}
