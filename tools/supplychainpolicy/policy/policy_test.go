@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,6 +453,23 @@ func TestLoadRefusesAMissingInvalidOrOtherSchemaPolicy(t *testing.T) {
 			_, err := Load(root)
 			if err == nil || !strings.Contains(err.Error(), c.wantSub) {
 				t.Errorf("Load = %v, want an error containing %q", err, c.wantSub)
+			}
+			// -write tells "absent" and "older schema" apart from an
+			// unreadable file by these, so they are part of the contract.
+			var schemaErr *SchemaError
+			switch c.name {
+			case "missing":
+				if !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("Load = %v, want it to wrap fs.ErrNotExist", err)
+				}
+			case "older schema":
+				if !errors.As(err, &schemaErr) || schemaErr.Got != 1 || schemaErr.Want != 2 {
+					t.Errorf("Load = %#v, want a *SchemaError{Got: 1, Want: 2}", err)
+				}
+			default:
+				if errors.Is(err, fs.ErrNotExist) || errors.As(err, &schemaErr) {
+					t.Errorf("Load = %v, an invalid file must be neither absent nor an older schema", err)
+				}
 			}
 		})
 	}

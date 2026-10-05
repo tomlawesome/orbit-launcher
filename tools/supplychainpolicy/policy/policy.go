@@ -181,9 +181,18 @@ func Load(root string) (Policy, error) {
 		return p, fmt.Errorf("supply-chain policy is not valid JSON: %w", err)
 	}
 	if p.SchemaVersion != SchemaVersion {
-		return p, fmt.Errorf("policy schemaVersion is %d, this tool understands %d", p.SchemaVersion, SchemaVersion)
+		return p, &SchemaError{Got: p.SchemaVersion, Want: SchemaVersion}
 	}
 	return p, nil
+}
+
+// SchemaError is a policy that parsed but was written for another schema.
+// It is a type so -write can tell it from an unreadable file: an older
+// schema's fields are still there to carry across, a parse failure's are not.
+type SchemaError struct{ Got, Want int }
+
+func (e *SchemaError) Error() string {
+	return fmt.Sprintf("policy schemaVersion is %d, this tool understands %d", e.Got, e.Want)
 }
 
 // DerivedActions returns the mechanical fields for every distinct action the

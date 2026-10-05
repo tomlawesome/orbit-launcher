@@ -356,11 +356,59 @@ func TestWriteRefusesAndWritesNothing(t *testing.T) {
 	}
 }
 
+// A policy that exists but cannot be parsed still holds owners, notes and
+// exceptions only a person wrote; regenerating over it would silently replace
+// them with defaults. Only an absent file or an older schema is regenerated.
+func TestWriteRefusesToRegenerateOverAnUnreadablePolicy(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+		wantCode   int
+	}{
+		{"a merge conflict", "{\"schemaVersion\": 2, \"actions\": [\n<<<<<<< HEAD\n", 1},
+		{"a trailing comma", "{\"schemaVersion\": 2, \"exceptions\": [{\"name\": \"some/action\", \"reason\": \"reviewed fork\"},]}\n", 1},
+		{"an older schema", "{\"schemaVersion\": 1}", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := goodRepo(t)
+			serve(t, goodRoutes())
+			path := filepath.Join(root, scp.PolicyPath)
+			if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			code, stdout, stderr := runCmd("-write")
+			if code != c.wantCode {
+				t.Fatalf("exit %d, want %d; stdout %q, stderr %q", code, c.wantCode, stdout, stderr)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.wantCode == 0 {
+				if p := readPolicy(t, root); p.SchemaVersion != scp.SchemaVersion || len(p.Actions) != 2 {
+					t.Errorf("an older schema was not regenerated: %+v", p)
+				}
+				return
+			}
+			for _, want := range []string{"cannot be read", "not valid JSON"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+				}
+			}
+			if string(got) != c.body {
+				t.Errorf("the unreadable policy was rewritten:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestWriteReportsAFailureToWriteThePolicy(t *testing.T) {
 	root := goodRepo(t)
 	serve(t, goodRoutes())
-	// A directory where the file should go makes the write fail.
-	if err := os.Mkdir(filepath.Join(root, scp.PolicyPath), 0o755); err != nil {
+	// A link into a directory that does not exist reads as an absent policy,
+	// so regeneration proceeds, but the write through it fails. (A directory
+	// in its place would now be refused earlier, as unreadable.)
+	if err := os.Symlink(filepath.Join(root, "missing", "policy.json"), filepath.Join(root, scp.PolicyPath)); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := runCmd("-write")
