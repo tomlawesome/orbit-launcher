@@ -118,6 +118,12 @@ live_pins() { printf '%s' "${lines[1]}"; }
   [ "$(docs_only)" = "DOCS_ONLY=false" ]
 }
 
+@test "a Go file moved into docs/ still runs the full gate" {
+  git mv internal/ui/app.go docs/app.md
+  classify
+  [ "$(docs_only)" = "DOCS_ONLY=false" ]
+}
+
 # --- pins the live install runs on (#164) ------------------------------------
 
 @test "a moved ubuntu image runs the live install" {
