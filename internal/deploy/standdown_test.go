@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,5 +87,43 @@ func TestRemovalCommand_PassesTheSameEnvFileAsStandDown(t *testing.T) {
 	downAt := strings.Index(got, " down -v")
 	if downAt < 0 || envAt > downAt {
 		t.Errorf("RemovalCommand(%q) = %q, --env-file must come before \" down -v\"", "/opt/orbit", got)
+	}
+}
+
+// TestRemovalCommand_QuotesPathsTheShellWouldSplit: the line is pasted
+// into a shell, so a directory with a space or quote in its name must
+// still arrive as one argument. Ordinary paths stay bare for readability.
+func TestRemovalCommand_QuotesPathsTheShellWouldSplit(t *testing.T) {
+	cases := []struct{ dir, want string }{
+		{"/opt/orbit", `docker compose --project-directory /opt/orbit --env-file /opt/orbit/.env-orbit down -v && sudo rm -rf /opt/orbit`},
+		{"/mnt/My Drive/orbit", `docker compose --project-directory '/mnt/My Drive/orbit' --env-file '/mnt/My Drive/orbit/.env-orbit' down -v && sudo rm -rf '/mnt/My Drive/orbit'`},
+		{"/opt/tom's orbit", `docker compose --project-directory '/opt/tom'\''s orbit' --env-file '/opt/tom'\''s orbit/.env-orbit' down -v && sudo rm -rf '/opt/tom'\''s orbit'`},
+		{"", `docker compose --project-directory '' --env-file .env-orbit down -v && sudo rm -rf ''`},
+	}
+	for _, c := range cases {
+		if got := RemovalCommand(c.dir); got != c.want {
+			t.Errorf("RemovalCommand(%q)\n got: %s\nwant: %s", c.dir, got, c.want)
+		}
+	}
+}
+
+// TestShellQuote_RoundTripsThroughSh checks the quoting against a real
+// shell rather than against the expected strings above: each path must
+// come back out of sh byte for byte.
+func TestShellQuote_RoundTripsThroughSh(t *testing.T) {
+	for _, p := range []string{
+		"/mnt/My Drive/orbit",
+		"/opt/tom's orbit",
+		"/opt/$orbit",
+		`/opt/orbit\`,
+	} {
+		out, err := exec.Command("sh", "-c", "printf '%s\\n' "+shellQuote(p)).Output()
+		if err != nil {
+			t.Errorf("sh for %q: %v", p, err)
+			continue
+		}
+		if string(out) != p+"\n" {
+			t.Errorf("shellQuote(%q) through sh = %q, want %q", p, out, p+"\n")
+		}
 	}
 }
