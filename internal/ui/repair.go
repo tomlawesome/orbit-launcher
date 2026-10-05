@@ -63,6 +63,14 @@ type RepairModel struct {
 	stream  *engine.Stream
 	menuSel int
 
+	// ctx scopes every fetch-and-start this model launches; cancel
+	// stops one in flight. A Ctrl-C before a run exists cancels it and
+	// sets quitting; the model then quits only when the preparation
+	// reports back, killing anything it managed to start.
+	ctx      context.Context
+	cancel   context.CancelFunc
+	quitting bool
+
 	// Done/WantsMenu surface the outcome to AppModel, exactly like a
 	// flow's engine run.
 	Done      bool
@@ -114,7 +122,20 @@ type repairStreamMsg struct{ msg any }
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	return RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	// One context for the model's whole life: Init cannot store state,
+	// and the model quits once it is cancelled.
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	return m
+}
+
+// prepareContext is the context preparations run on; a model built
+// without NewRepairModel falls back to one that is never cancelled.
+func (m RepairModel) prepareContext() context.Context {
+	if m.ctx == nil {
+		return context.Background()
+	}
+	return m.ctx
 }
 
 // Outcome surfaces the flow result to AppModel.
@@ -135,9 +156,9 @@ func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}
-	targetDir := m.targetDir
+	targetDir, ctx := m.targetDir, m.prepareContext()
 	return func() tea.Msg {
-		stream, err := prepare(context.Background(), targetDir, mode)
+		stream, err := prepare(ctx, targetDir, mode)
 		return repairReadyMsg{stream: stream, err: err}
 	}
 }
@@ -151,6 +172,10 @@ func defaultPrepareRepair(ctx context.Context, targetDir string, mode deploy.Rep
 	if err := deploy.StageRepairScript(targetDir, script); err != nil {
 		return nil, err
 	}
+	// A cancel that lands after the fetch must still stop the start.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return engine.Start(deploy.BuildRepairCommand(targetDir, mode))
 }
 
@@ -162,6 +187,9 @@ func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream
 		return nil, nil, err
 	}
 	if err := deploy.StageRepairScript(targetDir, script); err != nil {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	return engine.StartInteractive(deploy.BuildRepairCommand(targetDir, deploy.RepairExecuteDangerous))
@@ -184,9 +212,9 @@ func (m RepairModel) startRotate() tea.Cmd {
 	if prepare == nil {
 		prepare = defaultPrepareRotate
 	}
-	targetDir := m.targetDir
+	targetDir, ctx := m.targetDir, m.prepareContext()
 	return func() tea.Msg {
-		stream, stdin, err := prepare(context.Background(), targetDir)
+		stream, stdin, err := prepare(ctx, targetDir)
 		return repairRotateReadyMsg{stream: stream, stdin: stdin, err: err}
 	}
 }
@@ -216,6 +244,12 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case repairReadyMsg:
+		if m.quitting {
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			return m, tea.Quit
+		}
 		if msg.err != nil {
 			m.runErr = msg.err
 			m.state = repairError
@@ -228,6 +262,15 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, pumpRepair(m.stream)
 
 	case repairRotateReadyMsg:
+		if m.quitting {
+			if msg.stdin != nil {
+				_ = msg.stdin.Close()
+			}
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			return m, tea.Quit
+		}
 		if msg.err != nil {
 			m.runErr = msg.err
 			m.state = repairError
@@ -402,6 +445,16 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isCtrlC(msg) {
 		if m.stream != nil {
 			m.stream.Kill()
+			return m, tea.Quit
+		}
+		if m.state == repairPreparing || m.state == repairExecuting || m.state == repairRotating {
+			// The run is still being fetched and started: cancel that
+			// and quit when it reports back (see the ready cases).
+			m.quitting = true
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, nil
 		}
 		return m, tea.Quit
 	}

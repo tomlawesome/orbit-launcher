@@ -212,6 +212,65 @@ func TestRepairModel_CtrlCKillsTheRunAndQuits(t *testing.T) {
 	}
 }
 
+// Ctrl-C before the run exists must not leave the fetch-and-start going
+// unobserved: it cancels the preparation and quits only once the
+// preparation has reported back.
+func TestRepairModel_CtrlCWhilePreparingCancelsAndQuitsOnceTheRunReportsBack(t *testing.T) {
+	m := sizedRepair(t)
+	var captured context.Context
+	m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+		captured = ctx
+		return nil, errors.New("not now")
+	}
+	ready := m.Init()()
+
+	m, cmd := repairUpdate(t, m, ctrlC())
+	if cmd != nil {
+		t.Fatal("Ctrl+C while preparing quit before the preparation reported back")
+	}
+	if !errors.Is(captured.Err(), context.Canceled) {
+		t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", captured.Err())
+	}
+	if _, cmd = repairUpdate(t, m, ready); !isQuit(cmd) {
+		t.Fatal("the flow did not quit once the cancelled preparation reported back")
+	}
+}
+
+func TestRepairModel_CtrlCWhileARepairIsStartingKillsTheRunThatStartedAnyway(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state repairState
+		ready func(s *engine.Stream, stdin *recordingStdin) tea.Msg
+	}{
+		{"safe repairs", repairExecuting, func(s *engine.Stream, _ *recordingStdin) tea.Msg {
+			return repairReadyMsg{stream: s}
+		}},
+		{"credential rotation", repairRotating, func(s *engine.Stream, stdin *recordingStdin) tea.Msg {
+			return repairRotateReadyMsg{stream: s, stdin: stdin}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sizedRepair(t)
+			m.state = tc.state
+			s, stdin := sleepingStream(t), &recordingStdin{}
+
+			m, cmd := repairUpdate(t, m, ctrlC())
+			if cmd != nil {
+				t.Fatal("Ctrl+C before the run existed quit before it reported back")
+			}
+			if _, cmd = repairUpdate(t, m, tc.ready(s, stdin)); !isQuit(cmd) {
+				t.Fatal("the flow did not quit once the run arrived")
+			}
+			if d := awaitEnd(t, s); d.ExitCode == 0 {
+				t.Fatalf("a run that started after Ctrl+C was left going (%+v)", d)
+			}
+			if tc.state == repairRotating && !stdin.closed {
+				t.Fatal("the rotation's stdin was left open")
+			}
+		})
+	}
+}
+
 func TestRepairModel_FailedExecutionWithoutSummaryIsAnError(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairExecuting

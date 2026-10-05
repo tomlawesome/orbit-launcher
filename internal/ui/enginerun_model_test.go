@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -275,6 +276,72 @@ func TestEngineRun_CtrlCKillsTheEngine(t *testing.T) {
 	}
 	if d := awaitEnd(t, s); d.ExitCode == 0 {
 		t.Fatalf("Ctrl+C left the engine running: %+v", d)
+	}
+}
+
+// Ctrl-C while the console still says "preparing" must not leave the
+// fetch-and-start running unobserved: it cancels the preparation and
+// quits only once the preparation has reported back.
+func TestEngineRun_CtrlCWhilePreparingCancelsAndQuitsOnceThePrepareReportsBack(t *testing.T) {
+	var captured context.Context
+	r := newEngineRun("install", t.TempDir(), "Install — Standard", "v9.9.9").withSeams(engineRunSeams{
+		prepareEngine: func(ctx context.Context, _, _ string) (*engine.Stream, func() error, error) {
+			captured = ctx
+			return nil, nil, errors.New("not now")
+		},
+	})
+	r, startCmd := r.start(80, 26)
+	ready := startCmd()
+
+	r, cmd := r.update(ctrlC())
+	if cmd != nil {
+		t.Fatal("Ctrl+C while preparing quit before the preparation reported back")
+	}
+	if !errors.Is(captured.Err(), context.Canceled) {
+		t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", captured.Err())
+	}
+	if _, cmd = r.update(ready); !isQuit(cmd) {
+		t.Fatal("the run did not quit once the cancelled preparation reported back")
+	}
+}
+
+func TestEngineRun_CtrlCWhilePreparingKillsAnEngineThatStartedAnyway(t *testing.T) {
+	s := sleepingStream(t)
+	cleaned := false
+	r := newEngineRun("install", t.TempDir(), "Install — Standard", "v9.9.9").withSeams(engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			return s, func() error { cleaned = true; return nil }, nil
+		},
+	})
+	r, startCmd := r.start(80, 26)
+	ready := startCmd()
+
+	r, cmd := r.update(ctrlC())
+	if cmd != nil {
+		t.Fatal("Ctrl+C while preparing quit before the preparation reported back")
+	}
+	if _, cmd = r.update(ready); !isQuit(cmd) {
+		t.Fatal("the run did not quit once the engine arrived")
+	}
+	if !cleaned {
+		t.Fatal("the staged script was not cleaned up")
+	}
+	if d := awaitEnd(t, s); d.ExitCode == 0 {
+		t.Fatalf("an engine that started after Ctrl+C was left running: %+v", d)
+	}
+}
+
+func TestEngineRun_DefaultPrepareStopsWhenCancelled(t *testing.T) {
+	installScriptAt(t, "sleep 60\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream, _, err := defaultPrepareEngine(ctx, t.TempDir(), "install")
+	if stream != nil {
+		t.Cleanup(stream.Kill)
+		t.Fatal("a cancelled preparation still started the engine")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
