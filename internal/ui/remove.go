@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -57,6 +58,11 @@ type RemoveModel struct {
 	// nil in production, which means deploy.InstalledAt.
 	installedAt       time.Time
 	lookupInstalledAt func(context.Context, *deploy.Deployment) time.Time
+
+	// clipboard is where the OSC 52 copy sequence is written: the same kind
+	// of seam as standDown, nil in production, which means os.Stdout. Tests
+	// set it so they neither write to the real terminal nor go unchecked.
+	clipboard io.Writer
 }
 
 // NewRemoveModel constructs the Remove flow for a detected deployment.
@@ -157,7 +163,7 @@ func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		if m.state == removeStateDone && m.doneSel == 0 {
 			m.copied = true
-			return m, copyToClipboard(deploy.RemovalCommand(targetDirOrPlaceholder(m.deployment)))
+			return m, copyToClipboard(m.clipboardWriter(), deploy.RemovalCommand(targetDirOrPlaceholder(m.deployment)))
 		}
 		return m, tea.Quit
 	case tea.KeyUp, tea.KeyDown:
@@ -169,15 +175,24 @@ func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// clipboardWriter is where the copy sequence goes: os.Stdout unless a test
+// supplied a writer.
+func (m RemoveModel) clipboardWriter() io.Writer {
+	if m.clipboard != nil {
+		return m.clipboard
+	}
+	return os.Stdout
+}
+
 // copyToClipboard writes an OSC 52 escape sequence, which modern
 // terminals (including over SSH) interpret as a clipboard-set request.
 // Terminals that don't support it simply ignore the sequence. Written
 // directly to stdout rather than via tea.Printf, which is documented as a
 // no-op under the alt screen — the mode this program always runs in.
-func copyToClipboard(text string) tea.Cmd {
+func copyToClipboard(w io.Writer, text string) tea.Cmd {
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
 	return func() tea.Msg {
-		fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\x07", encoded)
+		fmt.Fprintf(w, "\x1b]52;c;%s\x07", encoded)
 		return nil
 	}
 }

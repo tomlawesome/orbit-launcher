@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +23,7 @@ func newTestRemoveModel(standDown func(context.Context, string) error) RemoveMod
 	}
 	m := NewRemoveModel(d)
 	m.standDown = standDown
+	m.clipboard = io.Discard // no test may write OSC 52 to the real terminal
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return updated.(RemoveModel)
 }
@@ -144,6 +149,43 @@ func TestRemoveModel_DoneScreenCopyThenExit(t *testing.T) {
 	_, quitCmd := m.Update(key(tea.KeyEnter))
 	if quitCmd == nil || quitCmd() != tea.Quit() {
 		t.Error("expected Exit to issue tea.Quit")
+	}
+}
+
+func TestRemoveModel_CopyWritesTheRemovalCommandAsOSC52(t *testing.T) {
+	m := newTestRemoveModel(func(context.Context, string) error { return nil })
+	var buf bytes.Buffer
+	m.clipboard = &buf
+	updated, cmd := m.Update(key(tea.KeyEnter))
+	m = updated.(RemoveModel)
+	updated, _ = m.Update(cmd())
+	m = updated.(RemoveModel)
+
+	_, copyCmd := m.Update(key(tea.KeyEnter)) // Copy command is selected by default
+	if copyCmd == nil {
+		t.Fatal("expected a command to write the OSC 52 sequence")
+	}
+	copyCmd()
+
+	const prefix, suffix = "\x1b]52;c;", "\x07"
+	got := buf.String()
+	if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+		t.Fatalf("clipboard write = %q, want an OSC 52 sequence", got)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(got, prefix), suffix))
+	if err != nil {
+		t.Fatalf("payload is not standard base64: %v", err)
+	}
+	if want := deploy.RemovalCommand("/opt/orbit"); string(decoded) != want {
+		t.Errorf("copied %q, want the removal command %q", decoded, want)
+	}
+}
+
+// In production nothing sets the seam, and the sequence must reach the
+// terminal, which is the only thing that can act on it.
+func TestRemoveModel_ClipboardDefaultsToStdout(t *testing.T) {
+	if w := NewRemoveModel(nil).clipboardWriter(); w != os.Stdout {
+		t.Errorf("clipboardWriter() = %v, want os.Stdout", w)
 	}
 }
 
