@@ -66,7 +66,9 @@ type RepairModel struct {
 	// ctx scopes every fetch-and-start this model launches; cancel
 	// stops one in flight. A Ctrl-C before a run exists cancels it and
 	// sets quitting; the model then quits only when the preparation
-	// reports back, killing anything it managed to start.
+	// reports back, killing a diagnosis it managed to start. A mutation
+	// that started anyway is kept instead, on a fresh context (see
+	// keepRunAfterCancel).
 	ctx      context.Context
 	cancel   context.CancelFunc
 	quitting bool
@@ -207,6 +209,15 @@ func (m *RepairModel) startExecution() {
 	m.rotPrompt, m.rotReason, m.rotInput = nil, "", nil
 }
 
+// keepRunAfterCancel keeps a mutating run the engine started just as
+// Ctrl-C landed: it is never signalled, because a kill milliseconds
+// after start is exactly stopping halfway. The launcher stays and
+// watches it; the fresh context lets a later "Diagnose again" fetch.
+func (m *RepairModel) keepRunAfterCancel() {
+	m.quitting = false
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+}
+
 func (m RepairModel) startRotate() tea.Cmd {
 	prepare := m.prepareRotate
 	if prepare == nil {
@@ -245,10 +256,14 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repairReadyMsg:
 		if m.quitting {
-			if msg.stream != nil {
-				msg.stream.Kill()
+			if msg.stream == nil {
+				return m, tea.Quit
 			}
-			return m, tea.Quit
+			if m.state == repairPreparing {
+				msg.stream.Kill()
+				return m, tea.Quit
+			}
+			m.keepRunAfterCancel()
 		}
 		if msg.err != nil {
 			m.runErr = msg.err
@@ -263,13 +278,21 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repairRotateReadyMsg:
 		if m.quitting {
+			if msg.stream == nil {
+				if msg.stdin != nil {
+					_ = msg.stdin.Close()
+				}
+				return m, tea.Quit
+			}
+			// Keep the rotation and close its input at once: the
+			// engine backs out at its first prompt.
+			m.keepRunAfterCancel()
+			m.stream = msg.stream
 			if msg.stdin != nil {
 				_ = msg.stdin.Close()
 			}
-			if msg.stream != nil {
-				msg.stream.Kill()
-			}
-			return m, tea.Quit
+			m.stdin = nil
+			return m, pumpRepair(m.stream)
 		}
 		if msg.err != nil {
 			m.runErr = msg.err
@@ -443,6 +466,15 @@ var executedMenu = []string{"Diagnose again", "Menu", "Exit"}
 
 func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isCtrlC(msg) {
+		if m.stream == nil && (m.state == repairPreparing || m.state == repairExecuting || m.state == repairRotating) {
+			// The run is still being fetched and started: cancel that
+			// and quit when it reports back (see the ready cases).
+			m.quitting = true
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, nil
+		}
 		switch m.state {
 		case repairExecuting:
 			// A running mutation is never signalled: stopping it halfway
@@ -453,16 +485,6 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.stream != nil {
 			m.stream.Kill()
-			return m, tea.Quit
-		}
-		if m.state == repairPreparing || m.state == repairExecuting || m.state == repairRotating {
-			// The run is still being fetched and started: cancel that
-			// and quit when it reports back (see the ready cases).
-			m.quitting = true
-			if m.cancel != nil {
-				m.cancel()
-			}
-			return m, nil
 		}
 		return m, tea.Quit
 	}
