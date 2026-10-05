@@ -104,6 +104,14 @@ green without being installed). The GitHub workflows still run on the mirrored p
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
 
+The `deps` job's licence check reads past declared licences (#176):
+`tools/licencereview` requires a reviewed entry in
+`.github/licence-review.txt` for every embedded, vendored or generated
+file, and every file whose comments say it came from elsewhere, in what
+the shipped binary links. Entries name an exact version, so a Renovate
+bump of such a module fails until its files are re-read. A licence
+decision there is the owner's.
+
 Because a TUI's output *is* its interface, treat a visual-regression
 failure as a real failure and look at the diff. Do not re-run it hoping
 for green.
