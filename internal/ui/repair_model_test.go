@@ -586,28 +586,31 @@ func TestRepairModel_TickAdvancesAndRearms(t *testing.T) {
 }
 
 func TestRepairModel_PlanSummaryWordsUnderThePlan(t *testing.T) {
+	const restart = "plan action=restart-services resolves=stale-container mutation=reversible backup=not-required"
 	cases := []struct {
-		summary string // "" means no summary line at all
-		want    string
+		name  string
+		lines []string
+		want  string
 	}{
-		{"", "execution arrives with a later Orbit release — nothing here has run"},
-		{"plan result=manual-required actions=0 manual=1", "some steps need your hands"},
-		{"plan result=blocked actions=0 manual=0", "blocked — execution arrives with a later Orbit release"},
+		{"no summary", []string{restart}, "nothing has run yet — pick a repair below to run it"},
+		{"manual alongside a runnable step", []string{restart, "plan result=manual-required actions=0 manual=1"}, "some steps need your hands — the rest can run from the menu below"},
+		{"unknown result", []string{restart, "plan result=blocked actions=0 manual=0"}, "blocked — nothing has run yet"},
+		{"manual only", []string{
+			"plan action=manual resolves=volume-retained-without-credentials mutation=none backup=not-required",
+			"plan result=manual-required actions=0 manual=1",
+		}, "some steps need your hands — nothing has run yet"},
 	}
 	for _, tc := range cases {
-		t.Run(tc.want, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			m := sizedRepair(t)
-			m = repairLines(t, m, "plan action=restart-services resolves=stale-container mutation=reversible backup=not-required")
-			if tc.summary != "" {
-				m = repairLines(t, m, tc.summary)
-			}
+			m = repairLines(t, m, tc.lines...)
 			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
 			s := repairScreen(m)
 			if !strings.Contains(s, tc.want) {
 				t.Fatalf("plan summary should read %q:\n%s", tc.want, s)
 			}
-			if !strings.Contains(s, "restart Orbit's services — running an older image than configured") {
-				t.Fatalf("plan line missing:\n%s", s)
+			if strings.Contains(s, "execution arrives") {
+				t.Fatalf("the plan says execution is unavailable while the menu offers it:\n%s", s)
 			}
 		})
 	}

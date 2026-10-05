@@ -832,8 +832,8 @@ func (m RepairModel) viewDiagnosis() string {
 }
 
 // writePlan renders the proposed plan (orbit#261 slice 3): what the
-// engine would do, classified — and the plain truth that nothing here
-// can execute yet.
+// engine would do, classified — and the plain truth that nothing has
+// run yet.
 func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 	if len(m.planActions) == 0 {
 		// No plan lines: healthy, a --check fallback run, or nothing
@@ -853,7 +853,7 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 		}
 	}
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary)))
+	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous())))
 }
 
 // planLine renders one proposed action: the action in plain words and
@@ -899,20 +899,31 @@ func actionWords(action string) string {
 	}
 }
 
-// planSummaryWords is the one-line truth under the plan.
-func planSummaryWords(s *engine.PlanSummary) string {
+// planSummaryWords is the one-line truth under the plan. runnable says
+// whether the menu below offers a repair to run, so the line points at
+// it when it does and never claims execution is unavailable.
+func planSummaryWords(s *engine.PlanSummary, runnable bool) string {
 	if s == nil {
-		return "execution arrives with a later Orbit release — nothing here has run"
+		if runnable {
+			return "nothing has run yet — pick a repair below to run it"
+		}
+		return "nothing has run yet"
 	}
 	switch s.Result {
 	case "ready":
-		return "a safe plan is ready — execution arrives with a later Orbit release"
+		if runnable {
+			return "a safe plan is ready — pick a repair below to run it"
+		}
+		return "a safe plan is ready — nothing has run yet"
 	case "manual-required":
-		return "some steps need your hands — execution arrives with a later Orbit release"
+		if runnable {
+			return "some steps need your hands — the rest can run from the menu below"
+		}
+		return "some steps need your hands — nothing has run yet"
 	case "empty":
 		return "nothing to plan"
 	default:
-		return s.Result + " — execution arrives with a later Orbit release"
+		return s.Result + " — nothing has run yet"
 	}
 }
 
