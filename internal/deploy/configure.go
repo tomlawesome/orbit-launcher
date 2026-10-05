@@ -173,6 +173,9 @@ func fetchFile(ctx context.Context, url string) ([]byte, error) {
 // isn't being asked about. A target with no configuration (fresh
 // install) imports nothing.
 func ImportTargetConfig(treeDir, targetDir string) error {
+	// A crashed adoption's temp is not a secret; importing it would
+	// adopt it back under that name.
+	removeStaleTemps(targetDir)
 	if err := copyConfigFile(filepath.Join(targetDir, ".env-orbit"), filepath.Join(treeDir, ".env-orbit")); err != nil {
 		return err
 	}
@@ -190,6 +193,7 @@ func AdoptConfig(treeDir, targetDir string) error {
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("configuration session left no .env-orbit: %w", err)
 	}
+	removeStaleTemps(targetDir)
 	if err := copyConfigFile(src, filepath.Join(targetDir, ".env-orbit")); err != nil {
 		return err
 	}
@@ -211,12 +215,60 @@ func copyConfigFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(dst, body, 0o600); err != nil {
+	return writeFileAtomically(dst, body)
+}
+
+// stageFile writes body to a new temp file beside dst and flushes it to
+// disk, leaving dst itself untouched. CreateTemp makes the file 0600, so
+// a secret never exists at a looser mode, and renaming it over dst
+// carries that mode with it.
+func stageFile(dst string, body []byte) (tmp string, err error) {
+	f, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp-*")
+	if err != nil {
+		return "", err
+	}
+	tmp = f.Name()
+	if _, err = f.Write(body); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
+// writeFileAtomically replaces dst by renaming a complete staged copy
+// over it, so dst is always either the whole old file or the whole new
+// one — never empty or half-written after a crash.
+func writeFileAtomically(dst string, body []byte) error {
+	tmp, err := stageFile(dst, body)
+	if err != nil {
 		return err
 	}
-	// WriteFile's mode only applies on creation; an existing file keeps
-	// its old mode, and 0600 is part of the engine's own contract.
-	return os.Chmod(dst, 0o600)
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// removeStaleTemps clears staging temps an earlier adoption left behind
+// when it crashed before switching them in. Best effort: a temp that
+// can't be removed is only clutter.
+func removeStaleTemps(targetDir string) {
+	for _, pattern := range []string{
+		filepath.Join(targetDir, ".env-orbit.tmp-*"),
+		filepath.Join(targetDir, ".orbit-secrets", "*.tmp-*"),
+	} {
+		stale, _ := filepath.Glob(pattern)
+		for _, path := range stale {
+			os.Remove(path)
+		}
+	}
 }
 
 func copySecretsDir(src, dst string) error {
