@@ -329,6 +329,10 @@ deps:
     # elsewhere, in every package the shipped binary links. Each must be
     # reviewed in .github/licence-review.txt.
     - go run ./tools/licencereview
+    # The notices the binary embeds and prints with --licences (#182) must
+    # match what it links: a dependency bump fails here until
+    # `go run ./tools/licencenotices` is re-run and committed.
+    - go run ./tools/licencenotices -check
 
 # secret-scan.yml, step for step. Full history: the point is catching a secret
 # that reached the remote in an earlier commit and is no longer in the working

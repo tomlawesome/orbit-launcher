@@ -112,6 +112,13 @@ the shipped binary links. Entries name an exact version, so a Renovate
 bump of such a module fails until its files are re-read. A licence
 decision there is the owner's.
 
+The binary carries every dependency's licence notice and prints them
+with `--licences` (#182). `internal/notices/THIRD_PARTY_NOTICES.txt` is
+generated: after any `go.mod` change run `go run ./tools/licencenotices`
+and commit the result, or `deps` fails. Code a module carries from
+elsewhere, named only in its comments, gets a hand-kept notice in
+`internal/notices/extra/`.
+
 Because a TUI's output *is* its interface, treat a visual-regression
 failure as a real failure and look at the diff. Do not re-run it hoping
 for green.
