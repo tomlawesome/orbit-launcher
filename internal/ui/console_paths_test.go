@@ -86,18 +86,46 @@ func TestConsole_NarrowTerminals(t *testing.T) {
 	c = c.observeRaw("hello")
 	// Under 24 columns the box takes the whole width rather than
 	// shrinking below usefulness.
-	rows := consoleRows(c, 18, 26)
-	for _, row := range rows[1:] { // the box, bar and stage rows
-		if w := len([]rune(row)); w > 18 {
-			t.Fatalf("a row is %d cells on an 18-column terminal: %q", w, row)
+	// Every row, the title row included, fits the terminal at any
+	// width — down to the clock's own width and below it (#187).
+	for width := 2; width <= 40; width++ {
+		for _, row := range consoleRows(c, width, 26) {
+			if w := len([]rune(row)); w > width {
+				t.Fatalf("a row is %d cells on a %d-column terminal: %q", w, width, row)
+			}
 		}
 	}
+	rows := consoleRows(c, 18, 26)
 	if !strings.HasPrefix(rows[2], "╭") || !strings.HasSuffix(rows[2], "╮") || len([]rune(rows[2])) != 18 {
 		t.Fatalf("box top should span the terminal: %q", rows[2])
 	}
 	// A terminal too small for any box draws no content at all.
 	if got := c.contentLines(1, 26); got != nil {
 		t.Fatalf("a 1-column terminal drew %q", got)
+	}
+}
+
+func TestConsole_TitleRowDegradesInAFixedOrder(t *testing.T) {
+	c := testConsole()
+	cases := []struct {
+		width int
+		want  string
+	}{
+		{35, "ORBIT · Install — Standard 0:00"}, // box 31: everything fits
+		{31, "ORBIT · Install — Stan 0:00"},     // box 27: the title text is cut
+		{18, "ORBIT · Insta 0:00"},              // box 18: still cut
+		{17, "ORBIT · Inst 0:00"},               // four cells of title is the floor
+		{16, "ORBIT       0:00"},                // under four: title and separator go
+		{10, "ORBIT 0:00"},                      // the mark's last width
+		{9, "     0:00"},                        // the mark goes; clock right-aligned
+		{4, "0:00"},                             // the clock alone
+		{3, "0:0"},                              // the clock is cut last of all
+		{2, "0:"},
+	}
+	for _, tc := range cases {
+		if got := consoleRows(c, tc.width, 26)[0]; got != tc.want {
+			t.Errorf("title row at width %d = %q, want %q", tc.width, got, tc.want)
+		}
 	}
 }
 

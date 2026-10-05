@@ -271,6 +271,9 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 		}
 	}
 	interior := boxWidth - 4 // "│ " and " │"
+	if interior < 0 {
+		interior = 0 // a 2- or 3-column box has borders and nothing else
+	}
 
 	// Rows: title, blank, box top, interior…, box bottom, blank, bar,
 	// stage word. The footer row is the caller's.
@@ -282,13 +285,7 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	var lines []string
 
 	// Title row: "ORBIT · <title>" left, elapsed clock right.
-	clock := formatClock(c.elapsed())
-	titleLeft := style.MutedText.Render("ORBIT") + style.AccentText.Render(" · ") + style.MutedText.Render(c.title)
-	titleGap := boxWidth - lipgloss.Width(titleLeft) - lipgloss.Width(clock)
-	if titleGap < 1 {
-		titleGap = 1
-	}
-	lines = append(lines, titleLeft+strings.Repeat(" ", titleGap)+style.Tagline.Render(clock))
+	lines = append(lines, c.titleRow(boxWidth))
 	lines = append(lines, strings.Repeat(" ", boxWidth))
 
 	border := lipgloss.NewStyle().Foreground(style.Border)
@@ -303,6 +300,13 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 		lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
 	}
 	for i, e := range visible {
+		if interior == 0 {
+			// No room inside the frame: the row is its borders, the
+			// same as a padding row, rather than a frame wider than
+			// the box.
+			lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
+			continue
+		}
 		latest := i == len(visible)-1
 		content := truncateStyled(c.entryLine(e, latest), interior)
 		gap := interior - lipgloss.Width(content)
@@ -330,14 +334,52 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	bar := barStyle.Render(strings.Repeat("─", fill)) + lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", boxWidth-fill))
 	lines = append(lines, bar)
 
-	stage := style.MutedText.Render(c.stageWord())
-	gap := boxWidth - lipgloss.Width(c.stageWord())
+	stage := truncateStyled(style.MutedText.Render(c.stageWord()), boxWidth)
+	gap := boxWidth - lipgloss.Width(stage)
 	if gap < 0 {
 		gap = 0
 	}
 	lines = append(lines, stage+strings.Repeat(" ", gap))
 
 	return lines
+}
+
+// titleRow renders "ORBIT · <title>" left and the elapsed clock right,
+// always exactly boxWidth cells. When the box is too narrow for all of
+// it, the parts go in a fixed order (#187): the title text is cut to
+// what fits, then dropped with its separator once under four cells of
+// it would show, then the ORBIT mark goes, and the clock is cut only
+// when it is the last thing left. The clock is the one live sign that
+// the install is still moving, the mark says which screen this is, and
+// the title repeats a choice the user made a moment ago — so it goes
+// first. Cuts are plain, as truncateStyled's are.
+func (c ConsoleModel) titleRow(boxWidth int) string {
+	const mark, sep, minTitle = "ORBIT", " · ", 4
+	clock := formatClock(c.elapsed())
+	clockWidth := lipgloss.Width(clock)
+	room := boxWidth - clockWidth - 1 // the left side, keeping a 1-cell gap
+	left := ""
+	switch titleRoom := room - lipgloss.Width(mark) - lipgloss.Width(sep); {
+	case titleRoom >= lipgloss.Width(c.title):
+		left = style.MutedText.Render(mark) + style.AccentText.Render(sep) + style.MutedText.Render(c.title)
+	case titleRoom >= minTitle:
+		title := []rune(c.title)
+		for lipgloss.Width(string(title)) > titleRoom {
+			title = title[:len(title)-1]
+		}
+		left = style.MutedText.Render(mark) + style.AccentText.Render(sep) + style.MutedText.Render(string(title))
+	case room >= lipgloss.Width(mark):
+		left = style.MutedText.Render(mark)
+	}
+	if left == "" {
+		if clockWidth > boxWidth {
+			clock = string([]rune(clock)[:boxWidth])
+			clockWidth = boxWidth
+		}
+		return strings.Repeat(" ", boxWidth-clockWidth) + style.Tagline.Render(clock)
+	}
+	gap := boxWidth - lipgloss.Width(left) - clockWidth
+	return left + strings.Repeat(" ", gap) + style.Tagline.Render(clock)
 }
 
 // formatClock renders the elapsed clock as m:ss (h:mm:ss past an hour).
