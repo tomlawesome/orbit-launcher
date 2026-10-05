@@ -260,6 +260,45 @@ ratchet (never regress from measured baseline), with stronger expectations
 on `internal/deploy` (the code that touches a person's real containers and
 data) than on `internal/ui` rendering.
 
+**Gated since 2026-10-05 (#169).** The baseline exists now: per-package
+statement coverage, measured with
+`go test -race -count=1 -coverprofile=coverage.out ./...`, then rounded
+DOWN to one decimal place. Floors live in `.github/coverage-floors.txt`
+(that file's own header has the full rules); `tools/coveragefloor` reads
+them and `coverage.out` and fails the `fast` job in `.gitlab-ci.yml` (and
+the mirrored step in `.github/workflows/ci.yml`) if a package drops below
+its floor, or if a floor names a package the profile no longer has. It is
+a ratchet, not a target: floors are never lowered to make a change pass,
+only raised, deliberately, to lock in a real improvement.
+
+Measured baseline (per-package statement coverage, floor in brackets):
+
+| Package | Coverage | Floor |
+| --- | --- | --- |
+| `cmd/orbit-launcher` | 18.75% | 18.7 |
+| `internal/deploy` | 85.40% | 85.3 |
+| `internal/engine` | 91.41% | 91.4 |
+| `internal/release` | 85.71% | 85.7 |
+| `internal/ui` | 85.72% | 85.7 |
+| `internal/ui/starfield` | 89.02% | 89.0 |
+| `internal/ui/style` | 100.00% | 100.0 |
+| `tools/calculateversion` | 51.92% | 51.9 |
+| `tools/coveragefloor` | 78.38% | 78.3 |
+| `tools/coveragefloor/floor` | 94.55% | 94.5 |
+| `tools/supplychainpolicy/policy` | 69.78% | 69.7 |
+
+`cmd/orbit-launcher`'s low number is real, not a measurement gap: most of
+`main.go` builds and runs the full-screen TUI program, which has no
+injectable stdin/stdout and so is proven instead by `test/pty` spawning
+the real binary under a real pty (section 3.3) — coverage.out only
+reflects in-process unit tests. The flag-dispatch logic (`run`) and
+version formatting (`displayVersion`) are unit-tested and fully covered.
+
+Packages under `test/` (black-box and integration tests, not the module's
+own package tree) and packages with no test file at all
+(`tools/supplychainpolicy`'s own `main` package) are deliberately outside
+this file's scope — see its header.
+
 ---
 
 ## 4. Repository governance — the three lanes

@@ -279,6 +279,7 @@ fast:
     - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
     - staticcheck ./...
     - go test -race -coverprofile=coverage.out ./...
+    - go run ./tools/coveragefloor coverage.out
   artifacts:
     name: coverage
     when: always

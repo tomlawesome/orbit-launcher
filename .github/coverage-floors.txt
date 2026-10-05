@@ -1,0 +1,42 @@
+# Per-package statement coverage floors, enforced by tools/coveragefloor
+# (wired into .gitlab-ci.yml's `fast` job and .github/workflows/ci.yml's
+# `Test` step, right after `go test -coverprofile=coverage.out ./...`).
+#
+# This is a RATCHET, not a target: a floor here is never lowered to make
+# a change pass. If a change legitimately drops a package's coverage
+# (e.g. an intentional untested escape hatch), the fix is to add the
+# missing test, not to edit this file down. The file is reviewed like any
+# other source change -- a pull/merge request that lowers a number here
+# should say why in its description.
+#
+# To RAISE a floor (coverage has genuinely improved and you want to lock
+# the gain in so it cannot quietly regress): rerun the measurement below
+# and replace the number. There is no automatic ratchet-up here (unlike
+# gauntlet's scripts/coverage-floor.py) -- raising is a deliberate,
+# reviewed edit, same as lowering would have to be.
+#
+# How these numbers were measured (orbit-launcher issue #169, 2026-10-05):
+#   go test -race -count=1 -coverprofile=coverage.out ./...
+#   go run ./tools/coveragefloor coverage.out   # prints got% per package
+# Each floor below is the measured percentage rounded DOWN to one decimal
+# place -- never up, so the recorded floor is never stricter than what was
+# actually observed.
+#
+# Only packages that have test files appear here. A package with no tests
+# still shows up in the coverage profile at 0%, but adding its floor is a
+# deliberate choice made here, not something tools/coveragefloor enforces
+# on its own (see that command's package doc). Packages under test/ are
+# black-box/integration packages, not the module's own package tree, and
+# are intentionally out of scope for this file.
+
+github.com/tomlawesome/orbit-launcher/cmd/orbit-launcher 18.7
+github.com/tomlawesome/orbit-launcher/internal/deploy 85.3
+github.com/tomlawesome/orbit-launcher/internal/engine 91.4
+github.com/tomlawesome/orbit-launcher/internal/release 85.7
+github.com/tomlawesome/orbit-launcher/internal/ui 85.7
+github.com/tomlawesome/orbit-launcher/internal/ui/starfield 89.0
+github.com/tomlawesome/orbit-launcher/internal/ui/style 100.0
+github.com/tomlawesome/orbit-launcher/tools/calculateversion 51.9
+github.com/tomlawesome/orbit-launcher/tools/coveragefloor 78.3
+github.com/tomlawesome/orbit-launcher/tools/coveragefloor/floor 94.5
+github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy/policy 69.7
