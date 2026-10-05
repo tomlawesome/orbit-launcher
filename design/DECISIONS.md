@@ -1,5 +1,11 @@
 # Design decisions — the owner-locked visual law
 
+> **Historical record, noted 2026-10-05.** Kept as written. A later mockup
+> set, `mockups-v7-notice.html` (the development notice), came after the
+> lineage listed here, and its screen has shipped. The "next mockup set is
+> v7" line below is out of date.
+
+
 This is the durable record of every visual decision the repository owner has
 made about the orbit-launcher TUI, with the reasoning that produced it. It
 exists so no future contributor — human or model — relitigates a settled
