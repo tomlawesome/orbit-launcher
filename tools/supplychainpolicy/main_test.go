@@ -19,6 +19,7 @@ const (
 	checkoutSHA    = "3d3c42e5aac5ba805825da76410c181273ba90b1"
 	codeqlSHA      = "cdf488f595d80d6e07e03d4674febd5ab45fa938"
 	codeqlTagObj   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	setupGoSHA     = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 	gitleaksDigest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 )
 
@@ -353,6 +354,66 @@ func TestWriteRefusesAndWritesNothing(t *testing.T) {
 				t.Errorf("a refused regeneration wrote the policy (stat: %v)", err)
 			}
 		})
+	}
+}
+
+// An excepted action is deliberately not recorded, so -write must neither
+// expect it in Actions nor ask the API about it; the result must still pass
+// the offline check.
+func TestWriteLeavesAnExceptedActionOutAndNeverQueriesIt(t *testing.T) {
+	root := repo(t, map[string]string{
+		"ci.yml":          ciWorkflow + "      - uses: actions/setup-go@" + setupGoSHA + " # v7.0.0\n",
+		"secret-scan.yml": secretScanWorkflow,
+	})
+	f := serve(t, goodRoutes()) // no setup-go routes: any request for it is a 404
+	writePolicy(t, root, scp.Policy{
+		SchemaVersion: scp.SchemaVersion,
+		Exceptions:    []scp.Exception{{Name: "actions/setup-go", Reason: "reviewed fork"}},
+	})
+
+	if code, _, stderr := runCmd("-write"); code != 0 {
+		t.Fatalf("exit %d; stderr: %s", code, stderr)
+	}
+	p := readPolicy(t, root)
+	if len(p.Actions) != 2 || p.Actions[0].Name != "actions/checkout" || p.Actions[1].Name != "github/codeql-action" {
+		t.Errorf("actions = %+v; want exactly checkout and codeql", p.Actions)
+	}
+	if len(p.Exceptions) != 1 || p.Exceptions[0].Name != "actions/setup-go" || p.Exceptions[0].Reason != "reviewed fork" {
+		t.Errorf("exceptions = %+v; want the setup-go exception carried", p.Exceptions)
+	}
+	for _, r := range f.seen() {
+		if strings.Contains(r.URL.Path, "/repos/actions/setup-go") {
+			t.Errorf("-write queried %s for an excepted action", r.URL.Path)
+		}
+	}
+	if code, stdout, stderr := runCmd(); code != 0 {
+		t.Errorf("check after write: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// An exception excuses the record, never the pin rules.
+func TestWriteStillRefusesANonSHAPinWhenExcepted(t *testing.T) {
+	root := repo(t, map[string]string{
+		"ci.yml":          ciWorkflow + "      - uses: actions/setup-go@v7 # v7.0.0\n",
+		"secret-scan.yml": secretScanWorkflow,
+	})
+	serve(t, goodRoutes())
+	writePolicy(t, root, scp.Policy{
+		SchemaVersion: scp.SchemaVersion,
+		Exceptions:    []scp.Exception{{Name: "actions/setup-go", Reason: "reviewed fork"}},
+	})
+	path := filepath.Join(root, scp.PolicyPath)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runCmd("-write")
+	if code != 1 || !strings.Contains(stderr, "not a commit SHA") {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want exit 1 naming the non-SHA pin", code, stdout, stderr)
+	}
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+		t.Errorf("a refused regeneration changed the policy (err %v)", err)
 	}
 }
 
