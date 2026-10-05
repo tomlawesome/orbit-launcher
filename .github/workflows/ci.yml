@@ -72,6 +72,9 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
 
+      - name: Check coverage floors
+        run: go run ./tools/coveragefloor coverage.out
+
       - name: Upload diagnostic coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
