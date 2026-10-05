@@ -91,6 +91,31 @@ type liveSession struct {
 	// goroutine dump SIGQUIT produces goes there, not down the pty, so
 	// capturing it can never depend on the transport under suspicion.
 	stderrPath string
+	// deadline is go test's own -timeout deadline, from t.Deadline; zero
+	// means there is none. Every wait ends cleanupReserve before it.
+	deadline time.Time
+}
+
+// healthClient bounds each request to the deployed app, so one that never
+// answers cannot hold the health loop past its deadline.
+var healthClient = &http.Client{Timeout: 10 * time.Second}
+
+// cleanupReserve is how long before go test's own -timeout every wait
+// gives up, so t.Cleanup (docker compose down -v) still runs. A timeout
+// panic runs no cleanups and leaves a real stack on the machine.
+const cleanupReserve = 3 * time.Minute
+
+// capBudget shortens budget so the wait ends cleanupReserve before
+// deadline; zero means the reserve is already spent.
+func capBudget(budget time.Duration, deadline, now time.Time) time.Duration {
+	if deadline.IsZero() {
+		return budget
+	}
+	left := deadline.Sub(now) - cleanupReserve
+	if left <= 0 {
+		return 0
+	}
+	return min(budget, left)
 }
 
 // expectBudget is the wall-clock ceiling for any single wait on the
@@ -156,9 +181,21 @@ func (s *liveSession) expectWithinErr(what string, match vtscreen.Match) (string
 // of range") and destroyed the diagnosis.
 func (s *liveSession) expectWithinBudget(what string, budget time.Duration, match vtscreen.Match) (string, error) {
 	s.t.Helper()
+	requested := budget
+	// A wait that outlives go test's -timeout ends in a panic that runs no
+	// t.Cleanup, so no wait may reach into the reserve kept for cleanup.
+	budget = capBudget(budget, s.deadline, time.Now())
+	if budget <= 0 {
+		s.diagnose(what)
+		return "", fmt.Errorf("%s: test deadline is within cleanupReserve (%s); failing now so cleanup can run", what, cleanupReserve)
+	}
 	start := time.Now()
 	screen, err := vtscreen.Wait(s.term, budget, match)
 	if err != nil {
+		// A cut budget's timeout would otherwise read like a budget bug.
+		if budget < requested {
+			err = fmt.Errorf("%w (budget cut from %s to %s to leave %s for cleanup before the test deadline)", err, requested, budget, cleanupReserve)
+		}
 		s.diagnose(what)
 		return "", err
 	}
@@ -615,7 +652,11 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		_, _ = cmd.Process.Wait()
 	})
 
-	return &liveSession{t: t, term: term, cmd: cmd, budget: expectBudget, screenBudget: screenBudget, stderrPath: stderrPath}
+	session := &liveSession{t: t, term: term, cmd: cmd, budget: expectBudget, screenBudget: screenBudget, stderrPath: stderrPath}
+	if deadline, ok := t.Deadline(); ok {
+		session.deadline = deadline
+	}
+	return session
 }
 
 // screenLogInterval is how often recordScreens looks for a new screen.
@@ -949,8 +990,12 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		var lastStatus int
 		var lastErr error
 		healthy := false
-		for i := 0; i < 60; i++ {
-			resp, err := http.Get("http://localhost:3000/")
+		// Same two-minute ceiling as the 60 tries it replaced, but each
+		// request is bounded too, and the loop stops short of the cleanup
+		// reserve.
+		until := time.Now().Add(capBudget(2*time.Minute, session.deadline, time.Now()))
+		for time.Now().Before(until) {
+			resp, err := healthClient.Get("http://localhost:3000/")
 			if err == nil {
 				lastStatus = resp.StatusCode
 				resp.Body.Close()
@@ -1270,5 +1315,102 @@ func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
 	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
 	if !ok || !status.Signaled() || status.Signal() != syscall.SIGQUIT {
 		t.Errorf("child state = %v, want it ended by the diagnosis's SIGQUIT", cmd.ProcessState)
+	}
+}
+
+func TestCapBudgetLeavesRoomForCleanup(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		name     string
+		budget   time.Duration
+		deadline time.Time
+		want     time.Duration
+	}{
+		{"no deadline leaves the budget alone", 600 * time.Second, time.Time{}, 600 * time.Second},
+		{"a far deadline leaves the budget alone", 600 * time.Second, now.Add(time.Hour), 600 * time.Second},
+		{"a near deadline caps it to what is left before the reserve", 600 * time.Second, now.Add(cleanupReserve + 10*time.Second), 10 * time.Second},
+		{"a deadline inside the reserve leaves nothing", 600 * time.Second, now.Add(cleanupReserve - time.Second), 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := capBudget(c.budget, c.deadline, now); got != c.want {
+				t.Errorf("capBudget(%s, %v, now) = %s, want %s", c.budget, c.deadline.Sub(now), got, c.want)
+			}
+		})
+	}
+}
+
+// TestExpectWithin_FailsBeforeTheTestDeadline proves a wait gives up while
+// there is still time for t.Cleanup to take the stack down, rather than
+// running into go test's -timeout, which runs no cleanups. Same noisy child
+// as the hang-diagnosis test, so the wait has a live screen to watch. Both
+// cases would wait the full minute without the cap; 30 s is half of that.
+func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		deadline    time.Duration // from now
+		stderr      bool
+		wantSubs    []string
+		wantSIGQUIT bool
+	}{
+		{
+			// capBudget leaves nothing, so the wait fails at once; the only
+			// time spent is diagnose's dump wait, which the sh child never
+			// answers, and its SIGQUIT is the proof the diagnosis ran.
+			name: "reserve already spent", deadline: cleanupReserve - time.Second, stderr: true,
+			wantSubs: []string{"test deadline is within"}, wantSIGQUIT: true,
+		},
+		{
+			// capBudget leaves 1 s, so the wait really times out and the
+			// error must say the budget was cut, not that it was 1 s.
+			name: "reserve about to be spent", deadline: cleanupReserve + time.Second,
+			wantSubs: []string{"no match within", "cleanup before the test deadline"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			term, err := vtscreen.New(80, 24, nil)
+			if err != nil {
+				t.Fatalf("create virtual terminal: %v", err)
+			}
+			t.Cleanup(func() { _ = term.Close() })
+
+			cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+			if err := term.Start(cmd); err != nil {
+				t.Fatalf("start noisy child: %v", err)
+			}
+			t.Cleanup(func() {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			})
+
+			session := &liveSession{
+				t: t, term: term, cmd: cmd, budget: time.Minute, screenBudget: time.Minute,
+				deadline: time.Now().Add(c.deadline),
+			}
+			if c.stderr {
+				session.stderrPath = filepath.Join(t.TempDir(), "child-stderr.log")
+			}
+
+			start := time.Now()
+			_, err = session.expectWithinErr("waiting for something that never arrives", vtscreen.ContainsAny("this string never appears"))
+			if elapsed := time.Since(start); elapsed >= 30*time.Second {
+				t.Errorf("the wait took %s; the deadline cap should have ended it well before the minute", elapsed.Round(100*time.Millisecond))
+			}
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			for _, want := range c.wantSubs {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+				}
+			}
+			if c.wantSIGQUIT {
+				_ = cmd.Wait()
+				status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+				if !ok || !status.Signaled() || status.Signal() != syscall.SIGQUIT {
+					t.Errorf("child state = %v, want it ended by the diagnosis's SIGQUIT", cmd.ProcessState)
+				}
+			}
+		})
 	}
 }
