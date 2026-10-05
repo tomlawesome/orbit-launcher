@@ -19,20 +19,23 @@
 
 charm.land/lipgloss/v2@v2.0.6 terminal.go notice BSD-3-Clause
 # queryBackgroundColor is "copied from x/term@v0.1.3": golang.org/x/term,
-# the Go Authors' BSD-3-Clause, already allowed.
+# the Go Authors' BSD-3-Clause, already allowed. Owner, 2026-10-05:
+# accepted.
 
 github.com/charmbracelet/ultraviolet@v0.0.0-20260811164956-006e29f97886 key_table.go notice MIT
 # SS3 keypad map "taken from Foot keymap.h and XTerm modifyOtherKeys":
 # a table of escape-sequence names (Foot is MIT; XTerm's is the X11
-# licence, MIT-style). Interface facts, not expression.
+# licence, MIT-style). Interface facts, not expression. Owner,
+# 2026-10-05: accepted.
 
 github.com/charmbracelet/x/ansi@v0.11.8 color.go notice ISC
 # The nearest-256-colour conversion is "mostly ported from
 # tmux/colour.c". tmux is ISC, already allowed; ISC asks for its notice
-# to be kept with copies.
+# to be kept with copies. Owner, 2026-10-05: accepted.
 
 github.com/lucasb-eyer/go-colorful@v1.4.1 hsluv.go notice MIT
 # From github.com/hsluv/hsluv-go, "Under MIT License", already allowed.
+# Owner, 2026-10-05: accepted.
 
 github.com/clipperhouse/displaywidth@v0.11.0 trie.go generated Unicode-3.0
 github.com/mattn/go-runewidth@v0.0.24 runewidth_table.go generated Unicode-3.0
@@ -48,9 +51,11 @@ golang.org/x/sys@v0.48.0 unix/dev_linux.go notice BSD-3-Clause+glibc-sysmacros-f
 # Mkdev/Major/Minor "extracted and adapted from bits/sysmacros.h in the
 # glibc sources" (glibc is LGPL-2.1-or-later): the dev_t bit layout,
 # re-expressed as three Go shift-and-mask functions by the Go Authors.
+# Owner, 2026-10-05: accepted as BSD-3-Clause.
 
 golang.org/x/sys@v0.48.0 unix/ generated BSD-3-Clause+Linux-UAPI-constants
 # zerrors_*, zsyscall_*, zsysnum_*, ztypes_*, zptrace_*: constants,
 # syscall numbers and struct layouts generated from the Linux UAPI
 # headers, which carry GPL-2.0 WITH Linux-syscall-note -- the note that
 # exists so programs can use the kernel's interface without the GPL.
+# Owner, 2026-10-05: accepted as BSD-3-Clause.
