@@ -64,10 +64,8 @@ func UnownedDatabaseVolumes(ctx context.Context, targetDir string) []DatabaseVol
 
 	var volumes []DatabaseVolume
 	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+		// Split before trimming: trimming first would strip the tab of a
+		// line with an empty name and promote its project to the name.
 		name, project, _ := strings.Cut(line, "\t")
 		if name = strings.TrimSpace(name); name == "" {
 			continue

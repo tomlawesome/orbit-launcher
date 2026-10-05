@@ -50,6 +50,17 @@ func TestUnownedDatabaseVolumes_UnlabelledVolumeHasNoProject(t *testing.T) {
 	}
 }
 
+// A line with an empty name field must not have its project label read
+// as the name: the pre-flight shows that name to the user as the volume
+// blocking the install.
+func TestUnownedDatabaseVolumes_EmptyNameIsSkipped(t *testing.T) {
+	fakeDockerPrinting(t, "\tsome-project\n", 0)
+
+	if got := UnownedDatabaseVolumes(t.Context(), t.TempDir()); len(got) != 0 {
+		t.Errorf("got %+v, want no volume for a line with no name", got)
+	}
+}
+
 // A recognised deployment owns its own volume: that is not a surprise
 // and not a blocker, so the pre-flight has nothing to say.
 func TestUnownedDatabaseVolumes_SilentWhenTheTargetHasADeployment(t *testing.T) {

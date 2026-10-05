@@ -27,7 +27,19 @@ func buildBinary(t *testing.T) string {
 	}
 
 	binPath := filepath.Join(t.TempDir(), "orbit-launcher")
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/orbit-launcher")
+	args := []string{"build", "-o", binPath}
+	// scripts/coverage.sh sets this so the binary's own runs count
+	// towards coverage (#169). It cannot be GOCOVERDIR itself: `go test
+	// -cover` points GOCOVERDIR at a directory of its own for each test
+	// process. Every spawn passes os.Environ() on, so setting GOCOVERDIR
+	// here reaches each binary this suite starts.
+	if dir := os.Getenv("ORBIT_LAUNCHER_BINARY_COVERDIR"); dir != "" {
+		args = append(args, "-cover", "-covermode=atomic", "-coverpkg=github.com/tomlawesome/orbit-launcher/...")
+		if err := os.Setenv("GOCOVERDIR", dir); err != nil {
+			t.Fatalf("point the binary's coverage at %s: %v", dir, err)
+		}
+	}
+	cmd := exec.Command("go", append(args, "./cmd/orbit-launcher")...)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build orbit-launcher: %v\n%s", err, out)

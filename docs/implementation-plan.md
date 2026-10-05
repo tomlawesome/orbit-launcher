@@ -261,43 +261,53 @@ on `internal/deploy` (the code that touches a person's real containers and
 data) than on `internal/ui` rendering.
 
 **Gated since 2026-10-05 (#169).** The baseline exists now: per-package
-statement coverage, measured with
-`go test -race -count=1 -coverprofile=coverage.out ./...`, then rounded
-DOWN to one decimal place. Floors live in `.github/coverage-floors.txt`
-(that file's own header has the full rules); `tools/coveragefloor` reads
-them and `coverage.out` and fails the `fast` job in `.gitlab-ci.yml` (and
-the mirrored step in `.github/workflows/ci.yml`) if a package drops below
-its floor, or if a floor names a package the profile no longer has. It is
-a ratchet, not a target: floors are never lowered to make a change pass,
-only raised, deliberately, to lock in a real improvement.
+statement coverage, measured with `scripts/coverage.sh -race`, which merges
+the unit tests' counters with those of the compiled launcher run under a
+real pty by `test/pty` (section 3.3), then rounded DOWN to one decimal
+place. Floors live in `.github/coverage-floors.txt` (that file's own header
+has the full rules); `tools/coveragefloor` reads them and `coverage.out` and
+fails the `fast` job in `.gitlab-ci.yml` (and the mirrored step in
+`.github/workflows/ci.yml`) if a package drops below its floor, or if a
+floor names a package the profile no longer has. It is a ratchet, not a
+target: floors are never lowered to make a change pass, only raised,
+deliberately, to lock in a real improvement.
 
-Measured baseline (per-package statement coverage, floor in brackets):
+The goal is meaningful coverage, not a number (owner, 2026-10-05): a test
+counts only if it would fail when the behaviour it names breaks, and the
+floors sit wherever that honest coverage lands.
+
+Measured baseline (per-package statement coverage, floor in brackets; two
+runs gave identical figures):
 
 | Package | Coverage | Floor |
 | --- | --- | --- |
-| `cmd/orbit-launcher` | 18.75% | 18.7 |
-| `internal/deploy` | 85.40% | 85.3 |
-| `internal/engine` | 91.41% | 91.4 |
-| `internal/release` | 85.71% | 85.7 |
-| `internal/ui` | 85.72% | 85.7 |
-| `internal/ui/starfield` | 89.02% | 89.0 |
+| `cmd/orbit-launcher` | 94.12% | 94.1 |
+| `internal/deploy` | 94.23% (CI) | 94.2 |
+| `internal/engine` | 93.43% | 93.4 |
+| `internal/release` | 100.00% | 100.0 |
+| `internal/ui` | 98.26% | 98.2 |
+| `internal/ui/starfield` | 90.24% | 90.2 |
 | `internal/ui/style` | 100.00% | 100.0 |
-| `tools/calculateversion` | 51.92% | 51.9 |
-| `tools/coveragefloor` | 78.38% | 78.3 |
+| `tools/calculateversion` | 96.55% | 96.5 |
+| `tools/coveragefloor` | 97.37% | 97.3 |
 | `tools/coveragefloor/floor` | 94.55% | 94.5 |
-| `tools/supplychainpolicy/policy` | 69.78% | 69.7 |
+| `tools/licencenotices` | 95.56% | 95.5 |
+| `tools/licencenotices/notices` | 96.43% | 96.4 |
+| `tools/licencereview` | 97.37% | 97.3 |
+| `tools/licencereview/review` | 99.32% | 99.3 |
+| `tools/supplychainpolicy` | 98.31% | 98.3 |
+| `tools/supplychainpolicy/policy` | 99.28% | 99.2 |
+| `test/internal/vtscreen` | 93.52% | 93.5 |
 
-`cmd/orbit-launcher`'s low number is real, not a measurement gap: most of
-`main.go` builds and runs the full-screen TUI program, which has no
-injectable stdin/stdout and so is proven instead by `test/pty` spawning
-the real binary under a real pty (section 3.3) — coverage.out only
-reflects in-process unit tests. The flag-dispatch logic (`run`) and
-version formatting (`displayVersion`) are unit-tested and fully covered.
+`internal/deploy` reads 96.79% as a normal user; CI's `fast` job runs as
+root, where the three tests that force a permission error skip themselves,
+so its floor is the CI figure.
 
-Packages under `test/` (black-box and integration tests, not the module's
-own package tree) and packages with no test file at all
-(`tools/supplychainpolicy`'s own `main` package) are deliberately outside
-this file's scope — see its header.
+`cmd/orbit-launcher` read 18.75% before the pty runs were counted: most of
+`main.go` builds and runs the full-screen program, which only `test/pty`
+exercises. Other packages under `test/` (black-box and integration tests)
+are outside the file's scope; `test/internal/vtscreen` is the exception,
+being a library with unit tests of its own.
 
 ---
 

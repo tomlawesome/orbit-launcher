@@ -319,3 +319,366 @@ func TestBuildConfigureCommand_UnknownModeOmitsEnv(t *testing.T) {
 		}
 	}
 }
+
+// lockDir removes every permission from dir for the rest of the test, so
+// anything inside it can neither be listed, stat'ed nor read, and restores
+// them afterwards so t.TempDir's own cleanup can still remove it.
+func lockDir(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block access")
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+}
+
+// truncatedBodyServer promises more bytes than it sends, so the client's
+// read fails part-way through — what a dropped connection looks like.
+func truncatedBodyServer(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "4096")
+		w.Write([]byte("#!/usr/bin/env bash\necho half a scr"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestURLDir_LeavesASlashlessValueAlone(t *testing.T) {
+	if got := urlDir("install.sh"); got != "install.sh" {
+		t.Errorf("urlDir(%q) = %q, want it unchanged", "install.sh", got)
+	}
+	if got := urlDir("https://example.test/repo/install.sh"); got != "https://example.test/repo" {
+		t.Errorf("urlDir = %q, want the scheme's double slash kept", got)
+	}
+}
+
+// An override that doesn't live under scripts/ has no separate root: the
+// template is fetched from the same directory as the scripts.
+func TestScriptSourceURLs_OverrideOutsideScriptsUsesOneBase(t *testing.T) {
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", "https://example.test/flat/install.sh")
+	scripts, root := scriptSourceURLs()
+	if scripts != "https://example.test/flat" || root != "https://example.test/flat" {
+		t.Fatalf("scripts = %q, root = %q, want both https://example.test/flat", scripts, root)
+	}
+}
+
+// Without the template there is nothing to seed configure.sh with, so the
+// whole fetch fails — and fails before anything is staged on disk.
+func TestFetchConfigTree_MissingTemplateFailsWithoutStagingATree(t *testing.T) {
+	fakeOrbitSource(t, map[string]string{
+		"/scripts/configure.sh": "#!/usr/bin/env bash\n",
+	})
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	treeDir, cleanup, err := FetchConfigTree(context.Background())
+	if err == nil || !strings.Contains(err.Error(), envExampleName) {
+		t.Fatalf("expected an error naming %s, got %v", envExampleName, err)
+	}
+	if treeDir != "" || cleanup != nil {
+		t.Errorf("a failed fetch returned treeDir=%q cleanup=%v; want neither", treeDir, cleanup != nil)
+	}
+	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
+		t.Errorf("a failed fetch left %d entries in the temp dir", len(entries))
+	}
+}
+
+func TestFetchConfigTree_UnwritableTempDirIsAnError(t *testing.T) {
+	fakeOrbitSource(t, map[string]string{
+		"/scripts/configure.sh": "#!/usr/bin/env bash\n",
+		"/.env-orbit.example":   "APP_URL=\n",
+	})
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+
+	treeDir, cleanup, err := FetchConfigTree(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "stage configuration tree") {
+		t.Fatalf("expected a staging error, got %v", err)
+	}
+	if treeDir != "" || cleanup != nil {
+		t.Errorf("a failed stage returned treeDir=%q cleanup=%v; want neither", treeDir, cleanup != nil)
+	}
+}
+
+func TestFetchFile_RefusesAnUnbuildableURL(t *testing.T) {
+	_, err := fetchFile(context.Background(), "http://bad\x7fhost/configure.sh")
+	if err == nil || !strings.Contains(err.Error(), "build request") {
+		t.Fatalf("expected a build-request error, got %v", err)
+	}
+}
+
+func TestFetchFile_RefusesAFileOverTheSizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, maxInstallScriptBytes+1))
+	}))
+	defer srv.Close()
+
+	body, err := fetchFile(context.Background(), srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("expected a size-limit error, got %v", err)
+	}
+	if body != nil {
+		t.Errorf("an oversized file returned %d bytes; want none", len(body))
+	}
+}
+
+// Exactly at the limit is still accepted: the cap is inclusive.
+func TestFetchFile_AcceptsAFileExactlyAtTheSizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, maxInstallScriptBytes))
+	}))
+	defer srv.Close()
+
+	body, err := fetchFile(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetchFile: %v", err)
+	}
+	if len(body) != maxInstallScriptBytes {
+		t.Errorf("len(body) = %d, want %d", len(body), maxInstallScriptBytes)
+	}
+}
+
+// A connection that drops mid-body must fail, never hand back half a file.
+func TestFetchFile_TruncatedBodyIsAnError(t *testing.T) {
+	body, err := fetchFile(context.Background(), truncatedBodyServer(t))
+	if err == nil {
+		t.Fatalf("expected an error for a truncated body, got %d bytes", len(body))
+	}
+	if body != nil {
+		t.Errorf("a truncated fetch returned %q; want nothing", body)
+	}
+}
+
+// A fresh install has no configuration to carry over, and that is not
+// an error: the tree simply stays unseeded.
+func TestImportTargetConfig_FreshTargetImportsNothing(t *testing.T) {
+	treeDir := t.TempDir()
+	if err := ImportTargetConfig(treeDir, t.TempDir()); err != nil {
+		t.Fatalf("ImportTargetConfig: %v", err)
+	}
+	for _, name := range []string{".env-orbit", ".orbit-secrets"} {
+		if _, err := os.Lstat(filepath.Join(treeDir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s appeared in the tree from an empty target (err=%v)", name, err)
+		}
+	}
+}
+
+// A symlinked .env-orbit is refused rather than followed, so the launcher
+// can never be steered into copying (and later writing back) some other
+// file on the machine.
+func TestImportTargetConfig_RefusesASymlinkedEnvFile(t *testing.T) {
+	treeDir := t.TempDir()
+	targetDir := t.TempDir()
+	elsewhere := filepath.Join(t.TempDir(), "unrelated")
+	if err := os.WriteFile(elsewhere, []byte("NOT_ORBIT=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(targetDir, ".env-orbit")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ImportTargetConfig(treeDir, targetDir)
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("expected a not-a-regular-file refusal, got %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(treeDir, ".env-orbit")); !os.IsNotExist(err) {
+		t.Error("the symlink's target was copied into the tree")
+	}
+}
+
+func TestImportTargetConfig_UnreadableEnvFileIsAnError(t *testing.T) {
+	targetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(targetDir, ".env-orbit"), []byte("APP_URL=x\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block reads")
+	}
+	treeDir := t.TempDir()
+	if err := ImportTargetConfig(treeDir, targetDir); err == nil {
+		t.Fatal("expected an error for an unreadable .env-orbit")
+	}
+	if _, err := os.Lstat(filepath.Join(treeDir, ".env-orbit")); !os.IsNotExist(err) {
+		t.Error("an unreadable source still produced a copy in the tree")
+	}
+}
+
+// An inaccessible target is an error, not "fresh install": treating it
+// as empty would start a reconfiguration from nothing over a real one.
+func TestImportTargetConfig_InaccessibleTargetIsAnErrorNotAFreshInstall(t *testing.T) {
+	targetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(targetDir, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockDir(t, targetDir)
+	if err := ImportTargetConfig(t.TempDir(), targetDir); err == nil {
+		t.Fatal("expected an error for a target that cannot be inspected")
+	}
+}
+
+func TestImportTargetConfig_RefusesASecretsPathThatIsNotADirectory(t *testing.T) {
+	targetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(targetDir, ".orbit-secrets"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := ImportTargetConfig(t.TempDir(), targetDir)
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("expected a not-a-directory refusal, got %v", err)
+	}
+}
+
+// Only regular files are carried: a symlink or subdirectory inside the
+// secrets directory is skipped, never followed.
+func TestImportTargetConfig_CopiesOnlyRegularSecretFiles(t *testing.T) {
+	targetDir := t.TempDir()
+	secrets := filepath.Join(targetDir, ".orbit-secrets")
+	if err := os.MkdirAll(filepath.Join(secrets, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secrets, "oidc-client-secret"), []byte("s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "private-key")
+	if err := os.WriteFile(elsewhere, []byte("not orbit's\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(secrets, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	treeDir := t.TempDir()
+	if err := ImportTargetConfig(treeDir, targetDir); err != nil {
+		t.Fatalf("ImportTargetConfig: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(treeDir, ".orbit-secrets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "oidc-client-secret" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("tree secrets = %v, want only [oidc-client-secret]", names)
+	}
+}
+
+func TestImportTargetConfig_UnreadableSecretsDirIsAnError(t *testing.T) {
+	targetDir := t.TempDir()
+	secrets := filepath.Join(targetDir, ".orbit-secrets")
+	if err := os.Mkdir(secrets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockDir(t, secrets)
+	if err := ImportTargetConfig(t.TempDir(), targetDir); err == nil {
+		t.Fatal("expected an error for a secrets directory that cannot be listed")
+	}
+}
+
+func TestImportTargetConfig_UnreadableSecretFileIsAnError(t *testing.T) {
+	targetDir := t.TempDir()
+	secrets := filepath.Join(targetDir, ".orbit-secrets")
+	if err := os.Mkdir(secrets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secrets, "oidc-client-secret"), []byte("s\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block reads")
+	}
+	if err := ImportTargetConfig(t.TempDir(), targetDir); err == nil {
+		t.Fatal("expected an error for a secret that cannot be read")
+	}
+}
+
+func TestCopySecretsDir_UninspectableSourceIsAnError(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.Mkdir(filepath.Join(parent, ".orbit-secrets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockDir(t, parent)
+	dst := filepath.Join(t.TempDir(), ".orbit-secrets")
+	if err := copySecretsDir(filepath.Join(parent, ".orbit-secrets"), dst); err == nil {
+		t.Fatal("expected an error when the source cannot be inspected")
+	}
+	if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+		t.Error("a failed inspection still created the destination")
+	}
+}
+
+func TestAdoptConfig_TargetUnderAFileIsAnError(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	treeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(treeDir, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := AdoptConfig(treeDir, filepath.Join(file, "orbit"))
+	if err == nil || !strings.Contains(err.Error(), "prepare target") {
+		t.Fatalf("expected a prepare-target error, got %v", err)
+	}
+}
+
+// If the configuration can't be written into the target, adoption stops
+// there: the secrets are not carried over on their own.
+func TestAdoptConfig_UnwritableEnvFileStopsBeforeTheSecrets(t *testing.T) {
+	treeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(treeDir, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(treeDir, ".orbit-secrets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(treeDir, ".orbit-secrets", "oidc-client-secret"), []byte("s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := t.TempDir()
+	// A directory where the file should go makes the write fail.
+	if err := os.Mkdir(filepath.Join(targetDir, ".env-orbit"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AdoptConfig(treeDir, targetDir); err == nil {
+		t.Fatal("expected an error when .env-orbit cannot be written")
+	}
+	if _, err := os.Lstat(filepath.Join(targetDir, ".orbit-secrets")); !os.IsNotExist(err) {
+		t.Error("secrets were adopted even though .env-orbit failed")
+	}
+}
+
+// A regular file sitting where the secrets directory belongs is refused,
+// not replaced.
+func TestAdoptConfig_LeavesAFileInTheSecretsPlaceAlone(t *testing.T) {
+	treeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(treeDir, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(treeDir, ".orbit-secrets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := t.TempDir()
+	blocker := filepath.Join(targetDir, ".orbit-secrets")
+	if err := os.WriteFile(blocker, []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AdoptConfig(treeDir, targetDir); err == nil {
+		t.Fatal("expected an error when .orbit-secrets is a file in the target")
+	}
+	if body, err := os.ReadFile(blocker); err != nil || string(body) != "keep me\n" {
+		t.Errorf("the file in the secrets place was changed: %q err=%v", body, err)
+	}
+}
+
+func TestRunConfigCheck_CleanExitWithNoReportIsAnError(t *testing.T) {
+	dir := fakeCheckTree(t, `all good, probably\n`, 0)
+	_, err := RunConfigCheck(context.Background(), dir)
+	if err == nil || !strings.Contains(err.Error(), "no readiness report") {
+		t.Fatalf("expected a no-readiness-report error, got %v", err)
+	}
+}

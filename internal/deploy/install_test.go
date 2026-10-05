@@ -3,6 +3,7 @@ package deploy
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -156,5 +157,31 @@ func TestBuildInstallCommand_ErrorsIfTargetDirDoesNotExist(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "chdir") && !strings.Contains(err.Error(), "no such file") {
 		t.Logf("got error (informational, not asserting exact wording): %v", err)
+	}
+}
+
+// If install.sh can't be staged there is nothing to run: no command and
+// no cleanup come back, so a caller can't run a half-built handoff.
+func TestBuildInstallCommand_UnstageableScriptReturnsNoCommand(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+
+	cmd, cleanup, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "stage install.sh") {
+		t.Fatalf("expected a staging error, got %v", err)
+	}
+	if cmd != nil || cleanup != nil {
+		t.Errorf("got cmd=%v cleanup=%v, want neither", cmd, cleanup != nil)
+	}
+}
+
+func TestBuildEngineCommand_UnstageableScriptReturnsNoCommand(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+
+	cmd, cleanup, err := BuildEngineCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir(), "install")
+	if err == nil || !strings.Contains(err.Error(), "stage install.sh") {
+		t.Fatalf("expected a staging error, got %v", err)
+	}
+	if cmd != nil || cleanup != nil {
+		t.Errorf("got cmd=%v cleanup=%v, want neither", cmd, cleanup != nil)
 	}
 }

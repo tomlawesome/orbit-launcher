@@ -15,9 +15,16 @@
 # gauntlet's scripts/coverage-floor.py) -- raising is a deliberate,
 # reviewed edit, same as lowering would have to be.
 #
-# How these numbers were measured (orbit-launcher issue #169, 2026-10-05):
-#   go test -race -count=1 -coverprofile=coverage.out ./...
+# How these numbers were measured (orbit-launcher issue #169, 2026-10-05;
+# two runs, identical to four decimal places):
+#   scripts/coverage.sh -race    # unit tests plus the binary's pty runs
 #   go run ./tools/coveragefloor coverage.out   # prints got% per package
+# Measure where the gate runs: CI's `fast` job runs as root, so the three
+# internal/deploy tests that force a permission error skip themselves
+# there, and that package reads 94.2% in CI against 96.7% as a normal
+# user. Its floor is the CI figure; every other package reads the same in
+# both places.
+#
 # Each floor below is the measured percentage rounded DOWN to one decimal
 # place -- never up, so the recorded floor is never stricter than what was
 # actually observed.
@@ -27,18 +34,24 @@
 # deliberate choice made here, not something tools/coveragefloor enforces
 # on its own (see that command's package doc). Packages under test/ are
 # black-box/integration packages, not the module's own package tree, and
-# are intentionally out of scope for this file.
+# are intentionally out of scope for this file -- except
+# test/internal/vtscreen, the screen reader the pty and live suites stand
+# on, which has unit tests of its own.
 
-github.com/tomlawesome/orbit-launcher/cmd/orbit-launcher 23.5
-github.com/tomlawesome/orbit-launcher/internal/deploy 85.3
-github.com/tomlawesome/orbit-launcher/internal/engine 91.4
-github.com/tomlawesome/orbit-launcher/internal/release 85.7
-github.com/tomlawesome/orbit-launcher/internal/ui 85.7
-github.com/tomlawesome/orbit-launcher/internal/ui/starfield 89.0
+github.com/tomlawesome/orbit-launcher/cmd/orbit-launcher 94.1
+github.com/tomlawesome/orbit-launcher/internal/deploy 94.2
+github.com/tomlawesome/orbit-launcher/internal/engine 93.4
+github.com/tomlawesome/orbit-launcher/internal/release 100.0
+github.com/tomlawesome/orbit-launcher/internal/ui 98.2
+github.com/tomlawesome/orbit-launcher/internal/ui/starfield 90.2
 github.com/tomlawesome/orbit-launcher/internal/ui/style 100.0
-github.com/tomlawesome/orbit-launcher/tools/calculateversion 51.9
-github.com/tomlawesome/orbit-launcher/tools/coveragefloor 78.3
+github.com/tomlawesome/orbit-launcher/tools/calculateversion 96.5
+github.com/tomlawesome/orbit-launcher/tools/coveragefloor 97.3
 github.com/tomlawesome/orbit-launcher/tools/coveragefloor/floor 94.5
-github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy/policy 69.7
-github.com/tomlawesome/orbit-launcher/tools/licencenotices/notices 94.6
-github.com/tomlawesome/orbit-launcher/tools/licencereview/review 74.6
+github.com/tomlawesome/orbit-launcher/tools/licencenotices 95.5
+github.com/tomlawesome/orbit-launcher/tools/licencenotices/notices 96.4
+github.com/tomlawesome/orbit-launcher/tools/licencereview 97.3
+github.com/tomlawesome/orbit-launcher/tools/licencereview/review 99.3
+github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy 98.3
+github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy/policy 99.2
+github.com/tomlawesome/orbit-launcher/test/internal/vtscreen 93.5
