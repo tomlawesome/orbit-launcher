@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,8 +30,8 @@ const ciWorkflow = "" +
 const secretScanWorkflow = "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + gitleaksDigest + "\n"
 
 // repo builds a throwaway repository root with the given workflows and makes
-// it the working directory, because -write writes the policy relative to the
-// working directory (as `go run` from the repository root does).
+// it the working directory, so the default -root of "." finds it (as `go run`
+// from the repository root does).
 func repo(t *testing.T, workflows map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -179,6 +180,29 @@ func TestWriteGeneratesAPolicyTheCheckThenAccepts(t *testing.T) {
 	code, stdout, stderr = runCmd()
 	if code != 0 || stdout != "supply-chain policy matches the workflows\n" {
 		t.Errorf("check after write: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+func TestWriteWritesUnderRootFromAnotherDirectory(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	root := goodRepo(t)
+	serve(t, goodRoutes())
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
+
+	code, stdout, stderr := runCmd("-write", "-root", root)
+	if code != 0 {
+		t.Fatalf("exit %d; stderr: %s", code, stderr)
+	}
+	want := filepath.Join(root, scp.PolicyPath)
+	if stdout != "wrote "+want+": 2 actions, 1 tools\n" {
+		t.Errorf("stdout = %q; want it to name %s", stdout, want)
+	}
+	if len(readPolicy(t, root).Actions) != 2 {
+		t.Error("the policy under -root was not regenerated")
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, scp.PolicyPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a policy was written under the working directory (stat err %v); -write must write under -root", err)
 	}
 }
 
