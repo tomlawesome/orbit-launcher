@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -180,10 +181,11 @@ func regenerate(root string, pins []scp.Pin, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(scp.PolicyPath, body, 0o644); err != nil {
+	path := filepath.Join(root, scp.PolicyPath)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("writing the policy: %w", err)
 	}
-	fmt.Fprintf(stdout, "wrote %s: %d actions, %d tools\n", scp.PolicyPath, len(out.Actions), len(out.Tools))
+	fmt.Fprintf(stdout, "wrote %s: %d actions, %d tools\n", path, len(out.Actions), len(out.Tools))
 	return nil
 }
 
