@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -672,6 +673,125 @@ func TestAdoptConfig_LeavesAFileInTheSecretsPlaceAlone(t *testing.T) {
 	}
 	if body, err := os.ReadFile(blocker); err != nil || string(body) != "keep me\n" {
 		t.Errorf("the file in the secrets place was changed: %q err=%v", body, err)
+	}
+}
+
+// writeTestFile writes body at path with mode, creating parents.
+func writeTestFile(t *testing.T, path, body string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	// WriteFile's mode is filtered by the umask; set it exactly.
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertNoTemps fails if any staging temp is left beside the live files.
+func assertNoTemps(t *testing.T, targetDir string) {
+	t.Helper()
+	for _, pattern := range []string{
+		filepath.Join(targetDir, ".env-orbit.tmp-*"),
+		filepath.Join(targetDir, ".orbit-secrets", "*.tmp-*"),
+	} {
+		if left, _ := filepath.Glob(pattern); len(left) != 0 {
+			t.Errorf("temp files left behind: %v", left)
+		}
+	}
+}
+
+func inode(t *testing.T, path string) uint64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Sys().(*syscall.Stat_t).Ino
+}
+
+// Live files are replaced by renaming a complete new file over them, so
+// at every instant each one is either the whole old file or the whole
+// new one — never truncated in place.
+func TestAdoptConfig_ReplacesLiveFilesByRename(t *testing.T) {
+	targetDir := t.TempDir()
+	envPath := filepath.Join(targetDir, ".env-orbit")
+	secretPath := filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret")
+	writeTestFile(t, envPath, "APP_URL=https://old.example\n", 0o644)
+	writeTestFile(t, secretPath, "old-secret\n", 0o644)
+	envBefore, secretBefore := inode(t, envPath), inode(t, secretPath)
+
+	treeDir := t.TempDir()
+	writeTestFile(t, filepath.Join(treeDir, ".env-orbit"), "APP_URL=https://new.example\n", 0o600)
+	writeTestFile(t, filepath.Join(treeDir, ".orbit-secrets", "oidc-client-secret"), "new-secret\n", 0o600)
+
+	if err := AdoptConfig(treeDir, targetDir); err != nil {
+		t.Fatalf("AdoptConfig: %v", err)
+	}
+	for path, want := range map[string]string{envPath: "APP_URL=https://new.example\n", secretPath: "new-secret\n"} {
+		if body, err := os.ReadFile(path); err != nil || string(body) != want {
+			t.Errorf("%s = %q err=%v, want %q", path, body, err, want)
+		}
+		info, _ := os.Stat(path)
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %o, want 600", path, info.Mode().Perm())
+		}
+	}
+	if inode(t, envPath) == envBefore {
+		t.Error(".env-orbit was rewritten in place, not replaced by rename")
+	}
+	if inode(t, secretPath) == secretBefore {
+		t.Error("the secret was rewritten in place, not replaced by rename")
+	}
+	assertNoTemps(t, targetDir)
+}
+
+// Temps left by a crash mid-adoption are swept on the next one.
+func TestAdoptConfig_ClearsAStaleTempFromAnEarlierCrash(t *testing.T) {
+	targetDir := t.TempDir()
+	writeTestFile(t, filepath.Join(targetDir, ".env-orbit.tmp-stale"), "APP_URL=half\n", 0o600)
+	writeTestFile(t, filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret.tmp-stale"), "half\n", 0o600)
+
+	treeDir := t.TempDir()
+	writeTestFile(t, filepath.Join(treeDir, ".env-orbit"), "APP_URL=https://x.example\n", 0o600)
+	writeTestFile(t, filepath.Join(treeDir, ".orbit-secrets", "oidc-client-secret"), "s\n", 0o600)
+
+	if err := AdoptConfig(treeDir, targetDir); err != nil {
+		t.Fatalf("AdoptConfig: %v", err)
+	}
+	assertNoTemps(t, targetDir)
+	if body, _ := os.ReadFile(filepath.Join(targetDir, ".env-orbit")); string(body) != "APP_URL=https://x.example\n" {
+		t.Errorf(".env-orbit = %q", body)
+	}
+	if body, _ := os.ReadFile(filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret")); string(body) != "s\n" {
+		t.Errorf("secret = %q", body)
+	}
+}
+
+// A temp left by a crashed adoption is not a secret: importing it would
+// carry it into the tree and adopt it back under that name.
+func TestImportTargetConfig_IgnoresAStaleTempSecret(t *testing.T) {
+	targetDir := t.TempDir()
+	writeTestFile(t, filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret"), "s\n", 0o600)
+	writeTestFile(t, filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret.tmp-stale"), "half\n", 0o600)
+
+	treeDir := t.TempDir()
+	if err := ImportTargetConfig(treeDir, targetDir); err != nil {
+		t.Fatalf("ImportTargetConfig: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(treeDir, ".orbit-secrets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "oidc-client-secret" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("tree secrets = %v, want only [oidc-client-secret]", names)
 	}
 }
 
