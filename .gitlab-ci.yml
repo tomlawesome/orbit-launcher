@@ -417,7 +417,9 @@ visual:
 # live-install-test.yml: the real install, end to end, building orbit-launcher
 # fresh from this commit. Opt-in, as on GitHub -- the `run-live-matrix` label
 # on the merge request, or RUN_LIVE=true on a pipeline started by hand -- since
-# it is slow: real image pulls, real health checks, minutes not seconds.
+# it is slow: real image pulls, real health checks, minutes not seconds. A
+# merge request that edits this file also creates the job, but it then waits
+# for someone to start it by hand (#192): see the third rule below.
 #
 # install.sh is read from ai/orbit through the API with the job's own token
 # (ai/orbit is private, so its raw URLs need one), then served to the launcher
@@ -453,9 +455,19 @@ live:
     # file-level, so this admits every edit to this file and the gate below
     # decides; creating a job costs nothing, and one that stops in its first
     # command costs seconds.
+    #
+    # A merge request that edits this file now waits for a person to press
+    # play on this job (#192). The job runs the pipeline's own UBUNTU_IMAGE on
+    # the privileged runner, and on this route nobody has looked at the change
+    # yet -- a Renovate bump or a bad upstream digest would otherwise run
+    # privileged unreviewed. `allow_failure: false` keeps the merge blocked
+    # until someone starts it; starting it is the review. The RUN_LIVE and
+    # label routes above stay automatic, because a person set them.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
+      when: manual
+      allow_failure: false
   variables:
     ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
   before_script:
