@@ -689,17 +689,16 @@ explicitly dropped with the reason recorded.
 
 **Goal**: everything needed to point real users at the bootstrap script.
 
-- Wider Linux-distro coverage in the live matrix if warranted (e.g. Fedora,
-  Arch — driven by real usage evidence, not speculative support).
-- Update self-check: orbit-launcher checks its own version against the
-  latest release and offers to self-update.
-- Documentation: README quickstart, the bootstrap one-liner, a
-  `docs/releasing.md` for this repo mirroring `orbit`'s.
+Closed 2026-10-05 (#24), after #171 moved shipping to Orbit:
 
-**Promotion gate**: the bootstrap one-liner installs on every distribution
-the live matrix claims to cover; the launcher checks its own version
-against the latest release and offers to update itself; the README carries
-a quickstart and the repository has its own releasing document.
+- Distributions: the README now claims only what the live matrix tests
+  (Ubuntu). Fedora and Arch moved to v0.5.0 as #183 and #184.
+- Update check: done in #172. The launcher reads Orbit's release
+  manifest and shows a notice. It no longer offers to replace itself:
+  Orbit builds and signs the launcher, and re-running Orbit's installer
+  is the update, so the signature check stays in the path.
+- Documentation: the README quickstart points at Orbit's one-liner, and
+  `docs/releasing.md` describes the release flow since #171.
 
 ### v0.4.0 — release
 
