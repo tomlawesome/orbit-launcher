@@ -700,6 +700,8 @@ func (m RepairModel) viewExecuted() string {
 		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Nothing to repair"))
 	case "failed":
 		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Some repairs failed"))
+	case "refused":
+		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair refused"))
 	default:
 		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair run ended"))
 	}
@@ -714,13 +716,28 @@ func (m RepairModel) viewExecuted() string {
 	if m.execSummary != nil && (m.execSummary.Done > 0 || m.execSummary.Failed > 0) {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done · %d failed", m.execSummary.Done, m.execSummary.Failed)))
 	}
-	if m.exitCode == repairExitDangerousRefused {
+	if m.execSummary != nil && m.execSummary.Result == "refused" {
+		// The whole run was refused before any batch ran; the reason
+		// enum says why, and the exit code alone cannot.
+		switch m.execSummary.Reason {
+		case "deployment-version-unsupported":
+			fmt.Fprintln(&b, style.DegradedText.Render("nothing was changed — this deployment's Orbit release is too old to repair here"))
+			fmt.Fprintln(&b, style.DegradedText.Render("upgrade or reinstall it with a supported release, then diagnose again"))
+		default:
+			refusal := "nothing was changed — the engine refused to run"
+			if m.execSummary.Reason != "" {
+				refusal += " (" + m.execSummary.Reason + ")"
+			}
+			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+		}
+	}
+	if m.dangerous != nil && m.dangerous.Result == "refused" {
 		// The dangerous batch's gate was never passed. Nothing was
 		// rotated and nothing failed — say only that, and say why when
 		// the stream told us, because "you declined" and "there was no
 		// terminal to ask" send the operator to different next steps.
 		refusal := "credentials left as they were — nothing was rotated"
-		if m.dangerous != nil && m.dangerous.Reason == "non-interactive" {
+		if m.dangerous.Reason == "non-interactive" {
 			refusal += " (no terminal was available to approve it)"
 		}
 		fmt.Fprintln(&b, style.DegradedText.Render(refusal))
