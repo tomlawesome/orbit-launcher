@@ -11,7 +11,8 @@ stay version-matched.
   request, running the full CI suite: `gofmt`, `go vet`, `go build`,
   `shellcheck` on the bootstrap script, `bats` against it, `staticcheck`,
   and `go test -race ./...` (unit tests, `teatest` in-memory TUI tests,
-  and real-PTY `go-expect` tests against the compiled binary). CodeQL and
+  and real-PTY tests against the compiled binary, read through Charm's
+  `x/vt` terminal emulator). CodeQL and
   the dependency/licence policy also run.
 - **Semantic version tags.** [`tools/calculateversion`](../tools/calculateversion)
   reads the highest existing `vMAJOR.MINOR.PATCH` git tag and increments
