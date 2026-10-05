@@ -890,3 +890,22 @@ func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.
 		})
 	}
 }
+
+func TestRepairModel_RefusedSafeRunSaysWhy(t *testing.T) {
+	m := sizedRepair(t)
+	m.state = repairExecuting
+	m = repairLines(t, m, "execution result=refused done=0 failed=0 reason=deployment-version-unsupported")
+	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 6, Err: errors.New("exit status 6")})
+	if m.state != repairExecuted {
+		t.Fatalf("exit 6 is an outcome, not an error: state = %v", m.state)
+	}
+	s := repairScreen(m)
+	for _, want := range []string{"Repair refused", "too old to repair here", "then diagnose again"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("refused run lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "nothing was rotated") {
+		t.Fatalf("a safe run that never offered a rotation must not report one refused:\n%s", s)
+	}
+}
