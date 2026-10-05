@@ -3,6 +3,7 @@ package deploy
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,5 +207,117 @@ func TestBuildEngineCommand_UnstageableScriptReturnsNoCommand(t *testing.T) {
 	}
 	if cmd != nil || cleanup != nil {
 		t.Errorf("got cmd=%v cleanup=%v, want neither", cmd, cleanup != nil)
+	}
+}
+
+// configTreeEnv returns the ORBIT_LAUNCHER_CONFIG_TREE value cmd hands
+// install.sh, and whether it is set at all.
+func configTreeEnv(cmd *exec.Cmd) (string, bool) {
+	for _, kv := range cmd.Env {
+		if v, ok := strings.CutPrefix(kv, "ORBIT_LAUNCHER_CONFIG_TREE="); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// #190: install.sh gets a fresh, private, empty directory to copy the
+// verified configure tree into (ai/orbit#1225), and the run's cleanup
+// removes it with whatever install.sh left there.
+func TestBuildInstallCommand_HandsInstallAFreshPrivateConfigTree(t *testing.T) {
+	cmd, cleanup, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir())
+	if err != nil {
+		t.Fatalf("BuildInstallCommand: %v", err)
+	}
+	tree, ok := configTreeEnv(cmd)
+	if !ok || tree == "" {
+		cleanup()
+		t.Fatalf("ORBIT_LAUNCHER_CONFIG_TREE not set in the engine's environment: %v", cmd.Env)
+	}
+	if got := ConfigTreeDir(cmd); got != tree {
+		t.Errorf("ConfigTreeDir = %q, want %q", got, tree)
+	}
+	info, err := os.Lstat(tree)
+	if err != nil {
+		t.Fatalf("config tree: %v", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Errorf("config tree mode = %v, want a 0700 directory", info.Mode())
+	}
+	if entries, _ := os.ReadDir(tree); len(entries) != 0 {
+		t.Errorf("config tree is not empty: %v", entries)
+	}
+
+	// install.sh fills it on a configuration refusal; cleanup still
+	// removes all of it.
+	if err := os.MkdirAll(filepath.Join(tree, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "scripts", "configure.sh"), []byte("#!/bin/bash\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if _, err := os.Lstat(tree); !os.IsNotExist(err) {
+		t.Errorf("cleanup left the config tree behind: %v", err)
+	}
+}
+
+func TestBuildInstallCommand_EachRunGetsItsOwnConfigTree(t *testing.T) {
+	first, cleanupFirst, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupFirst()
+	second, cleanupSecond, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupSecond()
+	if ConfigTreeDir(first) == ConfigTreeDir(second) {
+		t.Fatalf("two runs share the config tree %q", ConfigTreeDir(first))
+	}
+}
+
+// The variable reaches install.sh alongside the launcher's own
+// environment, which must survive: the live suite's
+// COMPOSE_PROJECT_NAME and the job's ORBIT_CHANNEL reach the engine
+// only because nothing scrubs them.
+func TestBuildEngineCommand_EngineSeesTheConfigTreeAndTheInheritedEnvironment(t *testing.T) {
+	t.Setenv("ORBIT_LAUNCHER_TEST_INHERITED", "kept")
+	script := []byte("#!/usr/bin/env bash\n[[ -d \"$ORBIT_LAUNCHER_CONFIG_TREE\" ]] || exit 7\n[[ \"$ORBIT_LAUNCHER_TEST_INHERITED\" == kept ]] || exit 8\n")
+	cmd, cleanup, err := BuildEngineCommand(script, t.TempDir(), "install")
+	if err != nil {
+		t.Fatalf("BuildEngineCommand: %v", err)
+	}
+	defer cleanup()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("engine did not see its config tree and inherited environment: %v", err)
+	}
+}
+
+// A run that could not be built leaves no config tree behind either.
+func TestBuildInstallCommand_UnstageableScriptLeavesNoConfigTree(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.Chmod(tmp, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(tmp, 0o700) })
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions don't block writes")
+	}
+	if _, _, err := BuildInstallCommand([]byte("#!/usr/bin/env bash\n"), t.TempDir()); err == nil {
+		t.Fatal("expected a staging error in an unwritable temp dir")
+	}
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Errorf("a failed build left %v behind", left)
+	}
+}
+
+func TestConfigTreeDir_UnsetIsEmpty(t *testing.T) {
+	if got := ConfigTreeDir(exec.Command("true")); got != "" {
+		t.Errorf("ConfigTreeDir = %q, want empty for a command with no config tree", got)
 	}
 }

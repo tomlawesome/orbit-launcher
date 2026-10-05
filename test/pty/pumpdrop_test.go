@@ -104,9 +104,7 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh":   fakeDatabasePhaseEngine,
-		"/scripts/configure.sh": fakeMachineConfigure,
-		"/.env-orbit.example":   "APP_URL=\n",
+		"/scripts/install.sh": handsOverTree(fakeDatabasePhaseEngine, fakeMachineConfigure),
 	})
 	console, cmd := startCIShapedPTY(t, binPath, dir, scriptURL)
 

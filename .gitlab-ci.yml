@@ -417,7 +417,9 @@ visual:
 # live-install-test.yml: the real install, end to end, building orbit-launcher
 # fresh from this commit. Opt-in, as on GitHub -- the `run-live-matrix` label
 # on the merge request, or RUN_LIVE=true on a pipeline started by hand -- since
-# it is slow: real image pulls, real health checks, minutes not seconds.
+# it is slow: real image pulls, real health checks, minutes not seconds. A
+# merge request that edits this file also creates the job, but it then waits
+# for someone to start it by hand (#192): see the third rule below.
 #
 # install.sh is read from ai/orbit through the API with the job's own token
 # (ai/orbit is private, so its raw URLs need one), then served to the launcher
@@ -453,9 +455,19 @@ live:
     # file-level, so this admits every edit to this file and the gate below
     # decides; creating a job costs nothing, and one that stops in its first
     # command costs seconds.
+    #
+    # A merge request that edits this file now waits for a person to press
+    # play on this job (#192). The job runs the pipeline's own UBUNTU_IMAGE on
+    # the privileged runner, and on this route nobody has looked at the change
+    # yet -- a Renovate bump or a bad upstream digest would otherwise run
+    # privileged unreviewed. `allow_failure: false` keeps the merge blocked
+    # until someone starts it; starting it is the review. The RUN_LIVE and
+    # label routes above stay automatic, because a person set them.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
+      when: manual
+      allow_failure: false
   variables:
     ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
   before_script:
@@ -480,21 +492,14 @@ live:
   script:
     - mkdir -p .live/install-script
     - |
-      # The whole configuration tree, not only install.sh: when the engine
-      # stops for settings, the launcher fetches configure.sh and its
-      # siblings from the same base as install.sh (internal/deploy's
-      # FetchConfigTree), and the test refuses the terminal-handoff fallback
-      # so a missing file is a red run, not a silent one. installer-ui.sh and
-      # configuration.sh are optional there, so an orbit ref without them is
-      # tolerated (main has no installer-ui.sh).
-      #
       # Where the files come from (#173): ai/orbit on this GitLab, read with
       # the job token. That token carries the access of whoever started the
       # pipeline, and Renovate's project bot can never read another project,
       # so on its merge requests GitLab answers 403. Then, and only then,
-      # every file comes from Orbit's public GitHub mirror instead, at the
+      # install.sh comes from Orbit's public GitHub mirror instead, at the
       # same branch: GitLab pushes it after each Orbit merge, so it trails by
-      # minutes at most. One source for the whole tree, never a mix.
+      # minutes at most. install.sh is the only file fetched: the configure
+      # tree reaches the launcher through install.sh's own handover (#190).
       # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path.
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
       gitlab_orbit_url() {
@@ -533,11 +538,6 @@ live:
           ;;
       esac
       fetch_orbit_file scripts/install.sh install.sh
-      fetch_orbit_file scripts/configure.sh configure.sh
-      fetch_orbit_file .env-orbit.example .env-orbit.example
-      for optional in configuration.sh installer-ui.sh; do
-        fetch_orbit_file "scripts/${optional}" "${optional}" || { rm -f ".live/install-script/${optional}"; echo "ai/orbit ${ORBIT_BRANCH} has no scripts/${optional}; the launcher treats it as optional"; }
-      done
       head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }
       python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do

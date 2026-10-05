@@ -3,8 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -274,79 +272,4 @@ func TestConfigCollect_NothingOwedAdoptsIntoTheTargetAndRetries(t *testing.T) {
 	if engineStarts != 1 {
 		t.Fatalf("engine started %d times on the retry, want once", engineStarts)
 	}
-}
-
-// configSource serves a configuration tree the way Orbit's script
-// source does.
-func configSource(t *testing.T, files map[string]string) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, ok := files[r.URL.Path]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", server.URL+"/scripts/install.sh")
-}
-
-func TestDefaultPrepareConfig_StagesTheTreeAndReportsWhatIsOwed(t *testing.T) {
-	configSource(t, map[string]string{
-		"/scripts/configure.sh": "#!/usr/bin/env bash\nprintf 'missing APP_URL\\nmissing OIDC_CLIENT_SECRET\\nmissing SMTP_HOST\\nready ORBIT_IMAGE\\n'; exit 1\n",
-		"/.env-orbit.example":   "APP_URL=\n",
-	})
-	target := t.TempDir()
-	if err := os.WriteFile(filepath.Join(target, ".env-orbit"), []byte("ORBIT_IMAGE=x\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	msg := defaultPrepareConfig(context.Background(), target)
-	if msg.err != nil {
-		t.Fatalf("prepare: %v", msg.err)
-	}
-	defer msg.plan.cleanup()
-	if !msg.plan.needInit || !msg.plan.needSecret {
-		t.Fatalf("plan = %+v, want init and secret owed", msg.plan)
-	}
-	if len(msg.plan.unfixable) != 1 || msg.plan.unfixable[0] != "SMTP_HOST" {
-		t.Fatalf("unfixable = %v, want [SMTP_HOST]", msg.plan.unfixable)
-	}
-	// The target's own configuration was imported into the tree, so the
-	// check judged this deployment rather than a blank one.
-	if got, _ := os.ReadFile(filepath.Join(msg.plan.treeDir, ".env-orbit")); string(got) != "ORBIT_IMAGE=x\n" {
-		t.Fatalf("target configuration not imported: %q", got)
-	}
-}
-
-func TestDefaultPrepareConfig_Failures(t *testing.T) {
-	t.Run("no configure.sh", func(t *testing.T) {
-		configSource(t, map[string]string{"/.env-orbit.example": "APP_URL=\n"})
-		if msg := defaultPrepareConfig(context.Background(), t.TempDir()); msg.err == nil || !strings.Contains(msg.err.Error(), "configure.sh") {
-			t.Fatalf("err = %v, want a configure.sh fetch error", msg.err)
-		}
-	})
-	t.Run("check with no report", func(t *testing.T) {
-		configSource(t, map[string]string{
-			"/scripts/configure.sh": "#!/usr/bin/env bash\necho 'Usage: configure.sh' >&2; exit 2\n",
-			"/.env-orbit.example":   "APP_URL=\n",
-		})
-		if msg := defaultPrepareConfig(context.Background(), t.TempDir()); msg.err == nil || !strings.Contains(msg.err.Error(), "configuration check failed") {
-			t.Fatalf("err = %v, want the check's failure", msg.err)
-		}
-	})
-	t.Run("unreadable target configuration", func(t *testing.T) {
-		configSource(t, map[string]string{
-			"/scripts/configure.sh": "#!/usr/bin/env bash\necho ready APP_URL\n",
-			"/.env-orbit.example":   "APP_URL=\n",
-		})
-		target := t.TempDir()
-		// A directory where the configuration file should be.
-		if err := os.Mkdir(filepath.Join(target, ".env-orbit"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if msg := defaultPrepareConfig(context.Background(), target); msg.err == nil {
-			t.Fatal("a target whose .env-orbit cannot be read should fail the prepare")
-		}
-	})
 }

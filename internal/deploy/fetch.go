@@ -26,7 +26,7 @@ const installScriptURL = "https://raw.githubusercontent.com/tomlawesome/orbit/ma
 // script to run.
 const maxInstallScriptBytes = 1 << 20 // 1 MiB
 
-// scriptFetchTimeout bounds every script download. The UI starts these
+// scriptFetchTimeout bounds the install.sh download. The UI starts these
 // fetches with a background context and shows only the console clock
 // while it waits, so on a network that accepts the connection and never
 // answers the launcher sat there indefinitely (#147). install.sh is a few
@@ -34,9 +34,10 @@ const maxInstallScriptBytes = 1 << 20 // 1 MiB
 // person is better served by a failed screen that says so.
 const scriptFetchTimeout = 30 * time.Second
 
-// scriptFetchClient is the one client every script fetch goes through, so
-// the deadline applies to install.sh, repair.sh and the configure tree
-// alike. http.DefaultClient has no timeout at all.
+// scriptFetchClient is the client install.sh's fetch goes through — the
+// only script the launcher ever downloads (repair.sh and the configure
+// tree come from the deployment and from install.sh's handover, #190).
+// http.DefaultClient has no timeout at all.
 var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
 
 // FetchInstallScript downloads the current install.sh from orbit's stable

@@ -2,12 +2,11 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"io/fs"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -18,13 +17,18 @@ import (
 // consumer runs scripts/configure.sh directly with
 // ORBIT_CONFIGURE_PROMPTS=machine. configure.sh anchors itself to the
 // tree it lives in (it cds to its own parent-of-scripts), so the
-// launcher stages a private temp tree shaped like an orbit
-// installation: the configuration scripts fetched fresh from the same
-// channel as install.sh, seeded with the target's existing
-// configuration when there is one (update_managed_keys preserves
-// unrelated keys), machine prompts driven there, and the produced
-// .env-orbit and .orbit-secrets adopted back into the target.
-// install.sh was designed for exactly this "pre-provisioned
+// launcher needs a private tree shaped like an orbit installation.
+// That tree is the one install.sh hands over: BuildInstallCommand gives
+// every run an empty private directory (ORBIT_LAUNCHER_CONFIG_TREE),
+// and on its configuration refusal install.sh copies configure.sh, its
+// siblings and .env-orbit.example into it from the assets it has
+// already verified against the image (ai/orbit#1225). Nothing is
+// downloaded (#190): an install.sh that hands over no tree means the
+// terminal handoff instead. The tree is seeded with the target's
+// existing configuration when there is one (update_managed_keys
+// preserves unrelated keys), machine prompts are driven there, and the
+// produced .env-orbit and .orbit-secrets are adopted back into the
+// target. install.sh was designed for exactly this "pre-provisioned
 // configuration shape": its own prepare_configuration re-checks
 // readiness and proceeds without prompting when the provisioned
 // configuration is complete — verified empirically against orbit
@@ -32,154 +36,72 @@ import (
 // --init and --set-oidc-secret, and install.sh persists ORBIT_IMAGE
 // itself from the image it resolves).
 
-// configScriptNames are the sibling scripts a configure run needs.
-// installer-ui.sh doesn't exist on orbit main and configure.sh sources
-// it conditionally, so only configure.sh itself is required.
-var configScriptNames = []struct {
-	name     string
-	required bool
-}{
-	{"configure.sh", true},
-	{"configuration.sh", false},
-	{"installer-ui.sh", false},
-}
+// ErrNoConfigTree means install.sh handed over no configure tree — an
+// install.sh from before ai/orbit#1225, or a refusal it didn't copy the
+// tree for. There is nothing verified to run in-console, so the caller
+// falls back to the terminal handoff, which runs the verified install.sh
+// and so the image's own configure.sh.
+var ErrNoConfigTree = errors.New("install.sh handed over no configuration tree")
 
-// envExampleName is the configuration template, at the tree root.
-const envExampleName = ".env-orbit.example"
+// configureScript is where configure.sh sits in a configure tree.
+const configureScript = "scripts/configure.sh"
 
-// scriptSourceURLs resolves where sibling scripts and root files come
-// from, derived from the same install.sh URL FetchInstallScript uses
-// (including its CI override): .../scripts/install.sh yields
-// .../scripts for scripts and ... for root files.
-func scriptSourceURLs() (scriptsBase, rootBase string) {
-	source := installScriptURL
-	if override := os.Getenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL"); override != "" {
-		source = override
+// OpenConfigTree starts a configuration session in the configure tree
+// install.sh handed over (see BuildInstallCommand). The returned
+// endSession clears what a session leaves in the tree — the collected
+// .env-orbit and .orbit-secrets, which hold a secret once
+// --set-oidc-secret has run — and keeps the verified scripts, so a
+// second attempt in the same run starts clean. The tree itself belongs
+// to the run, whose cleanup removes it.
+func OpenConfigTree(treeDir string) (endSession func(), err error) {
+	if treeDir == "" {
+		return nil, ErrNoConfigTree
 	}
-	scriptsBase = urlDir(source)
-	rootBase = scriptsBase
-	if strings.HasSuffix(scriptsBase, "/scripts") {
-		rootBase = urlDir(scriptsBase)
-	}
-	return scriptsBase, rootBase
-}
-
-// urlDir is path.Dir for URLs — path.Dir would collapse the scheme's
-// double slash.
-func urlDir(url string) string {
-	if i := strings.LastIndex(url, "/"); i > 0 {
-		return url[:i]
-	}
-	return url
-}
-
-// FetchConfigTree fetches the configuration script set and stages it
-// into a fresh private temp tree shaped like an orbit installation.
-// The returned cleanup removes the whole tree — call it once the
-// configuration session is over, success or not (the tree holds a
-// collected secret once --set-oidc-secret has run).
-func FetchConfigTree(ctx context.Context) (treeDir string, cleanup func(), err error) {
-	scriptsBase, rootBase := scriptSourceURLs()
-
-	files := map[string][]byte{}
-	for _, s := range configScriptNames {
-		body, err := fetchScriptFile(ctx, scriptsBase+"/"+s.name, s.required)
-		if err != nil {
-			return "", nil, fmt.Errorf("fetch %s: %w", s.name, err)
+	if _, err := os.Lstat(filepath.Join(treeDir, configureScript)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, ErrNoConfigTree
 		}
-		if body != nil {
-			files[filepath.Join("scripts", s.name)] = body
-		}
+		return nil, fmt.Errorf("configuration tree: %w", err)
 	}
-	example, err := fetchFile(ctx, rootBase+"/"+envExampleName)
-	if err != nil {
-		return "", nil, fmt.Errorf("fetch %s: %w", envExampleName, err)
-	}
-	files[envExampleName] = example
-
-	treeDir, err = os.MkdirTemp("", "orbit-launcher-config-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("stage configuration tree: %w", err)
-	}
-	cleanup = func() { os.RemoveAll(treeDir) }
-
-	if err := os.Mkdir(filepath.Join(treeDir, "scripts"), 0o700); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("stage configuration tree: %w", err)
-	}
-	for name, body := range files {
-		mode := os.FileMode(0o600)
-		if strings.HasPrefix(name, "scripts"+string(filepath.Separator)) {
-			mode = 0o700
-		}
-		if err := os.WriteFile(filepath.Join(treeDir, name), body, mode); err != nil {
-			cleanup()
-			return "", nil, fmt.Errorf("stage configuration tree: %w", err)
-		}
-	}
-	return treeDir, cleanup, nil
-}
-
-// fetchScriptFile fetches one script, tolerating absence (nil, nil)
-// when the script is optional — orbit main simply doesn't have some of
-// them yet.
-func fetchScriptFile(ctx context.Context, url string, required bool) ([]byte, error) {
-	body, err := fetchFile(ctx, url)
-	if err != nil {
-		if !required {
-			return nil, nil
-		}
+	// Run configure.sh only from a path nobody else could have put it
+	// in (#191).
+	if err := requireTrustedScripts(treeDir, "configure.sh"); err != nil {
 		return nil, err
 	}
-	if !strings.HasPrefix(string(body), "#!") {
-		return nil, fmt.Errorf("fetched content does not look like a script (no shebang) — refusing to run it")
-	}
-	return body, nil
+	return func() {
+		os.Remove(filepath.Join(treeDir, ".env-orbit"))
+		os.RemoveAll(filepath.Join(treeDir, ".orbit-secrets"))
+	}, nil
 }
 
-// statusError is a non-200 response, distinguishable from transport
-// failures so callers can treat absence as a capability signal.
-type statusError struct{ status string }
-
-func (e statusError) Error() string { return "unexpected status " + e.status }
-
-// fetchFile downloads one file with the same size discipline as
-// install.sh's fetch.
-func fetchFile(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	resp, err := scriptFetchClient.Do(req)
-	if err != nil {
-		return nil, fetchError(path.Base(url), err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, statusError{status: resp.Status}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxInstallScriptBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(body) > maxInstallScriptBytes {
-		return nil, fmt.Errorf("larger than the %d byte limit", maxInstallScriptBytes)
-	}
-	return body, nil
-}
-
-// ImportTargetConfig seeds the staged tree with the target's existing
+// ImportTargetConfig seeds the configure tree with the target's existing
 // configuration, so a reconfiguration preserves everything the person
 // isn't being asked about. A target with no configuration (fresh
 // install) imports nothing.
 func ImportTargetConfig(treeDir, targetDir string) error {
+	// Nothing is read or tidied in a directory the launcher does not
+	// trust (#191). A target that doesn't exist yet has nothing to
+	// import.
+	if _, err := os.Lstat(targetDir); os.IsNotExist(err) {
+		return nil
+	}
+	if err := requireTrustedConfigDirs(targetDir); err != nil {
+		return err
+	}
 	// A crashed adoption's temp is not a secret; importing it would
 	// adopt it back under that name.
 	removeStaleTemps(targetDir)
+	// Read the configuration only from paths nobody else could have
+	// written (#191).
+	if err := requireTrustedIfPresent(targetDir, ".env-orbit"); err != nil {
+		return err
+	}
 	if err := copyConfigFile(filepath.Join(targetDir, ".env-orbit"), filepath.Join(treeDir, ".env-orbit")); err != nil {
 		return err
 	}
-	return copySecretsDir(filepath.Join(targetDir, ".orbit-secrets"), filepath.Join(treeDir, ".orbit-secrets"))
+	return copySecretsDir(filepath.Join(targetDir, ".orbit-secrets"), filepath.Join(treeDir, ".orbit-secrets"), func(name string) error {
+		return RequireTrustedPath(targetDir, filepath.Join(".orbit-secrets", name))
+	})
 }
 
 // AdoptConfig moves the collected configuration into the target:
@@ -196,6 +118,11 @@ func AdoptConfig(treeDir, targetDir string) error {
 	envSrc := filepath.Join(treeDir, ".env-orbit")
 	if _, err := os.Stat(envSrc); err != nil {
 		return fmt.Errorf("configuration session left no .env-orbit: %w", err)
+	}
+	// Nothing is written or tidied in a directory the launcher does not
+	// trust (#191).
+	if err := requireTrustedConfigDirs(targetDir); err != nil {
+		return err
 	}
 	removeStaleTemps(targetDir)
 
@@ -435,7 +362,9 @@ func removeStaleTemps(targetDir string) {
 	}
 }
 
-func copySecretsDir(src, dst string) error {
+// copySecretsDir copies src's regular files into dst, each only once
+// trust(name) accepts it.
+func copySecretsDir(src, dst string, trust func(name string) error) error {
 	info, err := os.Lstat(src)
 	if os.IsNotExist(err) {
 		return nil
@@ -459,6 +388,9 @@ func copySecretsDir(src, dst string) error {
 	for _, entry := range entries {
 		if !entry.Type().IsRegular() {
 			continue
+		}
+		if err := trust(entry.Name()); err != nil {
+			return err
 		}
 		if err := copyConfigFile(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
 			return err
@@ -495,7 +427,7 @@ const (
 )
 
 // BuildConfigureCommand builds one machine-prompt configure run in the
-// staged tree. Setsid is load-bearing exactly as it is for the engine
+// configure tree. Setsid is load-bearing exactly as it is for the engine
 // run: a legacy configure.sh (orbit main) ignores
 // ORBIT_CONFIGURE_PROMPTS and would otherwise open /dev/tty and prompt
 // straight through the alt screen; detached, it fails fast with no
@@ -509,7 +441,7 @@ const (
 // mode — it only ever runs because the previous --init already decided
 // OIDC is on.
 func BuildConfigureCommand(treeDir string, step ConfigStep, mode AuthMode) *exec.Cmd {
-	cmd := exec.Command("bash", "scripts/configure.sh", string(step))
+	cmd := exec.Command("bash", configureScript, string(step))
 	cmd.Dir = treeDir
 	env := append(os.Environ(), "ORBIT_CONFIGURE_PROMPTS=machine")
 	if step == ConfigStepInit && mode != "" {
@@ -567,13 +499,13 @@ func (c ConfigCheck) Unfixable() []string {
 	return out
 }
 
-// RunConfigCheck runs configure.sh --check in the staged tree and
+// RunConfigCheck runs configure.sh --check in the configure tree and
 // parses its readiness report. A non-zero exit with a parseable report
 // is the normal "something's missing" answer, not an error; an error
 // means the check itself couldn't run (structural failure, legacy
 // script misbehaviour).
 func RunConfigCheck(ctx context.Context, treeDir string) (ConfigCheck, error) {
-	cmd := exec.CommandContext(ctx, "bash", "scripts/configure.sh", "--check")
+	cmd := exec.CommandContext(ctx, "bash", configureScript, "--check")
 	cmd.Dir = treeDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, runErr := cmd.Output()
