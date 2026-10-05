@@ -19,6 +19,12 @@
 # two runs, identical to four decimal places):
 #   scripts/coverage.sh -race    # unit tests plus the binary's pty runs
 #   go run ./tools/coveragefloor coverage.out   # prints got% per package
+# Measure where the gate runs: CI's `fast` job runs as root, so the three
+# internal/deploy tests that force a permission error skip themselves
+# there, and that package reads 94.2% in CI against 96.7% as a normal
+# user. Its floor is the CI figure; every other package reads the same in
+# both places.
+#
 # Each floor below is the measured percentage rounded DOWN to one decimal
 # place -- never up, so the recorded floor is never stricter than what was
 # actually observed.
@@ -33,7 +39,7 @@
 # on, which has unit tests of its own.
 
 github.com/tomlawesome/orbit-launcher/cmd/orbit-launcher 94.1
-github.com/tomlawesome/orbit-launcher/internal/deploy 96.7
+github.com/tomlawesome/orbit-launcher/internal/deploy 94.2
 github.com/tomlawesome/orbit-launcher/internal/engine 93.4
 github.com/tomlawesome/orbit-launcher/internal/release 100.0
 github.com/tomlawesome/orbit-launcher/internal/ui 98.2
