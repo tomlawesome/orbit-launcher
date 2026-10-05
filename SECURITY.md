@@ -23,8 +23,9 @@ maintenance line.
 | Latest stable release after v1 | Supported |
 | Older commits and superseded releases | Unsupported unless release notes say otherwise |
 
-Run the bootstrap script and binaries from the official release only, and
-verify the published checksum before executing anything it downloads.
+Install orbit-launcher only through Orbit's installer, which checks the
+signature on Orbit's release before it runs anything. This repository
+publishes no binaries or checksums of its own.
 
 ## Report a vulnerability privately
 

@@ -19,6 +19,8 @@ stay version-matched.
   minor (or, with `--hotfix`, patch) for the next release; before any tag
   exists, the baseline is `0.1.0`. A tag here marks a source revision
   Orbit can pin to build from — it doesn't publish a binary itself.
+  The **release:version** button below always takes the minor step: CI
+  has no way to cut a patch (hotfix) tag yet.
 
 ## Cutting a tag
 
