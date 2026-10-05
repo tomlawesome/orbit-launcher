@@ -315,17 +315,12 @@ func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
 		t.Error("expected the styled configuration prompt")
 	}
 
-	// Accept the default: Continue — guided configuration. That lands on
-	// the sign-in-mode screen (issue #154) before --init ever runs.
+	// Accept the default: Continue — guided configuration. This engine
+	// handed over no configure tree (an install.sh without
+	// ai/orbit#1225), so there is nothing verified to run in-console and
+	// the guided installer gets the terminal straight away — nothing is
+	// fetched instead (#190).
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = drive(t, updated, cmd).(InstallModel)
-
-	if m.run.state != runConfigSignInMode {
-		t.Fatalf("run state = %v, want runConfigSignInMode", m.run.state)
-	}
-
-	// Accept the default there too: Local accounts.
-	updated, cmd = m.Update(key(tea.KeyEnter))
 	m = drive(t, updated, cmd).(InstallModel)
 
 	if !prepared || !handoffRan {

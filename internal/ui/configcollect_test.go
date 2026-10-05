@@ -85,7 +85,7 @@ done
 exit 0`
 
 func planned(needInit, needSecret bool) prepareConfigFunc {
-	return func(context.Context, string) configPlanMsg {
+	return func(context.Context, string, string) configPlanMsg {
 		return configPlanMsg{plan: configPlan{
 			treeDir:    "/nonexistent-tree-for-tests",
 			cleanup:    func() {},
@@ -523,7 +523,7 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 	handoffRan := make(chan struct{}, 1)
 	tm := startConfigJourney(t, engineRunSeams{
 		prepareEngine: engineTwice(),
-		prepareConfig: func(context.Context, string) configPlanMsg {
+		prepareConfig: func(context.Context, string, string) configPlanMsg {
 			return configPlanMsg{plan: configPlan{
 				treeDir:   "/nonexistent",
 				cleanup:   func() {},
@@ -568,7 +568,7 @@ func TestAppModel_StrictModeRefusesTheHandoffFallback(t *testing.T) {
 	handoffRan := make(chan struct{}, 1)
 	tm := startConfigJourney(t, engineRunSeams{
 		prepareEngine: engineTwice(),
-		prepareConfig: func(context.Context, string) configPlanMsg {
+		prepareConfig: func(context.Context, string, string) configPlanMsg {
 			return configPlanMsg{err: errors.New("staging the tree failed")}
 		},
 		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {

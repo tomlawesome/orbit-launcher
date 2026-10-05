@@ -82,9 +82,12 @@ func outcomeOf(r engineRun) flowOutcome {
 // engineReadyMsg carries the started engine stream (or the error that
 // prevented it — fetch failure, unwritable temp dir).
 type engineReadyMsg struct {
-	stream  *engine.Stream
-	cleanup func() error
-	err     error
+	stream *engine.Stream
+	// configTree is the directory the engine was handed for its
+	// configure tree (deploy.ConfigTreeDir); cleanup removes it.
+	configTree string
+	cleanup    func() error
+	err        error
 }
 
 // engineStreamMsg wraps one message from the engine stream's channel.
@@ -115,6 +118,11 @@ type engineRun struct {
 
 	stream  *engine.Stream
 	cleanup func() error
+	// configTree is where this run's engine copies its verified
+	// configure tree on a configuration refusal (ai/orbit#1225). It
+	// lives until cleanup runs, which a refusal defers until the
+	// configuration that follows it is over (releaseRunFiles).
+	configTree string
 
 	// cancelPrepare cancels the in-flight fetch-and-start. A Ctrl-C
 	// while preparing cancels it and sets quitting; the run then quits
@@ -177,40 +185,54 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	if prepare == nil {
-		prepare = defaultPrepareEngine
-	}
 	targetDir, action := r.targetDir, r.action
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
+		if prepare == nil {
+			return defaultPrepareEngine(ctx, targetDir, action)
+		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
 	}
 }
 
 // defaultPrepareEngine fetches install.sh and starts it as the
-// detached, piped, plain-mode engine run.
-func defaultPrepareEngine(ctx context.Context, targetDir, action string) (*engine.Stream, func() error, error) {
+// detached, piped, plain-mode engine run, reporting the configure tree
+// directory the engine was handed.
+func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineReadyMsg {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
 	cmd, cleanup, err := deploy.BuildEngineCommand(script, targetDir, action)
 	if err != nil {
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
 	stream, err := engine.Start(cmd)
 	if err != nil {
 		cleanup()
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
-	return stream, cleanup, nil
+	return engineReadyMsg{stream: stream, configTree: deploy.ConfigTreeDir(cmd), cleanup: cleanup}
+}
+
+// releaseRunFiles removes what the engine run staged — install.sh and
+// its configure tree — once nothing needs them any more. A
+// configuration refusal holds them past the run's end, for the
+// configuration session; every way out of that (a retry, the terminal
+// handoff, leaving, quitting, a failure) comes through here.
+func (r *engineRun) releaseRunFiles() {
+	if r.cleanup != nil {
+		_ = r.cleanup()
+		r.cleanup = nil
+	}
+	r.configTree = ""
 }
 
 // readEngineStream starts the one long-lived reader for this run.
@@ -283,6 +305,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
+		r.configTree = msg.configTree
 		r.state = runStreaming
 		return r, readEngineStream(r.send, r.stream)
 
@@ -344,11 +367,10 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		return r, nil
 
 	case engine.DoneMsg:
-		if r.cleanup != nil {
-			r.cleanup()
-			r.cleanup = nil
-		}
 		r.stderrTail = m.StderrTail
+		if m.Err == nil || !r.configRefused {
+			r.releaseRunFiles()
+		}
 		if m.Err == nil {
 			return r.succeed()
 		}
@@ -356,7 +378,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		if r.configRefused {
 			// The engine's documented configuration-required refusal:
 			// the target was rolled back, and the fix is the guided
-			// configuration in a real terminal.
+			// configuration — in-console from the configure tree the
+			// engine just handed over, which is why the run's files
+			// are kept until that is over.
 			r.state = runConfigPrompt
 			r.menuSel = 0
 			return r, nil
@@ -422,6 +446,9 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 // install.sh's interactive prompts, which is what lets CI treat one of
 // those prompts appearing as proof of the in-console path.
 func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
+	// The handoff stages its own install.sh and configure tree; a
+	// refused run's are done with.
+	r.releaseRunFiles()
 	if requireInConsoleConfig() {
 		logDiag("refusing the terminal handoff: " + requireInConsoleEnv + " is set")
 		// The strict refusal is now the reason this run stopped, so
@@ -461,6 +488,7 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 			r.stream.Kill()
 		}
 		r.cfg.close()
+		r.releaseRunFiles()
 		return r, tea.Quit
 	}
 
@@ -477,10 +505,12 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 			case 0:
 				return r.beginConfigCollect()
 			case 1:
+				r.releaseRunFiles()
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
 			default:
+				r.releaseRunFiles()
 				return r, tea.Quit
 			}
 		})
@@ -505,6 +535,7 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items int, choose func(int) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
 	switch msg.Code {
 	case tea.KeyEsc:
+		r.releaseRunFiles()
 		r.Done = true
 		r.WantsMenu = true
 		return r, nil

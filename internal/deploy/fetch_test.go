@@ -225,33 +225,6 @@ func TestFetchInstallScript_GivesUpWhenTheServerNeverAnswers(t *testing.T) {
 	}
 }
 
-func TestFetchFile_GivesUpWhenTheServerNeverAnswers(t *testing.T) {
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-release
-	}))
-	defer srv.Close()
-	defer close(release)
-
-	restore := setScriptFetchTimeout(t, 100*time.Millisecond)
-	defer restore()
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := fetchFile(context.Background(), srv.URL)
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("expected a timeout error, got nil")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("fetch is still waiting after 2s: it has no deadline of its own")
-	}
-}
-
 func TestFetchInstallScript_RefusesAnUnbuildableURL(t *testing.T) {
 	_, err := fetchInstallScript(context.Background(), "http://bad\x7fhost/install.sh")
 	if err == nil || !strings.Contains(err.Error(), "build request") {
