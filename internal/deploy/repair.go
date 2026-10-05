@@ -31,14 +31,20 @@ var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (
 const repairScript = "scripts/repair.sh"
 
 // RepairCommand builds one repair run against the deployment's own
-// scripts/repair.sh. An absent script is ErrRepairUnavailable; there is
-// no fallback to any other copy.
+// scripts/repair.sh. An absent script is ErrRepairUnavailable; one on a
+// path RequireTrustedPath refuses is an UntrustedPathError. There is no
+// fallback to any other copy.
 func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
 	if _, err := os.Lstat(filepath.Join(targetDir, repairScript)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrRepairUnavailable
 		}
 		return nil, fmt.Errorf("repair.sh: %w", err)
+	}
+	// It exists; run it only from a path nobody else could have put it
+	// in (#191).
+	if err := RequireTrustedPath(targetDir, repairScript); err != nil {
+		return nil, err
 	}
 	return BuildRepairCommand(targetDir, mode), nil
 }

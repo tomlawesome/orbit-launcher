@@ -538,7 +538,10 @@ keep working. Two things follow from that:
   `configure.sh`, its siblings and `.env-orbit.example` into it from
   the assets it has already verified against the image (ai/orbit#1225)
   — and Repair runs the deployment's own `scripts/repair.sh`, which
-  `install.sh` placed from the image.
+  `install.sh` placed from the image. Neither runs unless
+  `deploy.RequireTrustedPath` accepts it (#191): real directories and a
+  regular file, no symlinks, nothing world-writable, one owner who is the
+  launcher's user (or any, under root); group-writable is accepted.
 - **No config collection, and no field knowledge at all.** Earlier
   drafts of Install had orbit-launcher collect `APP_URL`/OIDC fields
   itself via Go text inputs and write `.env-orbit` directly, running
