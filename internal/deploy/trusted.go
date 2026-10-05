@@ -16,8 +16,10 @@ type UntrustedPathError struct {
 	Reason string
 }
 
+// Error puts the reason before the path: the failure screens cut a line
+// at the terminal width, and a long path must not push the reason off.
 func (e *UntrustedPathError) Error() string {
-	return "refusing " + e.Path + ": " + e.Reason
+	return "refusing: " + e.Reason + " — " + e.Path
 }
 
 // RequireTrustedPath checks dir/rel before the launcher runs or reads it
@@ -39,16 +41,10 @@ func (e *UntrustedPathError) Error() string {
 // A path that doesn't exist is reported as the underlying not-exist
 // error, so callers can tell "absent" from "untrusted".
 func RequireTrustedPath(dir, rel string) error {
-	dirInfo, err := os.Lstat(dir)
+	dir = filepath.Clean(dir)
+	owner, err := trustedRoot(dir)
 	if err != nil {
 		return err
-	}
-	owner, err := checkTrustedDir(dir, dirInfo, -1)
-	if err != nil {
-		return err
-	}
-	if euid := os.Geteuid(); euid != 0 && owner != euid {
-		return &UntrustedPathError{Path: dir, Reason: fmt.Sprintf("it is owned by uid %d, not by the user running the launcher (uid %d)", owner, euid)}
 	}
 
 	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
@@ -72,6 +68,69 @@ func RequireTrustedPath(dir, rel string) error {
 			return &UntrustedPathError{Path: path, Reason: "it is not a regular file"}
 		}
 		if err := checkModeAndOwner(path, info, owner); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// trustedRoot checks dir itself — a real directory, not a symlink, not
+// world-writable, owned by the launcher's user (or any owner under
+// root) — and returns its owner. dir must already be Cleaned: Lstat
+// follows a symlink named as "link/" or "link/.".
+func trustedRoot(dir string) (int, error) {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return 0, err
+	}
+	owner, err := checkTrustedDir(dir, info, -1)
+	if err != nil {
+		return 0, err
+	}
+	if euid := os.Geteuid(); euid != 0 && owner != euid {
+		return 0, &UntrustedPathError{Path: dir, Reason: fmt.Sprintf("it is owned by uid %d, not by the user running the launcher (uid %d)", owner, euid)}
+	}
+	return owner, nil
+}
+
+// requireTrustedConfigDirs checks a deployment directory before its
+// configuration is read, written or tidied: the directory itself, and
+// .orbit-secrets when it exists (removeStaleTemps globs inside it). A
+// directory that doesn't exist yet has nothing in it to trust.
+func requireTrustedConfigDirs(dir string) error {
+	dir = filepath.Clean(dir)
+	owner, err := trustedRoot(dir)
+	if err != nil {
+		return err
+	}
+	secrets := filepath.Join(dir, ".orbit-secrets")
+	info, err := os.Lstat(secrets)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = checkTrustedDir(secrets, info, owner)
+	return err
+}
+
+// orbitScripts are the scripts in a deployment's scripts/ directory that
+// source one another: trusting one of them means trusting all that are
+// there.
+var orbitScripts = []string{"configure.sh", "configuration.sh", "installer-ui.sh", "engine-check.sh", "repair.sh"}
+
+// requireTrustedScripts is RequireTrustedPath for scripts/<name>, plus
+// each sibling it may source that is present.
+func requireTrustedScripts(dir, name string) error {
+	if err := RequireTrustedPath(dir, filepath.Join("scripts", name)); err != nil {
+		return err
+	}
+	for _, sibling := range orbitScripts {
+		if sibling == name {
+			continue
+		}
+		if err := requireTrustedIfPresent(dir, filepath.Join("scripts", sibling)); err != nil {
 			return err
 		}
 	}

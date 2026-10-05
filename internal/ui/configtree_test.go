@@ -272,3 +272,28 @@ func TestEngineRun_UntrustedConfigTreeStopsOnTheFailureScreen(t *testing.T) {
 		t.Fatalf("run cleanup ran %d times, want once", cleaned)
 	}
 }
+
+// Strict mode with a real, empty handed-over tree (an install.sh
+// without ai/orbit#1225): no in-console path exists, the handoff is
+// refused, and the run ends on that failure with its files released
+// exactly once.
+func TestEngineRun_StrictModeWithAnEmptyRealTreeRefusesTheHandoff(t *testing.T) {
+	t.Setenv(requireInConsoleEnv, "1")
+	prepared := false
+	cleaned := 0
+	r := refusedRunWithTree(t, handoffSeams(&prepared), t.TempDir(), &cleaned) // real prepareConfig
+	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	r, _ = runUpdate(t, r, cmd())
+	if r.state != runFailed {
+		t.Fatalf("state = %v, want the failure screen", r.state)
+	}
+	if prepared {
+		t.Fatal("strict mode still prepared the terminal handoff")
+	}
+	if !strings.Contains(runScreen(r), "terminal handoff refused") {
+		t.Fatalf("screen:\n%s", runScreen(r))
+	}
+	if cleaned != 1 {
+		t.Fatalf("run cleanup ran %d times, want once", cleaned)
+	}
+}

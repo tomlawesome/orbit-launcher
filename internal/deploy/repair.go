@@ -43,7 +43,7 @@ func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
 	}
 	// It exists; run it only from a path nobody else could have put it
 	// in (#191).
-	if err := RequireTrustedPath(targetDir, repairScript); err != nil {
+	if err := requireTrustedScripts(targetDir, "repair.sh"); err != nil {
 		return nil, err
 	}
 	return BuildRepairCommand(targetDir, mode), nil

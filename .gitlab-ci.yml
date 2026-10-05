@@ -496,9 +496,10 @@ live:
       # the job token. That token carries the access of whoever started the
       # pipeline, and Renovate's project bot can never read another project,
       # so on its merge requests GitLab answers 403. Then, and only then,
-      # every file comes from Orbit's public GitHub mirror instead, at the
+      # install.sh comes from Orbit's public GitHub mirror instead, at the
       # same branch: GitLab pushes it after each Orbit merge, so it trails by
-      # minutes at most. One source for the whole tree, never a mix.
+      # minutes at most. install.sh is the only file fetched: the configure
+      # tree reaches the launcher through install.sh's own handover (#190).
       # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path.
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
       gitlab_orbit_url() {
