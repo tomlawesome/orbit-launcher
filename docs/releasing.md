@@ -43,6 +43,5 @@ manifest covering the launcher archives, the image digest and the install
 scripts, and attaches everything to Orbit's releases. Orbit's
 `get-orbit.sh` checks that signature before running the launcher.
 
-`scripts/get-orbit-launcher.sh` in this repo is developer-only now (behind
-`ORBIT_LAUNCHER_DEVELOPER=1`); everyone else is pointed at Orbit's
-installer. See the [README](../README.md#quickstart).
+`scripts/get-orbit-launcher.sh` in this repo downloads nothing any more:
+it points anyone using its old URL at Orbit's installer. See the [README](../README.md#quickstart).

@@ -21,8 +21,9 @@ curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-
 
 This repo keeps orbit-launcher's source, version tags and CI tests (see
 [`docs/releasing.md`](docs/releasing.md)) — it doesn't publish a
-downloadable binary of its own. `scripts/get-orbit-launcher.sh` here is
-for orbit-launcher developers only (`ORBIT_LAUNCHER_DEVELOPER=1`).
+downloadable binary of its own. `scripts/get-orbit-launcher.sh` here only
+points old links at Orbit's installer; to work on the launcher, build it
+from source with `go build ./cmd/orbit-launcher`.
 
 Once installed, run orbit-launcher again any time to re-launch it. From
 the menu: **Install** deploys Orbit for the first time, after a short

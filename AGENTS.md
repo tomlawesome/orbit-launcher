@@ -24,7 +24,7 @@ Layout:
 - `internal/ui` — the TUI
 - `internal/engine` — install/update/repair logic
 - `internal/deploy`, `internal/release` — deployment and release handling
-- `scripts/get-orbit-launcher.sh` — the bootstrap script users curl
+- `scripts/get-orbit-launcher.sh` — retired; only points old links at Orbit's installer
 - `tools/calculateversion` — version derivation
 - `docs/implementation-plan.md`, `docs/releasing.md` — the roadmap and
   the release contract
