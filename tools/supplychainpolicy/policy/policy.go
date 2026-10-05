@@ -181,9 +181,18 @@ func Load(root string) (Policy, error) {
 		return p, fmt.Errorf("supply-chain policy is not valid JSON: %w", err)
 	}
 	if p.SchemaVersion != SchemaVersion {
-		return p, fmt.Errorf("policy schemaVersion is %d, this tool understands %d", p.SchemaVersion, SchemaVersion)
+		return p, &SchemaError{Got: p.SchemaVersion, Want: SchemaVersion}
 	}
 	return p, nil
+}
+
+// SchemaError is a policy that parsed but was written for another schema.
+// It is a type so -write can tell it from an unreadable file: an older
+// schema's fields are still there to carry across, a parse failure's are not.
+type SchemaError struct{ Got, Want int }
+
+func (e *SchemaError) Error() string {
+	return fmt.Sprintf("policy schemaVersion is %d, this tool understands %d", e.Got, e.Want)
 }
 
 // DerivedActions returns the mechanical fields for every distinct action the
@@ -204,6 +213,23 @@ func DerivedActions(pins []Pin) []Action {
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// WithoutExceptions drops the actions pol.Exceptions names: an excepted
+// action is deliberately not recorded, so neither the generator nor the
+// currency gate expects it in Actions.
+func WithoutExceptions(actions []Action, exceptions []Exception) []Action {
+	excepted := map[string]bool{}
+	for _, e := range exceptions {
+		excepted[e.Name] = true
+	}
+	out := make([]Action, 0, len(actions))
+	for _, a := range actions {
+		if !excepted[a.Name] {
+			out = append(out, a)
+		}
+	}
 	return out
 }
 

@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -99,21 +100,38 @@ func check(root string, stdout io.Writer) error {
 }
 
 func regenerate(root string, pins []scp.Pin, stdout io.Writer) error {
-	previous, _ := scp.Load(root) // absent or older schema is fine; nothing to carry over
+	// Only an absent file or an older schema may be regenerated over. A file
+	// that exists but does not parse still holds owners, notes and exceptions
+	// a person wrote, and rewriting it would replace them with defaults.
+	previous, err := scp.Load(root)
+	var schemaErr *scp.SchemaError
+	switch {
+	case err == nil, errors.Is(err, fs.ErrNotExist), errors.As(err, &schemaErr):
+		// absent, or an older schema whose fields are still carried: fine
+	default:
+		return fmt.Errorf("refusing to regenerate over a policy that cannot be read, "+
+			"because its owners, notes and exceptions would be lost: %w", err)
+	}
 	carriedAction := map[string]scp.Action{}
 	for _, a := range previous.Actions {
 		carriedAction[a.Name] = a
 	}
 
 	actions := scp.DerivedActions(pins)
-	for i := range actions {
-		a := &actions[i]
+	// The pin rules hold for every action, excepted or not, as in VerifyPins;
+	// an exception only excuses the record, so excepted actions are dropped
+	// before anything is fetched for them.
+	for _, a := range actions {
 		if !scp.IsSHA(a.Commit) {
 			return fmt.Errorf("%s is pinned to %q, not a commit SHA; fix the workflow before regenerating", a.Name, a.Commit)
 		}
 		if a.Version == "" {
 			return fmt.Errorf("%s has no `# vX.Y.Z` comment beside its pin; add one so the version is recorded", a.Name)
 		}
+	}
+	actions = scp.WithoutExceptions(actions, previous.Exceptions)
+	for i := range actions {
+		a := &actions[i]
 		lic, err := license(a.Name)
 		if err != nil {
 			return err

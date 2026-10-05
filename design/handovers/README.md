@@ -1,5 +1,11 @@
 # Implementation handovers — all resolved
 
+> **Historical record, noted 2026-10-05.** The "Rules that apply to every
+> task" block below is no longer current: the integration branch is `dev`
+> (not `develop`), and `.github/planning-governance.json` and the
+> Observability-Impact declaration have been removed.
+
+
 **Closed 2026-08-12.** Every surviving brief below was implemented — none were
 delegated in the end; the work landed as frontier-model PRs: the v5 splash
 (#74), the mission console + success screen (#75), and the v6 starchart pass

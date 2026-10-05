@@ -11,10 +11,10 @@ any distributed copy (modified or not) must remain under AGPL-3.0.
 ## Commercial licensing
 
 If the AGPL-3.0 terms don't fit your use case — for example, embedding
-orbit-launcher in a closed-source product, or distributing it without the
-network-use source-disclosure requirement — a separate commercial license
-is available.
+orbit-launcher in a closed-source product, or running or distributing it
+without publishing your source — a separate commercial licence is
+available.
 
-Contact the maintainer to discuss terms: see the repository owner's
-GitHub profile for contact details. No pricing or terms are listed here;
-that's a conversation, not a price list.
+To ask about terms, contact the owner through their
+[GitHub profile](https://github.com/tomlawesome). No pricing or terms are
+listed here; that is a conversation, not a price list.

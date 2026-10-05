@@ -1,24 +1,27 @@
 # Contributing
 
-This repository is **not currently accepting external pull requests.**
-That's a deliberate, temporary choice, not a policy about the project's
-long-term openness — it keeps the dual AGPL-3.0/commercial licensing model
-(see [LICENSING.md](LICENSING.md)) legally simple while the project is
-young: sole authorship means no Contributor License Agreement is needed
-yet. If that changes, this file will be updated with a CLA process before
-any external PR is merged.
+This repository is **not currently accepting outside code changes.** That
+is a deliberate, temporary choice. The owner holds all the rights to this
+code, which lets it be offered under both a free and a commercial licence
+(see [LICENSING.md](LICENSING.md)). Accepting outside code would complicate
+that, so for now we don't. If that changes, this file will set out a
+contributor agreement before any outside change is merged.
 
-Issues, bug reports and feature discussion are welcome on the
-[issue tracker](https://github.com/tomlawesome/orbit-launcher/issues).
+Public bug reports are not being taken for now. To report a security
+problem, use the private route in [SECURITY.md](SECURITY.md).
 
-## Internal workflow (for reference)
+Day-to-day work is tracked on the owner's
+[GitLab](https://gitlab.tomlawson.io/ai/orbit-launcher), which is where
+merge requests are made. GitHub is a public mirror of it.
 
-- Three protected branches: `dev` (integration), `preview` (release
-  lane), `main` (stable). See
-  [docs/implementation-plan.md](docs/implementation-plan.md) section 4.
-- Every change starts as a short-lived `codex/issue-<n>-<slug>` branch off
-  `dev`, opened as a pull request that closes its tracking issue.
-- No work happens on a wave or slice without a filed GitHub issue to track
-  it first.
-- Every pull request links its issue and is merged only on explicit owner
-  direction — see `docs/implementation-plan.md` §4.1 and §4.4.
+## How changes are made here
+
+- There are three protected branches: `dev` (where work comes together),
+  `preview` (the step between `dev` and a stable release) and `main`
+  (stable). Tags are cut from `dev`. See
+  [docs/releasing.md](docs/releasing.md).
+- Every change starts as a short-lived branch off `dev`, named for the
+  kind of work (`feature/…`, `fix/…`, `chore/…`, `docs/…`), and is
+  merged by merge request on GitLab.
+- Every change needs an issue first. The owner says when a merge request
+  may be merged.

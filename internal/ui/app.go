@@ -24,8 +24,7 @@ const (
 
 // AppModel is the root model: it starts at the splash screen and, once a
 // choice is made, hands control to that flow. Install (Standard profile
-// only), Update, Remove and Repair (a deliberate non-mutating stub) are
-// all wired to real flows. Install and Update conclude on the shared
+// only), Update, Remove and Repair are all wired to real flows. Install and Update conclude on the shared
 // success screen, whose Menu action returns to a freshly detected
 // splash — the launcher is a loop now, not a one-way corridor.
 type AppModel struct {

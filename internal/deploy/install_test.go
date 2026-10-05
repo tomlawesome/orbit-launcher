@@ -151,12 +151,15 @@ func TestBuildInstallCommand_DiskFullWhileStagingLeavesNoScriptBehind(t *testing
 	t.Setenv("TMPDIR", tmp)
 	script := []byte("#!/usr/bin/env bash\n# " + strings.Repeat("x", 4096) + "\n")
 
-	limitFileSize(t, 1024)
-	cmd, cleanup, err := BuildInstallCommand(script, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "stage install.sh") {
-		t.Fatalf("expected a stage-install.sh error, got %v", err)
+	// The child inherits TMPDIR, so a partial script would land in tmp.
+	errText, returnedCommand := runFileSizeLimited(t, "build-install", map[string]string{
+		"ORBIT_DEPLOY_HELPER_SCRIPT": string(script), "ORBIT_DEPLOY_HELPER_TARGET": t.TempDir(),
+	})
+	requireUnlimitedWrites(t)
+	if !strings.Contains(errText, "stage install.sh") {
+		t.Fatalf("expected a stage-install.sh error, got %q", errText)
 	}
-	if cmd != nil || cleanup != nil {
+	if returnedCommand {
 		t.Error("a failed staging still returned a command to run")
 	}
 	if left, _ := os.ReadDir(tmp); len(left) != 0 {
