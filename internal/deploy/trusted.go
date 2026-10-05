@@ -74,6 +74,11 @@ func RequireTrustedPath(dir, rel string) error {
 	return nil
 }
 
+// launcherEUID is the user the launcher runs as, for the owner rule. A
+// variable so tests can check that rule as root and as a normal user
+// alike.
+var launcherEUID = os.Geteuid
+
 // trustedRoot checks dir itself — a real directory, not a symlink, not
 // world-writable, owned by the launcher's user (or any owner under
 // root) — and returns its owner. dir must already be Cleaned: Lstat
@@ -87,7 +92,7 @@ func trustedRoot(dir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if euid := os.Geteuid(); euid != 0 && owner != euid {
+	if euid := launcherEUID(); euid != 0 && owner != euid {
 		return 0, &UntrustedPathError{Path: dir, Reason: fmt.Sprintf("it is owned by uid %d, not by the user running the launcher (uid %d)", owner, euid)}
 	}
 	return owner, nil
