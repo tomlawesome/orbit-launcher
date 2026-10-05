@@ -251,3 +251,41 @@ func TestFetchFile_GivesUpWhenTheServerNeverAnswers(t *testing.T) {
 		t.Fatal("fetch is still waiting after 2s: it has no deadline of its own")
 	}
 }
+
+func TestFetchInstallScript_RefusesAnUnbuildableURL(t *testing.T) {
+	_, err := fetchInstallScript(context.Background(), "http://bad\x7fhost/install.sh")
+	if err == nil || !strings.Contains(err.Error(), "build request") {
+		t.Fatalf("expected a build-request error, got %v", err)
+	}
+}
+
+// A connection that drops part-way must fail outright: running the first
+// half of install.sh is worse than running none of it.
+func TestFetchInstallScript_TruncatedBodyIsNeverReturned(t *testing.T) {
+	body, err := fetchInstallScript(context.Background(), truncatedBodyServer(t))
+	if err == nil || !strings.Contains(err.Error(), "read install.sh") {
+		t.Fatalf("expected a read error, got %v", err)
+	}
+	if body != nil {
+		t.Errorf("a truncated fetch returned %q; want nothing", body)
+	}
+}
+
+// A refused connection is worded as a fetch failure, not as the timeout
+// sentence: the person needs the real reason.
+func TestFetchInstallScript_RefusedConnectionKeepsTheRealReason(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+
+	_, err := fetchInstallScript(context.Background(), url)
+	if err == nil {
+		t.Fatal("expected an error for a closed server")
+	}
+	if strings.Contains(err.Error(), "did not answer") {
+		t.Errorf("a refused connection was reported as a timeout: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fetch install.sh") {
+		t.Errorf("error should name what failed, got: %v", err)
+	}
+}
