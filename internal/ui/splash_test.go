@@ -429,3 +429,24 @@ func TestSplashModel_ArrivalShowsTheWordsInOrder(t *testing.T) {
 		t.Errorf("arrival beats missing: Get=%v Into=%v OrbitAlone=%v", sawGet, sawInto, sawOrbitAlone)
 	}
 }
+
+// A terminal reporting zero or one rows leaves no body to draw; the
+// splash must render without panicking and recover at the next real size.
+func TestSplashModel_ZeroHeightWindowDoesNotPanic(t *testing.T) {
+	for _, h := range []int{0, 1} {
+		updated, _ := NewSplashModel().Update(tea.WindowSizeMsg{Width: 80, Height: h})
+		m := updated.(SplashModel)
+		if view := m.View().Content; view != "" {
+			t.Errorf("intro View() at height %d = %q, want empty", h, view)
+		}
+
+		updated, _ = NewSplashModelNoAnimation().Update(tea.WindowSizeMsg{Width: 80, Height: h})
+		still := updated.(SplashModel)
+		_ = still.View()
+
+		updated, _ = still.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+		if view := updated.(SplashModel).View().Content; !strings.Contains(view, "Install") {
+			t.Errorf("View() after resizing from height %d to 26 lacks the menu: %q", h, view)
+		}
+	}
+}

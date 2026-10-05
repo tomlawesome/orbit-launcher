@@ -98,6 +98,10 @@ func compositeScene(star starfield.Model, ready bool, width, bodyHeight int, con
 	if topOffset < 0 {
 		topOffset = 0
 	}
+	// A terminal can report zero rows mid-resize; every scene screen passes height-1.
+	if bodyHeight < 0 {
+		bodyHeight = 0
+	}
 	sky := skyGrid(star, ready, width, bodyHeight)
 	rows := make([]string, bodyHeight)
 	for y := 0; y < bodyHeight; y++ {
