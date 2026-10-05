@@ -323,7 +323,7 @@ deps:
     - |
       go-licenses check ./... \
         --ignore github.com/tomlawesome/orbit-launcher \
-        --allowed_licenses=0BSD,Apache-2.0,BSD-2-Clause,BSD-3-Clause,CC0-1.0,ISC,MIT,MIT-0,MPL-2.0,Unlicense
+        --allowed_licenses=0BSD,Apache-2.0,BSD-2-Clause,BSD-3-Clause,CC0-1.0,ISC,MIT,MIT-0,MPL-2.0,Unicode-3.0,Unlicense
     # What a declared licence does not cover (#176): embedded files,
     # vendored and generated code, and code a comment says came from
     # elsewhere, in every package the shipped binary links. Each must be
