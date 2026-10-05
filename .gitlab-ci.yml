@@ -278,7 +278,9 @@ fast:
       bats scripts/test/
     - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
     - staticcheck ./...
-    - go test -race -coverprofile=coverage.out ./...
+    # Unit tests plus the compiled binary's own runs under test/pty, merged
+    # into one profile (#169): see scripts/coverage.sh.
+    - scripts/coverage.sh -race
     - go run ./tools/coveragefloor coverage.out
   artifacts:
     name: coverage
