@@ -282,7 +282,7 @@ runs gave identical figures):
 | Package | Coverage | Floor |
 | --- | --- | --- |
 | `cmd/orbit-launcher` | 94.12% | 94.1 |
-| `internal/deploy` | 96.79% | 96.7 |
+| `internal/deploy` | 94.23% (CI) | 94.2 |
 | `internal/engine` | 93.43% | 93.4 |
 | `internal/release` | 100.00% | 100.0 |
 | `internal/ui` | 98.26% | 98.2 |
@@ -298,6 +298,10 @@ runs gave identical figures):
 | `tools/supplychainpolicy` | 98.31% | 98.3 |
 | `tools/supplychainpolicy/policy` | 99.28% | 99.2 |
 | `test/internal/vtscreen` | 93.52% | 93.5 |
+
+`internal/deploy` reads 96.79% as a normal user; CI's `fast` job runs as
+root, where the three tests that force a permission error skip themselves,
+so its floor is the CI figure.
 
 `cmd/orbit-launcher` read 18.75% before the pty runs were counted: most of
 `main.go` builds and runs the full-screen program, which only `test/pty`
