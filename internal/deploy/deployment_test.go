@@ -67,7 +67,7 @@ func TestDetect_EmptyProfilesIsNil(t *testing.T) {
 
 func TestRemovalCommand_IsExactAndScopedToTheTarget(t *testing.T) {
 	got := RemovalCommand("/opt/orbit")
-	want := "docker compose --project-directory /opt/orbit down -v && sudo rm -rf /opt/orbit"
+	want := "docker compose --project-directory /opt/orbit --env-file /opt/orbit/.env-orbit down -v && sudo rm -rf /opt/orbit"
 	if got != want {
 		t.Errorf("RemovalCommand(%q) = %q, want %q", "/opt/orbit", got, want)
 	}
