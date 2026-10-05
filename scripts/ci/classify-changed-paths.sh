@@ -56,7 +56,8 @@ if [ -z "$base" ] || [ -z "$head" ]; then
   report
 fi
 
-if ! changed="$(git diff --name-only "$base" "$head" 2>/dev/null)"; then
+# A rename is listed as its old and new path, so a source file moved into docs/ is still a source change.
+if ! changed="$(git diff --name-only --no-renames "$base" "$head" 2>/dev/null)"; then
   echo "classify: could not diff $base..$head, so the full gate runs" >&2
   report
 fi

@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -324,6 +326,26 @@ func TestExceptionExcusesTheRecordButNotAFloatingTag(t *testing.T) {
 	}
 }
 
+func TestWithoutExceptionsDropsOnlyTheNamedActions(t *testing.T) {
+	actions := []Action{{Name: "a/one"}, {Name: "b/two"}, {Name: "c/three"}, {Name: "d/four"}}
+	got := WithoutExceptions(actions, []Exception{{Name: "b/two"}, {Name: "d/four"}, {Name: "z/unused"}})
+	if len(got) != 2 || got[0].Name != "a/one" || got[1].Name != "c/three" {
+		t.Errorf("WithoutExceptions = %+v, want a/one then c/three", got)
+	}
+	if len(actions) != 4 || actions[1].Name != "b/two" {
+		t.Errorf("the input was modified: %+v", actions)
+	}
+
+	all := WithoutExceptions(actions, nil)
+	if len(all) != len(actions) {
+		t.Fatalf("with no exceptions, got %d actions, want %d", len(all), len(actions))
+	}
+	all[0].Name = "changed"
+	if actions[0].Name != "a/one" {
+		t.Error("the result shares the input's backing array; it must be a new slice")
+	}
+}
+
 func TestProblemStringOmitsLocationWhenThereIsNone(t *testing.T) {
 	withFile := Problem{File: "ci.yml", Line: 12, Msg: "boom"}
 	if got := withFile.String(); got != "ci.yml:12: boom" {
@@ -451,6 +473,23 @@ func TestLoadRefusesAMissingInvalidOrOtherSchemaPolicy(t *testing.T) {
 			_, err := Load(root)
 			if err == nil || !strings.Contains(err.Error(), c.wantSub) {
 				t.Errorf("Load = %v, want an error containing %q", err, c.wantSub)
+			}
+			// -write tells "absent" and "older schema" apart from an
+			// unreadable file by these, so they are part of the contract.
+			var schemaErr *SchemaError
+			switch c.name {
+			case "missing":
+				if !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("Load = %v, want it to wrap fs.ErrNotExist", err)
+				}
+			case "older schema":
+				if !errors.As(err, &schemaErr) || schemaErr.Got != 1 || schemaErr.Want != 2 {
+					t.Errorf("Load = %#v, want a *SchemaError{Got: 1, Want: 2}", err)
+				}
+			default:
+				if errors.Is(err, fs.ErrNotExist) || errors.As(err, &schemaErr) {
+					t.Errorf("Load = %v, an invalid file must be neither absent nor an older schema", err)
+				}
 			}
 		})
 	}

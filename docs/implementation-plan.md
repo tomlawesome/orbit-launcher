@@ -1,5 +1,18 @@
 # orbit-launcher implementation plan
 
+> **Historical record, noted 2026-10-05.** This was the original delivery
+> plan and is kept as written. Where it conflicts with the current docs,
+> they win. Superseded: the launcher binary and its bootstrap download
+> (1.1), the update check against GitHub Releases (1.3), the live test on
+> every push to `preview` (3.5), the branch and check set-up and Dependabot
+> (4.1), the preview and promote release pipeline (4.2), the Makefile,
+> `go-expect` and "wordmark in alive-green" lines, the Repair stub in
+> Wave 3, and the "immediate next steps" in section 7. The current
+> release process is in [releasing.md](releasing.md); GitLab and
+> `.gitlab-ci.yml` are the CI gate, and the live test runs when asked for
+> or when a change moves the pins it installs with. The module layout also omits `internal/engine` and `internal/notices`.
+
+
 ## Purpose
 
 orbit-launcher is a standalone, full-screen terminal application for
