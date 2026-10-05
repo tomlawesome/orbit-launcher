@@ -24,15 +24,21 @@ import (
 const defaultFloorsPath = ".github/coverage-floors.txt"
 
 func main() {
-	if len(os.Args) < 2 || len(os.Args) > 3 {
-		fmt.Fprintln(os.Stderr, "usage: coveragefloor <coverage.out> [floors-file]")
-		os.Exit(2)
+	os.Exit(cli(os.Args, os.Stdout, os.Stderr))
+}
+
+// cli is main bar os.Exit -- the argument check and the default floors
+// path -- so the usage error and the default are tested like the rest.
+func cli(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 || len(args) > 3 {
+		fmt.Fprintln(stderr, "usage: coveragefloor <coverage.out> [floors-file]")
+		return 2
 	}
 	floorsPath := defaultFloorsPath
-	if len(os.Args) == 3 {
-		floorsPath = os.Args[2]
+	if len(args) == 3 {
+		floorsPath = args[2]
 	}
-	os.Exit(run(os.Args[1], floorsPath, os.Stdout, os.Stderr))
+	return run(args[1], floorsPath, stdout, stderr)
 }
 
 // run is the whole command, with its inputs and outputs as parameters so

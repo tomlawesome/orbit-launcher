@@ -8,8 +8,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,16 +27,33 @@ const (
 )
 
 func main() {
-	check := flag.Bool("check", false, "fail if "+outPath+" is not what this would write")
-	flag.Parse()
-	if err := run(*check); err != nil {
-		fmt.Fprintln(os.Stderr, "licencenotices:", err)
-		os.Exit(1)
-	}
+	os.Exit(cli(os.Args, os.Stdout, os.Stderr, review.Shipped))
 }
 
-func run(check bool) error {
-	pkgs, err := review.Shipped()
+// cli is the whole command bar os.Exit, so its tests need no subprocess.
+// What ships is a parameter, review.Shipped from main, so a test can hand
+// it fixed packages rather than run go list over this module, whose
+// notices change with every dependency bump. Flags behave as the default
+// flag set's would: usage on stderr, exit 2 on a bad flag, 0 on -h.
+func cli(args []string, stdout, stderr io.Writer, shipped func() ([]review.Package, error)) int {
+	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	check := fs.Bool("check", false, "fail if "+outPath+" is not what this would write")
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if err := run(*check, stdout, shipped); err != nil {
+		fmt.Fprintln(stderr, "licencenotices:", err)
+		return 1
+	}
+	return 0
+}
+
+func run(check bool, stdout io.Writer, shipped func() ([]review.Package, error)) error {
+	pkgs, err := shipped()
 	if err != nil {
 		return err
 	}
@@ -77,6 +96,6 @@ func run(check bool) error {
 	if string(committed) != text {
 		return fmt.Errorf("%s is stale: a linked module, its version or a notice changed; regenerate it with `go run ./tools/licencenotices` and commit the result", outPath)
 	}
-	fmt.Printf("%s is current\n", outPath)
+	fmt.Fprintf(stdout, "%s is current\n", outPath)
 	return nil
 }
