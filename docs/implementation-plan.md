@@ -701,10 +701,11 @@ the live matrix claims to cover; the launcher checks its own version
 against the latest release and offers to update itself; the README carries
 a quickstart and the repository has its own releasing document.
 
-### v1.0.0 — release
+### v0.4.0 — release
 
 Not a capability and not a wave of work: it holds exactly one issue,
-promoting v1.0.0 to `main`, and requires Waves 6 to 11. No feature work
+promoting v0.4.0 to `main` (renamed from v1.0.0 on 2026-10-05: this
+promotion is not the stable release), and requires Waves 6 to 11. No feature work
 goes in it.
 
 **Promotion gate**: a person outside this session (ideally you) runs the
