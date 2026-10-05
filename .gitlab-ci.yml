@@ -525,7 +525,8 @@ live:
           fetch_orbit_file() {
             curl --fail --silent --show-error --location \
               --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-              --output "${3:-.live/install-script}/$2" "$(gitlab_orbit_url "$1")"
+              --output "${3:-.live/install-script}/$2" "$(gitlab_orbit_url "$1")" \
+              || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${ORBIT_BRANCH}"; exit 1; }
           }
           ;;
         github)
@@ -533,7 +534,8 @@ live:
           fetch_orbit_file() {
             curl --fail --silent --show-error --location \
               --output "${3:-.live/install-script}/$2" \
-              "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1"
+              "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1" \
+              || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${ORBIT_BRANCH}"; exit 1; }
           }
           ;;
         *)
