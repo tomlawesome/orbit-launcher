@@ -236,18 +236,113 @@ func TestRepairModel_CtrlCWhilePreparingCancelsAndQuitsOnceTheRunReportsBack(t *
 	}
 }
 
-func TestRepairModel_CtrlCWhileARepairIsStartingKillsTheRunThatStartedAnyway(t *testing.T) {
+// A diagnosis is read-only: one that started as Ctrl-C landed is
+// killed and the flow quits.
+func TestRepairModel_CtrlCWhileReadingKillsTheDiagnosisThatStartedAnyway(t *testing.T) {
+	m := sizedRepair(t)
+	s := sleepingStream(t)
+
+	m, cmd := repairUpdate(t, m, ctrlC())
+	if cmd != nil {
+		t.Fatal("Ctrl+C before the run existed quit before it reported back")
+	}
+	if _, cmd = repairUpdate(t, m, repairReadyMsg{stream: s}); !isQuit(cmd) {
+		t.Fatal("the flow did not quit once the diagnosis arrived")
+	}
+	if d := awaitEnd(t, s); d.ExitCode == 0 {
+		t.Fatalf("a diagnosis that started after Ctrl+C was left going (%+v)", d)
+	}
+}
+
+// Ctrl-C before a mutation exists cancels its fetch-and-start and quits
+// once the preparation reports back with nothing started.
+func TestRepairModel_CtrlCBeforeAMutationStartsCancelsAndQuits(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		state repairState
-		ready func(s *engine.Stream, stdin *recordingStdin) tea.Msg
+		// openInput hands the rotation an input pipe but no run.
+		openInput bool
+	}{
+		{"safe repairs", repairExecuting, false},
+		{"credential rotation", repairRotating, false},
+		{"credential rotation with its input open", repairRotating, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sizedRepair(t)
+			m.state = tc.state
+			var captured context.Context
+			var stdin io.WriteCloser
+			input := &recordingStdin{}
+			if tc.openInput {
+				stdin = input
+			}
+			m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+				captured = ctx
+				return nil, context.Canceled
+			}
+			m.prepareRotate = func(ctx context.Context, _ string) (*engine.Stream, io.WriteCloser, error) {
+				captured = ctx
+				return nil, stdin, context.Canceled
+			}
+			var ready tea.Msg
+			if tc.state == repairRotating {
+				ready = m.startRotate()()
+			} else {
+				ready = m.startRun(deploy.RepairExecuteSafe)()
+			}
+
+			m, cmd := repairUpdate(t, m, ctrlC())
+			if cmd != nil {
+				t.Fatal("Ctrl+C before the run existed quit before it reported back")
+			}
+			if !errors.Is(captured.Err(), context.Canceled) {
+				t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", captured.Err())
+			}
+			if _, cmd = repairUpdate(t, m, ready); !isQuit(cmd) {
+				t.Fatal("the flow did not quit once the cancelled preparation reported back")
+			}
+			if tc.openInput && !input.closed {
+				t.Fatal("the rotation's input was left open")
+			}
+		})
+	}
+}
+
+// assertKeptRunning runs the flow's next command, the pump on an adopted
+// run, and fails if it quits or the run says anything within 100 ms: a
+// kept run is never signalled. The pump is left waiting on the run,
+// which the test's cleanup kills.
+func assertKeptRunning(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("nothing is watching the run that started")
+	}
+	got := make(chan tea.Msg, 1)
+	go func() { got <- cmd() }()
+	select {
+	case msg := <-got:
+		t.Fatalf("the run that started as Ctrl+C landed was quit or interrupted: %#v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A mutation the engine started just as Ctrl-C landed is kept, not
+// killed: a signal milliseconds after start is exactly "stopping
+// halfway". The launcher stays on screen and watches it; a rotation's
+// input is closed at once so the engine backs out at its first prompt.
+func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		state  repairState
+		ready  func(s *engine.Stream, stdin *recordingStdin) tea.Msg
+		screen string
 	}{
 		{"safe repairs", repairExecuting, func(s *engine.Stream, _ *recordingStdin) tea.Msg {
 			return repairReadyMsg{stream: s}
-		}},
+		}, "can't be stopped from here"},
 		{"credential rotation", repairRotating, func(s *engine.Stream, stdin *recordingStdin) tea.Msg {
 			return repairRotateReadyMsg{stream: s, stdin: stdin}
-		}},
+		}, "stopping — waiting for the engine"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := sizedRepair(t)
@@ -258,16 +353,75 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKillsTheRunThatStartedAnyway(t *
 			if cmd != nil {
 				t.Fatal("Ctrl+C before the run existed quit before it reported back")
 			}
-			if _, cmd = repairUpdate(t, m, tc.ready(s, stdin)); !isQuit(cmd) {
-				t.Fatal("the flow did not quit once the run arrived")
+			if !errors.Is(m.ctx.Err(), context.Canceled) {
+				t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", m.ctx.Err())
 			}
-			if d := awaitEnd(t, s); d.ExitCode == 0 {
-				t.Fatalf("a run that started after Ctrl+C was left going (%+v)", d)
+
+			m, cmd = repairUpdate(t, m, tc.ready(s, stdin))
+			if m.stream != s {
+				t.Fatal("the flow did not take over the run that started")
+			}
+			if m.state != tc.state || m.Done {
+				t.Fatalf("the run's arrival changed the flow: state=%v Done=%v", m.state, m.Done)
 			}
 			if tc.state == repairRotating && !stdin.closed {
-				t.Fatal("the rotation's stdin was left open")
+				t.Fatal("the rotation's input was left open")
 			}
+			if sc := repairScreen(m); !strings.Contains(sc, tc.screen) {
+				t.Fatalf("screen lacks %q:\n%s", tc.screen, sc)
+			}
+			assertKeptRunning(t, cmd)
 		})
+	}
+}
+
+// The kept run gets a fresh context: a later "Diagnose again" must not
+// fetch on the one Ctrl-C cancelled.
+func TestRepairModel_DiagnoseAgainWorksAfterARunWasKeptPastCtrlC(t *testing.T) {
+	m := sizedRepair(t)
+	m.state = repairExecuting
+	m, _ = repairUpdate(t, m, ctrlC())
+	m, _ = repairUpdate(t, m, repairReadyMsg{stream: sleepingStream(t)})
+	m = repairLines(t, m, "execution result=complete done=1 failed=0", "diagnosis result=healthy checked=15 skipped=0")
+	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
+	if m.state != repairExecuted {
+		t.Fatalf("state = %v, want repairExecuted", m.state)
+	}
+
+	var captured context.Context
+	m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+		captured = ctx
+		return nil, errors.New("stop here")
+	}
+	_, cmd := repairUpdate(t, m, key(tea.KeyEnter)) // "Diagnose again" is first
+	if cmd == nil {
+		t.Fatal("Diagnose again started nothing")
+	}
+	cmd()
+	if err := captured.Err(); err != nil {
+		t.Fatalf("Diagnose again fetched on a cancelled context: %v", err)
+	}
+}
+
+// Every screen without a mutation in flight keeps Ctrl-C as
+// kill-and-quit.
+func TestRepairModel_CtrlCElsewhereKillsAnyRunAndQuits(t *testing.T) {
+	for _, state := range []repairState{repairDiagnosis, repairUnavailable, repairError, repairExecuted} {
+		m := sizedRepair(t)
+		m.state = state
+		if _, cmd := repairUpdate(t, m, ctrlC()); !isQuit(cmd) {
+			t.Fatalf("state %v: Ctrl+C did not quit", state)
+		}
+	}
+	m := sizedRepair(t)
+	m.state = repairDiagnosis
+	s := sleepingStream(t)
+	m.stream = s
+	if _, cmd := repairUpdate(t, m, ctrlC()); !isQuit(cmd) {
+		t.Fatal("Ctrl+C with a run did not quit")
+	}
+	if d := awaitEnd(t, s); d.ExitCode == 0 {
+		t.Fatalf("Ctrl+C left the run going (%+v)", d)
 	}
 }
 
