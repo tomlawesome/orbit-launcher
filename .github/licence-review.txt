@@ -44,8 +44,12 @@ github.com/rivo/uniseg@v0.4.7 ./ generated Unicode-3.0
 # Character Database (EastAsianWidth.txt, emoji-data.txt and the
 # segmentation property files; uniseg's headers point at
 # https://www.unicode.org/license.html). Unicode-3.0 is permissive but
-# not on go-licenses' allowed list, and asks for its notice to ship with
-# copies of the data.
+# permissive, and asks for its notice to ship with copies of the data or
+# their documentation; that notice ships through #182. uniseg's UCD 15.0.0
+# files predate v3 and were released under Unicode-DFS-2016, the same
+# terms in an older form. Owner, 2026-10-05: accepted, on the top
+# model's opinion (permissive, compatible with AGPL-3.0 and with a
+# commercial licence, notice-only condition).
 
 golang.org/x/sys@v0.48.0 unix/dev_linux.go notice BSD-3-Clause+glibc-sysmacros-formula
 # Mkdev/Major/Minor "extracted and adapted from bits/sysmacros.h in the
