@@ -713,6 +713,41 @@ func inode(t *testing.T, path string) uint64 {
 	return info.Sys().(*syscall.Stat_t).Ino
 }
 
+// A secret that cannot be carried over stops the adoption before any
+// live file is touched: the working configuration stays exactly as it
+// was, and no half-written temp is left beside it.
+func TestAdoptConfig_SecretFailureLeavesTheLiveConfigUntouched(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block reads")
+	}
+	targetDir := t.TempDir()
+	writeTestFile(t, filepath.Join(targetDir, ".env-orbit"), "APP_URL=https://kept.example\nOIDC_CLIENT_ID=old\n", 0o600)
+	writeTestFile(t, filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret"), "old-secret\n", 0o600)
+
+	treeDir := t.TempDir()
+	writeTestFile(t, filepath.Join(treeDir, ".env-orbit"), "APP_URL=https://kept.example\nOIDC_CLIENT_ID=new\n", 0o600)
+	writeTestFile(t, filepath.Join(treeDir, ".orbit-secrets", "oidc-client-secret"), "new-secret\n", 0o600)
+	// Sorts after the real secret, so a copy-as-you-go adoption has
+	// already overwritten .env-orbit and the first secret by the time it
+	// fails here.
+	writeTestFile(t, filepath.Join(treeDir, ".orbit-secrets", "zz-unreadable"), "x\n", 0o000)
+
+	err := AdoptConfig(treeDir, targetDir)
+	if err == nil {
+		t.Fatal("expected an error for a secret that cannot be read")
+	}
+	if env, _ := os.ReadFile(filepath.Join(targetDir, ".env-orbit")); !strings.Contains(string(env), "OIDC_CLIENT_ID=old") {
+		t.Errorf(".env-orbit was changed by a failed adoption: %q", env)
+	}
+	if secret, _ := os.ReadFile(filepath.Join(targetDir, ".orbit-secrets", "oidc-client-secret")); string(secret) != "old-secret\n" {
+		t.Errorf("secret was changed by a failed adoption: %q", secret)
+	}
+	if !strings.Contains(err.Error(), "existing configuration is unchanged") {
+		t.Errorf("error does not say the existing configuration is unchanged: %v", err)
+	}
+	assertNoTemps(t, targetDir)
+}
+
 // Live files are replaced by renaming a complete new file over them, so
 // at every instant each one is either the whole old file or the whole
 // new one — never truncated in place.

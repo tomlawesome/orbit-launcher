@@ -184,20 +184,184 @@ func ImportTargetConfig(treeDir, targetDir string) error {
 
 // AdoptConfig moves the collected configuration into the target:
 // .env-orbit (0600) and .orbit-secrets (0700, entries 0600), creating
-// the target directory if this is a fresh install.
+// the target directory if this is a fresh install. Every file is first
+// staged beside its destination and only renamed in once all of them
+// are written, so a failure while saving (disk full, permissions)
+// leaves the existing configuration untouched. Target secrets the
+// session didn't produce are left in place.
 func AdoptConfig(treeDir, targetDir string) error {
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("prepare target: %w", err)
 	}
-	src := filepath.Join(treeDir, ".env-orbit")
-	if _, err := os.Stat(src); err != nil {
+	envSrc := filepath.Join(treeDir, ".env-orbit")
+	if _, err := os.Stat(envSrc); err != nil {
 		return fmt.Errorf("configuration session left no .env-orbit: %w", err)
 	}
 	removeStaleTemps(targetDir)
-	if err := copyConfigFile(src, filepath.Join(targetDir, ".env-orbit")); err != nil {
+
+	plan, err := planAdoption(treeDir, targetDir)
+	if err != nil {
 		return err
 	}
-	return copySecretsDir(filepath.Join(treeDir, ".orbit-secrets"), filepath.Join(targetDir, ".orbit-secrets"))
+
+	staged, err := stageAdoption(plan)
+	if err != nil {
+		return fmt.Errorf("saving the new configuration failed — the existing configuration is unchanged: %w", err)
+	}
+
+	// .env-orbit goes last: install.sh's readiness check reads it, so its
+	// new values are the signal that the set is complete.
+	for i, s := range staged {
+		if err := os.Rename(s.tmp, s.final); err != nil {
+			for _, rest := range staged[i:] {
+				os.Remove(rest.tmp)
+			}
+			return fmt.Errorf("switching to the new configuration failed partway — check .env-orbit and .orbit-secrets in %s: %w", targetDir, err)
+		}
+	}
+	return nil
+}
+
+// adoptionPlan is what an adoption will write, worked out and checked
+// before anything in the target is touched.
+type adoptionPlan struct {
+	// secretsDir is the target's .orbit-secrets, or "" when the session
+	// produced no secrets directory (nothing is done to the target's).
+	secretsDir string
+	// secretsDirExisted records whether secretsDir was already there, so
+	// a failed staging can take back one it created.
+	secretsDirExisted bool
+	// copies are the files to carry, secrets first and .env-orbit last.
+	copies []fileCopy
+}
+
+type fileCopy struct{ src, dst string }
+
+// planAdoption lists the files to carry and refuses, before anything is
+// written, any destination that isn't free or a regular file to replace.
+func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
+	var plan adoptionPlan
+	envSrc := filepath.Join(treeDir, ".env-orbit")
+	if err := requireRegularSource(envSrc); err != nil {
+		return plan, err
+	}
+	envDst := filepath.Join(targetDir, ".env-orbit")
+	if err := requireReplaceable(envDst); err != nil {
+		return plan, err
+	}
+
+	secretsSrc := filepath.Join(treeDir, ".orbit-secrets")
+	info, err := os.Lstat(secretsSrc)
+	switch {
+	case os.IsNotExist(err):
+		plan.copies = append(plan.copies, fileCopy{envSrc, envDst})
+		return plan, nil
+	case err != nil:
+		return plan, err
+	case !info.IsDir():
+		return plan, fmt.Errorf("%s is not a directory", secretsSrc)
+	}
+
+	plan.secretsDir = filepath.Join(targetDir, ".orbit-secrets")
+	info, err = os.Lstat(plan.secretsDir)
+	switch {
+	case os.IsNotExist(err):
+	case err != nil:
+		return plan, err
+	case !info.IsDir():
+		return plan, fmt.Errorf("%s is not a directory", plan.secretsDir)
+	default:
+		plan.secretsDirExisted = true
+	}
+
+	entries, err := os.ReadDir(secretsSrc)
+	if err != nil {
+		return plan, err
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		dst := filepath.Join(plan.secretsDir, entry.Name())
+		if plan.secretsDirExisted {
+			if err := requireReplaceable(dst); err != nil {
+				return plan, err
+			}
+		}
+		plan.copies = append(plan.copies, fileCopy{filepath.Join(secretsSrc, entry.Name()), dst})
+	}
+	plan.copies = append(plan.copies, fileCopy{envSrc, envDst})
+	return plan, nil
+}
+
+// requireRegularSource refuses a source that isn't a regular file, so a
+// symlink is never followed out of the tree.
+func requireRegularSource(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	return nil
+}
+
+// requireReplaceable accepts a destination that doesn't exist yet or is
+// a regular file; anything else is refused, never replaced.
+func requireReplaceable(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	return nil
+}
+
+type stagedFile struct{ tmp, final string }
+
+// stageAdoption writes every planned file to a temp beside its
+// destination. These writes are the only steps that can run out of
+// space or hit a permission error, and none of them touches a live
+// file; on failure every temp written so far is removed.
+func stageAdoption(plan adoptionPlan) (staged []stagedFile, err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, s := range staged {
+			os.Remove(s.tmp)
+		}
+		staged = nil
+		if plan.secretsDir != "" && !plan.secretsDirExisted {
+			os.Remove(plan.secretsDir)
+		}
+	}()
+	if plan.secretsDir != "" {
+		if err := os.MkdirAll(plan.secretsDir, 0o700); err != nil {
+			return staged, err
+		}
+		if err := os.Chmod(plan.secretsDir, 0o700); err != nil {
+			return staged, err
+		}
+	}
+	for _, c := range plan.copies {
+		body, err := os.ReadFile(c.src)
+		if err != nil {
+			return staged, err
+		}
+		tmp, err := stageFile(c.dst, body)
+		if err != nil {
+			return staged, err
+		}
+		staged = append(staged, stagedFile{tmp: tmp, final: c.dst})
+	}
+	return staged, nil
 }
 
 func copyConfigFile(src, dst string) error {
