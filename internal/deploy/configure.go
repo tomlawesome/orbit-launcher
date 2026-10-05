@@ -65,7 +65,7 @@ func OpenConfigTree(treeDir string) (endSession func(), err error) {
 	}
 	// Run configure.sh only from a path nobody else could have put it
 	// in (#191).
-	if err := RequireTrustedPath(treeDir, configureScript); err != nil {
+	if err := requireTrustedScripts(treeDir, "configure.sh"); err != nil {
 		return nil, err
 	}
 	return func() {
@@ -79,6 +79,15 @@ func OpenConfigTree(treeDir string) (endSession func(), err error) {
 // isn't being asked about. A target with no configuration (fresh
 // install) imports nothing.
 func ImportTargetConfig(treeDir, targetDir string) error {
+	// Nothing is read or tidied in a directory the launcher does not
+	// trust (#191). A target that doesn't exist yet has nothing to
+	// import.
+	if _, err := os.Lstat(targetDir); os.IsNotExist(err) {
+		return nil
+	}
+	if err := requireTrustedConfigDirs(targetDir); err != nil {
+		return err
+	}
 	// A crashed adoption's temp is not a secret; importing it would
 	// adopt it back under that name.
 	removeStaleTemps(targetDir)
@@ -109,6 +118,11 @@ func AdoptConfig(treeDir, targetDir string) error {
 	envSrc := filepath.Join(treeDir, ".env-orbit")
 	if _, err := os.Stat(envSrc); err != nil {
 		return fmt.Errorf("configuration session left no .env-orbit: %w", err)
+	}
+	// Nothing is written or tidied in a directory the launcher does not
+	// trust (#191).
+	if err := requireTrustedConfigDirs(targetDir); err != nil {
+		return err
 	}
 	removeStaleTemps(targetDir)
 

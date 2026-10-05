@@ -74,6 +74,28 @@ func TestRequireTrustedPath(t *testing.T) {
 			reason: "symbolic link",
 		},
 		{
+			name: "symlinked dir with a trailing slash",
+			prepare: func(t *testing.T) string {
+				link := filepath.Join(t.TempDir(), "deployment")
+				if err := os.Symlink(trustedDeployment(t), link); err != nil {
+					t.Fatal(err)
+				}
+				return link + "/"
+			},
+			reason: "symbolic link",
+		},
+		{
+			name: "symlinked dir with a trailing /.",
+			prepare: func(t *testing.T) string {
+				link := filepath.Join(t.TempDir(), "deployment")
+				if err := os.Symlink(trustedDeployment(t), link); err != nil {
+					t.Fatal(err)
+				}
+				return link + "/."
+			},
+			reason: "symbolic link",
+		},
+		{
 			name: "symlinked script",
 			prepare: func(t *testing.T) string {
 				dir := trustedDeployment(t)
@@ -179,7 +201,7 @@ func TestRequireTrustedPath(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.reason) {
 				t.Errorf("err = %q, want the reason %q", err, tc.reason)
 			}
-			if !strings.HasPrefix(untrusted.Path, dir) {
+			if !strings.HasPrefix(untrusted.Path, filepath.Clean(dir)) {
 				t.Errorf("error names %q, want a path under %q", untrusted.Path, dir)
 			}
 			if !strings.Contains(err.Error(), untrusted.Path) {
@@ -298,4 +320,138 @@ func TestImportTargetConfig_RefusesUntrustedConfiguration(t *testing.T) {
 			t.Fatalf("err = %v, want a refusal", err)
 		}
 	})
+}
+
+// The owner branch without root: a system directory root owns is not
+// the launcher user's deployment.
+func TestRequireTrustedPath_RootOwnedPathRefusedForAnotherUser(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: root may use any consistently owned path")
+	}
+	err := RequireTrustedPath("/usr", "bin/env")
+	var untrusted *UntrustedPathError
+	if !errors.As(err, &untrusted) || !strings.Contains(err.Error(), "not by the user running the launcher") {
+		t.Fatalf("err = %v, want the owner refusal", err)
+	}
+}
+
+// symlinkSibling replaces dir/scripts/name with a symlink to a script
+// elsewhere.
+func symlinkSibling(t *testing.T, dir, name string) {
+	t.Helper()
+	elsewhere := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(elsewhere, []byte("#!/bin/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(dir, "scripts", name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// repair.sh and configure.sh source their siblings in scripts/, so a
+// trusted script next to an untrusted sibling is still refused.
+func TestRepairCommand_RefusesAnUntrustedSibling(t *testing.T) {
+	for _, sibling := range []string{"configure.sh", "configuration.sh", "installer-ui.sh", "engine-check.sh"} {
+		t.Run(sibling, func(t *testing.T) {
+			dir := trustedDeployment(t)
+			symlinkSibling(t, dir, sibling)
+			_, err := RepairCommand(dir, RepairPlan)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) || filepath.Base(untrusted.Path) != sibling {
+				t.Fatalf("err = %v, want a refusal naming %s", err, sibling)
+			}
+		})
+	}
+}
+
+func TestOpenConfigTree_RefusesAnUntrustedSibling(t *testing.T) {
+	tree := handedOverTree(t)
+	if err := os.Remove(filepath.Join(tree, "scripts", "configuration.sh")); err != nil {
+		t.Fatal(err)
+	}
+	symlinkSibling(t, tree, "configuration.sh")
+	_, err := OpenConfigTree(tree)
+	var untrusted *UntrustedPathError
+	if !errors.As(err, &untrusted) || filepath.Base(untrusted.Path) != "configuration.sh" {
+		t.Fatalf("err = %v, want a refusal naming configuration.sh", err)
+	}
+}
+
+// Absent siblings are fine: not every Orbit line ships all of them.
+func TestRepairCommand_AbsentSiblingsAreFine(t *testing.T) {
+	if _, err := RepairCommand(trustedDeployment(t), RepairPlan); err != nil {
+		t.Fatalf("RepairCommand: %v", err)
+	}
+}
+
+// removeStaleTemps globs inside .orbit-secrets; through a symlink it
+// would delete files somewhere else entirely.
+func TestImportTargetConfig_DeletesNothingThroughASymlinkedSecretsDir(t *testing.T) {
+	for name, run := range map[string]func(tree, target string) error{
+		"import": func(tree, target string) error { return ImportTargetConfig(tree, target) },
+		"adopt":  func(tree, target string) error { return AdoptConfig(tree, target) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			elsewhere := t.TempDir()
+			bystander := filepath.Join(elsewhere, "keep.tmp-123")
+			if err := os.WriteFile(bystander, []byte("keep\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			target := t.TempDir()
+			if err := os.Symlink(elsewhere, filepath.Join(target, ".orbit-secrets")); err != nil {
+				t.Fatal(err)
+			}
+			tree := t.TempDir()
+			if err := os.WriteFile(filepath.Join(tree, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := run(tree, target)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			if _, err := os.Stat(bystander); err != nil {
+				t.Fatalf("a file outside the target was deleted: %v", err)
+			}
+		})
+	}
+}
+
+func TestAdoptConfig_RefusesASymlinkedTargetWithNoConfiguration(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "target")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	tree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tree, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := AdoptConfig(tree, link)
+	var untrusted *UntrustedPathError
+	if !errors.As(err, &untrusted) {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if entries, _ := os.ReadDir(real); len(entries) != 0 {
+		t.Errorf("configuration was written through the symlink: %v", entries)
+	}
+}
+
+func TestImportTargetConfig_RefusesAWorldWritableTargetWithNoConfiguration(t *testing.T) {
+	target := t.TempDir()
+	chmod(t, target, 0o777)
+	err := ImportTargetConfig(t.TempDir(), target)
+	var untrusted *UntrustedPathError
+	if !errors.As(err, &untrusted) {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+}
+
+// The failure screens cut a line at the terminal width, so the reason
+// comes before the (long) path.
+func TestUntrustedPathError_ReasonBeforePath(t *testing.T) {
+	err := &UntrustedPathError{Path: "/a/very/long/deployment/scripts/repair.sh", Reason: "it is writable by everyone"}
+	if got, want := err.Error(), "refusing: it is writable by everyone — /a/very/long/deployment/scripts/repair.sh"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
 }
