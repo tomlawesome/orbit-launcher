@@ -164,6 +164,22 @@ func TestDetect_InaccessibleTargetIsAnErrorNotAbsence(t *testing.T) {
 	}
 }
 
+// The root-proof counterpart of the test above, which skips in CI: a
+// target path that is a file is an error, not "no deployment here".
+func TestDetect_TargetThatIsAFileIsAnErrorNotAbsence(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "orbit")
+	if err := os.WriteFile(target, []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := Detect(target)
+	if err == nil {
+		t.Fatal("expected an error for a target that is a file")
+	}
+	if d != nil {
+		t.Errorf("Detect = %+v, want nil alongside the error", d)
+	}
+}
+
 func TestDetect_UnreadableEnvFileIsAnError(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=x\n"), 0o000); err != nil {

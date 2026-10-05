@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1061,5 +1062,154 @@ func TestRepairModel_RefusedSafeRunSaysWhy(t *testing.T) {
 	}
 	if strings.Contains(s, "nothing was rotated") {
 		t.Fatalf("a safe run that never offered a rotation must not report one refused:\n%s", s)
+	}
+}
+
+// A RepairModel built without NewRepairModel has no context of its own;
+// its preparation falls back to one that is never cancelled, so the
+// diagnosis still runs instead of failing on a missing context.
+func TestRepairModel_BuiltWithoutTheConstructorStillRunsTheDiagnosis(t *testing.T) {
+	repairScriptServer(t, "#!/usr/bin/env bash\necho \"diagnosis result=healthy checked=0 skipped=0\"\nexit 0\n")
+	m := RepairModel{targetDir: t.TempDir(), mode: deploy.RepairPlan} // no constructor, no seam
+	ready, ok := m.Init()().(repairReadyMsg)
+	if !ok || ready.err != nil {
+		t.Fatalf("a model built without the constructor could not start its diagnosis: %#v", ready)
+	}
+	if done := awaitEnd(t, ready.stream); done.ExitCode != 0 {
+		t.Fatalf("the diagnosis did not run to the end: %+v", done)
+	}
+}
+
+// stageThroughAFIFO makes dir/scripts/repair.sh a FIFO, so the real
+// preparation's staging write blocks until this test reads it. The
+// reader cancels before draining, and the script is far larger than a
+// pipe holds, so the cancel lands after the fetch has finished and
+// before the staging write can return — the window a late Ctrl-C hits.
+// The returned wait releases a reader still blocked (the preparation
+// failed before staging) and waits for it.
+func stageThroughAFIFO(t *testing.T, dir string, cancel context.CancelFunc) (wait func()) {
+	t.Helper()
+	scripts := filepath.Join(dir, "scripts")
+	if err := os.MkdirAll(scripts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(scripts, "repair.sh")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		f, err := os.Open(fifo) // blocks until the staging opens it to write
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		cancel()
+		_, _ = io.Copy(io.Discard, f)
+	}()
+	return func() {
+		if f, err := os.OpenFile(fifo, os.O_RDWR|syscall.O_NONBLOCK, 0); err == nil {
+			f.Close()
+		}
+		<-drained
+	}
+}
+
+// bigRepairScript is a repair.sh larger than a pipe's buffer, so writing
+// it through a FIFO cannot complete until the reader drains it.
+func bigRepairScript() string {
+	return "#!/usr/bin/env bash\n# " + strings.Repeat("x", 256<<10) + "\nsleep 60\n"
+}
+
+// A Ctrl-C that lands after repair.sh was fetched, while it is being
+// staged, still stops the run: nothing is started.
+func TestDefaultPrepareRepair_CancelAfterTheFetchStartsNothing(t *testing.T) {
+	repairScriptServer(t, bigRepairScript())
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wait := stageThroughAFIFO(t, dir, cancel)
+
+	stream, err := defaultPrepareRepair(ctx, dir, deploy.RepairPlan)
+	wait()
+	if stream != nil {
+		t.Cleanup(stream.Kill)
+		t.Fatal("a cancel that landed after the fetch still started the repair")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// The same late Ctrl-C stops a credential rotation before it starts.
+func TestDefaultPrepareRotate_CancelAfterTheFetchStartsNothing(t *testing.T) {
+	repairScriptServer(t, bigRepairScript())
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wait := stageThroughAFIFO(t, dir, cancel)
+
+	stream, stdin, err := defaultPrepareRotate(ctx, dir)
+	wait()
+	if stream != nil {
+		t.Cleanup(stream.Kill)
+		if stdin != nil {
+			stdin.Close()
+		}
+		t.Fatal("a cancel that landed after the fetch still started the rotation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// A refusal for a reason the launcher has no words for still says
+// nothing was changed and names the reason as given; with no reason it
+// says only that the engine refused. Neither claims a too-old release or
+// a rotation nobody asked for.
+func TestRepairModel_RefusedRunForAnotherReasonNamesIt(t *testing.T) {
+	cases := []struct {
+		name, line, want string
+	}{
+		{"named reason", "execution result=refused done=0 failed=0 reason=lock-held", "nothing was changed — the engine refused to run (lock-held)"},
+		{"no reason", "execution result=refused done=0 failed=0", "nothing was changed — the engine refused to run"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sizedRepair(t)
+			m.state = repairExecuting
+			m = repairLines(t, m, tc.line)
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 6, Err: errors.New("exit status 6")})
+			s := repairScreen(m)
+			for _, want := range []string{"Repair refused", tc.want} {
+				if !strings.Contains(s, want) {
+					t.Errorf("refused run lacks %q:\n%s", want, s)
+				}
+			}
+			if tc.name == "no reason" && strings.Contains(s, "refused to run (") {
+				t.Errorf("a refusal with no reason shows an empty or invented one:\n%s", s)
+			}
+			for _, wrong := range []string{"too old to repair here", "nothing was rotated"} {
+				if strings.Contains(s, wrong) {
+					t.Errorf("refused run claims %q:\n%s", wrong, s)
+				}
+			}
+		})
+	}
+}
+
+// A plan with nothing runnable and no summary line says nothing has run,
+// and does not point at a menu that offers no repair.
+func TestRepairModel_UnsummarisedManualOnlyPlanDoesNotPointAtTheMenu(t *testing.T) {
+	m := sizedRepair(t)
+	m = repairLines(t, m, "plan action=manual resolves=volume-retained-without-credentials mutation=none backup=not-required")
+	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
+	s := repairScreen(m)
+	if !strings.Contains(s, "nothing has run yet") {
+		t.Fatalf("plan summary should read \"nothing has run yet\":\n%s", s)
+	}
+	if strings.Contains(s, "pick a repair below") || strings.Contains(s, "execution arrives") {
+		t.Fatalf("the plan points at a repair the menu does not offer:\n%s", s)
 	}
 }
