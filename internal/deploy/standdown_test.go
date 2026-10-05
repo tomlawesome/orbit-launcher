@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +56,19 @@ func TestStandDownCommand_EndsWithDown(t *testing.T) {
 	cmd := standDownCommand(context.Background(), "/opt/orbit")
 	if len(cmd.Args) == 0 || cmd.Args[len(cmd.Args)-1] != "down" {
 		t.Errorf("expected the command to end with \"down\", got %v", cmd.Args)
+	}
+}
+
+// When docker compose down fails, the error carries docker's own output,
+// so the person sees why their containers are still running.
+func TestStandDown_FailureCarriesDockersOutput(t *testing.T) {
+	fakeDockerPrinting(t, "no such service: orbit\n", 1)
+
+	err := StandDown(t.Context(), t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error when docker compose down fails")
+	}
+	if !strings.Contains(err.Error(), "no such service: orbit") {
+		t.Errorf("error should carry docker's output, got: %v", err)
 	}
 }

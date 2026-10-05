@@ -48,3 +48,9 @@ func TestProbeHealth_RespectsContextTimeout(t *testing.T) {
 		t.Error("probe did not respect the context deadline")
 	}
 }
+
+func TestProbeHealth_MalformedURLReadsAsDegraded(t *testing.T) {
+	if ProbeHealth(context.Background(), "http://bad\x7fhost/") {
+		t.Error("an unusable APP_URL should read as degraded, not alive")
+	}
+}
