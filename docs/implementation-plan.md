@@ -142,7 +142,7 @@ much this project's value is in *looking* right, not just working right.
 | Static | `go vet`, `staticcheck`, `golangci-lint`, `gofmt -l` | catch invalid patterns, unsafe code, style defects | first, parallel |
 | Unit | Go `testing` (`go test ./...`) | pure logic: starfield math, profile validation, compose-file selection, version parsing, state-machine transitions | first |
 | Component/message-flow | `charmbracelet/x/exp/teatest` | drive a `tea.Model` with synthetic key messages, assert rendered frames, without a real PTY | first, alongside unit |
-| Black-box PTY (Go's equivalent of `pexpect`) | `github.com/charmbracelet/x/vttest` (go-expect + creack/pty until #181) | spawn the **real compiled binary** under a real pty inside a virtual terminal, send real keystrokes, assert on the rendered screen | before merge to `dev` |
+| Black-box PTY (Go's equivalent of `pexpect`) | `creack/pty` + Charm's `x/vt` terminal emulator, via `test/internal/vtscreen` (go-expect until #181) | spawn the **real compiled binary** under a real pty inside a virtual terminal, send real keystrokes, assert on the rendered screen | before merge to `dev` |
 | Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `dev`, gated to changes touching `internal/ui` or `internal/ui/style` |
 | Compose/deploy integration | Go `testing` + a disposable Docker context | prove profile selection produces a valid, `docker compose config`-verified compose file; prove stand-down actually stops what install started | before preview publication |
 | Real virtualized live install | `ubuntu-latest` GitHub Actions job, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end | preview push (authoritative), release acceptance |
@@ -166,7 +166,8 @@ volume.
 
 ### 3.3 Black-box PTY tests — Go's equivalent of pexpect
 
-Charm's `vttest` (go-expect + creack/pty until #181) gives the same
+`creack/pty` with Charm's `x/vt` terminal emulator (go-expect until
+#181; `test/internal/vtscreen`) gives the same
 capability pexpect is known for — spawn a real process under a real pty,
 wait for output, send real keystrokes — reading the screen a virtual
 terminal renders rather than the raw byte stream — against the **actual

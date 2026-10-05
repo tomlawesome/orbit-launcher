@@ -98,7 +98,7 @@ const noticeWait = 72 * time.Second
 // passNotice gets past the development notice the way a person does:
 // End shows the whole notice, the countdown runs out, the phrase is
 // typed and Enter accepts it. Nothing here has to keep reading the pty
-// while the countdown redraws: vttest's emulator drains the program's
+// while the countdown redraws: vtscreen's emulator drains the program's
 // output into the virtual screen on its own goroutine, so the binary
 // can never block on its own output while this waits.
 func passNotice(t *testing.T, console *vtConsole) {

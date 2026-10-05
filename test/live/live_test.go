@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -28,8 +29,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/charmbracelet/x/vttest"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
@@ -73,12 +72,12 @@ func binaryPath(t *testing.T) string {
 // file runs the same hang diagnosis on timeout (issue #100) instead of
 // each subtest re-declaring its own bare must/send closures.
 //
-// The pty sits inside Charm's vttest virtual terminal (#181), and every
+// The pty is drawn by Charm's x/vt terminal emulator (#181), and every
 // expectation reads the screen it renders rather than the raw byte
 // stream go-expect matched before.
 type liveSession struct {
 	t    *testing.T
-	term *vttest.Terminal
+	term *vtscreen.Terminal
 	cmd  *exec.Cmd
 	// budget is the wall-clock ceiling used by expectWithin. It exists
 	// as a field (rather than expectWithin reading the expectBudget
@@ -150,7 +149,7 @@ func (s *liveSession) expectWithinErr(what string, match vtscreen.Match) (string
 // caller: s.budget for waits on the engine, s.screenBudget for the
 // launcher's own screens (#166).
 //
-// The wait looks at the screen and never reads the pty itself — vttest's
+// The wait looks at the screen and never reads the pty itself — vtscreen's
 // emulator does that on its own goroutine — so diagnose can run while
 // the wait is still parked. go-expect's reader could not share the pty
 // that way: two readers on its bufio.Reader panicked ("slice bounds out
@@ -214,7 +213,7 @@ const noticeWait = 72 * time.Second
 // shows the whole notice, the countdown runs out, the phrase is typed and
 // Enter accepts it. The wait does not have to keep reading the pty to
 // stop the binary blocking on its own output while the countdown redraws
-// every second: vttest's emulator drains the pty into the virtual screen
+// every second: vtscreen's emulator drains the pty into the virtual screen
 // on its own goroutine for as long as the session lives.
 func (s *liveSession) passNotice() {
 	s.t.Helper()
@@ -497,23 +496,35 @@ func indent(block string) string {
 // /dev/tty directly) actually requires. A pty on the standard streams
 // alone does not establish this; Setsid+Setctty below do — discovered
 // the hard way verifying this test manually before writing it (see
-// orbit-launcher issue #51/#52). vttest's Start keeps both, and points
+// orbit-launcher issue #51/#52). vtscreen's Start keeps both, and points
 // whichever standard streams are still unset at the pty.
 func startLive(t *testing.T, binPath, dir string) *liveSession {
 	t.Helper()
 
-	term, err := vttest.NewTerminal(t, 120, 40)
+	// Suffixed per (sub)test — Install and Remove each call startLive
+	// once, and os.Create truncates, so a single shared path would
+	// silently let Remove's log erase Install's, exactly the run that
+	// matters most when Install is the one hanging or failing.
+	logPath := ""
+	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
+		logPath = rawLogPath + "." + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	}
+	var raw io.Writer
+	if logPath != "" {
+		rawLog, err := os.Create(logPath)
+		if err != nil {
+			t.Fatalf("create raw log: %v", err)
+		}
+		t.Cleanup(func() { _ = rawLog.Close() })
+		raw = rawLog
+	}
+	term, err := vtscreen.New(120, 40, raw)
 	if err != nil {
 		t.Fatalf("create virtual terminal: %v", err)
 	}
 	t.Cleanup(func() { _ = term.Close() })
-	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
-		// Suffixed per (sub)test — Install and Remove each call startLive
-		// once, and os.Create truncates, so a single shared path would
-		// silently let Remove's log erase Install's, exactly the run
-		// that matters most when Install is the one hanging or failing.
-		suffix := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-		recordScreens(t, term, rawLogPath+"."+suffix)
+	if logPath != "" {
+		recordScreens(t, term, logPath+".screens")
 	}
 
 	cmd := exec.Command(binPath)
@@ -529,16 +540,15 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 	// The name extends the raw log's, so CI's existing
 	// `.orbit-launcher-live-raw.log*` artifact glob keeps it too.
 	stderrPath := filepath.Join(t.TempDir(), "launcher-stderr.log")
-	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
-		suffix := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-		stderrPath = rawLogPath + "." + suffix + ".stderr"
+	if logPath != "" {
+		stderrPath = logPath + ".stderr"
 	}
 	stderrFile, err := os.Create(stderrPath)
 	if err != nil {
 		t.Fatalf("create launcher stderr log: %v", err)
 	}
 	t.Cleanup(func() { stderrFile.Close() })
-	cmd.Stderr = stderrFile // stdin and stdout are left to vttest: the pty
+	cmd.Stderr = stderrFile // stdin and stdout are left to vtscreen: the pty
 	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
 	// goroutine, not just the one that took the signal.
 	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all",
@@ -611,16 +621,14 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 // screenLogInterval is how often recordScreens looks for a new screen.
 const screenLogInterval = 500 * time.Millisecond
 
-// recordScreens keeps the ORBIT_LAUNCHER_LIVE_RAW_LOG artefact CI
-// uploads (live-raw.log.*). It used to be the raw byte stream, copied
-// out of go-expect as it read the pty. vttest does not expose that
-// stream — its emulator reads the pty directly — so the file now holds
-// screens instead: every screen that differs from the last one written,
+// recordScreens writes the screen log that sits beside the raw byte
+// stream in the ORBIT_LAUNCHER_LIVE_RAW_LOG artefact CI uploads
+// (live-raw.log.*): every screen that differs from the last one written,
 // looked for every screenLogInterval for the whole session, each headed
 // by its time since the session started, and the screen the launcher was
 // left on when the test ends. A brief screen between two looks is not
 // in it.
-func recordScreens(t *testing.T, term *vttest.Terminal, path string) {
+func recordScreens(t *testing.T, term *vtscreen.Terminal, path string) {
 	t.Helper()
 	log, err := os.Create(path)
 	if err != nil {
@@ -1218,14 +1226,14 @@ func TestDiagnose_FindsASessionDetachedDescendant(t *testing.T) {
 // scrolling and moving its cursor for the whole budget, which is when a
 // screen read and the emulator contend. Under go-expect the same loop
 // kept a reader parked in bufio.Reader.ReadRune and made a second reader
-// in diagnose panic ("slice bounds out of range"). Under vttest, reading
-// through Terminal.Snapshot deadlocked against the emulator's own
+// in diagnose panic ("slice bounds out of range"). Under Charm's vttest,
+// reading through Terminal.Snapshot deadlocked against the emulator's own
 // callbacks, and reading cell by cell starved behind the emulator's
 // writes (vtscreen.Screen says how). Each fails this test: the panic as
 // a panic, the deadlock as a wait that never returns, the starvation as
 // a last screen with no "tick" on it, which is how this test caught it.
 func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
-	term, err := vttest.NewTerminal(t, 80, 24)
+	term, err := vtscreen.New(80, 24, nil)
 	if err != nil {
 		t.Fatalf("create virtual terminal: %v", err)
 	}

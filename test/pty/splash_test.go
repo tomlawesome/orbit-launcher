@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/x/vttest"
-
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
@@ -37,12 +35,12 @@ func buildBinary(t *testing.T) string {
 	return binPath
 }
 
-// vtConsole is one orbit-launcher process on a virtual terminal: Charm's
-// vttest runs it on a real pty and keeps the rendered screen, and every
+// vtConsole is one orbit-launcher process on a virtual terminal: it runs
+// on a real pty, Charm's x/vt emulator keeps the rendered screen, and every
 // expectation here is about that screen (#181). It replaces go-expect's
 // Console, which matched the raw byte stream instead.
 type vtConsole struct {
-	term *vttest.Terminal
+	term *vtscreen.Terminal
 	// timeout is the wall-clock ceiling for one expectation. go-expect's
 	// own timeout measured idleness between reads, which a repainting
 	// screen never reaches; this is a real deadline.
@@ -50,12 +48,12 @@ type vtConsole struct {
 }
 
 // newConsole opens a cols x rows virtual terminal and closes it when the
-// test ends. vttest sizes the pty itself, so the program's first
+// test ends. vtscreen sizes the pty before the program starts, so its first
 // WindowSizeMsg reports a real size and bubbletea renders (see
 // SplashModel.View).
 func newConsole(t *testing.T, cols, rows int, timeout time.Duration) *vtConsole {
 	t.Helper()
-	term, err := vttest.NewTerminal(t, cols, rows)
+	term, err := vtscreen.New(cols, rows, nil)
 	if err != nil {
 		t.Fatalf("create virtual terminal: %v", err)
 	}

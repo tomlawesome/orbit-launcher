@@ -7,22 +7,20 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/charmbracelet/x/vttest"
 )
 
 // draw writes s to term's pty from the program's side, as a program
 // running on it would.
-func draw(t *testing.T, term *vttest.Terminal, s string) {
+func draw(t *testing.T, term *Terminal, s string) {
 	t.Helper()
 	if _, err := io.WriteString(term.Output(), s); err != nil {
 		t.Fatalf("write to pty: %v", err)
 	}
 }
 
-func newTerminal(t *testing.T) *vttest.Terminal {
+func newTerminal(t *testing.T) *Terminal {
 	t.Helper()
-	term, err := vttest.NewTerminal(t, 120, 40)
+	term, err := New(120, 40, nil)
 	if err != nil {
 		t.Fatalf("create virtual terminal: %v", err)
 	}
