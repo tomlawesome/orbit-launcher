@@ -530,7 +530,15 @@ keep working. Two things follow from that:
   vendoring — it's how `scripts/get-orbit-launcher.sh` hands over the
   exact copy it already fetched and verified against Orbit's signed
   manifest (ADR-0031), so the launcher doesn't re-fetch something
-  already checked.
+  already checked. `install.sh` is the only script the launcher ever
+  downloads (#190): the configure tree reaches it through
+  `ORBIT_LAUNCHER_CONFIG_TREE`, a fresh private (0700) empty directory
+  `BuildInstallCommand` creates for every run and removes with the
+  run's cleanup — on its configuration refusal `install.sh` copies
+  `configure.sh`, its siblings and `.env-orbit.example` into it from
+  the assets it has already verified against the image (ai/orbit#1225)
+  — and Repair runs the deployment's own `scripts/repair.sh`, which
+  `install.sh` placed from the image.
 - **No config collection, and no field knowledge at all.** Earlier
   drafts of Install had orbit-launcher collect `APP_URL`/OIDC fields
   itself via Go text inputs and write `.env-orbit` directly, running
@@ -612,9 +620,11 @@ which the model swallows.
 
 **In-console configuration + repair diagnosis (orbit#297 machine
 prompts, orbit#261 slice 1).** When the engine's configuration refusal
-lands, the flow now stages a config tree (configure.sh + siblings +
-.env-orbit.example fetched from the same channel as install.sh, seeded
-with the target's existing configuration), runs `configure.sh --check`
+lands, the flow opens the configure tree the engine handed over in
+`ORBIT_LAUNCHER_CONFIG_TREE` (configure.sh + siblings +
+.env-orbit.example, copied by install.sh from its image-verified assets,
+ai/orbit#1225; never downloaded, #190), seeds it with the target's
+existing configuration, runs `configure.sh --check`
 to plan, then drives `--init` and `--set-oidc-secret` with
 `ORBIT_CONFIGURE_PROMPTS=machine` — the engine's own prompts, rendered
 as in-console input rows (`internal/ui/configcollect.go`), every answer
@@ -624,13 +634,15 @@ adopted into the target (install.sh's designed "pre-provisioned
 configuration shape") and the engine re-runs — this time proceeding.
 A legacy configure.sh exits with no protocol line, which is the
 capability signal: the flow falls back to the #51 terminal handoff
-automatically. Setsid on the configure run is as load-bearing as on the
-engine run — a legacy script would otherwise prompt on /dev/tty through
-the alt screen. Repair stopped being a stub: the launcher fetches
-orbit's standalone `repair.sh` (absence = "diagnosis needs a newer
-Orbit", honestly), stages it into the deployment's scripts/ directory,
-runs `--plan` (orbit#261 slice 3: the identical read-only diagnosis
-plus a classified proposed action per warn/fail finding — still zero
+automatically — as it does when install.sh handed over no tree at
+all. Setsid on the configure run is as load-bearing as on the engine
+run — a legacy script would otherwise prompt on /dev/tty through the
+alt screen. Repair stopped being a stub: the launcher runs the
+deployment's own `scripts/repair.sh`, as install.sh placed it from the
+image (absence = "diagnosis needs a newer Orbit", honestly; nothing is
+fetched or written, #190), with `--plan` (orbit#261 slice 3: the
+identical read-only diagnosis plus a classified proposed action per
+warn/fail finding — still zero
 mutation), and renders the plan grammar in honest words: action words,
 the resolves class, `backup first` when the contract demands a
 checkpoint, and the value-free `manual step:` guidance from stderr.

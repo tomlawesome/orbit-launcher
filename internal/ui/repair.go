@@ -17,8 +17,9 @@ import (
 )
 
 // RepairModel is the real read-only diagnosis and plan (orbit#261
-// slices 1–3): the launcher fetches orbit's standalone repair.sh
-// fresh, stages it into the deployment, runs `--plan` (diagnosis plus
+// slices 1–3): the launcher runs the deployment's own repair.sh — the
+// copy install.sh placed there from the image, never a download (#190)
+// — with `--plan` (diagnosis plus
 // the classified proposed actions — still zero mutation by the
 // script's own contract), and renders the finding/diagnosis/plan
 // grammar — enums in, honest words out, outcome keyed off exit codes,
@@ -63,7 +64,7 @@ type RepairModel struct {
 	stream  *engine.Stream
 	menuSel int
 
-	// ctx scopes every fetch-and-start this model launches; cancel
+	// ctx scopes every start this model launches; cancel
 	// stops one in flight. A Ctrl-C before a run exists cancels it and
 	// sets quitting; the model then quits only when the preparation
 	// reports back, killing a diagnosis it managed to start. A mutation
@@ -165,36 +166,31 @@ func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
 	}
 }
 
-// defaultPrepareRepair fetches, stages and starts one repair run.
+// defaultPrepareRepair starts one repair run of the deployment's own
+// scripts/repair.sh — nothing is fetched or written (#190).
 func defaultPrepareRepair(ctx context.Context, targetDir string, mode deploy.RepairMode) (*engine.Stream, error) {
-	script, err := deploy.FetchRepairScript(ctx)
+	cmd, err := deploy.RepairCommand(targetDir, mode)
 	if err != nil {
 		return nil, err
 	}
-	if err := deploy.StageRepairScript(targetDir, script); err != nil {
-		return nil, err
-	}
-	// A cancel that lands after the fetch must still stop the start.
+	// A cancel that has already landed must still stop the start.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return engine.Start(deploy.BuildRepairCommand(targetDir, mode))
+	return engine.Start(cmd)
 }
 
 // defaultPrepareRotate starts the dangerous rotation with its stdin
 // piped — the machine-prompt transport the script demands.
 func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream, io.WriteCloser, error) {
-	script, err := deploy.FetchRepairScript(ctx)
+	cmd, err := deploy.RepairCommand(targetDir, deploy.RepairExecuteDangerous)
 	if err != nil {
-		return nil, nil, err
-	}
-	if err := deploy.StageRepairScript(targetDir, script); err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	return engine.StartInteractive(deploy.BuildRepairCommand(targetDir, deploy.RepairExecuteDangerous))
+	return engine.StartInteractive(cmd)
 }
 
 // startExecution resets the evidence a fresh run will replace and
@@ -212,7 +208,7 @@ func (m *RepairModel) startExecution() {
 // keepRunAfterCancel keeps a mutating run the engine started just as
 // Ctrl-C landed: it is never signalled, because a kill milliseconds
 // after start is exactly stopping halfway. The launcher stays and
-// watches it; the fresh context lets a later "Diagnose again" fetch.
+// watches it; the fresh context lets a later "Diagnose again" start.
 func (m *RepairModel) keepRunAfterCancel() {
 	m.quitting = false
 	m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -467,7 +463,7 @@ var executedMenu = []string{"Diagnose again", "Menu", "Exit"}
 func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isCtrlC(msg) {
 		if m.stream == nil && (m.state == repairPreparing || m.state == repairExecuting || m.state == repairRotating) {
-			// The run is still being fetched and started: cancel that
+			// The run is still being started: cancel that
 			// and quit when it reports back (see the ready cases).
 			m.quitting = true
 			if m.cancel != nil {

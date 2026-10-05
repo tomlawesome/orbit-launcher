@@ -15,10 +15,12 @@ import (
 //
 //   - in-console guided configuration over the machine prompt protocol
 //     (orbit#297): refusal → prompts inside the TUI → adoption → retry
-//     → success, with the launcher's own fetch/stage/import/check
-//     plumbing (deploy.FetchConfigTree and friends) on the real path;
-//   - repair diagnosis (orbit#261 slice 1): fetch repair.sh, stage it
-//     into the deployment, parse findings, exit-code outcome.
+//     → success, with the launcher's own handover/import/check plumbing
+//     on the real path: the fake engine copies its configure tree into
+//     ORBIT_LAUNCHER_CONFIG_TREE on refusal, as install.sh does
+//     (ai/orbit#1225), and nothing but install.sh is ever served;
+//   - repair diagnosis (orbit#261 slice 1): run the deployment's own
+//     scripts/repair.sh, parse findings, exit-code outcome.
 
 // fakeConfigAwareEngine refuses without configuration and succeeds
 // with it — how the real engine behaves across the collect-then-retry
@@ -96,10 +98,31 @@ echo "plan result=ready actions=1 manual=1"
 exit 3
 `
 
+// handsOverTree makes engine behave as an install.sh with ai/orbit#1225:
+// on its configuration refusal it copies its configure tree — configure
+// as scripts/configure.sh, plus the template — into the directory the
+// launcher named in ORBIT_LAUNCHER_CONFIG_TREE before exiting. That is
+// the only place the launcher may take configure.sh from (#190).
+func handsOverTree(engine, configure string) string {
+	const refusal = "  echo \"Orbit installer: configuration fields requiring attention: APP_URL.\" >&2\n"
+	if !strings.Contains(engine, refusal) {
+		panic("handsOverTree: the engine has no configuration refusal to hand the tree over at")
+	}
+	handover := refusal +
+		"  if [[ -n \"${ORBIT_LAUNCHER_CONFIG_TREE:-}\" ]]; then\n" +
+		"    mkdir -p \"$ORBIT_LAUNCHER_CONFIG_TREE/scripts\"\n" +
+		"    cat > \"$ORBIT_LAUNCHER_CONFIG_TREE/scripts/configure.sh\" <<'ORBIT_CONFIGURE_EOF'\n" +
+		configure +
+		"ORBIT_CONFIGURE_EOF\n" +
+		"    printf 'APP_URL=\\n' > \"$ORBIT_LAUNCHER_CONFIG_TREE/.env-orbit.example\"\n" +
+		"  fi\n"
+	return strings.Replace(engine, refusal, handover, 1)
+}
+
 // serveOrbitTree stands up a path-aware fake of orbit's raw file tree
-// and returns the install.sh URL for ORBIT_LAUNCHER_INSTALL_SCRIPT_URL
-// — sibling scripts and the root template resolve exactly as they do
-// against the real repository.
+// and returns the install.sh URL for ORBIT_LAUNCHER_INSTALL_SCRIPT_URL.
+// Since #190 only install.sh is ever fetched; serving anything else
+// would test nothing.
 func serveOrbitTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,9 +145,7 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh":   fakeConfigAwareEngine,
-		"/scripts/configure.sh": fakeMachineConfigure,
-		"/.env-orbit.example":   "APP_URL=\n",
+		"/scripts/install.sh": handsOverTree(fakeConfigAwareEngine, fakeMachineConfigure),
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
@@ -268,9 +289,7 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh":   fakeConfigAwareEngine,
-		"/scripts/configure.sh": fakeMachineConfigureModeAware,
-		"/.env-orbit.example":   "APP_URL=\n",
+		"/scripts/install.sh": handsOverTree(fakeConfigAwareEngine, fakeMachineConfigureModeAware),
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
@@ -322,15 +341,27 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 	}
 }
 
+// placeRepairScript puts repair.sh in the deployment's scripts/
+// directory, where install.sh places it from the image.
+func placeRepairScript(t *testing.T, dir, script string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "repair.sh"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	placeRepairScript(t, dir, fakeRepairPlan)
 	scriptURL := serveOrbitTree(t, map[string]string{
 		"/scripts/install.sh": fakeConfigAwareEngine,
-		"/scripts/repair.sh":  fakeRepairPlan,
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
@@ -366,9 +397,9 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	placeRepairScript(t, dir, fakeRepairCheckOnly)
 	scriptURL := serveOrbitTree(t, map[string]string{
 		"/scripts/install.sh": fakeConfigAwareEngine,
-		"/scripts/repair.sh":  fakeRepairCheckOnly,
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
@@ -385,16 +416,17 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	send("\x1b[B")   // Repair
 	send("\r")
 
-	// The real fetch → stage → run → parse path, rendered honestly.
+	// The real run → parse path, rendered honestly.
 	must("Needs attention")
 	must("postgres-password secret")
 	must("absent or empty")
 	must("12 checked · 1 skipped")
 	must("repair actions arrive with a later Orbit release")
 
-	// repair.sh really was staged into the deployment's scripts dir.
-	if _, err := os.Stat(filepath.Join(dir, "scripts", "repair.sh")); err != nil {
-		t.Errorf("staged repair.sh: %v", err)
+	// The deployment's repair.sh ran as install.sh left it: the
+	// launcher never writes it (#190).
+	if got, _ := os.ReadFile(filepath.Join(dir, "scripts", "repair.sh")); string(got) != fakeRepairCheckOnly {
+		t.Errorf("the deployment's repair.sh was changed: %q", got)
 	}
 
 	// Menu returns to the splash; Escape quits.
@@ -410,9 +442,12 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// No repair.sh in the served tree — orbit main today.
+	// No scripts/repair.sh in the deployment — one from before the
+	// repair diagnosis. The source still offers one, where the launcher
+	// used to fetch it from; it must not be taken (#190).
 	scriptURL := serveOrbitTree(t, map[string]string{
 		"/scripts/install.sh": fakeConfigAwareEngine,
+		"/scripts/repair.sh":  fakeRepairPlan,
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
@@ -463,9 +498,9 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	placeRepairScript(t, dir, fakeRepairModal)
 	scriptURL := serveOrbitTree(t, map[string]string{
 		"/scripts/install.sh": fakeConfigAwareEngine,
-		"/scripts/repair.sh":  fakeRepairModal,
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
