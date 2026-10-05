@@ -7,8 +7,9 @@ code, which lets it be offered under both a free and a commercial licence
 that, so for now we don't. If that changes, this file will set out a
 contributor agreement before any outside change is merged.
 
-Bug reports and ideas are welcome as issues on the
-[GitHub issue tracker](https://github.com/tomlawesome/orbit-launcher/issues).
+Public bug reports are not being taken for now. To report a security
+problem, use the private route in [SECURITY.md](SECURITY.md).
+
 Day-to-day work is tracked on the owner's
 [GitLab](https://gitlab.tomlawson.io/ai/orbit-launcher), which is where
 merge requests are made. GitHub is a public mirror of it.
