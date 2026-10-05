@@ -10,8 +10,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 // Edge and exit paths on the two end screens: the success screen and
@@ -240,8 +238,10 @@ func TestRemoveModel_WithoutDeploymentDetailsUsesHonestPlaceholders(t *testing.T
 	if gotDir != "" {
 		t.Fatalf("stand-down was handed %q, want no directory", gotDir)
 	}
+	// The command is wrapped across lines at 80 columns, so look for the
+	// placeholder path in both of its halves rather than the one-line form.
 	s := stripANSI(m.View().Content)
-	if !strings.Contains(s, "the deployment directory") || !strings.Contains(s, deploy.RemovalCommand("/opt/orbit")) {
+	if !strings.Contains(s, "the deployment directory") || !strings.Contains(s, "--project-directory /opt/orbit") || !strings.Contains(s, "sudo rm -rf /opt/orbit") {
 		t.Fatalf("done screen should fall back to placeholders:\n%s", s)
 	}
 }
