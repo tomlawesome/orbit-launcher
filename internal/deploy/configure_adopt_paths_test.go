@@ -1,7 +1,10 @@
 package deploy
 
 import (
+	"flag"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -46,8 +49,20 @@ func newSession(t *testing.T) string {
 	return treeDir
 }
 
+// requireUnlimitedWrites fails unless this test process can still write a
+// file larger than the disk-full tests' limit: the limit belongs to the
+// operation under test, never to go test's own log, race and coverage
+// writes.
+func requireUnlimitedWrites(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(t.TempDir(), "probe"), make([]byte, 8192), 0o600); err != nil {
+		t.Fatalf("the test process itself is under the file size limit: %v", err)
+	}
+}
+
 // limitFileSize caps the size of any file this process writes, for the
 // rest of the test, so a write past it fails as it would on a full disk.
+// Only TestHelperProcess_FileSizeLimit's child may call it.
 // Root is bound by the limit too, so unlike a permission trick this runs
 // in CI.
 func limitFileSize(t *testing.T, limit uint64) {
@@ -66,6 +81,75 @@ func limitFileSize(t *testing.T, limit uint64) {
 			t.Errorf("restore the file size limit: %v", err)
 		}
 	})
+}
+
+// TestHelperProcess_FileSizeLimit is not a test: it is the body the three
+// disk-full tests run in a child process. Only that child lowers
+// RLIMIT_FSIZE, so go test's own log, race and coverage writes are never
+// under the limit. Pattern: os/exec's helper process. It returns normally,
+// never os.Exit, so the limit is raised again before the testing package
+// writes the child's coverage counters.
+func TestHelperProcess_FileSizeLimit(t *testing.T) {
+	if os.Getenv("ORBIT_DEPLOY_HELPER") != "1" {
+		t.Skip("only runs as runFileSizeLimited's child")
+	}
+	limitFileSize(t, 1024)
+	var err error
+	returnedCommand := false
+	switch op := os.Getenv("ORBIT_DEPLOY_HELPER_OP"); op {
+	case "adopt":
+		err = AdoptConfig(os.Getenv("ORBIT_DEPLOY_HELPER_TREE"), os.Getenv("ORBIT_DEPLOY_HELPER_TARGET"))
+	case "import":
+		err = ImportTargetConfig(os.Getenv("ORBIT_DEPLOY_HELPER_TREE"), os.Getenv("ORBIT_DEPLOY_HELPER_TARGET"))
+	case "build-install":
+		var cmd *exec.Cmd
+		var cleanup func() error
+		cmd, cleanup, err = BuildInstallCommand([]byte(os.Getenv("ORBIT_DEPLOY_HELPER_SCRIPT")), os.Getenv("ORBIT_DEPLOY_HELPER_TARGET"))
+		returnedCommand = cmd != nil || cleanup != nil
+	default:
+		t.Fatalf("unknown helper op %q", op)
+	}
+	fmt.Printf("HELPER err=%q returned-command=%t\n", errString(err), returnedCommand)
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// runFileSizeLimited runs op in a child copy of this test binary whose file
+// size limit is 1 KiB, and returns the error text the operation produced
+// there. The caller asserts on disk afterwards, in this process.
+func runFileSizeLimited(t *testing.T, op string, env map[string]string) (errText string, returnedCommand bool) {
+	t.Helper()
+	args := []string{"-test.run=^TestHelperProcess_FileSizeLimit$"}
+	// scripts/coverage.sh merges only the -test.gocoverdir directory, so
+	// the child must write its counters there too.
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		args = append(args, "-test.gocoverdir="+f.Value.String())
+	}
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(), "ORBIT_DEPLOY_HELPER=1", "ORBIT_DEPLOY_HELPER_OP="+op)
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("file-size-limited %s child failed: %v\n%s", op, err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "HELPER ") {
+			continue
+		}
+		if _, err := fmt.Sscanf(line, "HELPER err=%q returned-command=%t", &errText, &returnedCommand); err != nil {
+			t.Fatalf("cannot parse the %s child's report %q: %v\n%s", op, line, err, out)
+		}
+		return errText, returnedCommand
+	}
+	t.Fatalf("the file-size-limited %s child reported nothing:\n%s", op, out)
+	return "", false
 }
 
 // A .env-orbit in the session tree that is a symlink is refused, so a
@@ -209,10 +293,12 @@ func TestAdoptConfig_DiskFullWhileStagingLeavesTheLiveConfigWhole(t *testing.T) 
 	treeDir := newSession(t)
 	writeTestFile(t, filepath.Join(treeDir, ".orbit-secrets", "oidc-client-secret"), strings.Repeat("n", 4096), 0o600)
 
-	limitFileSize(t, 1024)
-	err := AdoptConfig(treeDir, targetDir)
-	if err == nil || !strings.Contains(err.Error(), "existing configuration is unchanged") {
-		t.Fatalf("expected an unchanged-configuration error, got %v", err)
+	errText, _ := runFileSizeLimited(t, "adopt", map[string]string{
+		"ORBIT_DEPLOY_HELPER_TREE": treeDir, "ORBIT_DEPLOY_HELPER_TARGET": targetDir,
+	})
+	requireUnlimitedWrites(t)
+	if !strings.Contains(errText, "existing configuration is unchanged") {
+		t.Fatalf("expected an unchanged-configuration error, got %q", errText)
 	}
 	assertLiveConfigUnchanged(t, targetDir)
 }
@@ -227,8 +313,11 @@ func TestImportTargetConfig_DiskFullLeavesTheTreeFileWhole(t *testing.T) {
 	treeEnv := filepath.Join(treeDir, ".env-orbit")
 	writeTestFile(t, treeEnv, "APP_URL=https://tree.example\n", 0o600)
 
-	limitFileSize(t, 1024)
-	if err := ImportTargetConfig(treeDir, targetDir); err == nil {
+	errText, _ := runFileSizeLimited(t, "import", map[string]string{
+		"ORBIT_DEPLOY_HELPER_TREE": treeDir, "ORBIT_DEPLOY_HELPER_TARGET": targetDir,
+	})
+	requireUnlimitedWrites(t)
+	if errText == "" {
 		t.Fatal("expected an error when the import cannot be written")
 	}
 	if body, err := os.ReadFile(treeEnv); err != nil || string(body) != "APP_URL=https://tree.example\n" {
