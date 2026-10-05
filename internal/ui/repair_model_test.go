@@ -1191,3 +1191,36 @@ func TestRepairModel_BuiltWithoutTheConstructorStillRunsTheDiagnosis(t *testing.
 		t.Fatalf("the diagnosis did not run to the end: %+v", done)
 	}
 }
+
+// #191: a repair.sh on an untrusted path is refused on the failure
+// screen, with the path and the reason, and never run.
+func TestDefaultPrepareRepair_UntrustedScriptIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	deploymentRepair(t, dir, "#!/usr/bin/env bash\ntouch ran\n")
+	script := filepath.Join(dir, "scripts", "repair.sh")
+	if err := os.Chmod(script, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	m := NewRepairModel(dir, "v0.6.0")
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = updated.(RepairModel)
+	m, _ = repairUpdate(t, m, m.Init()())
+	if m.state != repairError {
+		t.Fatalf("state = %v, want the failure screen", m.state)
+	}
+	var untrusted *deploy.UntrustedPathError
+	if !errors.As(m.runErr, &untrusted) || untrusted.Path != script {
+		t.Fatalf("runErr = %v, want a refusal naming %s", m.runErr, script)
+	}
+	if s := repairScreen(m); !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "writable by everyone") {
+		t.Fatalf("screen:\n%s", s)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {
+		t.Fatal("the untrusted repair.sh ran")
+	}
+
+	rot := NewRepairModel(dir, "v").startRotate()().(repairRotateReadyMsg)
+	if !errors.As(rot.err, &untrusted) {
+		t.Fatalf("rotate err = %v, want a refusal", rot.err)
+	}
+}

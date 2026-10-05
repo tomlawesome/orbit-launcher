@@ -239,3 +239,36 @@ func TestEngineRun_CtrlCOnTheRefusalReleasesTheTree(t *testing.T) {
 		t.Fatalf("run cleanup ran %d times on Ctrl+C, want once", cleaned)
 	}
 }
+
+// #191: a configure tree on a path the launcher does not trust is a
+// refusal on the failure screen, naming the path and the reason — not
+// a quiet fallback.
+func TestEngineRun_UntrustedConfigTreeStopsOnTheFailureScreen(t *testing.T) {
+	t.Setenv(requireInConsoleEnv, "")
+	tree := handedOverTree(t, "#!/usr/bin/env bash\necho ready APP_URL\n")
+	configure := filepath.Join(tree, "scripts", "configure.sh")
+	if err := os.Chmod(configure, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	prepared := false
+	cleaned := 0
+	r := refusedRunWithTree(t, handoffSeams(&prepared), tree, &cleaned) // real prepareConfig
+	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	r, _ = runUpdate(t, r, cmd())
+	if r.state != runFailed {
+		t.Fatalf("state = %v, want the failure screen", r.state)
+	}
+	if prepared {
+		t.Fatal("an untrusted tree fell back to the handoff instead of refusing")
+	}
+	var untrusted *deploy.UntrustedPathError
+	if !errors.As(r.runErr, &untrusted) || untrusted.Path != configure {
+		t.Fatalf("runErr = %v, want a refusal naming %s", r.runErr, configure)
+	}
+	if !strings.Contains(runScreen(r), "writable by everyone") {
+		t.Fatalf("the failure screen does not give the reason:\n%s", runScreen(r))
+	}
+	if cleaned != 1 {
+		t.Fatalf("run cleanup ran %d times, want once", cleaned)
+	}
+}

@@ -57,15 +57,16 @@ func OpenConfigTree(treeDir string) (endSession func(), err error) {
 	if treeDir == "" {
 		return nil, ErrNoConfigTree
 	}
-	info, err := os.Lstat(filepath.Join(treeDir, configureScript))
-	if err != nil {
+	if _, err := os.Lstat(filepath.Join(treeDir, configureScript)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrNoConfigTree
 		}
 		return nil, fmt.Errorf("configuration tree: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(treeDir, configureScript))
+	// Run configure.sh only from a path nobody else could have put it
+	// in (#191).
+	if err := RequireTrustedPath(treeDir, configureScript); err != nil {
+		return nil, err
 	}
 	return func() {
 		os.Remove(filepath.Join(treeDir, ".env-orbit"))
@@ -81,10 +82,17 @@ func ImportTargetConfig(treeDir, targetDir string) error {
 	// A crashed adoption's temp is not a secret; importing it would
 	// adopt it back under that name.
 	removeStaleTemps(targetDir)
+	// Read the configuration only from paths nobody else could have
+	// written (#191).
+	if err := requireTrustedIfPresent(targetDir, ".env-orbit"); err != nil {
+		return err
+	}
 	if err := copyConfigFile(filepath.Join(targetDir, ".env-orbit"), filepath.Join(treeDir, ".env-orbit")); err != nil {
 		return err
 	}
-	return copySecretsDir(filepath.Join(targetDir, ".orbit-secrets"), filepath.Join(treeDir, ".orbit-secrets"))
+	return copySecretsDir(filepath.Join(targetDir, ".orbit-secrets"), filepath.Join(treeDir, ".orbit-secrets"), func(name string) error {
+		return RequireTrustedPath(targetDir, filepath.Join(".orbit-secrets", name))
+	})
 }
 
 // AdoptConfig moves the collected configuration into the target:
@@ -340,7 +348,9 @@ func removeStaleTemps(targetDir string) {
 	}
 }
 
-func copySecretsDir(src, dst string) error {
+// copySecretsDir copies src's regular files into dst, each only once
+// trust(name) accepts it.
+func copySecretsDir(src, dst string, trust func(name string) error) error {
 	info, err := os.Lstat(src)
 	if os.IsNotExist(err) {
 		return nil
@@ -364,6 +374,9 @@ func copySecretsDir(src, dst string) error {
 	for _, entry := range entries {
 		if !entry.Type().IsRegular() {
 			continue
+		}
+		if err := trust(entry.Name()); err != nil {
+			return err
 		}
 		if err := copyConfigFile(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
 			return err

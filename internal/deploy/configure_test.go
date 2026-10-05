@@ -402,7 +402,7 @@ func TestCopySecretsDir_UninspectableSourceIsAnError(t *testing.T) {
 	}
 	lockDir(t, parent)
 	dst := filepath.Join(t.TempDir(), ".orbit-secrets")
-	if err := copySecretsDir(filepath.Join(parent, ".orbit-secrets"), dst); err == nil {
+	if err := copySecretsDir(filepath.Join(parent, ".orbit-secrets"), dst, func(string) error { return nil }); err == nil {
 		t.Fatal("expected an error when the source cannot be inspected")
 	}
 	if _, err := os.Lstat(dst); !os.IsNotExist(err) {

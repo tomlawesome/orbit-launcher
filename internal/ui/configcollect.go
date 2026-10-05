@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -203,6 +204,21 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case configPlanMsg:
+		var untrusted *deploy.UntrustedPathError
+		if errors.As(msg.err, &untrusted) {
+			// The tree is on a path the launcher does not trust (#191):
+			// a refusal, naming the path and the reason, never a quiet
+			// fallback. The failure screen still offers the guided
+			// installer as the person's own choice.
+			r.cfg.close()
+			r.releaseRunFiles()
+			r.lastFailed = nil
+			r.stderrTail = nil
+			r.runErr = msg.err
+			r.state = runFailed
+			r.menuSel = 0
+			return r, nil
+		}
 		if msg.err != nil || len(msg.plan.unfixable) > 0 {
 			// Can't collect here (no tree was handed over, or fields
 			// beyond the protocol's vocabulary are missing) — the
