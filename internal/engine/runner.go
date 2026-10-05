@@ -47,6 +47,11 @@ type Stream struct {
 
 	cmd  *exec.Cmd
 	once sync.Once
+
+	// mu guards reaped: once cmd.Wait has returned, the PID no longer
+	// names the engine and must not be signalled.
+	mu     sync.Mutex
+	reaped bool
 }
 
 // Start launches cmd with stdout piped (which is what makes the engine
@@ -121,6 +126,9 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 		// tail (seen as a real release-gate failure).
 		tail := <-tailCh
 		err := cmd.Wait()
+		s.mu.Lock()
+		s.reaped = true
+		s.mu.Unlock()
 		done := DoneMsg{Err: err, StderrTail: tail}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -186,10 +194,17 @@ func trimLineEnd(line []byte) string {
 
 // Kill terminates the engine's whole process group — the engine runs
 // as a session leader (Setsid), so its own children (docker, curl) go
-// with it. Idempotent; safe after natural exit.
+// with it. Idempotent. Once the process has been reaped Kill sends
+// nothing at all: by then its PID, and the process group it named, may
+// belong to an unrelated process.
 func (s *Stream) Kill() {
 	s.once.Do(func() {
 		if s.cmd != nil && s.cmd.Process != nil {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.reaped {
+				return
+			}
 			// Negative pid addresses the process group the engine
 			// leads. Best effort: the process may already be gone.
 			_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGTERM)

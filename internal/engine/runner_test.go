@@ -150,3 +150,34 @@ sleep 60
 		t.Fatal("expected a non-nil error after kill")
 	}
 }
+
+// Once the engine has been reaped its PID may belong to something else,
+// so a Kill that arrives afterwards — Ctrl-C on the success screen — must
+// send nothing. PID reuse is simulated by pointing the finished stream at
+// a live, unrelated process group.
+func TestStream_KillAfterExitSignalsNothing(t *testing.T) {
+	s := startScript(t, "exit 0")
+	collect(t, s)
+
+	victim := exec.Command("sleep", "60")
+	victim.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := victim.Start(); err != nil {
+		t.Fatalf("start victim: %v", err)
+	}
+	t.Cleanup(func() { _ = victim.Process.Kill() })
+	done := make(chan struct{})
+	go func() {
+		_ = victim.Wait()
+		close(done)
+	}()
+
+	// The stream's goroutine has finished, so nothing else reads cmd now.
+	s.cmd.Process.Pid = victim.Process.Pid
+	s.Kill()
+
+	select {
+	case <-done:
+		t.Fatal("Kill after exit signalled another process group")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
