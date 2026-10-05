@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tomlawesome/orbit-launcher/internal/notices"
 	"github.com/tomlawesome/orbit-launcher/internal/release"
 )
 
@@ -31,6 +32,30 @@ func TestRun_VersionFlag(t *testing.T) {
 	}
 	if stderr.String() != "" {
 		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+// --licences prints the notices the binary embeds (#182), in full, and
+// never starts the TUI.
+func TestRun_LicencesFlag(t *testing.T) {
+	for _, flag := range []string{"--licences", "--licenses"} {
+		started := false
+		stub := func(stdout, stderr io.Writer) int { started = true; return 99 }
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{flag}, &stdout, &stderr, stub); code != 0 {
+			t.Errorf("%s: exit code = %d, want 0", flag, code)
+		}
+		if started {
+			t.Errorf("%s must not start the TUI", flag)
+		}
+		if stdout.String() != notices.Text {
+			t.Errorf("%s: stdout is not the embedded notices", flag)
+		}
+		for _, want := range []string{"Go standard library and runtime", "charm.land/bubbletea/v2", "UNICODE LICENSE V3"} {
+			if !strings.Contains(stdout.String(), want) {
+				t.Errorf("%s: notices lack %q", flag, want)
+			}
+		}
 	}
 }
 

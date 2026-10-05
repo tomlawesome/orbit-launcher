@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/notices"
 	"github.com/tomlawesome/orbit-launcher/internal/release"
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
 )
@@ -21,7 +22,7 @@ func main() {
 }
 
 // run is orbit-launcher's entire command-line surface: the --version
-// short-circuit, and otherwise the TUI itself. startApp is a seam for
+// and --licences short-circuits, and otherwise the TUI itself. startApp is a seam for
 // tests -- main always passes startApp itself; main_test.go substitutes a
 // stub so the dispatch logic (which args launch the TUI, what exit code
 // and output each path produces) can be checked without a real terminal.
@@ -32,6 +33,12 @@ func main() {
 func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr io.Writer) int) int {
 	if len(args) > 0 && args[0] == "--version" {
 		fmt.Fprintf(stdout, "orbit-launcher %s (%s)\n", release.Version, release.Revision)
+		return 0
+	}
+	// The licence notices every copy of the binary owes its dependencies
+	// (#182). Both spellings, since either is what someone will type.
+	if len(args) > 0 && (args[0] == "--licences" || args[0] == "--licenses") {
+		fmt.Fprint(stdout, notices.Text)
 		return 0
 	}
 	return startApp(stdout, stderr)
