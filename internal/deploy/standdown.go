@@ -42,9 +42,14 @@ func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 // volumes and every file in targetDir. This package never executes it:
 // see removal_property_test.go, which asserts that as a real, checked
 // property, not just a comment someone could quietly invalidate later.
+//
+// It passes --env-file for the same reason StandDown does: Compose never
+// auto-loads .env-orbit, so without it "down -v" cannot resolve the
+// compose file's variables.
 func RemovalCommand(targetDir string) string {
+	envFile := filepath.Join(targetDir, ".env-orbit")
 	return fmt.Sprintf(
-		"docker compose --project-directory %s down -v && sudo rm -rf %s",
-		targetDir, targetDir,
+		"docker compose --project-directory %s --env-file %s down -v && sudo rm -rf %s",
+		targetDir, envFile, targetDir,
 	)
 }
