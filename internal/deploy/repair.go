@@ -1,9 +1,9 @@
 package deploy
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,55 +12,41 @@ import (
 )
 
 // Repair diagnosis — orbit scripts/repair.sh --check (orbit#261, first
-// slice). repair.sh is deliberately standalone and source-less so a
-// current copy can diagnose any generation of deployment, but it
+// slice). The launcher runs the deployment's own scripts/repair.sh: the
+// copy install.sh placed there from the digest-pinned image, so it came
+// through the same verified channel as the rest of the deployment
+// (#190). Nothing is fetched and nothing is written — a deployment
+// without the script simply has no diagnosis, said honestly. repair.sh
 // anchors to the tree it lives in (it cds to its own parent-of-scripts
 // and delegates configuration readiness to that tree's own
-// configure.sh). It isn't a deployment asset, so the launcher fetches
-// it fresh — same channel as install.sh — and stages it into the
-// target's scripts/ directory before each diagnosis. The diagnosis
-// itself is read-only by construction (the script's own contract,
-// contract-tested orbit-side); the staged file is the one write, and
-// it is overwritten on every run so it can never go stale.
+// configure.sh), and its diagnosis is read-only by construction (the
+// script's own contract, contract-tested orbit-side).
 
-// ErrRepairUnavailable means the configured orbit line doesn't publish
-// repair.sh yet (orbit main today): diagnosis honestly isn't available
-// rather than being guessed at.
-var ErrRepairUnavailable = errors.New("this orbit line doesn't publish the repair diagnosis yet")
+// ErrRepairUnavailable means the deployment has no scripts/repair.sh —
+// it predates the repair diagnosis, or there is no deployment here:
+// diagnosis honestly isn't available rather than being guessed at.
+var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (no scripts/repair.sh)")
 
-// FetchRepairScript downloads the current repair.sh from the same
-// source as install.sh (including the CI override).
-func FetchRepairScript(ctx context.Context) ([]byte, error) {
-	scriptsBase, _ := scriptSourceURLs()
-	body, err := fetchFile(ctx, scriptsBase+"/repair.sh")
-	if err != nil {
-		var status statusError
-		if errors.As(err, &status) {
+// repairScript is where install.sh places repair.sh in a deployment.
+const repairScript = "scripts/repair.sh"
+
+// RepairCommand builds one repair run against the deployment's own
+// scripts/repair.sh. An absent script is ErrRepairUnavailable; one on a
+// path RequireTrustedPath refuses is an UntrustedPathError. There is no
+// fallback to any other copy.
+func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
+	if _, err := os.Lstat(filepath.Join(targetDir, repairScript)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrRepairUnavailable
 		}
-		return nil, fmt.Errorf("fetch repair.sh: %w", err)
+		return nil, fmt.Errorf("repair.sh: %w", err)
 	}
-	if !strings.HasPrefix(string(body), "#!") {
-		return nil, ErrRepairUnavailable
+	// It exists; run it only from a path nobody else could have put it
+	// in (#191).
+	if err := requireTrustedScripts(targetDir, "repair.sh"); err != nil {
+		return nil, err
 	}
-	return body, nil
-}
-
-// StageRepairScript writes repair.sh into the target's scripts/
-// directory, where it diagnoses that installation.
-func StageRepairScript(targetDir string, script []byte) error {
-	if _, err := os.Stat(targetDir); err != nil {
-		return fmt.Errorf("target directory: %w", err)
-	}
-	scriptsDir := filepath.Join(targetDir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		return fmt.Errorf("stage repair.sh: %w", err)
-	}
-	dst := filepath.Join(scriptsDir, "repair.sh")
-	if err := os.WriteFile(dst, script, 0o700); err != nil {
-		return fmt.Errorf("stage repair.sh: %w", err)
-	}
-	return os.Chmod(dst, 0o700)
+	return BuildRepairCommand(targetDir, mode), nil
 }
 
 // RepairMode selects which repair invocation runs.
@@ -98,7 +84,7 @@ const (
 // prompt transport (orbit#297 grammar, repair's own env var), which is
 // the only non-TTY way its confirmation prompts can exist at all.
 func BuildRepairCommand(targetDir string, mode RepairMode) *exec.Cmd {
-	args := append([]string{"scripts/repair.sh"}, strings.Fields(string(mode))...)
+	args := append([]string{repairScript}, strings.Fields(string(mode))...)
 	cmd := exec.Command("bash", args...)
 	cmd.Dir = targetDir
 	if mode == RepairExecuteDangerous {

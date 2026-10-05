@@ -1,16 +1,33 @@
 package deploy
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
+// ConfigTreeEnv names the private directory install.sh copies its
+// verified configure tree into when it refuses for missing
+// configuration (ai/orbit#1225). The launcher runs configure.sh from
+// there and nowhere else (#190).
+const ConfigTreeEnv = "ORBIT_LAUNCHER_CONFIG_TREE"
+
 // BuildInstallCommand stages script (install.sh's content) to a temp
 // file and returns a ready-to-run command against targetDir, plus a
-// cleanup func that removes the staged file — call it once the command
-// has finished.
+// cleanup func that removes what the run staged — call it once the
+// run, and any configuration session using its configure tree, is
+// over.
+//
+// Each run also gets a fresh, private (0700) and empty directory,
+// passed to install.sh as ORBIT_LAUNCHER_CONFIG_TREE: on its
+// configuration refusal install.sh copies the configure tree it has
+// already verified against the image into it (ai/orbit#1225), and that
+// copy is the only configure.sh the launcher ever runs (ConfigTreeDir,
+// OpenConfigTree). The cleanup removes it with whatever install.sh
+// left there.
 //
 // Deliberately not run here, and deliberately leaves Stdin/Stdout/Stderr
 // unset: install.sh must see a real controlling terminal, because its
@@ -28,21 +45,48 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	if err != nil {
 		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
-	cleanup = func() error { return os.Remove(scriptFile.Name()) }
+	removeScript := func() error { return os.Remove(scriptFile.Name()) }
 
 	if _, err := scriptFile.Write(script); err != nil {
 		scriptFile.Close()
-		cleanup()
+		removeScript()
 		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
 	if err := scriptFile.Close(); err != nil {
-		cleanup()
+		removeScript()
 		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+	}
+
+	// MkdirTemp creates the directory 0700, owned by this user, and
+	// empty — what install.sh insists on before it writes there.
+	configTree, err := os.MkdirTemp("", "orbit-launcher-config-*")
+	if err != nil {
+		removeScript()
+		return nil, nil, fmt.Errorf("stage configuration tree: %w", err)
+	}
+	cleanup = func() error {
+		return errors.Join(removeScript(), os.RemoveAll(configTree))
 	}
 
 	cmd = exec.Command("bash", scriptFile.Name())
 	cmd.Dir = targetDir
+	// Appended to the launcher's own environment, never replacing it:
+	// install.sh reads ORBIT_CHANNEL, COMPOSE_PROJECT_NAME and the rest
+	// from what the person (or CI) set.
+	cmd.Env = append(os.Environ(), ConfigTreeEnv+"="+configTree)
 	return cmd, cleanup, nil
+}
+
+// ConfigTreeDir is the configure tree directory cmd hands install.sh,
+// or "" when it hands over none.
+func ConfigTreeDir(cmd *exec.Cmd) string {
+	prefix := ConfigTreeEnv + "="
+	for i := len(cmd.Env) - 1; i >= 0; i-- {
+		if dir, ok := strings.CutPrefix(cmd.Env[i], prefix); ok {
+			return dir
+		}
+	}
+	return ""
 }
 
 // BuildEngineCommand stages script like BuildInstallCommand but builds

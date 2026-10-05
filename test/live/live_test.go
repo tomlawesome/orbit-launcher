@@ -625,20 +625,21 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// The Compose project this run owns, and the whole of its
 		// isolation from any other Orbit on the daemon — see
 		// liveProjectName. It reaches the engine because nothing
-		// scrubs it on the way: deploy.BuildInstallCommand never sets
-		// cmd.Env, and the two commands that do set it
-		// (deploy/configure.go, deploy/repair.go) append to
+		// scrubs it on the way: every command that sets cmd.Env
+		// (deploy/install.go for ORBIT_LAUNCHER_CONFIG_TREE,
+		// deploy/configure.go, deploy/repair.go) appends to
 		// os.Environ() rather than replacing it. install.sh then reads
 		// COMPOSE_PROJECT_NAME itself and records it in .env-orbit.
 		"COMPOSE_PROJECT_NAME="+liveProjectName(dir),
-		// Prove the path, don't hope for it. Until orbit's own CI served
-		// the whole configuration tree, deploy.FetchConfigTree 404'd here
-		// and the launcher quietly switched to the terminal handoff — a
-		// run that looked identical to a passing one, because both paths
-		// ask for the same fields. With this set the launcher refuses the
-		// handoff and stops instead, so a fallback is a red test rather
-		// than an invisible one. Deliberately not what an operator gets:
-		// unset (the default), a fallback still falls back.
+		// Prove the path, don't hope for it. When the engine hands over
+		// no configure tree in ORBIT_LAUNCHER_CONFIG_TREE (an install.sh
+		// without ai/orbit#1225, #190), the launcher quietly switches to
+		// the terminal handoff — a run that looks identical to a passing
+		// one, because both paths ask for the same fields. With this set
+		// the launcher refuses the handoff and stops instead, so a
+		// fallback is a red test rather than an invisible one.
+		// Deliberately not what an operator gets: unset (the default), a
+		// fallback still falls back.
 		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := term.Start(cmd); err != nil {

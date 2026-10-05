@@ -101,7 +101,8 @@ diff is documentation only; `fast` and `deps` then skip themselves when it is,
 pipelines, or MR pipelines touching `internal/ui`, `test/visual` or
 `.gitlab-ci.yml`) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or
 a moved `UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin -- an image bump can no longer go
-green without being installed). The GitHub workflows still run on the mirrored push as a
+green without being installed). A merge request that edits `.gitlab-ci.yml`
+waits for someone to start the `live` job by hand (#192). The GitHub workflows still run on the mirrored push as a
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
 

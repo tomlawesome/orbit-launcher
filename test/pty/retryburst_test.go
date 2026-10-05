@@ -61,9 +61,7 @@ func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
 	binPath := buildBinary(t)
 	dir := t.TempDir()
 	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh":   fakeLongLineRetryEngine,
-		"/scripts/configure.sh": fakeMachineConfigure,
-		"/.env-orbit.example":   "APP_URL=\n",
+		"/scripts/install.sh": handsOverTree(fakeLongLineRetryEngine, fakeMachineConfigure),
 	})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 

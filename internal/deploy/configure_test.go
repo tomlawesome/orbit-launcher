@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,102 +13,6 @@ import (
 	"syscall"
 	"testing"
 )
-
-// fakeOrbitSource serves an orbit-repo-shaped file tree, the same
-// layout the real raw.githubusercontent source has, so the derivation
-// from the install.sh override URL is what's actually under test.
-func fakeOrbitSource(t *testing.T, files map[string]string) string {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, ok := files[r.URL.Path]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		w.Write([]byte(body))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", server.URL+"/scripts/install.sh")
-	return server.URL
-}
-
-func TestScriptSourceURLs_DerivesFromInstallOverride(t *testing.T) {
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", "https://example.test/repo/scripts/install.sh")
-	scripts, root := scriptSourceURLs()
-	if scripts != "https://example.test/repo/scripts" {
-		t.Fatalf("scripts base = %q", scripts)
-	}
-	if root != "https://example.test/repo" {
-		t.Fatalf("root base = %q", root)
-	}
-}
-
-func TestScriptSourceURLs_DefaultPointsAtOrbitMain(t *testing.T) {
-	scripts, root := scriptSourceURLs()
-	if scripts != "https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts" {
-		t.Fatalf("scripts base = %q", scripts)
-	}
-	if root != "https://raw.githubusercontent.com/tomlawesome/orbit/main" {
-		t.Fatalf("root base = %q", root)
-	}
-}
-
-func TestFetchConfigTree_StagesScriptsAndTemplate(t *testing.T) {
-	fakeOrbitSource(t, map[string]string{
-		"/scripts/configure.sh":     "#!/usr/bin/env bash\necho configure\n",
-		"/scripts/configuration.sh": "#!/usr/bin/env bash\necho configuration\n",
-		// installer-ui.sh deliberately absent — orbit main doesn't
-		// have it, and absence must be tolerated.
-		"/.env-orbit.example": "APP_URL=\n",
-	})
-
-	treeDir, cleanup, err := FetchConfigTree(context.Background())
-	if err != nil {
-		t.Fatalf("FetchConfigTree: %v", err)
-	}
-	defer cleanup()
-
-	for path, wantMode := range map[string]os.FileMode{
-		"scripts/configure.sh":     0o700,
-		"scripts/configuration.sh": 0o700,
-		".env-orbit.example":       0o600,
-	} {
-		info, err := os.Stat(filepath.Join(treeDir, path))
-		if err != nil {
-			t.Fatalf("staged %s: %v", path, err)
-		}
-		if info.Mode().Perm() != wantMode {
-			t.Errorf("%s mode = %o, want %o", path, info.Mode().Perm(), wantMode)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(treeDir, "scripts/installer-ui.sh")); !os.IsNotExist(err) {
-		t.Error("expected installer-ui.sh to be absent, not staged empty")
-	}
-
-	cleanup()
-	if _, err := os.Stat(treeDir); !os.IsNotExist(err) {
-		t.Error("cleanup did not remove the staged tree")
-	}
-}
-
-func TestFetchConfigTree_RequiredScriptMissingFails(t *testing.T) {
-	fakeOrbitSource(t, map[string]string{
-		"/.env-orbit.example": "APP_URL=\n",
-	})
-	if _, _, err := FetchConfigTree(context.Background()); err == nil {
-		t.Fatal("expected an error when configure.sh is absent")
-	}
-}
-
-func TestFetchConfigTree_NonScriptContentRefused(t *testing.T) {
-	fakeOrbitSource(t, map[string]string{
-		"/scripts/configure.sh": "<html>404-but-200</html>",
-		"/.env-orbit.example":   "APP_URL=\n",
-	})
-	if _, _, err := FetchConfigTree(context.Background()); err == nil {
-		t.Fatal("expected an error for shebang-less configure.sh")
-	}
-}
 
 func TestImportAndAdoptConfig_RoundTripWithModes(t *testing.T) {
 	treeDir := t.TempDir()
@@ -347,111 +252,6 @@ func truncatedBodyServer(t *testing.T) string {
 	return srv.URL
 }
 
-func TestURLDir_LeavesASlashlessValueAlone(t *testing.T) {
-	if got := urlDir("install.sh"); got != "install.sh" {
-		t.Errorf("urlDir(%q) = %q, want it unchanged", "install.sh", got)
-	}
-	if got := urlDir("https://example.test/repo/install.sh"); got != "https://example.test/repo" {
-		t.Errorf("urlDir = %q, want the scheme's double slash kept", got)
-	}
-}
-
-// An override that doesn't live under scripts/ has no separate root: the
-// template is fetched from the same directory as the scripts.
-func TestScriptSourceURLs_OverrideOutsideScriptsUsesOneBase(t *testing.T) {
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", "https://example.test/flat/install.sh")
-	scripts, root := scriptSourceURLs()
-	if scripts != "https://example.test/flat" || root != "https://example.test/flat" {
-		t.Fatalf("scripts = %q, root = %q, want both https://example.test/flat", scripts, root)
-	}
-}
-
-// Without the template there is nothing to seed configure.sh with, so the
-// whole fetch fails — and fails before anything is staged on disk.
-func TestFetchConfigTree_MissingTemplateFailsWithoutStagingATree(t *testing.T) {
-	fakeOrbitSource(t, map[string]string{
-		"/scripts/configure.sh": "#!/usr/bin/env bash\n",
-	})
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-
-	treeDir, cleanup, err := FetchConfigTree(context.Background())
-	if err == nil || !strings.Contains(err.Error(), envExampleName) {
-		t.Fatalf("expected an error naming %s, got %v", envExampleName, err)
-	}
-	if treeDir != "" || cleanup != nil {
-		t.Errorf("a failed fetch returned treeDir=%q cleanup=%v; want neither", treeDir, cleanup != nil)
-	}
-	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
-		t.Errorf("a failed fetch left %d entries in the temp dir", len(entries))
-	}
-}
-
-func TestFetchConfigTree_UnwritableTempDirIsAnError(t *testing.T) {
-	fakeOrbitSource(t, map[string]string{
-		"/scripts/configure.sh": "#!/usr/bin/env bash\n",
-		"/.env-orbit.example":   "APP_URL=\n",
-	})
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
-
-	treeDir, cleanup, err := FetchConfigTree(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "stage configuration tree") {
-		t.Fatalf("expected a staging error, got %v", err)
-	}
-	if treeDir != "" || cleanup != nil {
-		t.Errorf("a failed stage returned treeDir=%q cleanup=%v; want neither", treeDir, cleanup != nil)
-	}
-}
-
-func TestFetchFile_RefusesAnUnbuildableURL(t *testing.T) {
-	_, err := fetchFile(context.Background(), "http://bad\x7fhost/configure.sh")
-	if err == nil || !strings.Contains(err.Error(), "build request") {
-		t.Fatalf("expected a build-request error, got %v", err)
-	}
-}
-
-func TestFetchFile_RefusesAFileOverTheSizeLimit(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(make([]byte, maxInstallScriptBytes+1))
-	}))
-	defer srv.Close()
-
-	body, err := fetchFile(context.Background(), srv.URL)
-	if err == nil || !strings.Contains(err.Error(), "byte limit") {
-		t.Fatalf("expected a size-limit error, got %v", err)
-	}
-	if body != nil {
-		t.Errorf("an oversized file returned %d bytes; want none", len(body))
-	}
-}
-
-// Exactly at the limit is still accepted: the cap is inclusive.
-func TestFetchFile_AcceptsAFileExactlyAtTheSizeLimit(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(make([]byte, maxInstallScriptBytes))
-	}))
-	defer srv.Close()
-
-	body, err := fetchFile(context.Background(), srv.URL)
-	if err != nil {
-		t.Fatalf("fetchFile: %v", err)
-	}
-	if len(body) != maxInstallScriptBytes {
-		t.Errorf("len(body) = %d, want %d", len(body), maxInstallScriptBytes)
-	}
-}
-
-// A connection that drops mid-body must fail, never hand back half a file.
-func TestFetchFile_TruncatedBodyIsAnError(t *testing.T) {
-	body, err := fetchFile(context.Background(), truncatedBodyServer(t))
-	if err == nil {
-		t.Fatalf("expected an error for a truncated body, got %d bytes", len(body))
-	}
-	if body != nil {
-		t.Errorf("a truncated fetch returned %q; want nothing", body)
-	}
-}
-
 // A fresh install has no configuration to carry over, and that is not
 // an error: the tree simply stays unseeded.
 func TestImportTargetConfig_FreshTargetImportsNothing(t *testing.T) {
@@ -602,7 +402,7 @@ func TestCopySecretsDir_UninspectableSourceIsAnError(t *testing.T) {
 	}
 	lockDir(t, parent)
 	dst := filepath.Join(t.TempDir(), ".orbit-secrets")
-	if err := copySecretsDir(filepath.Join(parent, ".orbit-secrets"), dst); err == nil {
+	if err := copySecretsDir(filepath.Join(parent, ".orbit-secrets"), dst, func(string) error { return nil }); err == nil {
 		t.Fatal("expected an error when the source cannot be inspected")
 	}
 	if _, err := os.Lstat(dst); !os.IsNotExist(err) {
@@ -835,5 +635,88 @@ func TestRunConfigCheck_CleanExitWithNoReportIsAnError(t *testing.T) {
 	_, err := RunConfigCheck(context.Background(), dir)
 	if err == nil || !strings.Contains(err.Error(), "no readiness report") {
 		t.Fatalf("expected a no-readiness-report error, got %v", err)
+	}
+}
+
+// handedOverTree is a configure tree as install.sh leaves it in
+// ORBIT_LAUNCHER_CONFIG_TREE on a configuration refusal (ai/orbit#1225).
+func handedOverTree(t *testing.T) string {
+	t.Helper()
+	tree := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tree, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"scripts/configure.sh":     "#!/usr/bin/env bash\necho configure\n",
+		"scripts/configuration.sh": "#!/usr/bin/env bash\n",
+		".env-orbit.example":       "APP_URL=\n",
+	} {
+		if err := os.WriteFile(filepath.Join(tree, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tree
+}
+
+// #190: the configure tree is what install.sh handed over, never a
+// download — opening it fetches nothing and writes nothing.
+func TestOpenConfigTree_UsesTheHandedOverTreeWithoutFetching(t *testing.T) {
+	requests := noScriptSource(t)
+	tree := handedOverTree(t)
+
+	endSession, err := OpenConfigTree(tree)
+	if err != nil {
+		t.Fatalf("OpenConfigTree: %v", err)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("opening the configure tree made %d HTTP requests", n)
+	}
+
+	// What a session leaves behind — the collected configuration and
+	// the secret — goes when it ends; the verified scripts stay for a
+	// second attempt in the same run, and the tree itself is the run's
+	// to remove.
+	if err := os.WriteFile(filepath.Join(tree, ".env-orbit"), []byte("APP_URL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tree, ".orbit-secrets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, ".orbit-secrets", "oidc-client-secret"), []byte("s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endSession()
+	for _, gone := range []string{".env-orbit", ".orbit-secrets"} {
+		if _, err := os.Lstat(filepath.Join(tree, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s survived the end of the session", gone)
+		}
+	}
+	for _, kept := range []string{"scripts/configure.sh", ".env-orbit.example"} {
+		if _, err := os.Lstat(filepath.Join(tree, kept)); err != nil {
+			t.Errorf("%s was removed with the session: %v", kept, err)
+		}
+	}
+}
+
+// An install.sh without ai/orbit#1225 leaves the directory empty: there
+// is nothing verified to run, so the caller falls back to the terminal
+// handoff rather than fetching anything.
+func TestOpenConfigTree_EmptyTreeIsNoTree(t *testing.T) {
+	requests := noScriptSource(t)
+	endSession, err := OpenConfigTree(t.TempDir())
+	if !errors.Is(err, ErrNoConfigTree) {
+		t.Fatalf("err = %v, want ErrNoConfigTree", err)
+	}
+	if endSession != nil {
+		t.Error("a missing tree returned a session")
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("an empty tree made %d HTTP requests; there is no fallback fetch", n)
+	}
+}
+
+func TestOpenConfigTree_NoTreeAtAll(t *testing.T) {
+	if _, err := OpenConfigTree(""); !errors.Is(err, ErrNoConfigTree) {
+		t.Fatalf("err = %v, want ErrNoConfigTree", err)
 	}
 }

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -16,18 +17,21 @@ import (
 
 // In-console guided configuration, driven by orbit's machine prompt
 // protocol (docs/engine-events.md "Machine prompts (v0)", orbit#297).
-// On the engine's configuration refusal the launcher stages a config
-// tree (deploy.FetchConfigTree), seeds it from the target, and runs
+// On the engine's configuration refusal the launcher opens the configure
+// tree the engine handed over (ORBIT_LAUNCHER_CONFIG_TREE, ai/orbit#1225;
+// see deploy.BuildInstallCommand), seeds it from the target, and runs
 // configure.sh's own guided flow with machine prompts — every answer
 // validated by the engine's validators, never the launcher's guesses,
 // and no value (least of all the secret) ever appearing in a protocol
-// line. A legacy engine that doesn't speak the protocol fails fast
-// with no prompt line, and the flow falls back to the same terminal
-// handoff as before — capability detected by behaviour, never by
-// version sniffing.
+// line. Nothing is downloaded (#190): an engine that handed over no
+// tree, or one that doesn't speak the protocol (it fails fast with no
+// prompt line), gets the same terminal handoff as before — capability
+// detected by behaviour, never by version sniffing.
 
-// configPlan is the prepared session: the staged tree plus what
-// configure.sh --check says still needs collecting.
+// configPlan is the prepared session: the configure tree plus what
+// configure.sh --check says still needs collecting. cleanup ends the
+// session (clearing what it collected); the tree itself is the engine
+// run's, released with the run's files.
 type configPlan struct {
 	treeDir    string
 	cleanup    func()
@@ -66,7 +70,7 @@ type configRecheckMsg struct {
 
 // Seams so flow tests drive the whole session with fakes.
 type (
-	prepareConfigFunc func(ctx context.Context, targetDir string) configPlanMsg
+	prepareConfigFunc func(ctx context.Context, targetDir, configTree string) configPlanMsg
 	startConfigFunc   func(treeDir string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error)
 	adoptConfigFunc   func(treeDir, targetDir string) error
 	recheckConfigFunc func(ctx context.Context, treeDir string) (deploy.ConfigCheck, error)
@@ -96,7 +100,7 @@ type configCollect struct {
 	authMode deploy.AuthMode
 }
 
-// close releases the session's process and staged tree.
+// close releases the session's process and what it collected.
 func (c *configCollect) close() {
 	if c.stream != nil {
 		c.stream.Kill()
@@ -112,11 +116,15 @@ func (c *configCollect) close() {
 	}
 }
 
-func defaultPrepareConfig(ctx context.Context, targetDir string) configPlanMsg {
-	treeDir, cleanup, err := deploy.FetchConfigTree(ctx)
+// defaultPrepareConfig opens the configure tree the engine handed over
+// and plans the session there. No tree (an install.sh without
+// ai/orbit#1225) is an error, which routes to the terminal handoff.
+func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) configPlanMsg {
+	cleanup, err := deploy.OpenConfigTree(configTree)
 	if err != nil {
 		return configPlanMsg{err: err}
 	}
+	treeDir := configTree
 	if err := deploy.ImportTargetConfig(treeDir, targetDir); err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
@@ -148,9 +156,9 @@ func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	if prepare == nil {
 		prepare = defaultPrepareConfig
 	}
-	targetDir := r.targetDir
+	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
-		return prepare(context.Background(), targetDir)
+		return prepare(context.Background(), targetDir, configTree)
 	}
 }
 
@@ -166,12 +174,11 @@ func pumpConfig(s *engine.Stream) tea.Cmd {
 }
 
 // The four ways in-console collection can be abandoned, in fixed
-// phrases. Deliberately not built from the underlying error: the fetch
-// error carries the source URL, and configure.sh's output carries
-// answers. Neither belongs in a log CI keeps as an artifact (see
-// logDiag).
+// phrases. Deliberately not built from the underlying error: it carries
+// local paths, and configure.sh's output carries answers. Neither
+// belongs in a log CI keeps as an artifact (see logDiag).
 const (
-	fallbackFetchFailed  = "could not stage a configuration tree"
+	fallbackNoTree       = "the engine handed over no configuration tree"
 	fallbackUnfixable    = "the configuration needs fields this console cannot ask for"
 	fallbackStepFailed   = "the configuration step would not start"
 	fallbackLegacyEngine = "the engine never spoke the machine prompt protocol"
@@ -197,16 +204,30 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case configPlanMsg:
+		var untrusted *deploy.UntrustedPathError
+		if errors.As(msg.err, &untrusted) {
+			// The tree is on a path the launcher does not trust (#191):
+			// a refusal, naming the path and the reason, never a quiet
+			// fallback. The failure screen still offers the guided
+			// installer as the person's own choice.
+			r.cfg.close()
+			r.releaseRunFiles()
+			r.lastFailed = nil
+			r.stderrTail = nil
+			r.runErr = msg.err
+			r.state = runFailed
+			r.menuSel = 0
+			return r, nil
+		}
 		if msg.err != nil || len(msg.plan.unfixable) > 0 {
-			// Can't collect here (fetch failed, or fields beyond the
-			// protocol's vocabulary are missing) — the guided installer
-			// in the real terminal can.
-			reason := fallbackFetchFailed
+			// Can't collect here (no tree was handed over, or fields
+			// beyond the protocol's vocabulary are missing) — the
+			// guided installer in the real terminal can.
+			reason := fallbackNoTree
 			if msg.err == nil {
-				// How many, not which: the names come from the fetched
-				// tree's own --check output, and nothing fetched is
-				// logged. The count is enough to tell this apart from
-				// a fetch that never happened.
+				// How many, not which: the names come from the tree's
+				// own --check output, which is never logged. The count
+				// is enough to tell this apart from a missing tree.
 				reason = fmt.Sprintf("%s (%d)", fallbackUnfixable, len(msg.plan.unfixable))
 			}
 			r.cfg.close()
@@ -257,6 +278,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	case configAdoptedMsg:
 		if msg.err != nil {
 			r.cfg.close()
+			r.releaseRunFiles()
 			r.runErr = msg.err
 			r.state = runFailed
 			r.menuSel = 0
@@ -383,6 +405,8 @@ func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 // retryEngine starts a fresh engine run against the now-provisioned
 // target: fresh console, fresh clock, fresh outcome evidence.
 func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
+	// The retry is a new engine run with its own configure tree.
+	r.releaseRunFiles()
 	r.configRefused = false
 	r.lastFailed = nil
 	r.stderrTail = nil

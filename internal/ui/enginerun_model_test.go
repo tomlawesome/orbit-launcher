@@ -335,13 +335,13 @@ func TestEngineRun_DefaultPrepareStopsWhenCancelled(t *testing.T) {
 	installScriptAt(t, "sleep 60\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	stream, _, err := defaultPrepareEngine(ctx, t.TempDir(), "install")
-	if stream != nil {
-		t.Cleanup(stream.Kill)
+	ready := defaultPrepareEngine(ctx, t.TempDir(), "install")
+	if ready.stream != nil {
+		t.Cleanup(ready.stream.Kill)
 		t.Fatal("a cancelled preparation still started the engine")
 	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
+	if !errors.Is(ready.err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", ready.err)
 	}
 }
 

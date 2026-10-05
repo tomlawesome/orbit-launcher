@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -884,88 +884,6 @@ func TestSortedFindings_UnknownSeverityGoesLastAndOrderIsStable(t *testing.T) {
 	}
 }
 
-// repairScriptServer serves a repair.sh the way Orbit's script source
-// does, so the real fetch-stage-run path can be driven offline.
-func repairScriptServer(t *testing.T, script string) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/scripts/repair.sh" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(script))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", server.URL+"/scripts/install.sh")
-}
-
-func TestDefaultPrepareRepair_FetchesStagesAndRunsTheRequestedMode(t *testing.T) {
-	repairScriptServer(t, "#!/usr/bin/env bash\necho \"diagnosis result=healthy checked=$# skipped=0\"\necho \"args: $*\" >&2\nexit 0\n")
-	dir := t.TempDir()
-
-	m := NewRepairModel(dir, "v0.6.0") // no seam: the real default
-	ready, ok := m.Init()().(repairReadyMsg)
-	if !ok || ready.err != nil {
-		t.Fatalf("default prepare: %#v", ready)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "scripts", "repair.sh")); err != nil {
-		t.Fatalf("repair.sh was not staged into the target: %v", err)
-	}
-	done := awaitEnd(t, ready.stream)
-	if done.ExitCode != 0 || !strings.Contains(strings.Join(done.StderrTail, "\n"), "args: --plan") {
-		t.Fatalf("the staged script did not run in --plan mode: %+v", done)
-	}
-}
-
-func TestDefaultPrepareRepair_MissingScriptIsUnavailable(t *testing.T) {
-	repairScriptServer(t, "<html>not a script</html>")
-	m := sizedRepair(t)
-	msg := m.Init()()
-	m, _ = repairUpdate(t, m, msg)
-	if m.state != repairUnavailable || !strings.Contains(repairScreen(m), "Diagnosis needs a newer Orbit") {
-		t.Fatalf("state = %v, screen:\n%s", m.state, repairScreen(m))
-	}
-}
-
-func TestDefaultPrepareRepair_MissingTargetIsAnError(t *testing.T) {
-	repairScriptServer(t, "#!/bin/bash\nexit 0\n")
-	m := NewRepairModel(filepath.Join(t.TempDir(), "gone"), "v0.6.0")
-	ready := m.Init()().(repairReadyMsg)
-	if ready.err == nil || !strings.Contains(ready.err.Error(), "target directory") {
-		t.Fatalf("err = %v, want a target-directory error", ready.err)
-	}
-}
-
-func TestDefaultPrepareRotate_RunsTheDangerousModeWithMachinePrompts(t *testing.T) {
-	repairScriptServer(t, "#!/usr/bin/env bash\necho \"prompt field=action-word kind=typed-word required=true attempt=1\"\nread -r w\necho \"got $w $* $ORBIT_REPAIR_PROMPTS\" >&2\nexit 0\n")
-	dir := t.TempDir()
-	m := NewRepairModel(dir, "v0.6.0")
-	ready := m.startRotate()().(repairRotateReadyMsg)
-	if ready.err != nil {
-		t.Fatalf("default rotate prepare: %v", ready.err)
-	}
-	if _, err := io.WriteString(ready.stdin, "rotate\n"); err != nil {
-		t.Fatalf("write stdin: %v", err)
-	}
-	ready.stdin.Close()
-	done := awaitEnd(t, ready.stream)
-	tail := strings.Join(done.StderrTail, "\n")
-	if !strings.Contains(tail, "got rotate") || !strings.Contains(tail, "machine") {
-		t.Fatalf("the rotation did not run with piped machine prompts: %q", tail)
-	}
-}
-
-func TestDefaultPrepareRotate_FetchAndStageFailures(t *testing.T) {
-	repairScriptServer(t, "no shebang")
-	if r := NewRepairModel(t.TempDir(), "v").startRotate()().(repairRotateReadyMsg); !errors.Is(r.err, deploy.ErrRepairUnavailable) {
-		t.Fatalf("err = %v, want ErrRepairUnavailable", r.err)
-	}
-	repairScriptServer(t, "#!/bin/bash\n")
-	if r := NewRepairModel(filepath.Join(t.TempDir(), "gone"), "v").startRotate()().(repairRotateReadyMsg); r.err == nil {
-		t.Fatal("a missing target directory should fail the rotation's start")
-	}
-}
-
 // isQuit reports whether cmd is bubbletea's quit command.
 func isQuit(cmd tea.Cmd) bool { return cmd != nil && cmd() == tea.Quit() }
 
@@ -1065,105 +983,6 @@ func TestRepairModel_RefusedSafeRunSaysWhy(t *testing.T) {
 	}
 }
 
-// A RepairModel built without NewRepairModel has no context of its own;
-// its preparation falls back to one that is never cancelled, so the
-// diagnosis still runs instead of failing on a missing context.
-func TestRepairModel_BuiltWithoutTheConstructorStillRunsTheDiagnosis(t *testing.T) {
-	repairScriptServer(t, "#!/usr/bin/env bash\necho \"diagnosis result=healthy checked=0 skipped=0\"\nexit 0\n")
-	m := RepairModel{targetDir: t.TempDir(), mode: deploy.RepairPlan} // no constructor, no seam
-	ready, ok := m.Init()().(repairReadyMsg)
-	if !ok || ready.err != nil {
-		t.Fatalf("a model built without the constructor could not start its diagnosis: %#v", ready)
-	}
-	if done := awaitEnd(t, ready.stream); done.ExitCode != 0 {
-		t.Fatalf("the diagnosis did not run to the end: %+v", done)
-	}
-}
-
-// stageThroughAFIFO makes dir/scripts/repair.sh a FIFO, so the real
-// preparation's staging write blocks until this test reads it. The
-// reader cancels before draining, and the script is far larger than a
-// pipe holds, so the cancel lands after the fetch has finished and
-// before the staging write can return — the window a late Ctrl-C hits.
-// The returned wait releases a reader still blocked (the preparation
-// failed before staging) and waits for it.
-func stageThroughAFIFO(t *testing.T, dir string, cancel context.CancelFunc) (wait func()) {
-	t.Helper()
-	scripts := filepath.Join(dir, "scripts")
-	if err := os.MkdirAll(scripts, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fifo := filepath.Join(scripts, "repair.sh")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		f, err := os.Open(fifo) // blocks until the staging opens it to write
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		cancel()
-		_, _ = io.Copy(io.Discard, f)
-	}()
-	return func() {
-		if f, err := os.OpenFile(fifo, os.O_RDWR|syscall.O_NONBLOCK, 0); err == nil {
-			f.Close()
-		}
-		<-drained
-	}
-}
-
-// bigRepairScript is a repair.sh larger than a pipe's buffer, so writing
-// it through a FIFO cannot complete until the reader drains it.
-func bigRepairScript() string {
-	return "#!/usr/bin/env bash\n# " + strings.Repeat("x", 256<<10) + "\nsleep 60\n"
-}
-
-// A Ctrl-C that lands after repair.sh was fetched, while it is being
-// staged, still stops the run: nothing is started.
-func TestDefaultPrepareRepair_CancelAfterTheFetchStartsNothing(t *testing.T) {
-	repairScriptServer(t, bigRepairScript())
-	dir := t.TempDir()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	wait := stageThroughAFIFO(t, dir, cancel)
-
-	stream, err := defaultPrepareRepair(ctx, dir, deploy.RepairPlan)
-	wait()
-	if stream != nil {
-		t.Cleanup(stream.Kill)
-		t.Fatal("a cancel that landed after the fetch still started the repair")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
-	}
-}
-
-// The same late Ctrl-C stops a credential rotation before it starts.
-func TestDefaultPrepareRotate_CancelAfterTheFetchStartsNothing(t *testing.T) {
-	repairScriptServer(t, bigRepairScript())
-	dir := t.TempDir()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	wait := stageThroughAFIFO(t, dir, cancel)
-
-	stream, stdin, err := defaultPrepareRotate(ctx, dir)
-	wait()
-	if stream != nil {
-		t.Cleanup(stream.Kill)
-		if stdin != nil {
-			stdin.Close()
-		}
-		t.Fatal("a cancel that landed after the fetch still started the rotation")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
-	}
-}
-
 // A refusal for a reason the launcher has no words for still says
 // nothing was changed and names the reason as given; with no reason it
 // says only that the engine refused. Neither claims a too-old release or
@@ -1211,5 +1030,197 @@ func TestRepairModel_UnsummarisedManualOnlyPlanDoesNotPointAtTheMenu(t *testing.
 	}
 	if strings.Contains(s, "pick a repair below") || strings.Contains(s, "execution arrives") {
 		t.Fatalf("the plan points at a repair the menu does not offer:\n%s", s)
+	}
+}
+
+// deploymentRepair places repair.sh in dir/scripts the way install.sh
+// does from the image, and points the install.sh source at a server
+// that counts requests, so a test can prove nothing was fetched (#190).
+func deploymentRepair(t *testing.T, dir, script string) (requests *atomic.Int32) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "repair.sh"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return countingScriptSource(t)
+}
+
+// countingScriptSource points the install.sh override at a server that
+// counts every request and serves a script for any path.
+func countingScriptSource(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	var n atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n.Add(1)
+		_, _ = w.Write([]byte("#!/usr/bin/env bash\necho 'fetched — never run this'\nexit 0\n"))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", server.URL+"/scripts/install.sh")
+	return &n
+}
+
+func TestDefaultPrepareRepair_RunsTheDeploymentsOwnScriptInTheRequestedMode(t *testing.T) {
+	dir := t.TempDir()
+	const script = "#!/usr/bin/env bash\necho \"diagnosis result=healthy checked=$# skipped=0\"\necho \"args: $*\" >&2\nexit 0\n"
+	requests := deploymentRepair(t, dir, script)
+
+	m := NewRepairModel(dir, "v0.6.0") // no seam: the real default
+	ready, ok := m.Init()().(repairReadyMsg)
+	if !ok || ready.err != nil {
+		t.Fatalf("default prepare: %#v", ready)
+	}
+	done := awaitEnd(t, ready.stream)
+	if done.ExitCode != 0 || !strings.Contains(strings.Join(done.StderrTail, "\n"), "args: --plan") {
+		t.Fatalf("the deployment's script did not run in --plan mode: %+v", done)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("Repair made %d HTTP requests; it must fetch nothing", n)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "scripts", "repair.sh")); string(got) != script {
+		t.Errorf("the deployment's repair.sh was overwritten: %q", got)
+	}
+}
+
+func TestDefaultPrepareRepair_AbsentScriptIsUnavailable(t *testing.T) {
+	requests := countingScriptSource(t)
+	m := sizedRepair(t)
+	msg := m.Init()()
+	m, _ = repairUpdate(t, m, msg)
+	if m.state != repairUnavailable || !strings.Contains(repairScreen(m), "Diagnosis needs a newer Orbit") {
+		t.Fatalf("state = %v, screen:\n%s", m.state, repairScreen(m))
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("an absent repair.sh made %d HTTP requests; there is no fallback fetch", n)
+	}
+	if _, err := os.Lstat(filepath.Join(m.targetDir, "scripts")); !os.IsNotExist(err) {
+		t.Error("nothing may be written into the deployment when repair.sh is absent")
+	}
+}
+
+func TestDefaultPrepareRepair_MissingTargetIsUnavailable(t *testing.T) {
+	countingScriptSource(t)
+	m := NewRepairModel(filepath.Join(t.TempDir(), "gone"), "v0.6.0")
+	ready := m.Init()().(repairReadyMsg)
+	if !errors.Is(ready.err, deploy.ErrRepairUnavailable) {
+		t.Fatalf("err = %v, want ErrRepairUnavailable", ready.err)
+	}
+}
+
+func TestDefaultPrepareRotate_RunsTheDangerousModeWithMachinePrompts(t *testing.T) {
+	dir := t.TempDir()
+	requests := deploymentRepair(t, dir, "#!/usr/bin/env bash\necho \"prompt field=action-word kind=typed-word required=true attempt=1\"\nread -r w\necho \"got $w $* $ORBIT_REPAIR_PROMPTS\" >&2\nexit 0\n")
+	m := NewRepairModel(dir, "v0.6.0")
+	ready := m.startRotate()().(repairRotateReadyMsg)
+	if ready.err != nil {
+		t.Fatalf("default rotate prepare: %v", ready.err)
+	}
+	if _, err := io.WriteString(ready.stdin, "rotate\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	ready.stdin.Close()
+	done := awaitEnd(t, ready.stream)
+	tail := strings.Join(done.StderrTail, "\n")
+	if !strings.Contains(tail, "got rotate") || !strings.Contains(tail, "machine") {
+		t.Fatalf("the rotation did not run with piped machine prompts: %q", tail)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("Rotate made %d HTTP requests; it must fetch nothing", n)
+	}
+}
+
+func TestDefaultPrepareRotate_AbsentScriptIsUnavailable(t *testing.T) {
+	requests := countingScriptSource(t)
+	if r := NewRepairModel(t.TempDir(), "v").startRotate()().(repairRotateReadyMsg); !errors.Is(r.err, deploy.ErrRepairUnavailable) {
+		t.Fatalf("err = %v, want ErrRepairUnavailable", r.err)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("an absent repair.sh made %d HTTP requests", n)
+	}
+}
+
+// A Ctrl-C that lands before the run starts stops it: nothing is
+// started.
+func TestDefaultPrepareRepair_CancelledBeforeTheStartStartsNothing(t *testing.T) {
+	dir := t.TempDir()
+	deploymentRepair(t, dir, "#!/usr/bin/env bash\nsleep 60\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream, err := defaultPrepareRepair(ctx, dir, deploy.RepairPlan)
+	if stream != nil {
+		t.Cleanup(stream.Kill)
+		t.Fatal("a cancelled preparation still started the repair")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// The same early Ctrl-C stops a credential rotation before it starts.
+func TestDefaultPrepareRotate_CancelledBeforeTheStartStartsNothing(t *testing.T) {
+	dir := t.TempDir()
+	deploymentRepair(t, dir, "#!/usr/bin/env bash\nsleep 60\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream, stdin, err := defaultPrepareRotate(ctx, dir)
+	if stream != nil {
+		t.Cleanup(stream.Kill)
+		if stdin != nil {
+			stdin.Close()
+		}
+		t.Fatal("a cancelled preparation still started the rotation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// A RepairModel built without NewRepairModel has no context of its own;
+// its preparation falls back to one that is never cancelled, so the
+// diagnosis still runs instead of failing on a missing context.
+func TestRepairModel_BuiltWithoutTheConstructorStillRunsTheDiagnosis(t *testing.T) {
+	dir := t.TempDir()
+	deploymentRepair(t, dir, "#!/usr/bin/env bash\necho \"diagnosis result=healthy checked=0 skipped=0\"\nexit 0\n")
+	m := RepairModel{targetDir: dir, mode: deploy.RepairPlan} // no constructor, no seam
+	ready, ok := m.Init()().(repairReadyMsg)
+	if !ok || ready.err != nil {
+		t.Fatalf("a model built without the constructor could not start its diagnosis: %#v", ready)
+	}
+	if done := awaitEnd(t, ready.stream); done.ExitCode != 0 {
+		t.Fatalf("the diagnosis did not run to the end: %+v", done)
+	}
+}
+
+// #191: a repair.sh on an untrusted path is refused on the failure
+// screen, with the path and the reason, and never run.
+func TestDefaultPrepareRepair_UntrustedScriptIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	deploymentRepair(t, dir, "#!/usr/bin/env bash\ntouch ran\n")
+	script := filepath.Join(dir, "scripts", "repair.sh")
+	if err := os.Chmod(script, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	m := NewRepairModel(dir, "v0.6.0")
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = updated.(RepairModel)
+	m, _ = repairUpdate(t, m, m.Init()())
+	if m.state != repairError {
+		t.Fatalf("state = %v, want the failure screen", m.state)
+	}
+	var untrusted *deploy.UntrustedPathError
+	if !errors.As(m.runErr, &untrusted) || untrusted.Path != script {
+		t.Fatalf("runErr = %v, want a refusal naming %s", m.runErr, script)
+	}
+	if s := repairScreen(m); !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "writable by everyone") {
+		t.Fatalf("screen:\n%s", s)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {
+		t.Fatal("the untrusted repair.sh ran")
+	}
+
+	rot := NewRepairModel(dir, "v").startRotate()().(repairRotateReadyMsg)
+	if !errors.As(rot.err, &untrusted) {
+		t.Fatalf("rotate err = %v, want a refusal", rot.err)
 	}
 }
