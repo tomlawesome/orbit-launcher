@@ -48,13 +48,17 @@ browser).
 Go, using [`charmbracelet/bubbletea`](https://github.com/charmbracelet/bubbletea)
 for the full-screen event loop and
 [`charmbracelet/lipgloss`](https://github.com/charmbracelet/lipgloss)
-for layout and styling. Linux only (Debian, Ubuntu and similar) — this
-runs on the server being managed, not as a cross-platform desktop tool.
+for layout and styling. Linux only — this runs on the server being
+managed, not as a cross-platform desktop tool. Tested on Ubuntu; Debian
+and similar distributions should work but are not tested.
 
 ## Licence
 
 [AGPL-3.0](LICENSE), with a commercial license available for uses that
 don't fit those terms — see [`LICENSING.md`](LICENSING.md).
+
+The launcher is built from other people's open-source code too; run
+`orbit-launcher --licences` to read their licence notices.
 
 ## Contributing
 

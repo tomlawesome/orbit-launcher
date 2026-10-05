@@ -279,6 +279,7 @@ fast:
     - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
     - staticcheck ./...
     - go test -race -coverprofile=coverage.out ./...
+    - go run ./tools/coveragefloor coverage.out
   artifacts:
     name: coverage
     when: always
@@ -323,7 +324,16 @@ deps:
     - |
       go-licenses check ./... \
         --ignore github.com/tomlawesome/orbit-launcher \
-        --allowed_licenses=0BSD,Apache-2.0,BSD-2-Clause,BSD-3-Clause,CC0-1.0,ISC,MIT,MIT-0,MPL-2.0,Unlicense
+        --allowed_licenses=0BSD,Apache-2.0,BSD-2-Clause,BSD-3-Clause,CC0-1.0,ISC,MIT,MIT-0,MPL-2.0,Unicode-3.0,Unlicense
+    # What a declared licence does not cover (#176): embedded files,
+    # vendored and generated code, and code a comment says came from
+    # elsewhere, in every package the shipped binary links. Each must be
+    # reviewed in .github/licence-review.txt.
+    - go run ./tools/licencereview
+    # The notices the binary embeds and prints with --licences (#182) must
+    # match what it links: a dependency bump fails here until
+    # `go run ./tools/licencenotices` is re-run and committed.
+    - go run ./tools/licencenotices -check
 
 # secret-scan.yml, step for step. Full history: the point is catching a secret
 # that reached the remote in an earlier commit and is no longer in the working

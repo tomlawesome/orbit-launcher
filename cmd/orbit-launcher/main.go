@@ -5,22 +5,51 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/notices"
 	"github.com/tomlawesome/orbit-launcher/internal/release"
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Printf("orbit-launcher %s (%s)\n", release.Version, release.Revision)
-		return
-	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, startApp))
+}
 
+// run is orbit-launcher's entire command-line surface: the --version
+// and --licences short-circuits, and otherwise the TUI itself. startApp is a seam for
+// tests -- main always passes startApp itself; main_test.go substitutes a
+// stub so the dispatch logic (which args launch the TUI, what exit code
+// and output each path produces) can be checked without a real terminal.
+// The TUI's own behaviour is exercised instead by test/pty, which spawns
+// the real compiled binary under a real pty (docs/implementation-plan.md
+// section 3.3) -- that is a better tool for proving a full-screen
+// application works than an in-process unit test would be.
+func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr io.Writer) int) int {
+	if len(args) > 0 && args[0] == "--version" {
+		fmt.Fprintf(stdout, "orbit-launcher %s (%s)\n", release.Version, release.Revision)
+		return 0
+	}
+	// The licence notices every copy of the binary owes its dependencies
+	// (#182). Both spellings, since either is what someone will type.
+	if len(args) > 0 && (args[0] == "--licences" || args[0] == "--licenses") {
+		fmt.Fprint(stdout, notices.Text)
+		return 0
+	}
+	return startApp(stdout, stderr)
+}
+
+// startApp builds and runs the TUI program to completion. stdout is
+// unused: tea.NewProgram writes straight to the real terminal rather than
+// through an injectable writer, which is also why this function itself
+// is not unit-tested (see run's doc comment) -- the parameter stays so
+// startApp's signature matches what run expects.
+func startApp(stdout, stderr io.Writer) int {
 	app := ui.NewAppModel()
 	if os.Getenv("ORBIT_LAUNCHER_NO_ANIMATION") != "" {
 		app = ui.NewAppModelNoAnimation()
@@ -60,9 +89,10 @@ func main() {
 	program := tea.NewProgram(app)
 	sender.Attach(program)
 	if _, err := program.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "orbit-launcher:", err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, "orbit-launcher:", err)
+		return 1
 	}
+	return 0
 }
 
 // displayVersion formats the release version for the splash's corner:
