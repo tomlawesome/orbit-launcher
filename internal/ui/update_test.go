@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,10 +26,9 @@ func newTestUpdateModel(d *deploy.Deployment, seams engineRunSeams) (UpdateModel
 
 func testDeployment() *deploy.Deployment {
 	return &deploy.Deployment{
-		TargetDir:   "/opt/orbit",
-		AppURL:      "https://mail.example.com",
-		Image:       "ghcr.io/tomlawesome/orbit@sha256:abc",
-		InstalledAt: time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC),
+		TargetDir: "/opt/orbit",
+		AppURL:    "https://mail.example.com",
+		Image:     "ghcr.io/tomlawesome/orbit@sha256:abc",
 	}
 }
 
@@ -162,5 +162,53 @@ func TestUpdateModel_EngineFailureReachesFailedState(t *testing.T) {
 	}
 	if o := m.Outcome(); o.Succeeded {
 		t.Error("a failed engine run must never read as success")
+	}
+}
+
+// The install date is Docker's to give: until the lookup answers, the
+// confirm screen names the deployment and says nothing about its age.
+func TestUpdateModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
+	m, _ := newTestUpdateModel(testDeployment(), engineRunSeams{})
+
+	before := stripANSI(m.View().Content)
+	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
+		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
+	}
+
+	updated, _ := m.Update(installedAtMsg{at: time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)})
+	after := stripANSI(updated.(UpdateModel).View().Content)
+	if !strings.Contains(after, "mail.example.com · installed 2026-06-14") {
+		t.Fatalf("after the lookup answers, want the date beside the host:\n%s", after)
+	}
+}
+
+func TestUpdateModel_InitAsksForTheInstallDate(t *testing.T) {
+	d := testDeployment()
+	want := time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)
+	var seen *deploy.Deployment
+	m := NewUpdateModel(d, "/opt/orbit", "v9.9.9")
+	m.lookupInstalledAt = func(_ context.Context, got *deploy.Deployment) time.Time {
+		seen = got
+		return want
+	}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init must start the install-date lookup")
+	}
+	msg, ok := cmd().(installedAtMsg)
+	if !ok {
+		t.Fatalf("Init's command did not answer with the install date")
+	}
+	if !msg.at.Equal(want) {
+		t.Errorf("install date = %v, want %v", msg.at, want)
+	}
+	if seen != d {
+		t.Errorf("the lookup was asked about %+v, want this deployment", seen)
+	}
+
+	// Nothing installed here: there is no date to look up.
+	if cmd := NewUpdateModel(nil, "/opt/orbit", "v9.9.9").Init(); cmd != nil {
+		t.Error("with no deployment, Init must not start a lookup")
 	}
 }

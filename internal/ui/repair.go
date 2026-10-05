@@ -63,6 +63,16 @@ type RepairModel struct {
 	stream  *engine.Stream
 	menuSel int
 
+	// ctx scopes every fetch-and-start this model launches; cancel
+	// stops one in flight. A Ctrl-C before a run exists cancels it and
+	// sets quitting; the model then quits only when the preparation
+	// reports back, killing a diagnosis it managed to start. A mutation
+	// that started anyway is kept instead, on a fresh context (see
+	// keepRunAfterCancel).
+	ctx      context.Context
+	cancel   context.CancelFunc
+	quitting bool
+
 	// Done/WantsMenu surface the outcome to AppModel, exactly like a
 	// flow's engine run.
 	Done      bool
@@ -114,7 +124,20 @@ type repairStreamMsg struct{ msg any }
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	return RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	// One context for the model's whole life: Init cannot store state,
+	// and the model quits once it is cancelled.
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	return m
+}
+
+// prepareContext is the context preparations run on; a model built
+// without NewRepairModel falls back to one that is never cancelled.
+func (m RepairModel) prepareContext() context.Context {
+	if m.ctx == nil {
+		return context.Background()
+	}
+	return m.ctx
 }
 
 // Outcome surfaces the flow result to AppModel.
@@ -135,9 +158,9 @@ func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}
-	targetDir := m.targetDir
+	targetDir, ctx := m.targetDir, m.prepareContext()
 	return func() tea.Msg {
-		stream, err := prepare(context.Background(), targetDir, mode)
+		stream, err := prepare(ctx, targetDir, mode)
 		return repairReadyMsg{stream: stream, err: err}
 	}
 }
@@ -151,6 +174,10 @@ func defaultPrepareRepair(ctx context.Context, targetDir string, mode deploy.Rep
 	if err := deploy.StageRepairScript(targetDir, script); err != nil {
 		return nil, err
 	}
+	// A cancel that lands after the fetch must still stop the start.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return engine.Start(deploy.BuildRepairCommand(targetDir, mode))
 }
 
@@ -162,6 +189,9 @@ func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream
 		return nil, nil, err
 	}
 	if err := deploy.StageRepairScript(targetDir, script); err != nil {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	return engine.StartInteractive(deploy.BuildRepairCommand(targetDir, deploy.RepairExecuteDangerous))
@@ -179,14 +209,23 @@ func (m *RepairModel) startExecution() {
 	m.rotPrompt, m.rotReason, m.rotInput = nil, "", nil
 }
 
+// keepRunAfterCancel keeps a mutating run the engine started just as
+// Ctrl-C landed: it is never signalled, because a kill milliseconds
+// after start is exactly stopping halfway. The launcher stays and
+// watches it; the fresh context lets a later "Diagnose again" fetch.
+func (m *RepairModel) keepRunAfterCancel() {
+	m.quitting = false
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+}
+
 func (m RepairModel) startRotate() tea.Cmd {
 	prepare := m.prepareRotate
 	if prepare == nil {
 		prepare = defaultPrepareRotate
 	}
-	targetDir := m.targetDir
+	targetDir, ctx := m.targetDir, m.prepareContext()
 	return func() tea.Msg {
-		stream, stdin, err := prepare(context.Background(), targetDir)
+		stream, stdin, err := prepare(ctx, targetDir)
 		return repairRotateReadyMsg{stream: stream, stdin: stdin, err: err}
 	}
 }
@@ -216,6 +255,16 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case repairReadyMsg:
+		if m.quitting {
+			if msg.stream == nil {
+				return m, tea.Quit
+			}
+			if m.state == repairPreparing {
+				msg.stream.Kill()
+				return m, tea.Quit
+			}
+			m.keepRunAfterCancel()
+		}
 		if msg.err != nil {
 			m.runErr = msg.err
 			m.state = repairError
@@ -228,6 +277,23 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, pumpRepair(m.stream)
 
 	case repairRotateReadyMsg:
+		if m.quitting {
+			if msg.stream == nil {
+				if msg.stdin != nil {
+					_ = msg.stdin.Close()
+				}
+				return m, tea.Quit
+			}
+			// Keep the rotation and close its input at once: the
+			// engine backs out at its first prompt.
+			m.keepRunAfterCancel()
+			m.stream = msg.stream
+			if msg.stdin != nil {
+				_ = msg.stdin.Close()
+			}
+			m.stdin = nil
+			return m, pumpRepair(m.stream)
+		}
 		if msg.err != nil {
 			m.runErr = msg.err
 			m.state = repairError
@@ -400,6 +466,23 @@ var executedMenu = []string{"Diagnose again", "Menu", "Exit"}
 
 func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isCtrlC(msg) {
+		if m.stream == nil && (m.state == repairPreparing || m.state == repairExecuting || m.state == repairRotating) {
+			// The run is still being fetched and started: cancel that
+			// and quit when it reports back (see the ready cases).
+			m.quitting = true
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, nil
+		}
+		switch m.state {
+		case repairExecuting:
+			// A running mutation is never signalled: stopping it halfway
+			// is the one thing more dangerous than letting it finish.
+			return m, nil
+		case repairRotating:
+			return m.stopRotation()
+		}
 		if m.stream != nil {
 			m.stream.Kill()
 		}
@@ -496,21 +579,13 @@ func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func
 }
 
 // handleRotateKey is the rotation session's typing surface — the same
-// grammar as the in-console configuration prompts. Esc abandons the
-// session; the engine treats closed input as its documented abort and
-// changes nothing.
+// grammar as the in-console configuration prompts. Esc closes the
+// session's input, which the engine treats as its documented abort at
+// its next prompt; a rotation already past its prompts is left to
+// finish. Either way the run ends on the after-picture.
 func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		if m.stdin != nil {
-			m.stdin.Close()
-			m.stdin = nil
-		}
-		if m.stream != nil {
-			m.stream.Kill()
-		}
-		m.state = repairDiagnosis
-		m.menuSel = 0
-		return m, nil
+		return m.stopRotation()
 	}
 	if m.rotPrompt == nil {
 		return m, nil
@@ -536,6 +611,20 @@ func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// stopRotation closes the rotation's input and waits: the engine is
+// never signalled, because what it already began must be backed out or
+// finished by the engine itself. With input already closed, or not yet
+// open, there is nothing to do.
+func (m RepairModel) stopRotation() (tea.Model, tea.Cmd) {
+	if m.stdin == nil {
+		return m, nil
+	}
+	m.stdin.Close()
+	m.stdin = nil
+	m.rotPrompt, m.rotInput, m.rotReason = nil, nil, ""
+	return m, nil
+}
+
 // View implements tea.Model.
 func (m RepairModel) View() tea.View { return tea.NewView(m.view()) }
 
@@ -548,7 +637,8 @@ func (m RepairModel) view() string {
 	case repairPreparing:
 		return skyBlock(m.star, m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
 	case repairExecuting:
-		return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first"))
+		return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first")+
+			"\n"+style.Tagline.Render("can't be stopped from here — stopping halfway is the one unsafe step"))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -573,6 +663,13 @@ func (m RepairModel) viewRotating() string {
 	fmt.Fprintln(&b, style.MutedText.Render("A passphrase-protected backup of the current credential is"))
 	fmt.Fprintln(&b, style.MutedText.Render("taken and verified before anything changes."))
 	fmt.Fprintln(&b)
+
+	if m.stream != nil && m.stdin == nil {
+		// Input closed, engine still running: it is backing out at its
+		// next prompt or finishing a step it already began.
+		fmt.Fprintln(&b, style.Tagline.Render("stopping — waiting for the engine to back out or finish what it began"))
+		return skyBlock(m.star, m.width, m.height, b.String())
+	}
 
 	p := m.rotPrompt
 	if p == nil {
@@ -625,6 +722,8 @@ func (m RepairModel) viewExecuted() string {
 		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Nothing to repair"))
 	case "failed":
 		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Some repairs failed"))
+	case "refused":
+		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair refused"))
 	default:
 		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair run ended"))
 	}
@@ -639,13 +738,28 @@ func (m RepairModel) viewExecuted() string {
 	if m.execSummary != nil && (m.execSummary.Done > 0 || m.execSummary.Failed > 0) {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done · %d failed", m.execSummary.Done, m.execSummary.Failed)))
 	}
-	if m.exitCode == repairExitDangerousRefused {
+	if m.execSummary != nil && m.execSummary.Result == "refused" {
+		// The whole run was refused before any batch ran; the reason
+		// enum says why, and the exit code alone cannot.
+		switch m.execSummary.Reason {
+		case "deployment-version-unsupported":
+			fmt.Fprintln(&b, style.DegradedText.Render("nothing was changed — this deployment's Orbit release is too old to repair here"))
+			fmt.Fprintln(&b, style.DegradedText.Render("upgrade or reinstall it with a supported release, then diagnose again"))
+		default:
+			refusal := "nothing was changed — the engine refused to run"
+			if m.execSummary.Reason != "" {
+				refusal += " (" + m.execSummary.Reason + ")"
+			}
+			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+		}
+	}
+	if m.dangerous != nil && m.dangerous.Result == "refused" {
 		// The dangerous batch's gate was never passed. Nothing was
 		// rotated and nothing failed — say only that, and say why when
 		// the stream told us, because "you declined" and "there was no
 		// terminal to ask" send the operator to different next steps.
 		refusal := "credentials left as they were — nothing was rotated"
-		if m.dangerous != nil && m.dangerous.Reason == "non-interactive" {
+		if m.dangerous.Reason == "non-interactive" {
 			refusal += " (no terminal was available to approve it)"
 		}
 		fmt.Fprintln(&b, style.DegradedText.Render(refusal))
@@ -757,8 +871,8 @@ func (m RepairModel) viewDiagnosis() string {
 }
 
 // writePlan renders the proposed plan (orbit#261 slice 3): what the
-// engine would do, classified — and the plain truth that nothing here
-// can execute yet.
+// engine would do, classified — and the plain truth that nothing has
+// run yet.
 func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 	if len(m.planActions) == 0 {
 		// No plan lines: healthy, a --check fallback run, or nothing
@@ -778,7 +892,7 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 		}
 	}
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary)))
+	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous())))
 }
 
 // planLine renders one proposed action: the action in plain words and
@@ -824,20 +938,31 @@ func actionWords(action string) string {
 	}
 }
 
-// planSummaryWords is the one-line truth under the plan.
-func planSummaryWords(s *engine.PlanSummary) string {
+// planSummaryWords is the one-line truth under the plan. runnable says
+// whether the menu below offers a repair to run, so the line points at
+// it when it does and never claims execution is unavailable.
+func planSummaryWords(s *engine.PlanSummary, runnable bool) string {
 	if s == nil {
-		return "execution arrives with a later Orbit release — nothing here has run"
+		if runnable {
+			return "nothing has run yet — pick a repair below to run it"
+		}
+		return "nothing has run yet"
 	}
 	switch s.Result {
 	case "ready":
-		return "a safe plan is ready — execution arrives with a later Orbit release"
+		if runnable {
+			return "a safe plan is ready — pick a repair below to run it"
+		}
+		return "a safe plan is ready — nothing has run yet"
 	case "manual-required":
-		return "some steps need your hands — execution arrives with a later Orbit release"
+		if runnable {
+			return "some steps need your hands — the rest can run from the menu below"
+		}
+		return "some steps need your hands — nothing has run yet"
 	case "empty":
 		return "nothing to plan"
 	default:
-		return s.Result + " — execution arrives with a later Orbit release"
+		return s.Result + " — nothing has run yet"
 	}
 }
 

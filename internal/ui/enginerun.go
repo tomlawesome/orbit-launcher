@@ -116,6 +116,13 @@ type engineRun struct {
 	stream  *engine.Stream
 	cleanup func() error
 
+	// cancelPrepare cancels the in-flight fetch-and-start. A Ctrl-C
+	// while preparing cancels it and sets quitting; the run then quits
+	// only when the preparation reports back, killing anything it
+	// managed to start, so no engine is ever left running unobserved.
+	cancelPrepare context.CancelFunc
+	quitting      bool
+
 	// cfg is the in-console configuration session, live while state is
 	// runConfigCollect.
 	cfg configCollect
@@ -174,8 +181,10 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 		prepare = defaultPrepareEngine
 	}
 	targetDir, action := r.targetDir, r.action
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
-		stream, cleanup, err := prepare(context.Background(), targetDir, action)
+		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
 	}
 }
@@ -185,6 +194,11 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 func defaultPrepareEngine(ctx context.Context, targetDir, action string) (*engine.Stream, func() error, error) {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
+		return nil, nil, err
+	}
+	// A cancel that lands after the script arrived must still stop the
+	// engine from starting: once started, only the model can kill it.
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	cmd, cleanup, err := deploy.BuildEngineCommand(script, targetDir, action)
@@ -253,6 +267,15 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, tick()
 
 	case engineReadyMsg:
+		if r.quitting {
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			if msg.cleanup != nil {
+				_ = msg.cleanup()
+			}
+			return r, tea.Quit
+		}
 		if msg.err != nil {
 			r.runErr = msg.err
 			r.state = runFailed
@@ -425,6 +448,15 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 
 func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if isCtrlC(msg) {
+		if r.state == runPreparing {
+			// Nothing to kill yet: cancel the preparation and quit when
+			// it reports back (see the engineReadyMsg case).
+			r.quitting = true
+			if r.cancelPrepare != nil {
+				r.cancelPrepare()
+			}
+			return r, nil
+		}
 		if r.stream != nil {
 			r.stream.Kill()
 		}

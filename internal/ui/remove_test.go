@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +14,8 @@ import (
 
 func newTestRemoveModel(standDown func(context.Context, string) error) RemoveModel {
 	d := &deploy.Deployment{
-		TargetDir:   "/opt/orbit",
-		AppURL:      "https://mail.example.com",
-		InstalledAt: time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC),
+		TargetDir: "/opt/orbit",
+		AppURL:    "https://mail.example.com",
 	}
 	m := NewRemoveModel(d)
 	m.standDown = standDown
@@ -156,5 +156,48 @@ func TestRemoveModel_NeverInvokesStandDownAutomatically(t *testing.T) {
 	_ = m.View() // rendering alone must never trigger a side effect
 	if called {
 		t.Error("StandDown must only run after an explicit confirm, never as a side effect of rendering")
+	}
+}
+
+// The install date is Docker's to give: until the lookup answers, the
+// confirm screen names the deployment and says nothing about its age.
+func TestRemoveModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
+	m := newTestRemoveModel(func(context.Context, string) error { return nil })
+
+	before := stripANSI(m.View().Content)
+	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
+		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
+	}
+
+	updated, _ := m.Update(installedAtMsg{at: time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)})
+	after := stripANSI(updated.(RemoveModel).View().Content)
+	if !strings.Contains(after, "mail.example.com · installed 2026-06-14") {
+		t.Fatalf("after the lookup answers, want the date beside the host:\n%s", after)
+	}
+}
+
+func TestRemoveModel_InitAsksForTheInstallDate(t *testing.T) {
+	d := &deploy.Deployment{TargetDir: "/opt/orbit", AppURL: "https://mail.example.com"}
+	want := time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)
+	var seen *deploy.Deployment
+	m := NewRemoveModel(d)
+	m.lookupInstalledAt = func(_ context.Context, got *deploy.Deployment) time.Time {
+		seen = got
+		return want
+	}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init must start the install-date lookup")
+	}
+	msg, ok := cmd().(installedAtMsg)
+	if !ok {
+		t.Fatalf("Init's command did not answer with the install date")
+	}
+	if !msg.at.Equal(want) {
+		t.Errorf("install date = %v, want %v", msg.at, want)
+	}
+	if seen != d {
+		t.Errorf("the lookup was asked about %+v, want this deployment", seen)
 	}
 }

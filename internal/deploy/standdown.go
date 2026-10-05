@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 // StandDown stops a deployment's containers and network — the safe,
@@ -42,9 +44,31 @@ func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 // volumes and every file in targetDir. This package never executes it:
 // see removal_property_test.go, which asserts that as a real, checked
 // property, not just a comment someone could quietly invalidate later.
+//
+// It passes --env-file for the same reason StandDown does: Compose never
+// auto-loads .env-orbit, so without it "down -v" cannot resolve the
+// compose file's variables. Paths are quoted because the line is pasted
+// into a shell, so a directory name with a space or quote must still
+// arrive as one argument.
 func RemovalCommand(targetDir string) string {
+	envFile := filepath.Join(targetDir, ".env-orbit")
 	return fmt.Sprintf(
-		"docker compose --project-directory %s down -v && sudo rm -rf %s",
-		targetDir, targetDir,
+		"docker compose --project-directory %s --env-file %s down -v && sudo rm -rf %s",
+		shellQuote(targetDir), shellQuote(envFile), shellQuote(targetDir),
 	)
+}
+
+// shellSafe matches values that need no quoting in a POSIX shell.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%+=:,./_-]+$`)
+
+// shellQuote applies POSIX single-quote escaping (as Python's shlex.quote
+// does), leaving the value bare when it only has shell-safe characters.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if shellSafe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -157,3 +157,9 @@ func TestFormatAchieved(t *testing.T) {
 		}
 	}
 }
+
+// A terminal can report zero rows mid-resize; the live console must
+// still render rather than panic.
+func TestConsole_ZeroHeightViewDoesNotPanic(t *testing.T) {
+	_ = testConsole().setSize(80, 0).view(80, 0)
+}
