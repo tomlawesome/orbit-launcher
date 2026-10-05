@@ -71,6 +71,8 @@ GitLab, with `gh-pages` for the published site.
 
 - Protected branches are `dev`, `preview`, and `main` on both hosts.
 - Approval to merge into `dev` is not approval to promote.
+- Ask the owner in chat before every merge: the safety hook may let one
+  through without prompting (!191, 2026-10-05).
 
 ## Commit style
 
