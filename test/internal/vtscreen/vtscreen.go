@@ -1,8 +1,8 @@
 // Package vtscreen is the one way test/pty and test/live read a program's
-// screen: Charm's vttest runs the program on a pty inside a virtual
-// terminal, and this package turns that terminal's rendered cells into
-// plain text and waits, against a wall-clock deadline, for text to appear
-// on it (#181).
+// screen: the program runs on a real pty, Charm's x/vt terminal emulator
+// draws everything it writes there, and this package turns the emulator's
+// rendered cells into plain text and waits, against a wall-clock deadline,
+// for text to appear on it (#181).
 //
 // It replaces go-expect, which matched the raw stream of bytes the program
 // wrote. A stream carries a frame as a diff of the cells that changed, with
@@ -21,36 +21,131 @@ package vtscreen
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/charmbracelet/x/vttest"
+	"github.com/charmbracelet/x/vt"
+	"github.com/creack/pty"
 )
 
 // PollInterval is how often a wait looks at the screen.
 const PollInterval = 50 * time.Millisecond
 
+// Terminal is a pty with an emulator on its far end: what a program
+// writes to the pty is drawn on the emulator's screen, and what the
+// emulator answers (cursor position and colour queries) goes back in as
+// the program's input, as a real terminal's would.
+//
+// It is built on x/vt directly rather than on Charm's vttest, which wraps
+// the same emulator (#181): vttest pulls in a font renderer for a PNG
+// feature these suites do not use, and its Snapshot and SendText lock the
+// emulator in an order that deadlocks against a program that keeps
+// redrawing — the first run of test/pty on it hung for ten minutes so.
+type Terminal struct {
+	emu  *vt.SafeEmulator
+	pty  *os.File // the terminal's side
+	tty  *os.File // the program's side
+	once sync.Once
+}
+
+// New opens a cols x rows terminal. The pty is sized before any program
+// starts on it, so a program's first size query sees the real size.
+//
+// If raw is not nil, every byte the program writes is copied to it too,
+// before the emulator draws it: the exact stream, for a log. A failed
+// write to raw is ignored, so a broken log cannot stop the screen.
+func New(cols, rows int, raw io.Writer) (*Terminal, error) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open pty: %w", err)
+	}
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil {
+		_ = ptmx.Close()
+		_ = tty.Close()
+		return nil, fmt.Errorf("size pty: %w", err)
+	}
+	t := &Terminal{emu: vt.NewSafeEmulator(cols, rows), pty: ptmx, tty: tty}
+	// The program's output, drawn. The emulator never stops reading,
+	// whether or not anything is looking at the screen, so a program is
+	// never held up by a full pty.
+	var drawn io.Writer = t.emu
+	if raw != nil {
+		drawn = io.MultiWriter(ignoreErrors{raw}, t.emu)
+	}
+	go func() { _, _ = io.Copy(drawn, t.pty) }()
+	// The emulator's answers, back to the program.
+	go func() { _, _ = io.Copy(t.pty, t.emu) }()
+	return t, nil
+}
+
+// ignoreErrors reports every write as whole, so io.MultiWriter carries on
+// to the emulator whatever happens to the log.
+type ignoreErrors struct{ w io.Writer }
+
+func (e ignoreErrors) Write(p []byte) (int, error) {
+	_, _ = e.w.Write(p)
+	return len(p), nil
+}
+
+// Start runs cmd on the terminal. Stdin, stdout and stderr default to the
+// pty; a stream the caller already set is left alone.
+func (t *Terminal) Start(cmd *exec.Cmd) error {
+	if cmd.Stdin == nil {
+		cmd.Stdin = t.tty
+	}
+	if cmd.Stdout == nil {
+		cmd.Stdout = t.tty
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = t.tty
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", cmd.Path, err)
+	}
+	return nil
+}
+
+// Output is the program's side of the pty, for a test that draws on the
+// screen itself.
+func (t *Terminal) Output() io.Writer {
+	return t.tty
+}
+
+// Close shuts the terminal down. It does not wait for the copying to
+// stop, so it cannot hang on an emulator stuck mid-write.
+func (t *Terminal) Close() error {
+	var err error
+	t.once.Do(func() {
+		// Closing the emulator's answer pipe first frees a write
+		// blocked on it, and ends the copy reading it. That pipe is
+		// closed directly, not through the emulator's Close, which sets
+		// a flag the copy's reads check without a lock.
+		if pw, ok := t.emu.InputPipe().(io.Closer); ok {
+			_ = pw.Close()
+		}
+		err = t.pty.Close()
+		if tErr := t.tty.Close(); err == nil {
+			err = tErr
+		}
+	})
+	return err
+}
+
 // Screen is term's screen as it is now, as plain text: one line per row,
 // trailing spaces trimmed, styling dropped.
 //
-// It reads the emulator directly rather than through vttest's
-// Terminal.Snapshot, for two reasons found running this suite (#181):
-//
-//   - Snapshot holds the Terminal's own mutex while it reads cells under
-//     the emulator's lock, and the emulator's callbacks (cursor moves,
-//     modes) take that same mutex while a write holds the emulator's
-//     lock. A snapshot taken while the program draws deadlocks both, and
-//     Terminal.Close after them: the first run of test/pty on vttest hung
-//     for ten minutes exactly so.
-//   - Snapshot, like any cell-by-cell read, takes the emulator's lock once
-//     per cell. A program writing without pause (the starfield, or a
-//     tight echo loop) retakes the lock between every two cells, so one
-//     120x40 read starves for seconds.
-//
-// Render takes the emulator's lock once for the whole screen, which also
-// means a screen is never two frames mixed. Its styling is stripped here.
-func Screen(term *vttest.Terminal) string {
-	lines := strings.Split(stripEscapes(term.Emulator.Render()), "\n")
+// It uses the emulator's Render, which takes the emulator's lock once for
+// the whole screen. A cell-by-cell read takes it once per cell, and a
+// program writing without pause (the starfield, or a tight echo loop)
+// retakes it between every two cells, so one 120x40 read starves for
+// seconds (#181). One lock also means a screen is never two frames mixed.
+// Render's styling is stripped here.
+func Screen(term *Terminal) string {
+	lines := strings.Split(stripEscapes(term.emu.Render()), "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " ")
 	}
@@ -96,11 +191,10 @@ func stripEscapes(s string) string {
 }
 
 // Send types text into term as raw input, escape sequences and all, the
-// way a person's keystrokes arrive. Like Screen it goes to the emulator
-// directly: Terminal.SendText takes the Terminal's mutex before the
-// emulator's lock, the order Snapshot deadlocks on.
-func Send(term *vttest.Terminal, text string) {
-	term.Emulator.SendText(text)
+// way a person's keystrokes arrive. It writes to the pty itself, not
+// through the emulator, so typing never waits on the emulator's lock.
+func Send(term *Terminal, text string) {
+	_, _ = io.WriteString(term.pty, text)
 }
 
 // Match decides whether a screen is the one being waited for.
@@ -149,7 +243,7 @@ func (e *TimeoutError) Error() string {
 // nobody reads would hold it for ever. The wait still ends on time; only
 // the goroutine taking the snapshot is left behind, until the terminal is
 // closed.
-func Wait(term *vttest.Terminal, within time.Duration, match Match) (string, error) {
+func Wait(term *Terminal, within time.Duration, match Match) (string, error) {
 	type look struct {
 		screen string
 		ok     bool
