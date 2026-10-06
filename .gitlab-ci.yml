@@ -589,7 +589,7 @@ live:
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
         export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
-        echo "the verified preview release manifest names image $(jq -r .digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
+        echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
       fi
       python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
