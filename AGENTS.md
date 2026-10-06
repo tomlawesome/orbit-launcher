@@ -60,7 +60,11 @@ on GitHub by hand.
   the Codex one) and `GITLAB_TOKEN` unset; the repo-local git credential
   helper for the `gitlab` remote is `!glab auth git-credential`.
 - Start a pipeline by hand with `gl-pipeline-run ai/orbit-launcher <ref>
-  RUN_LIVE=true` to include the live test.
+  RUN_LIVE=true` to include the live test. The update leg (#198) also needs
+  `ORBIT_FIRST_RECORD_IMAGE_JOB=<id> ORBIT_FIRST_SIGN_EVIDENCE_JOB=<id>`: the
+  `record_image` and `sign_evidence` job IDs of an earlier signed ai/orbit
+  preview pipeline than the current one. Without them it skips, saying so;
+  the job token cannot list pipelines to find them itself.
 - Renovate's pipelines are started by the project bot, which cannot read
   ai/orbit; the live job then takes Orbit's files from the GitHub mirror
   (#173). `ORBIT_FILES_SOURCE=github` forces that route.
