@@ -581,45 +581,47 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 	}
 	t.Cleanup(func() { stderrFile.Close() })
 	cmd.Stderr = stderrFile // stdin and stdout are left to vtscreen: the pty
-	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
-	// goroutine, not just the one that took the signal.
+
+	// The health probe stays on, as an operator's launcher has it. The
+	// other behaviours HermeticEnv turns off matter to this suite as
+	// follows.
 	//
-	// The health probe stays on, as an operator's launcher has it. Why
-	// the other behaviours HermeticEnv turns off matter to this suite:
-	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe), "GOTRACEBACK=all",
-		// The stale-database-volume pre-flight (issue #105) reads the
-		// host's volumes, so a volume left behind by a crashed earlier
-		// run would interrupt this install with a screen the test never
-		// expects — and the gate would sit out its full 600s waiting for
-		// a profile screen that isn't coming, which is precisely the
-		// hang class issue #100 exists to diagnose. Covered by its own
-		// unit and seam tests instead of on machine state.
-		//
-		// No arrival animation (issue #120). Menu rows render at
-		// introMenuStart but keys stay swallowed until introEnd
-		// (internal/ui/splash.go:98-102), so a test that matches "Install"
-		// and immediately sends a selection can have it eaten as the skip,
-		// leaving the menu settled with nothing chosen.
-		//
-		// Sending a separate skip key first was measured not to fix it:
-		// that attempt hung in exactly the same place as no skip key at
-		// all, because the bubbletea of the day batched consecutive
-		// printable runes into a single key message and handleKey's
-		// swallow returns before the digit shortcuts are examined
-		// (splash.go:343-380), so "s" and the selection sent back-to-back
-		// were discarded together. Each printable character is its own
-		// key press now, so the two would arrive separately — but this
-		// suite does not need the arrival either way, for the reason
-		// below.
-		//
-		// This costs no coverage. The arrival's own behaviour — any key
-		// skips and is swallowed, it finishes on its own after enough
-		// ticks, NO_ANIMATION never plays it — is asserted by
-		// internal/ui/splash_test.go, and how it looks belongs to
-		// visual-regression.yml. What this suite exists to pin is the
-		// install.sh handoff contract, which the animation only ever
-		// added nondeterminism to.
-		//
+	// The stale-database-volume pre-flight (issue #105) reads the
+	// host's volumes, so a volume left behind by a crashed earlier
+	// run would interrupt this install with a screen the test never
+	// expects — and the gate would sit out its full 600s waiting for
+	// a profile screen that isn't coming, which is precisely the
+	// hang class issue #100 exists to diagnose. Covered by its own
+	// unit and seam tests instead of on machine state.
+	//
+	// No arrival animation (issue #120). Menu rows render at
+	// introMenuStart but keys stay swallowed until introEnd
+	// (internal/ui/splash.go:98-102), so a test that matches "Install"
+	// and immediately sends a selection can have it eaten as the skip,
+	// leaving the menu settled with nothing chosen.
+	//
+	// Sending a separate skip key first was measured not to fix it:
+	// that attempt hung in exactly the same place as no skip key at
+	// all, because the bubbletea of the day batched consecutive
+	// printable runes into a single key message and handleKey's
+	// swallow returns before the digit shortcuts are examined
+	// (splash.go:343-380), so "s" and the selection sent back-to-back
+	// were discarded together. Each printable character is its own
+	// key press now, so the two would arrive separately — but this
+	// suite does not need the arrival either way, for the reason
+	// below.
+	//
+	// This costs no coverage. The arrival's own behaviour — any key
+	// skips and is swallowed, it finishes on its own after enough
+	// ticks, NO_ANIMATION never plays it — is asserted by
+	// internal/ui/splash_test.go, and how it looks belongs to
+	// visual-regression.yml. What this suite exists to pin is the
+	// install.sh handoff contract, which the animation only ever
+	// added nondeterminism to.
+	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe),
+		// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps
+		// every goroutine, not just the one that took the signal.
+		"GOTRACEBACK=all",
 		// The Compose project this run owns, and the whole of its
 		// isolation from any other Orbit on the daemon — see
 		// liveProjectName. It reaches the engine because nothing
