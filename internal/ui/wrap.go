@@ -6,21 +6,21 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// wrapShellCommand breaks a one-line shell command into lines of at most
-// limit cells that a shell reads back as the same command: every line
-// that continues ends in " \", "&&" always starts its own line, and
-// continuation lines are indented two cells (design/mockups.html §11).
-// A command that fits is returned as the one line it is.
+// wrapShellCommand lays a shell command, given as its already-quoted
+// words, out on lines of at most limit cells that a shell reads back as
+// those words joined by spaces: every line that continues ends in " \",
+// "&&" always starts its own line, and continuation lines are indented
+// two cells (design/mockups.html §11). A command that fits is one line.
 //
-// Breaks fall only between shell words, never inside a quoted path, and
+// Breaks fall only between the words, never inside a quoted path, and
 // an option stays with its value ("--env-file /opt/orbit/.env-orbit") so
 // no line ends on a flag waiting for its argument. A single word wider
 // than limit is still placed whole — a path that long cannot be helped.
-func wrapShellCommand(cmd string, limit int) []string {
-	if lipgloss.Width(cmd) <= limit {
+func wrapShellCommand(words []string, limit int) []string {
+	if cmd := strings.Join(words, " "); lipgloss.Width(cmd) <= limit {
 		return []string{cmd}
 	}
-	units := shellUnits(cmd)
+	units := commandUnits(words)
 	const indent, cont = "  ", " \\"
 	var lines []string
 	line := ""
@@ -53,37 +53,9 @@ func wrapShellCommand(cmd string, limit int) []string {
 	return lines
 }
 
-// shellUnits splits a command into the pieces a line may end after:
-// shell words, with single-quoted spans kept whole and an option glued to
-// the value that follows it.
-func shellUnits(cmd string) []string {
-	var words []string
-	var w strings.Builder
-	quoted, escaped := false, false
-	for _, r := range cmd {
-		switch {
-		case escaped: // the character after a backslash is literal
-			escaped = false
-			w.WriteRune(r)
-		case r == '\\' && !quoted: // shellQuote writes a quote inside a word as '\''
-			escaped = true
-			w.WriteRune(r)
-		case r == '\'':
-			quoted = !quoted
-			w.WriteRune(r)
-		case r == ' ' && !quoted:
-			if w.Len() > 0 {
-				words = append(words, w.String())
-				w.Reset()
-			}
-		default:
-			w.WriteRune(r)
-		}
-	}
-	if w.Len() > 0 {
-		words = append(words, w.String())
-	}
-
+// commandUnits groups a command's words into the pieces a line may end
+// after: each word, with an option glued to the value that follows it.
+func commandUnits(words []string) []string {
 	var units []string
 	for i := 0; i < len(words); i++ {
 		u := words[i]

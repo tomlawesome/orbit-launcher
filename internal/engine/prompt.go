@@ -52,19 +52,11 @@ func ParsePromptLine(line string) (msg any, ok bool) {
 		return nil, false
 	}
 
-	fields := map[string]string{}
-	for _, token := range tokens[1:] {
-		key, value, found := strings.Cut(token, "=")
-		if !found || key == "" {
-			// A bare word means this is prose that merely starts with
-			// a protocol word — not a protocol line.
-			return nil, false
-		}
-		// Unknown trailing key=value fields are tolerated, same as the
-		// event stream contract; last occurrence wins.
-		fields[key] = value
-	}
-	if fields["field"] == "" {
+	// A bare word means this is prose that merely starts with a
+	// protocol word — not a protocol line. Unknown trailing key=value
+	// fields are tolerated, same as the event stream contract.
+	fields, ok := keyValueFields(tokens[1:])
+	if !ok || fields["field"] == "" {
 		return nil, false
 	}
 

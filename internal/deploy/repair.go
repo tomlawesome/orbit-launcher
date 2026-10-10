@@ -1,14 +1,12 @@
 package deploy
 
 import (
+	"context"
 	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // Repair diagnosis — orbit scripts/repair.sh --check (orbit#261, first
@@ -27,23 +25,16 @@ import (
 // diagnosis honestly isn't available rather than being guessed at.
 var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (no scripts/repair.sh)")
 
-// repairScript is where install.sh places repair.sh in a deployment.
-const repairScript = "scripts/repair.sh"
+// repairScript is repair.sh's name in the deployment's scripts
+// directory, where install.sh places it.
+const repairScript = "repair.sh"
 
 // RepairCommand builds one repair run against the deployment's own
 // scripts/repair.sh. An absent script is ErrRepairUnavailable; one on a
 // path RequireTrustedPath refuses is an UntrustedPathError. There is no
 // fallback to any other copy.
 func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
-	if _, err := os.Lstat(filepath.Join(targetDir, repairScript)); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, ErrRepairUnavailable
-		}
-		return nil, fmt.Errorf("repair.sh: %w", err)
-	}
-	// It exists; run it only from a path nobody else could have put it
-	// in (#191).
-	if err := requireTrustedScripts(targetDir, "repair.sh"); err != nil {
+	if err := requireScript(targetDir, repairScript, ErrRepairUnavailable); err != nil {
 		return nil, err
 	}
 	return BuildRepairCommand(targetDir, mode), nil
@@ -78,18 +69,18 @@ const (
 	RepairExecuteDangerous RepairMode = "--execute --dangerous"
 )
 
-// BuildRepairCommand builds one repair run. Detached (Setsid) for
-// uniformity with every other engine invocation — nothing the launcher
-// spawns may ever reach /dev/tty. The dangerous mode gets the machine
-// prompt transport (orbit#297 grammar, repair's own env var), which is
-// the only non-TTY way its confirmation prompts can exist at all.
+// BuildRepairCommand builds one repair run, detached like every engine
+// script run (detachedCommand), so neither repair.sh nor anything it
+// starts can reach /dev/tty. Not every child is detached: Docker calls
+// stay attached, and the terminal handoff (BuildInstallCommand) must
+// reach the terminal. The dangerous mode gets the machine prompt
+// transport (orbit#297 grammar, repair's own env var), which is the only
+// non-TTY way its confirmation prompts can exist at all.
 func BuildRepairCommand(targetDir string, mode RepairMode) *exec.Cmd {
-	args := append([]string{repairScript}, strings.Fields(string(mode))...)
-	cmd := exec.Command("bash", args...)
-	cmd.Dir = targetDir
+	args := append([]string{filepath.Join(scriptsDir, repairScript)}, strings.Fields(string(mode))...)
+	cmd := detachedCommand(context.Background(), targetDir, "bash", args...)
 	if mode == RepairExecuteDangerous {
 		cmd.Env = append(os.Environ(), "ORBIT_REPAIR_PROMPTS=machine")
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }

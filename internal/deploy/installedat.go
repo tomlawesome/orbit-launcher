@@ -19,16 +19,20 @@ import (
 // to a person, and this one is only ever passed to docker.
 //
 // Every failure — nil deployment, no docker on PATH, no reachable
-// daemon, no such volume, output that is not a time — returns the zero
-// time and no error. The date is reassurance on a confirm screen, so
+// daemon, no answer within dockerQueryTimeout, no such volume, output
+// that is not a time — returns the zero time and no error. The date is reassurance on a confirm screen, so
 // when Docker cannot say, the screen leaves it out rather than guess.
 func InstalledAt(ctx context.Context, d *Deployment) time.Time {
 	if d == nil || d.Project == "" {
 		return time.Time{}
 	}
+	ctx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
+	defer cancel()
 	volume := d.Project + "_" + orbitDatabaseVolumePattern
-	out, err := exec.CommandContext(ctx, "docker", "volume", "inspect",
-		"--format", "{{.CreatedAt}}", volume).Output()
+	cmd := exec.CommandContext(ctx, "docker", "volume", "inspect",
+		"--format", "{{.CreatedAt}}", volume)
+	cmd.WaitDelay = pipeWaitDelay
+	out, err := cmd.Output()
 	if err != nil {
 		return time.Time{}
 	}

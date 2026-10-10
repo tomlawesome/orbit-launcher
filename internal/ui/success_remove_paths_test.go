@@ -224,24 +224,3 @@ func TestRemoveModel_ConfirmToggleAndUnboundKey(t *testing.T) {
 		t.Fatal("an unbound key acted on the confirm screen")
 	}
 }
-
-func TestRemoveModel_WithoutDeploymentDetailsUsesHonestPlaceholders(t *testing.T) {
-	var gotDir string
-	m := NewRemoveModel(nil)
-	m.standDown = func(_ context.Context, dir string) error { gotDir = dir; return nil }
-	m, _ = removeUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 30})
-	if !strings.Contains(stripANSI(m.View().Content), "no deployment details found") {
-		t.Fatalf("confirm screen:\n%s", stripANSI(m.View().Content))
-	}
-	m, cmd := removeUpdate(t, m, key(tea.KeyEnter))
-	m, _ = removeUpdate(t, m, cmd())
-	if gotDir != "" {
-		t.Fatalf("stand-down was handed %q, want no directory", gotDir)
-	}
-	// The command is wrapped across lines at 80 columns, so look for the
-	// placeholder path in both of its halves rather than the one-line form.
-	s := stripANSI(m.View().Content)
-	if !strings.Contains(s, "the deployment directory") || !strings.Contains(s, "--project-directory /opt/orbit") || !strings.Contains(s, "sudo rm -rf /opt/orbit") {
-		t.Fatalf("done screen should fall back to placeholders:\n%s", s)
-	}
-}

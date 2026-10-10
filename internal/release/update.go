@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // manifestURL points at the newest *stable* Orbit release's
@@ -26,6 +27,16 @@ const manifestURL = "https://github.com/tomlawesome/orbit/releases/latest/downlo
 // but the read is still capped defensively against a huge or malformed
 // response.
 const maxUpdateCheckResponseBytes = 1 << 16
+
+// updateCheckTimeout bounds the update check. The check is a background
+// notice on the splash screen that renders either way, so a manifest
+// server that has not answered in three seconds is abandoned rather than
+// left open (#207: the limit lives beside the call, not in the UI).
+const updateCheckTimeout = 3 * time.Second
+
+// updateCheckClient is the client the check goes through;
+// http.DefaultClient has no timeout at all.
+var updateCheckClient = &http.Client{Timeout: updateCheckTimeout}
 
 // launcherTagPattern is the strict shape the manifest's launcher.tag must
 // take. write-release-manifest.sh writes it straight from
@@ -52,6 +63,8 @@ var launcherTagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 // match launcherTagPattern are all treated the same as "nothing to
 // report" — hasUpdate=false — same as when the binary is already
 // current.
+//
+// It gives up after updateCheckTimeout, or sooner if ctx ends.
 func CheckForUpdate(ctx context.Context) (latestVersion string, hasUpdate bool, err error) {
 	return checkForUpdate(ctx, manifestURL, Version)
 }
@@ -62,7 +75,7 @@ func checkForUpdate(ctx context.Context, url, runningVersion string) (string, bo
 		return "", false, fmt.Errorf("build request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateCheckClient.Do(req)
 	if err != nil {
 		return "", false, fmt.Errorf("check for update: %w", err)
 	}

@@ -31,13 +31,21 @@ type Event struct {
 	Simulation bool
 }
 
-// Terminal states per the contract: failed and blocked are refusals or
-// failures; completed on the complete phase is success.
+// The contract's state vocabulary (orbit docs/engine-events.md,
+// "state"). Terminal outcomes: failed and blocked are refusals or
+// failures; completed on the complete phase is success; skipped records
+// an explicitly bypassed step.
 const (
-	StateFailed    = "failed"
-	StateBlocked   = "blocked"
+	StateWaiting   = "waiting"
+	StateStarting  = "starting"
+	StateRunning   = "running"
+	StateHealthy   = "healthy"
+	StateSkipped   = "skipped"
 	StateCompleted = "completed"
-	PhaseComplete  = "complete"
+	StateBlocked   = "blocked"
+	StateFailed    = "failed"
+
+	PhaseComplete = "complete"
 
 	// ReasonConfigurationFailure is the non-interactive refusal the
 	// contract documents for incomplete configuration: the engine
@@ -69,49 +77,38 @@ func (e Event) NeedsConfiguration() bool {
 // display text, never as machine signal.
 func ParseEvent(line string) (e Event, ok bool) {
 	// An event line is exactly key=value tokens separated by single
-	// spaces, and always leads with phase= — cheap rejection first so
-	// arbitrary prose (which may contain '=') is never misparsed.
+	// spaces, and always leads with phase= at column 0 — cheap
+	// rejection first so arbitrary prose (which may contain '=') is
+	// never misparsed.
 	if !strings.HasPrefix(line, "phase=") {
 		return Event{}, false
 	}
-
-	seen := map[string]bool{}
-	for _, token := range strings.Fields(line) {
-		key, value, found := strings.Cut(token, "=")
-		if !found || key == "" {
-			// A bare word inside an otherwise event-shaped line means
-			// this is prose that merely starts with "phase=".
-			return Event{}, false
-		}
-		switch key {
-		case "phase":
-			e.Phase = value
-		case "component":
-			e.Component = value
-		case "state":
-			e.State = value
-		case "reason":
-			e.Reason = value
-		case "action":
-			e.Action = value
-		case "elapsed":
-			e.ElapsedSeconds = parseElapsed(value)
-		case "simulation":
-			e.Simulation = value == "true"
-		default:
-			// Unknown trailing key=value fields are explicitly allowed
-			// by the contract; ignore them.
-		}
-		seen[key] = true
+	fields, ok := keyValueFields(strings.Fields(line))
+	if !ok {
+		// A bare word inside an otherwise event-shaped line means this
+		// is prose that merely starts with "phase=".
+		return Event{}, false
 	}
 
-	// All five enum fields plus elapsed are required for a v0 event.
+	// All five enum fields plus elapsed are required for a v0 event,
+	// each with a value: the emitter renders an unrecognised value as
+	// "unknown", never as nothing.
 	for _, key := range []string{"phase", "component", "state", "reason", "action", "elapsed"} {
-		if !seen[key] {
+		if fields[key] == "" {
 			return Event{}, false
 		}
 	}
-	return e, true
+	// Unknown trailing key=value fields are explicitly allowed by the
+	// contract; they are simply not read.
+	return Event{
+		Phase:          fields["phase"],
+		Component:      fields["component"],
+		State:          fields["state"],
+		Reason:         fields["reason"],
+		Action:         fields["action"],
+		ElapsedSeconds: parseElapsed(fields["elapsed"]),
+		Simulation:     fields["simulation"] == "true",
+	}, true
 }
 
 // parseElapsed parses "<seconds>s"; anything malformed is 0, matching

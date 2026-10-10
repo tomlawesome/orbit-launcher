@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // In-console guided configuration — orbit docs/engine-events.md
@@ -43,8 +41,9 @@ import (
 // and so the image's own configure.sh.
 var ErrNoConfigTree = errors.New("install.sh handed over no configuration tree")
 
-// configureScript is where configure.sh sits in a configure tree.
-const configureScript = "scripts/configure.sh"
+// configureScript is configure.sh's name in a configure tree's scripts
+// directory.
+const configureScript = "configure.sh"
 
 // OpenConfigTree starts a configuration session in the configure tree
 // install.sh handed over (see BuildInstallCommand). The returned
@@ -57,20 +56,12 @@ func OpenConfigTree(treeDir string) (endSession func(), err error) {
 	if treeDir == "" {
 		return nil, ErrNoConfigTree
 	}
-	if _, err := os.Lstat(filepath.Join(treeDir, configureScript)); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, ErrNoConfigTree
-		}
-		return nil, fmt.Errorf("configuration tree: %w", err)
-	}
-	// Run configure.sh only from a path nobody else could have put it
-	// in (#191).
-	if err := requireTrustedScripts(treeDir, "configure.sh"); err != nil {
+	if err := requireScript(treeDir, configureScript, ErrNoConfigTree); err != nil {
 		return nil, err
 	}
 	return func() {
-		os.Remove(filepath.Join(treeDir, ".env-orbit"))
-		os.RemoveAll(filepath.Join(treeDir, ".orbit-secrets"))
+		os.Remove(filepath.Join(treeDir, EnvFile))
+		os.RemoveAll(filepath.Join(treeDir, SecretsDir))
 	}, nil
 }
 
@@ -93,14 +84,14 @@ func ImportTargetConfig(treeDir, targetDir string) error {
 	removeStaleTemps(targetDir)
 	// Read the configuration only from paths nobody else could have
 	// written (#191).
-	if err := requireTrustedIfPresent(targetDir, ".env-orbit"); err != nil {
+	if err := requireTrustedIfPresent(targetDir, EnvFile); err != nil {
 		return err
 	}
-	if err := copyConfigFile(filepath.Join(targetDir, ".env-orbit"), filepath.Join(treeDir, ".env-orbit")); err != nil {
+	if err := copyConfigFile(filepath.Join(targetDir, EnvFile), filepath.Join(treeDir, EnvFile)); err != nil {
 		return err
 	}
-	return copySecretsDir(filepath.Join(targetDir, ".orbit-secrets"), filepath.Join(treeDir, ".orbit-secrets"), func(name string) error {
-		return RequireTrustedPath(targetDir, filepath.Join(".orbit-secrets", name))
+	return copySecretsDir(filepath.Join(targetDir, SecretsDir), filepath.Join(treeDir, SecretsDir), func(name string) error {
+		return RequireTrustedPath(targetDir, filepath.Join(SecretsDir, name))
 	})
 }
 
@@ -115,9 +106,9 @@ func AdoptConfig(treeDir, targetDir string) error {
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("prepare target: %w", err)
 	}
-	envSrc := filepath.Join(treeDir, ".env-orbit")
+	envSrc := filepath.Join(treeDir, EnvFile)
 	if _, err := os.Stat(envSrc); err != nil {
-		return fmt.Errorf("configuration session left no .env-orbit: %w", err)
+		return fmt.Errorf("configuration session left no %s: %w", EnvFile, err)
 	}
 	// Nothing is written or tidied in a directory the launcher does not
 	// trust (#191).
@@ -143,7 +134,7 @@ func AdoptConfig(treeDir, targetDir string) error {
 			for _, rest := range staged[i:] {
 				os.Remove(rest.tmp)
 			}
-			return fmt.Errorf("switching to the new configuration failed partway — check .env-orbit and .orbit-secrets in %s: %w", targetDir, err)
+			return fmt.Errorf("switching to the new configuration failed partway — check %s and %s in %s: %w", EnvFile, SecretsDir, targetDir, err)
 		}
 	}
 	return nil
@@ -168,16 +159,16 @@ type fileCopy struct{ src, dst string }
 // written, any destination that isn't free or a regular file to replace.
 func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
 	var plan adoptionPlan
-	envSrc := filepath.Join(treeDir, ".env-orbit")
+	envSrc := filepath.Join(treeDir, EnvFile)
 	if err := requireRegularSource(envSrc); err != nil {
 		return plan, err
 	}
-	envDst := filepath.Join(targetDir, ".env-orbit")
+	envDst := filepath.Join(targetDir, EnvFile)
 	if err := requireReplaceable(envDst); err != nil {
 		return plan, err
 	}
 
-	secretsSrc := filepath.Join(treeDir, ".orbit-secrets")
+	secretsSrc := filepath.Join(treeDir, SecretsDir)
 	info, err := os.Lstat(secretsSrc)
 	switch {
 	case os.IsNotExist(err):
@@ -189,7 +180,7 @@ func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
 		return plan, fmt.Errorf("%s is not a directory", secretsSrc)
 	}
 
-	plan.secretsDir = filepath.Join(targetDir, ".orbit-secrets")
+	plan.secretsDir = filepath.Join(targetDir, SecretsDir)
 	info, err = os.Lstat(plan.secretsDir)
 	switch {
 	case os.IsNotExist(err):
@@ -309,12 +300,17 @@ func copyConfigFile(src, dst string) error {
 	return writeFileAtomically(dst, body)
 }
 
+// stagingSuffix marks a staged file beside its destination: stageFile
+// names temps <name>+stagingSuffix+<random>, and removeStaleTemps sweeps
+// exactly that shape, so the two cannot drift apart.
+const stagingSuffix = ".tmp-"
+
 // stageFile writes body to a new temp file beside dst and flushes it to
 // disk, leaving dst itself untouched. CreateTemp makes the file 0600, so
 // a secret never exists at a looser mode, and renaming it over dst
 // carries that mode with it.
 func stageFile(dst string, body []byte) (tmp string, err error) {
-	f, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp-*")
+	f, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+stagingSuffix+"*")
 	if err != nil {
 		return "", err
 	}
@@ -352,8 +348,8 @@ func writeFileAtomically(dst string, body []byte) error {
 // can't be removed is only clutter.
 func removeStaleTemps(targetDir string) {
 	for _, pattern := range []string{
-		filepath.Join(targetDir, ".env-orbit.tmp-*"),
-		filepath.Join(targetDir, ".orbit-secrets", "*.tmp-*"),
+		filepath.Join(targetDir, EnvFile+stagingSuffix+"*"),
+		filepath.Join(targetDir, SecretsDir, "*"+stagingSuffix+"*"),
 	} {
 		stale, _ := filepath.Glob(pattern)
 		for _, path := range stale {
@@ -441,14 +437,12 @@ const (
 // mode — it only ever runs because the previous --init already decided
 // OIDC is on.
 func BuildConfigureCommand(treeDir string, step ConfigStep, mode AuthMode) *exec.Cmd {
-	cmd := exec.Command("bash", configureScript, string(step))
-	cmd.Dir = treeDir
+	cmd := detachedCommand(context.Background(), treeDir, "bash", filepath.Join(scriptsDir, configureScript), string(step))
 	env := append(os.Environ(), "ORBIT_CONFIGURE_PROMPTS=machine")
 	if step == ConfigStepInit && mode != "" {
 		env = append(env, "ORBIT_CONFIGURE_AUTH_MODE="+string(mode))
 	}
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }
 
@@ -503,12 +497,11 @@ func (c ConfigCheck) Unfixable() []string {
 // parses its readiness report. A non-zero exit with a parseable report
 // is the normal "something's missing" answer, not an error; an error
 // means the check itself couldn't run (structural failure, legacy
-// script misbehaviour).
+// script misbehaviour). Cancelling ctx stops the check and everything
+// it started, and returns without waiting on a pipe a child still holds
+// (detachedCommand).
 func RunConfigCheck(ctx context.Context, treeDir string) (ConfigCheck, error) {
-	cmd := exec.CommandContext(ctx, "bash", configureScript, "--check")
-	cmd.Dir = treeDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	out, runErr := cmd.Output()
+	out, runErr := detachedCommand(ctx, treeDir, "bash", filepath.Join(scriptsDir, configureScript), "--check").Output()
 
 	var check ConfigCheck
 	sawReport := false
