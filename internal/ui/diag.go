@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"os"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 // Diagnostics for the paths a person never sees taken.
@@ -42,7 +44,7 @@ func logDiag(line string) {
 // still falls back. Only CI and the live suite set it, and only
 // because a handoff there is not a graceful degradation but the
 // failure the job exists to catch.
-const requireInConsoleEnv = "ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG"
+const requireInConsoleEnv = deploy.RequireInConsoleConfigEnv
 
 // requireInConsoleConfig reports whether that demand is in force. Set
 // to anything non-empty is on, matching every other ORBIT_LAUNCHER_*

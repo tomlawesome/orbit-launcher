@@ -9,12 +9,6 @@ import (
 	"strings"
 )
 
-// ConfigTreeEnv names the private directory install.sh copies its
-// verified configure tree into when it refuses for missing
-// configuration (ai/orbit#1225). The launcher runs configure.sh from
-// there and nowhere else (#190).
-const ConfigTreeEnv = "ORBIT_LAUNCHER_CONFIG_TREE"
-
 // BuildInstallCommand stages script (install.sh's content) to a temp
 // file and returns a ready-to-run command against targetDir, plus a
 // cleanup func that removes what the run staged — call it once the

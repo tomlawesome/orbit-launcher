@@ -58,11 +58,11 @@ var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
 // script always has this set, and FetchInstallScript never re-fetches
 // something already checked.
 func FetchInstallScript(ctx context.Context) ([]byte, error) {
-	if path := os.Getenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH"); path != "" {
+	if path := os.Getenv(InstallScriptPathEnv); path != "" {
 		return readInstallScriptFile(path)
 	}
 	url := installScriptURL
-	if override := os.Getenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL"); override != "" {
+	if override := os.Getenv(InstallScriptURLEnv); override != "" {
 		url = override
 	}
 	return fetchInstallScript(ctx, url)
@@ -75,10 +75,10 @@ func FetchInstallScript(ctx context.Context) ([]byte, error) {
 func readInstallScriptFile(path string) ([]byte, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read install script from ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH=%s: %w", path, err)
+		return nil, fmt.Errorf("read install script from %s=%s: %w", InstallScriptPathEnv, path, err)
 	}
 	if len(body) == 0 {
-		return nil, fmt.Errorf("install script at ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH=%s is empty", path)
+		return nil, fmt.Errorf("install script at %s=%s is empty", InstallScriptPathEnv, path)
 	}
 	return body, nil
 }
