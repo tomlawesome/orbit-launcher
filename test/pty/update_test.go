@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
@@ -59,7 +62,13 @@ func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *test
 		t.Fatalf("did not see the detected deployment's host: %v", err)
 	}
 
-	console.send("\x1b") // Escape cancels, never touches Docker
+	// Escape is one step back, to the menu (#210, owner 4a), and never
+	// touches Docker; Ctrl-C quits from anywhere.
+	console.send("\x1b")
+	if err := console.expectWithin(10*time.Second, vtscreen.ContainsAll("Install", "Update", "Repair")); err != nil {
+		t.Fatalf("Escape on the confirm screen did not return to the menu: %v", err)
+	}
+	console.send("\x03")
 
 	waitForExit(t, cmd)
 }

@@ -108,9 +108,9 @@ type configCollect struct {
 	// set from a non-secret field.
 	origin string
 
-	// authModeSel is the highlighted row on the sign-in-mode screen
-	// (issue #154): 0 = Local accounts (the default), 1 = SSO.
-	authModeSel int
+	// signIn is the highlight on the sign-in-mode screen (issue #154),
+	// over configSignInLabels; Local accounts, first, is the default.
+	signIn menu
 	// authMode is the answer, once chosen, threaded into BuildConfigureCommand
 	// for the --init step it gates. Empty until the person chooses.
 	authMode deploy.AuthMode
@@ -221,7 +221,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		if msg.err != nil || len(msg.plan.unfixable) > 0 {
@@ -249,7 +249,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			// sign in. Local accounts is the default; choosing either
 			// row starts --init with that mode (handleConfigSignInModeKey).
 			r.state = runConfigSignInMode
-			r.cfg.authModeSel = 0
+			r.cfg.signIn = menu{}
 			return r, nil
 		}
 		return r.startNextConfigStep()
@@ -289,7 +289,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.runErr = errEngineStoppedEarly
 		}
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 
 	case configRecheckMsg:
@@ -309,7 +309,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.releaseRunFiles()
 			r.runErr = msg.err
 			r.state = runFailed
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		r.cfg.close()
@@ -411,7 +411,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		// The engine aborted (rejections exhausted or input closed) —
 		// back to the refusal menu; the person decides what's next.
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	return r, nil
@@ -439,7 +439,7 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
-	r.menuSel = 0
+	r.menu = menu{}
 	return r.start(r.width, r.height)
 }
 
@@ -449,24 +449,23 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 // the refusal menu — the same cancel handleConfigKey gives the rest of
 // this session.
 func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
-	case tea.KeyUp, tea.KeyDown:
-		r.cfg.authModeSel = 1 - r.cfg.authModeSel
-		return r, nil
-	case tea.KeyEnter:
-		r.cfg.authMode = deploy.AuthModeLocal
-		if r.cfg.authModeSel == 1 {
-			r.cfg.authMode = deploy.AuthModeOIDC
-		}
-		r.state = runConfigCollect
-		return r.startNextConfigStep()
 	}
-	return r, nil
+	var chosen string
+	r.cfg.signIn, chosen = r.cfg.signIn.over(configSignInLabels()).update(msg)
+	if chosen == "" {
+		return r, nil
+	}
+	r.cfg.authMode = deploy.AuthModeLocal
+	if chosen == signInSSO {
+		r.cfg.authMode = deploy.AuthModeOIDC
+	}
+	r.state = runConfigCollect
+	return r.startNextConfigStep()
 }
 
 // handleConfigKey is the typing surface: append, backspace, enter
@@ -476,7 +475,7 @@ func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	if r.cfg.prompt == nil {
@@ -596,6 +595,21 @@ func rejectionWords(reason string) string {
 	}
 }
 
+const (
+	signInLocal = "Local accounts"
+	signInSSO   = "Single sign-on (SSO) with an identity provider"
+)
+
+// configSignInLabels are the sign-in-mode screen's rows as the menu
+// knows them: configSignInRows' labels, in order.
+func configSignInLabels() []string {
+	labels := make([]string, len(configSignInRows))
+	for i, row := range configSignInRows {
+		labels[i] = row.label
+	}
+	return labels
+}
+
 // configSignInRows is the sign-in-mode screen's copy, ratified 2026-09-09
 // on issue #154 and reproduced here exactly — not to be reworded without
 // a fresh ratification. Local accounts is first (and the default); both
@@ -604,11 +618,11 @@ var configSignInRows = []struct {
 	label string
 	desc  []string
 }{
-	{"Local accounts", []string{
+	{signInLocal, []string{
 		"People get a password managed by Orbit. Nothing else to set up.",
 		"A provider can be added later with configure.sh.",
 	}},
-	{"Single sign-on (SSO) with an identity provider", []string{
+	{signInSSO, []string{
 		"People sign in through your OIDC provider — Authentik, Keycloak,",
 		"Entra ID and the like. Orbit asks for its address and client",
 		"details next. Local accounts stay available as well.",
@@ -630,7 +644,7 @@ func (r engineRun) viewConfigSignInMode(width, height int) string {
 	var block []string
 	for i, row := range configSignInRows {
 		label := "  " + style.MenuUnselected.Render(row.label)
-		if i == r.cfg.authModeSel {
+		if i == r.cfg.signIn.sel {
 			label = style.MenuCaret.Render(style.SymbolSelected) + " " + style.MenuSelected.Render(row.label)
 		}
 		block = append(block, label)

@@ -161,7 +161,7 @@ func TestConfigCollect_EventLinesKeepTheSessionReading(t *testing.T) {
 func TestConfigSignInMode_UnboundKeyChangesNothing(t *testing.T) {
 	r := signInModeRun()
 	r, cmd := r.handleKey(runeKey('s'))
-	if cmd != nil || r.state != runConfigSignInMode || r.cfg.authModeSel != 0 {
+	if cmd != nil || r.state != runConfigSignInMode || r.cfg.signIn.sel != 0 {
 		t.Fatal("an unbound key acted on the sign-in screen")
 	}
 }

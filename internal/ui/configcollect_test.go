@@ -734,8 +734,8 @@ func TestConfigSignInMode_RendersBothRowsLocalDefault(t *testing.T) {
 func TestConfigSignInMode_ArrowsMoveSelection(t *testing.T) {
 	r := signInModeRun()
 	r, _ = r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyDown})
-	if r.cfg.authModeSel != 1 {
-		t.Fatalf("authModeSel = %d after down, want 1", r.cfg.authModeSel)
+	if r.cfg.signIn.sel != 1 {
+		t.Fatalf("signIn.sel = %d after down, want 1", r.cfg.signIn.sel)
 	}
 	lines := strings.Split(r.view(80, 30), "\n")
 	if !strings.Contains(lineContaining(lines, "Single sign-on"), "▸") {
@@ -743,8 +743,8 @@ func TestConfigSignInMode_ArrowsMoveSelection(t *testing.T) {
 	}
 
 	r, _ = r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyUp})
-	if r.cfg.authModeSel != 0 {
-		t.Fatalf("authModeSel = %d after up, want 0", r.cfg.authModeSel)
+	if r.cfg.signIn.sel != 0 {
+		t.Fatalf("signIn.sel = %d after up, want 0", r.cfg.signIn.sel)
 	}
 }
 
@@ -771,7 +771,7 @@ func TestConfigSignInMode_EnterStartsInitWithChosenMode(t *testing.T) {
 		}
 		r := signInModeRun()
 		r.startConfig = start
-		r.cfg.authModeSel = tc.sel
+		r.cfg.signIn.sel = tc.sel
 		r.cfg.plan = configPlan{needInit: true, treeDir: "/nonexistent"}
 
 		r, cmd := r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyEnter})

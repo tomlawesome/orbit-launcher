@@ -24,26 +24,26 @@ func settled(m SplashModel) SplashModel { m.introDone = true; return m }
 func TestSplashModel_ArrowNavigationWraps(t *testing.T) {
 	m := settled(NewSplashModel())
 
-	if m.selected != 0 {
-		t.Fatalf("initial selection = %d, want 0", m.selected)
+	if m.menu.sel != 0 {
+		t.Fatalf("initial selection = %d, want 0", m.menu.sel)
 	}
 
 	updated, _ := m.Update(key(tea.KeyUp))
 	m = updated.(SplashModel)
-	if m.selected != len(MainMenu)-1 {
-		t.Errorf("Up from index 0 = %d, want wrap to %d", m.selected, len(MainMenu)-1)
+	if m.menu.sel != len(MainMenu)-1 {
+		t.Errorf("Up from index 0 = %d, want wrap to %d", m.menu.sel, len(MainMenu)-1)
 	}
 
 	updated, _ = m.Update(key(tea.KeyDown))
 	m = updated.(SplashModel)
-	if m.selected != 0 {
-		t.Errorf("Down from the last index = %d, want wrap to 0", m.selected)
+	if m.menu.sel != 0 {
+		t.Errorf("Down from the last index = %d, want wrap to 0", m.menu.sel)
 	}
 }
 
 func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
 	m := settled(NewSplashModel())
-	m.selected = 2 // Repair
+	m.menu.sel = 2 // Repair
 
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(SplashModel)
@@ -62,8 +62,8 @@ func TestSplashModel_NumberKeyJumpsAndChooses(t *testing.T) {
 	updated, cmd := m.Update(runeKey('4')) // 1-indexed: Remove
 	m = updated.(SplashModel)
 
-	if m.selected != 3 {
-		t.Errorf("selected = %d, want 3 (Remove)", m.selected)
+	if m.menu.sel != 3 {
+		t.Errorf("selected = %d, want 3 (Remove)", m.menu.sel)
 	}
 	if m.Chosen != "Remove" {
 		t.Errorf("Chosen = %q, want %q", m.Chosen, "Remove")
@@ -90,7 +90,7 @@ func TestSplashModel_NumberKeyBeyondMenuLengthIsIgnored(t *testing.T) {
 func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
 	for _, k := range []tea.KeyPressMsg{key(tea.KeyEsc), ctrlC()} {
 		m := settled(NewSplashModel())
-		m.selected = 1
+		m.menu.sel = 1
 
 		updated, cmd := m.Update(k)
 		m = updated.(SplashModel)
@@ -248,7 +248,7 @@ func seedDeployment(m SplashModel) SplashModel {
 	m.fqdn = "mail.example.com"
 	m.appURL = "https://mail.example.com"
 	m.state = stateUnknown
-	m.selected = menuUpdate
+	m.menu.sel = menuUpdate
 	return m
 }
 
@@ -261,8 +261,8 @@ func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
 	if m.state != stateAlive {
 		t.Errorf("state = %v, want stateAlive", m.state)
 	}
-	if m.selected != menuUpdate {
-		t.Errorf("selected = %d, want Update to stay preselected", m.selected)
+	if m.menu.sel != menuUpdate {
+		t.Errorf("selected = %d, want Update to stay preselected", m.menu.sel)
 	}
 }
 
@@ -275,8 +275,8 @@ func TestSplashModel_HealthResultDegradedPreselectsRepair(t *testing.T) {
 	if m.state != stateDegraded {
 		t.Errorf("state = %v, want stateDegraded", m.state)
 	}
-	if m.selected != menuRepair {
-		t.Errorf("selected = %d, want Repair preselected on a degraded deployment", m.selected)
+	if m.menu.sel != menuRepair {
+		t.Errorf("selected = %d, want Repair preselected on a degraded deployment", m.menu.sel)
 	}
 }
 
@@ -285,7 +285,7 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 
 	updated, _ := m.Update(key(tea.KeyDown)) // the user takes over
 	m = updated.(SplashModel)
-	navigatedTo := m.selected
+	navigatedTo := m.menu.sel
 
 	updated, _ = m.Update(healthResultMsg{healthy: false})
 	m = updated.(SplashModel)
@@ -293,8 +293,8 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 	if m.state != stateDegraded {
 		t.Errorf("state = %v, want stateDegraded (display still updates)", m.state)
 	}
-	if m.selected != navigatedTo {
-		t.Errorf("selected = %d, want %d — the probe must never fight the user's hands", m.selected, navigatedTo)
+	if m.menu.sel != navigatedTo {
+		t.Errorf("selected = %d, want %d — the probe must never fight the user's hands", m.menu.sel, navigatedTo)
 	}
 }
 
@@ -371,7 +371,7 @@ func TestSplashModel_AnyKeySkipsTheArrivalAndIsSwallowed(t *testing.T) {
 	if !m.introDone {
 		t.Error("any key must skip the arrival")
 	}
-	if m.selected != 0 {
+	if m.menu.sel != 0 {
 		t.Error("the skipping key must be swallowed, not treated as navigation")
 	}
 	if !strings.Contains(m.View().Content, "Install") {

@@ -602,8 +602,8 @@ func TestRepairModel_AfterPictureMenuAndExitRows(t *testing.T) {
 	// Esc anywhere on a menu screen goes back to the main menu; an
 	// unbound key does nothing at all.
 	ignored, cmd := repairUpdate(t, m, runeKey('x'))
-	if cmd != nil || ignored.Done || ignored.menuSel != 0 {
-		t.Fatalf("an unbound key changed the screen: cmd=%v Done=%v sel=%d", cmd != nil, ignored.Done, ignored.menuSel)
+	if cmd != nil || ignored.Done || ignored.menu.sel != 0 {
+		t.Fatalf("an unbound key changed the screen: cmd=%v Done=%v sel=%d", cmd != nil, ignored.Done, ignored.menu.sel)
 	}
 	esc, _ := repairUpdate(t, m, key(tea.KeyEsc))
 	if !esc.Done || !esc.WantsMenu {

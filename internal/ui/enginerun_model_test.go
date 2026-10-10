@@ -237,7 +237,7 @@ func TestEngineRun_ConfigurationPromptMenu(t *testing.T) {
 	t.Run("unbound key", func(t *testing.T) {
 		r := refused(t)
 		r, cmd := runUpdate(t, r, runeKey('z'))
-		if cmd != nil || r.Done || r.menuSel != 0 || r.state != runConfigPrompt {
+		if cmd != nil || r.Done || r.menu.sel != 0 || r.state != runConfigPrompt {
 			t.Fatal("an unbound key changed the prompt")
 		}
 	})

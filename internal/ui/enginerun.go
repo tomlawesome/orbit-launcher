@@ -69,6 +69,12 @@ type flowOutcome struct {
 	Elapsed   time.Duration
 }
 
+// backToMenu is leaving a flow for the main menu before anything has
+// run: Esc on the flow's first screen, or the Cancel or Back row there,
+// which is the same act (#210, owner decision 4a). Ctrl-C is never this;
+// it quits.
+var backToMenu = flowOutcome{Done: true, WantsMenu: true}
+
 func outcomeOf(r engineRun) flowOutcome {
 	return flowOutcome{
 		Done:      r.Done,
@@ -161,7 +167,9 @@ type engineRun struct {
 	stderrTail    []string
 	runErr        error
 
-	menuSel int
+	// menu is the cursor on whichever post-run screen is showing; each
+	// screen names its own rows (configPromptMenu, failedMenu).
+	menu menu
 
 	// Done/Succeeded/WantsMenu are read by the owning flow model and
 	// AppModel. URL and Elapsed feed the success screen.
@@ -409,11 +417,11 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			// engine just handed over, which is why the run's files
 			// are kept until that is over.
 			r.state = runConfigPrompt
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	return r, nil
@@ -440,7 +448,7 @@ func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.C
 		r.runErr = errEngineStoppedEarly
 	}
 	r.state = runFailed
-	r.menuSel = 0
+	r.menu = menu{}
 	return r, nil
 }
 
@@ -489,7 +497,7 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 		// goes in the diagnostic line above, which has no such limit.
 		r.runErr = errors.New("in-console configuration required — terminal handoff refused")
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	r.state = runHandoffRunning
@@ -527,31 +535,31 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		return r.handleConfigKey(msg)
 
 	case runConfigPrompt:
-		return r.handleMenuKey(msg, len(configPromptMenu), func(sel int) (engineRun, tea.Cmd) {
-			switch sel {
-			case 0:
+		return r.handleMenuKey(msg, configPromptMenu, func(label string) (engineRun, tea.Cmd) {
+			switch label {
+			case "Continue — guided configuration":
 				return r.beginConfigCollect()
-			case 1:
+			case "Menu":
 				r.releaseRunFiles()
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
-			default:
+			default: // Exit
 				r.releaseRunFiles()
 				return r, tea.Quit
 			}
 		})
 
 	case runFailed:
-		return r.handleMenuKey(msg, len(failedMenu), func(sel int) (engineRun, tea.Cmd) {
-			switch sel {
-			case 0:
+		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
+			switch label {
+			case "Open the guided installer":
 				return r.beginHandoff()
-			case 1:
+			case "Menu":
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
-			default:
+			default: // Exit
 				return r, tea.Quit
 			}
 		})
@@ -559,23 +567,21 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
-func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items int, choose func(int) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+// handleMenuKey drives a post-run screen's menu over items: Esc is back
+// to the main menu, and Enter hands choose the selected row's label.
+func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose func(string) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
 		r.releaseRunFiles()
 		r.Done = true
 		r.WantsMenu = true
 		return r, nil
-	case tea.KeyUp:
-		r.menuSel = (r.menuSel - 1 + items) % items
-		return r, nil
-	case tea.KeyDown:
-		r.menuSel = (r.menuSel + 1) % items
-		return r, nil
-	case tea.KeyEnter:
-		return choose(r.menuSel)
 	}
-	return r, nil
+	var chosen string
+	r.menu, chosen = r.menu.over(items).update(msg)
+	if chosen == "" {
+		return r, nil
+	}
+	return choose(chosen)
 }
 
 // Both post-run screens offer the same three exits, in the same order:
@@ -617,7 +623,7 @@ func (r engineRun) viewConfigPrompt(width, height int) string {
 	fmt.Fprintln(&b, style.MutedText.Render("every answer is checked by Orbit's own setup, which takes"))
 	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+r.action+" resumes."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, configPromptMenu, r.menuSel)
+	r.menu.over(configPromptMenu).write(&b)
 	return skyBlock(r.console.sky, width, height, b.String())
 }
 
@@ -637,7 +643,7 @@ func (r engineRun) viewFailed(width, height int) string {
 		fmt.Fprintln(&b, style.Tagline.Render(line))
 	}
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, failedMenu, r.menuSel)
+	r.menu.over(failedMenu).write(&b)
 	return skyBlock(r.console.sky, width, height, b.String())
 }
 

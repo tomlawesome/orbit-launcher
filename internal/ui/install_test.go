@@ -203,7 +203,7 @@ func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
 func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
 	for _, sel := range []int{1, 2} { // AI, Full
 		m, _ := newTestInstallModel(engineRunSeams{})
-		m.profileSel = sel
+		m.profile.sel = sel
 		updated, _ := m.Update(key(tea.KeyEnter))
 		m = updated.(InstallModel)
 		if m.state != installStateUnavailableProfile {

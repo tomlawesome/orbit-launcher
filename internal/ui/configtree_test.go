@@ -201,7 +201,7 @@ func TestEngineRun_TreeOutlivesACancelledSessionAndGoesWithTheRun(t *testing.T) 
 	if r.state != runConfigPrompt || cleaned != 0 {
 		t.Fatalf("state = %v cleaned = %d; a cancelled session must keep the run's tree", r.state, cleaned)
 	}
-	r.menuSel = 1 // Menu
+	r.menu.sel = 1 // Menu
 	r, _ = r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !r.Done || !r.WantsMenu {
 		t.Fatalf("Done=%v WantsMenu=%v, want back to the menu", r.Done, r.WantsMenu)

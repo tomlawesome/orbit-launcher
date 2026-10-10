@@ -54,6 +54,15 @@ var MainMenu = []MenuItem{
 	{Label: "Exit"},
 }
 
+// mainMenu is MainMenu as the shared menu value: its labels, in order.
+func mainMenu() menu {
+	labels := make([]string, len(MainMenu))
+	for i, item := range MainMenu {
+		labels[i] = item.Label
+	}
+	return newMenu(labels...)
+}
+
 // Menu indices used by the state-based preselection.
 const (
 	menuInstall = 0
@@ -133,7 +142,7 @@ func envelope(s, start float64) float64 {
 // single centred version foot (design/mockups-v6-starchart.html).
 type SplashModel struct {
 	width, height int
-	selected      int
+	menu          menu // mainMenu
 	star          starfield.Model
 	starReady     bool
 	quitting      bool
@@ -187,7 +196,7 @@ type SplashModel struct {
 
 // NewSplashModel constructs the splash/main-menu screen.
 func NewSplashModel() SplashModel {
-	return SplashModel{state: stateDormant}
+	return SplashModel{state: stateDormant, menu: mainMenu()}
 }
 
 // NewSplashModelNoAnimation constructs a splash/main-menu screen frozen at
@@ -197,7 +206,7 @@ func NewSplashModel() SplashModel {
 // screen that otherwise animates continuously, and deterministic
 // screenshots for visual regression (see test/visual).
 func NewSplashModelNoAnimation() SplashModel {
-	return SplashModel{noAnimation: true, state: stateDormant, introDone: true}
+	return SplashModel{noAnimation: true, state: stateDormant, introDone: true, menu: mainMenu()}
 }
 
 // Init implements tea.Model.
@@ -283,7 +292,7 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// what's wrong, the caret already points at the fix — but
 			// only while the user hasn't taken over.
 			if !m.userNavigated {
-				m.selected = menuRepair
+				m.menu.sel = menuRepair
 			}
 		}
 		return m, nil
@@ -316,19 +325,15 @@ func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.Code {
-	case tea.KeyUp:
+	// Up, Down and Enter are the shared menu's; the splash adds only
+	// that a move is the user taking over from the preselection.
+	if msg.Code == tea.KeyUp || msg.Code == tea.KeyDown {
 		m.userNavigated = true
-		m.selected = (m.selected - 1 + len(MainMenu)) % len(MainMenu)
-		return m, nil
-
-	case tea.KeyDown:
-		m.userNavigated = true
-		m.selected = (m.selected + 1) % len(MainMenu)
-		return m, nil
-
-	case tea.KeyEnter:
-		m.Chosen = MainMenu[m.selected].Label
+	}
+	var chosen string
+	m.menu, chosen = m.menu.update(msg)
+	if chosen != "" {
+		m.Chosen = chosen
 		m.quitting = true
 		return m, tea.Quit
 	}
@@ -338,8 +343,8 @@ func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			idx := int(r - '1')
 			if idx < len(MainMenu) {
 				m.userNavigated = true
-				m.selected = idx
-				m.Chosen = MainMenu[idx].Label
+				m.menu.sel = idx
+				m.Chosen = m.menu.selected()
 				m.quitting = true
 				return m, tea.Quit
 			}
@@ -434,7 +439,7 @@ func (m SplashModel) centreBlockLines() []string {
 		if item.Gap {
 			lines = append(lines, "")
 		}
-		lines = append(lines, menuRow(item.Label, i == m.selected))
+		lines = append(lines, menuRow(item.Label, i == m.menu.sel))
 	}
 	return lines
 }
@@ -505,7 +510,7 @@ func (m SplashModel) viewIntro() string {
 			a := (s - introMenuStart - float64(i)*introMenuStep) / introMenuFade
 			if a > 0.06 && r >= 0 && r < bodyHeight {
 				if a >= 1 {
-					lines[r] = menuRow(mi.Label, i == m.selected)
+					lines[r] = menuRow(mi.Label, i == m.menu.sel)
 				} else {
 					lines[r] = rampStyle(style.InkRamp[:4], a).Render(mi.Label)
 				}

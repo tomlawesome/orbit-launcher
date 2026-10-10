@@ -104,8 +104,8 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 	first := m.notice.start
 
 	m = update(t, m, key(tea.KeyEsc))
-	if m.state != installStateConfirm || m.confirmSel != 0 {
-		t.Fatalf("Esc: state = %v, confirmSel = %d; want confirm with Install now selected", m.state, m.confirmSel)
+	if m.state != installStateConfirm || m.confirm.sel != 0 {
+		t.Fatalf("Esc: state = %v, confirm.sel = %d; want confirm with Install now selected", m.state, m.confirm.sel)
 	}
 
 	clock.advance(30 * time.Second)

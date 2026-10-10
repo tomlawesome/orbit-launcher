@@ -61,8 +61,10 @@ type RepairModel struct {
 	rotReason string
 	rotInput  []rune
 
-	stream  *engine.Stream
-	menuSel int
+	stream *engine.Stream
+	// menu is the cursor on whichever menu screen is showing; each screen
+	// names its own rows (planMenu, executedMenu, repairMenu).
+	menu menu
 
 	// ctx scopes every start this model launches; cancel
 	// stops one in flight. A Ctrl-C before a run exists cancels it and
@@ -398,7 +400,7 @@ func (m RepairModel) handleStreamEnded(msg repairStreamEndedMsg) (tea.Model, tea
 	m.stdin = nil
 	m.rotPrompt, m.rotInput, m.rotReason = nil, nil, ""
 	m.state = repairError
-	m.menuSel = 0
+	m.menu = menu{}
 	return m, nil
 }
 
@@ -416,11 +418,11 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		if m.execSummary == nil && s.ExitCode != engine.ExitHealthy && s.ExitCode != engine.ExitDangerousRefused {
 			m.runErr = s.Err
 			m.state = repairError
-			m.menuSel = 0
+			m.menu = menu{}
 			return m, nil
 		}
 		m.state = repairExecuted
-		m.menuSel = 0
+		m.menu = menu{}
 		return m, nil
 	}
 
@@ -444,7 +446,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 			m.findings, m.diagnosis = nil, nil
 			m.planActions, m.planSummary, m.manualNotes = nil, nil, nil
 			m.stream = nil
-			m.menuSel = 0
+			m.menu = menu{}
 			return m, m.startRun(deploy.RepairCheck)
 		}
 		m.runErr = s.Err
@@ -453,7 +455,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		m.runErr = s.Err
 		m.state = repairError
 	}
-	m.menuSel = 0
+	m.menu = menu{}
 	return m, nil
 }
 
@@ -589,25 +591,21 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	})
 }
 
-// handleMenu is the shared stacked-menu key handling, dispatching by
-// label so contextual menus can't drift out of sync with selection
-// indexes.
+// handleMenu drives a menu screen over items: Esc is back to the main
+// menu, and Enter hands choose the selected row's label (menu.go), so
+// contextual menus can't drift out of sync with selection indexes.
 func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func(string) (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		m.Done = true
 		m.WantsMenu = true
 		return m, nil
-	case tea.KeyUp:
-		m.menuSel = (m.menuSel - 1 + len(items)) % len(items)
-		return m, nil
-	case tea.KeyDown:
-		m.menuSel = (m.menuSel + 1) % len(items)
-		return m, nil
-	case tea.KeyEnter:
-		return choose(items[m.menuSel])
 	}
-	return m, nil
+	var chosen string
+	m.menu, chosen = m.menu.over(items).update(msg)
+	if chosen == "" {
+		return m, nil
+	}
+	return choose(chosen)
 }
 
 // handleRotateKey is the rotation session's typing surface — the same
@@ -806,7 +804,7 @@ func (m RepairModel) viewExecuted() string {
 		}
 	}
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, executedMenu, m.menuSel)
+	m.menu.over(executedMenu).write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
@@ -834,7 +832,7 @@ func (m RepairModel) viewUnavailable() string {
 	fmt.Fprintln(&b, style.MutedText.Render("This Orbit release doesn't publish its repair diagnosis"))
 	fmt.Fprintln(&b, style.MutedText.Render("yet. Nothing on the deployment was touched."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, repairMenu, m.menuSel)
+	m.menu.over(repairMenu).write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
@@ -845,7 +843,7 @@ func (m RepairModel) viewError() string {
 		fmt.Fprintln(&b, style.Tagline.Render(m.runErr.Error()))
 		fmt.Fprintln(&b)
 	}
-	writeStackedMenu(&b, repairMenu, m.menuSel)
+	m.menu.over(repairMenu).write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
@@ -891,7 +889,7 @@ func (m RepairModel) viewDiagnosis() string {
 	m.writePlan(&b, result)
 
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, m.planMenu(), m.menuSel)
+	m.menu.over(m.planMenu()).write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

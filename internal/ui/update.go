@@ -35,7 +35,11 @@ type UpdateModel struct {
 	version       string
 	deployment    *deploy.Deployment
 	state         updateState
-	confirmSel    int // 0 = Update Orbit, 1 = Cancel
+	confirm       menu // updateConfirmRows
+
+	// left is Esc or Cancel on the flow's first screen: back to the main
+	// menu with nothing started (#210).
+	left bool
 
 	// installedAt and lookupInstalledAt: see RemoveModel.
 	installedAt       time.Time
@@ -59,11 +63,19 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 	if d == nil {
 		state = updateStateNotFound
 	}
-	return UpdateModel{deployment: d, targetDir: targetDir, version: version, state: state}
+	return UpdateModel{deployment: d, targetDir: targetDir, version: version, state: state, confirm: newMenu(updateConfirmRows...)}
 }
 
-// Outcome surfaces the engine run's result to AppModel.
-func (m UpdateModel) Outcome() flowOutcome { return outcomeOf(m.run) }
+var updateConfirmRows = []string{"Update Orbit", "Cancel"}
+
+// Outcome surfaces the flow's result to AppModel: back to the menu when
+// the person left on the first screen, otherwise the engine run's.
+func (m UpdateModel) Outcome() flowOutcome {
+	if m.left {
+		return backToMenu
+	}
+	return outcomeOf(m.run)
+}
 
 // Init implements tea.Model. On the confirm screen it starts the
 // read-only install-date lookup, as RemoveModel.Init does.
@@ -115,6 +127,12 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch m.state {
 	case updateStateNotFound:
+		// The flow's first screen: Esc is back to the menu; Exit, and
+		// any other key, quits as it always has.
+		if msg.Code == tea.KeyEsc {
+			m.left = true
+			return m, nil
+		}
 		return m, tea.Quit
 	case updateStateConfirm:
 		return m.handleConfirmKey(msg)
@@ -123,16 +141,16 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		return m, tea.Quit
-	case tea.KeyUp, tea.KeyDown:
-		m.confirmSel = 1 - m.confirmSel
+	if msg.Code == tea.KeyEsc {
+		m.left = true
 		return m, nil
-	case tea.KeyEnter:
-		if m.confirmSel == 1 {
-			return m, tea.Quit
-		}
+	}
+	var chosen string
+	m.confirm, chosen = m.confirm.update(msg)
+	switch chosen {
+	case "Cancel":
+		m.left = true
+	case "Update Orbit":
 		m.state = updateStateRunning
 		title := "Update"
 		if m.deployment != nil && m.deployment.AppURL != "" {
@@ -191,7 +209,7 @@ func (m UpdateModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))
 	fmt.Fprintln(&b, style.MutedText.Render("Your existing configuration is preserved. Nothing is deleted."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Update Orbit", "Cancel"}, m.confirmSel)
+	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

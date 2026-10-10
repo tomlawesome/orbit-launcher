@@ -45,11 +45,14 @@ type RemoveModel struct {
 	star          starfield.Model
 	deployment    *deploy.Deployment
 	state         removeState
-	confirmSel    int // 0 = Stand down Orbit, 1 = Cancel
-	doneSel       int // 0 = Copy command, 1 = Exit
+	confirm       menu // removeConfirmRows
+	done          menu // removeDoneRows
 	standDownErr  error
 	copied        bool
-	wantsMenu     bool
+
+	// left is Esc, Cancel or Back on the flow's first screen: back to the
+	// main menu with nothing stood down (#210).
+	left bool
 
 	// targetDir is where AppModel looked; the no-deployment screen names
 	// it. With a deployment, every command uses deployment.TargetDir.
@@ -77,16 +80,27 @@ type RemoveModel struct {
 // nil deployment means nothing was found, and the flow says so and
 // offers only the way back.
 func NewRemoveModel(d *deploy.Deployment) RemoveModel {
+	m := RemoveModel{deployment: d, confirm: newMenu(removeConfirmRows...), done: newMenu(removeDoneRows...)}
 	if d == nil {
-		return RemoveModel{state: removeStateNotFound}
+		m.state = removeStateNotFound
 	}
-	return RemoveModel{deployment: d}
+	return m
 }
 
-// Outcome surfaces the flow result to AppModel: only Back from the
-// no-deployment screen returns to the menu.
+const removeCopy = "Copy command"
+
+var (
+	removeConfirmRows = []string{"Stand down Orbit", "Cancel"}
+	removeDoneRows    = []string{removeCopy, "Exit"}
+)
+
+// Outcome surfaces the flow result to AppModel: leaving on the first
+// screen returns to the menu; every later screen ends in a quit.
 func (m RemoveModel) Outcome() flowOutcome {
-	return flowOutcome{Done: m.wantsMenu, WantsMenu: m.wantsMenu}
+	if m.left {
+		return backToMenu
+	}
+	return flowOutcome{}
 }
 
 func (m RemoveModel) standDownFunc() func(context.Context, string) error {
@@ -144,7 +158,7 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case removeStateNotFound:
 		// Back is the only choice, and Esc is one step back (#205, 4a).
 		if msg.Code == tea.KeyEnter || msg.Code == tea.KeyEsc {
-			m.wantsMenu = true
+			m.left = true
 		}
 		return m, nil
 	case removeStateConfirm:
@@ -156,18 +170,16 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		m.state = removeStateCancelled
-		return m, tea.Quit
-	case tea.KeyUp, tea.KeyDown:
-		m.confirmSel = 1 - m.confirmSel
+	if msg.Code == tea.KeyEsc {
+		m.left = true
 		return m, nil
-	case tea.KeyEnter:
-		if m.confirmSel == 1 {
-			m.state = removeStateCancelled
-			return m, tea.Quit
-		}
+	}
+	var chosen string
+	m.confirm, chosen = m.confirm.update(msg)
+	switch chosen {
+	case "Cancel":
+		m.left = true
+	case "Stand down Orbit":
 		m.state = removeStateStandingDown
 		targetDir := m.deployment.TargetDir
 		standDown := m.standDownFunc()
@@ -178,25 +190,32 @@ func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// handleDoneKey drives the two screens after the stand-down. Nothing
+// here goes back: the stand-down has happened, so Esc quits, as Exit
+// does.
 func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		return m, tea.Quit
-	case tea.KeyEnter:
-		if m.state == removeStateDone && m.doneSel == 0 {
-			words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
-			if err != nil {
-				return m, nil
-			}
-			m.copied = true
-			return m, copyToClipboard(m.clipboardWriter(), strings.Join(words, " "))
-		}
-		return m, tea.Quit
-	case tea.KeyUp, tea.KeyDown:
-		if m.state == removeStateDone {
-			m.doneSel = 1 - m.doneSel
+	}
+	if m.state == removeStateFailed {
+		// Exit is the only row.
+		if msg.Code == tea.KeyEnter {
+			return m, tea.Quit
 		}
 		return m, nil
+	}
+	var chosen string
+	m.done, chosen = m.done.update(msg)
+	switch chosen {
+	case removeCopy:
+		words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+		if err != nil {
+			return m, nil
+		}
+		m.copied = true
+		return m, copyToClipboard(m.clipboardWriter(), strings.Join(words, " "))
+	case "Exit":
+		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -273,7 +292,7 @@ func (m RemoveModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))
 	fmt.Fprintln(&b, style.MutedText.Render("shows exactly how to remove them if you choose to."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Stand down Orbit", "Cancel"}, m.confirmSel)
+	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
@@ -308,11 +327,13 @@ func (m RemoveModel) viewDone() string {
 	fmt.Fprintln(&b, style.DegradedText.Render("it cannot be undone"))
 	fmt.Fprintln(&b)
 
-	copyLabel := "Copy command"
+	// The copy row says so once it has copied; the menu's own label,
+	// which Enter answers with, stays the same.
+	done := m.done
 	if m.copied {
-		copyLabel = "Copy command · copied"
+		done = done.over([]string{removeCopy + " · copied", "Exit"})
 	}
-	writeStackedMenu(&b, []string{copyLabel, "Exit"}, m.doneSel)
+	done.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

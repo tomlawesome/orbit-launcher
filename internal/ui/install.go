@@ -46,9 +46,13 @@ type InstallModel struct {
 	targetDir     string
 	version       string
 
-	profileSel int // 0 = Standard, 1 = AI, 2 = Full
-	confirmSel int // 0 = Install now, 1 = Back
-	volumeSel  int // 0 = Continue anyway, 1 = Back
+	profile menu // installProfiles
+	confirm menu // installConfirmRows
+	volume  menu // installVolumeRows
+
+	// left is Esc or Back on the flow's first screen: back to the main
+	// menu with nothing started (#210).
+	left bool
 
 	// staleVolumes carries the pre-flight's finding (issue #105): Orbit
 	// database volumes this machine already has and this target cannot
@@ -113,12 +117,38 @@ func (r engineRun) withSeams(s engineRunSeams) engineRun {
 
 // NewInstallModel constructs the Install flow for targetDir.
 func NewInstallModel(targetDir, version string) InstallModel {
-	return InstallModel{targetDir: targetDir, version: version}
+	return InstallModel{
+		targetDir: targetDir,
+		version:   version,
+		profile:   newMenu(installProfiles...),
+		confirm:   newMenu(installConfirmRows...),
+		volume:    newMenu(installVolumeRows...),
+	}
 }
 
-// Done, Succeeded, WantsMenu, SuccessURL and SuccessElapsed surface the
-// engine run's outcome to AppModel.
-func (m InstallModel) Outcome() flowOutcome { return outcomeOf(m.run) }
+// The profile screen's rows. Only Standard is wired; AI and Full lead to
+// the honest dead end.
+const installStandard = "Standard  ·  mail, documents, calendar"
+
+var installProfiles = []string{
+	installStandard,
+	"AI  ·  adds a local model for search & suggestions",
+	"Full  ·  AI features plus every optional service",
+}
+
+var (
+	installConfirmRows = []string{"Install now", "Back"}
+	installVolumeRows  = []string{"Continue anyway", "Back"}
+)
+
+// Outcome surfaces the flow's result to AppModel: back to the menu when
+// the person left on the first screen, otherwise the engine run's.
+func (m InstallModel) Outcome() flowOutcome {
+	if m.left {
+		return backToMenu
+	}
+	return outcomeOf(m.run)
+}
 
 // staleVolumesMsg carries the pre-flight's finding back into the event
 // loop. An empty slice is the overwhelmingly common case and means the
@@ -191,7 +221,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(found.volumes) > 0 && m.state == installStateProfile {
 			m.staleVolumes = found.volumes
 			m.state = installStateStaleVolume
-			m.volumeSel = 0
+			m.volume = newMenu(installVolumeRows...)
 		}
 		return m, nil
 	}
@@ -236,58 +266,54 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // always offered and always works: this screen reports what the engine
 // is about to refuse, and a detection mistake here must never be able to
 // stand between someone and an install.
+//
+// It takes the first screen's place when it fires, so Esc and Back are
+// the same act here as on the profile screen: back to the main menu.
 func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		return m, tea.Quit
-	case tea.KeyUp, tea.KeyDown:
-		m.volumeSel = 1 - m.volumeSel
+	if msg.Code == tea.KeyEsc {
+		m.left = true
 		return m, nil
-	case tea.KeyEnter:
-		if m.volumeSel == 1 {
-			return m, tea.Quit
-		}
+	}
+	var chosen string
+	m.volume, chosen = m.volume.update(msg)
+	switch chosen {
+	case "Continue anyway":
 		m.state = installStateProfile
-		return m, nil
+	case "Back":
+		m.left = true
 	}
 	return m, nil
 }
 
 func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		return m, tea.Quit
-	case tea.KeyUp:
-		m.profileSel = (m.profileSel - 1 + 3) % 3
+	if msg.Code == tea.KeyEsc {
+		m.left = true
 		return m, nil
-	case tea.KeyDown:
-		m.profileSel = (m.profileSel + 1) % 3
-		return m, nil
-	case tea.KeyEnter:
-		if m.profileSel != 0 {
-			m.state = installStateUnavailableProfile
-			return m, nil
-		}
+	}
+	var chosen string
+	m.profile, chosen = m.profile.update(msg)
+	switch chosen {
+	case "": // a move, or a key the menu does not use
+	case installStandard:
 		m.state = installStateConfirm
-		m.confirmSel = 0
-		return m, nil
+		m.confirm = newMenu(installConfirmRows...)
+	default:
+		m.state = installStateUnavailableProfile
 	}
 	return m, nil
 }
 
 func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		m.state = installStateProfile
 		return m, nil
-	case tea.KeyUp, tea.KeyDown:
-		m.confirmSel = 1 - m.confirmSel
-		return m, nil
-	case tea.KeyEnter:
-		if m.confirmSel == 1 {
-			m.state = installStateProfile
-			return m, nil
-		}
+	}
+	var chosen string
+	m.confirm, chosen = m.confirm.update(msg)
+	switch chosen {
+	case "Back":
+		m.state = installStateProfile
+	case "Install now":
 		// Install now opens the development notice (#175), fresh every
 		// time: going back and coming again restarts the countdown and
 		// closes the scroll gate.
@@ -412,22 +438,14 @@ func (m InstallModel) viewStaleVolume() string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("nothing has been changed, and nothing will be by this screen"))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Continue anyway", "Back"}, m.volumeSel)
+	m.volume.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
-
-	profiles := []struct{ name, desc string }{
-		{"Standard", "mail, documents, calendar"},
-		{"AI", "adds a local model for search & suggestions"},
-		{"Full", "AI features plus every optional service"},
-	}
-	for i, p := range profiles {
-		fmt.Fprintln(&b, menuRow(p.name+"  ·  "+p.desc, i == m.profileSel))
-	}
+	m.profile.write(&b)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -458,6 +476,6 @@ func (m InstallModel) viewConfirm() string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render(m.targetDir))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Install now", "Back"}, m.confirmSel)
+	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }

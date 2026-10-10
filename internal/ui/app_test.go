@@ -273,8 +273,8 @@ func TestAppModel_WithDeploymentStatusPreselectsUpdateAndSetsFQDN(t *testing.T) 
 	m.targetDir = dir
 	m = m.WithDeploymentStatus(nil)
 
-	if m.splash.selected != menuUpdate {
-		t.Errorf("selected = %d, want Update preselected for a detected deployment", m.splash.selected)
+	if m.splash.menu.sel != menuUpdate {
+		t.Errorf("selected = %d, want Update preselected for a detected deployment", m.splash.menu.sel)
 	}
 	if m.splash.fqdn != "mail.example.com" {
 		t.Errorf("fqdn = %q, want the bare host", m.splash.fqdn)
@@ -289,8 +289,8 @@ func TestAppModel_WithDeploymentStatusIsANoOpWithoutADeployment(t *testing.T) {
 	m.targetDir = t.TempDir()
 	m = m.WithDeploymentStatus(nil)
 
-	if m.splash.selected != menuInstall {
-		t.Errorf("selected = %d, want Install for a dormant machine", m.splash.selected)
+	if m.splash.menu.sel != menuInstall {
+		t.Errorf("selected = %d, want Install for a dormant machine", m.splash.menu.sel)
 	}
 	if m.splash.state != stateDormant {
 		t.Errorf("state = %v, want stateDormant", m.splash.state)

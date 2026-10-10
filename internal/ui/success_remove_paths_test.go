@@ -174,7 +174,7 @@ func TestRemoveModel_FailedScreenNamesTheErrorAndOnlyExits(t *testing.T) {
 	}
 	// Arrows have nowhere to go; Enter and Esc both leave.
 	m, cmd = removeUpdate(t, m, key(tea.KeyDown))
-	if cmd != nil || m.doneSel != 0 {
+	if cmd != nil || m.done.sel != 0 {
 		t.Fatal("arrows moved a one-row menu")
 	}
 	if _, cmd := removeUpdate(t, m, key(tea.KeyEnter)); !isQuit(cmd) {

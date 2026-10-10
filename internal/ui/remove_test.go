@@ -39,19 +39,23 @@ func TestRemoveModel_CancelFromConfirmNeverCallsStandDown(t *testing.T) {
 	m = updated.(RemoveModel)
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(RemoveModel)
+	if cmd != nil {
+		cmd()
+	}
 
 	if called {
 		t.Error("StandDown must never be called when Cancel is chosen")
 	}
-	if m.state != removeStateCancelled {
-		t.Errorf("state = %v, want removeStateCancelled", m.state)
+	if m.state == removeStateStandingDown {
+		t.Error("Cancel began the stand-down")
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected Cancel to issue tea.Quit")
+	// Cancel is the same act as Esc: back to the main menu (#210).
+	if o := m.Outcome(); !leftForMenu(o) {
+		t.Errorf("outcome after Cancel = %+v, want back to the menu", o)
 	}
 }
 
-func TestRemoveModel_EscapeAtConfirmCancelsWithoutCallingStandDown(t *testing.T) {
+func TestRemoveModel_EscapeAtConfirmGoesBackToTheMenuWithoutCallingStandDown(t *testing.T) {
 	called := false
 	m := newTestRemoveModel(func(context.Context, string) error {
 		called = true
@@ -60,15 +64,19 @@ func TestRemoveModel_EscapeAtConfirmCancelsWithoutCallingStandDown(t *testing.T)
 
 	updated, cmd := m.Update(key(tea.KeyEsc))
 	m = updated.(RemoveModel)
+	if cmd != nil {
+		cmd()
+	}
 
 	if called {
 		t.Error("StandDown must never be called on Escape")
 	}
-	if m.state != removeStateCancelled {
-		t.Errorf("state = %v, want removeStateCancelled", m.state)
+	if m.state == removeStateStandingDown {
+		t.Error("Escape began the stand-down")
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected Escape to issue tea.Quit")
+	// The flow's first screen: Esc is back to the main menu (#210).
+	if o := m.Outcome(); !leftForMenu(o) {
+		t.Errorf("outcome after Escape = %+v, want back to the menu", o)
 	}
 }
 
@@ -129,12 +137,20 @@ func TestRemoveModel_DoneScreenCopyThenExit(t *testing.T) {
 		t.Fatalf("state = %v, want removeStateDone", m.state)
 	}
 
-	// Copy command is selected by default (doneSel == 0); Enter copies and
+	// Copy command is selected by default (done.sel == 0); Enter copies and
 	// stays on screen rather than quitting.
 	updated, copyCmd := m.Update(key(tea.KeyEnter))
 	m = updated.(RemoveModel)
 	if !m.copied {
 		t.Error("expected copied to be true after selecting Copy command")
+	}
+	if s := stripANSI(m.View().Content); !strings.Contains(s, "▸ Copy command · copied") {
+		t.Errorf("the copy row should say it has copied, still selected:\n%s", s)
+	}
+	// The row's label changed on screen, not in the menu: Enter copies
+	// again rather than doing nothing.
+	if _, again := m.Update(key(tea.KeyEnter)); again == nil {
+		t.Error("Enter on the copied row did nothing")
 	}
 	if copyCmd == nil {
 		t.Fatal("expected a command to write the OSC 52 sequence")

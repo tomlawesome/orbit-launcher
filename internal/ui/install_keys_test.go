@@ -26,23 +26,32 @@ func installUpdate(t *testing.T, m InstallModel, msgs ...tea.Msg) (InstallModel,
 func TestInstallModel_ProfileArrowsWrapAndShowTheSelection(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
 	m, _ = installUpdate(t, m, key(tea.KeyUp))
-	if m.profileSel != 2 || !strings.Contains(screen(m), "▸ Full") {
-		t.Fatalf("Up from Standard should wrap to Full (sel=%d):\n%s", m.profileSel, screen(m))
+	if m.profile.sel != 2 || !strings.Contains(screen(m), "▸ Full") {
+		t.Fatalf("Up from Standard should wrap to Full (sel=%d):\n%s", m.profile.sel, screen(m))
 	}
 	m, _ = installUpdate(t, m, key(tea.KeyDown))
-	if m.profileSel != 0 || !strings.Contains(screen(m), "▸ Standard") {
-		t.Fatalf("Down from Full should wrap to Standard (sel=%d)", m.profileSel)
+	if m.profile.sel != 0 || !strings.Contains(screen(m), "▸ Standard") {
+		t.Fatalf("Down from Full should wrap to Standard (sel=%d)", m.profile.sel)
 	}
 	m, cmd := installUpdate(t, m, runeKey('j'))
-	if cmd != nil || m.profileSel != 0 || m.state != installStateProfile {
+	if cmd != nil || m.profile.sel != 0 || m.state != installStateProfile {
 		t.Fatal("an unbound key moved the profile screen")
 	}
 }
 
-func TestInstallModel_EscOnTheProfileScreenQuits(t *testing.T) {
+// Esc on the flow's first screen is back to the main menu (#210, owner
+// decision 4a), and starts nothing.
+func TestInstallModel_EscOnTheProfileScreenGoesBackToTheMenu(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	if _, cmd := installUpdate(t, m, key(tea.KeyEsc)); !isQuit(cmd) {
-		t.Fatal("Esc on the first screen of the flow should quit")
+	m, cmd := installUpdate(t, m, key(tea.KeyEsc))
+	if cmd != nil {
+		t.Fatal("Esc on the first screen of the flow should run nothing")
+	}
+	if o := m.Outcome(); !leftForMenu(o) {
+		t.Fatalf("outcome after Esc = %+v, want back to the menu", o)
+	}
+	if m.state == installStateRunning {
+		t.Fatal("Esc started the install")
 	}
 }
 
@@ -86,8 +95,8 @@ func TestInstallModel_ConfirmBackRowReturnsToProfile(t *testing.T) {
 		t.Fatalf("Down should select Back:\n%s", screen(m))
 	}
 	m, _ = installUpdate(t, m, key(tea.KeyUp), key(tea.KeyUp)) // toggles: Install now, Back
-	if m.confirmSel != 1 {
-		t.Fatalf("Up toggles between the two rows, sel = %d", m.confirmSel)
+	if m.confirm.sel != 1 {
+		t.Fatalf("Up toggles between the two rows, sel = %d", m.confirm.sel)
 	}
 	m, cmd := installUpdate(t, m, runeKey('y'))
 	if cmd != nil || m.state != installStateConfirm {
@@ -99,7 +108,9 @@ func TestInstallModel_ConfirmBackRowReturnsToProfile(t *testing.T) {
 	}
 }
 
-func TestInstallModel_StaleVolumeBackAndEscQuitWithoutInstalling(t *testing.T) {
+// The pre-flight takes the first screen's place, so Back and Esc there
+// are back to the main menu (#210), and neither installs.
+func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *testing.T) {
 	stale := func(t *testing.T) InstallModel {
 		m := NewInstallModel("/opt/orbit", "v0.1.0")
 		m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
@@ -117,21 +128,23 @@ func TestInstallModel_StaleVolumeBackAndEscQuitWithoutInstalling(t *testing.T) {
 			t.Fatalf("Down should select Back:\n%s", screen(m))
 		}
 		m, _ = installUpdate(t, m, key(tea.KeyUp), key(tea.KeyUp))
-		if m.volumeSel != 1 {
-			t.Fatalf("Up toggles the two rows, sel = %d", m.volumeSel)
+		if m.volume.sel != 1 {
+			t.Fatalf("Up toggles the two rows, sel = %d", m.volume.sel)
 		}
-		if _, cmd := installUpdate(t, m, key(tea.KeyEnter)); !isQuit(cmd) {
-			t.Fatal("Back on the pre-flight screen should leave the launcher")
+		m, cmd := installUpdate(t, m, key(tea.KeyEnter))
+		if cmd != nil || m.state == installStateRunning || !leftForMenu(m.Outcome()) {
+			t.Fatalf("Back on the pre-flight screen should go back to the menu, starting nothing (cmd=%v state=%v outcome=%+v)", cmd != nil, m.state, m.Outcome())
 		}
 	})
 	t.Run("Esc", func(t *testing.T) {
-		if _, cmd := installUpdate(t, stale(t), key(tea.KeyEsc)); !isQuit(cmd) {
-			t.Fatal("Esc on the pre-flight screen should leave the launcher")
+		m, cmd := installUpdate(t, stale(t), key(tea.KeyEsc))
+		if cmd != nil || m.state == installStateRunning || !leftForMenu(m.Outcome()) {
+			t.Fatalf("Esc on the pre-flight screen should go back to the menu, starting nothing (cmd=%v state=%v outcome=%+v)", cmd != nil, m.state, m.Outcome())
 		}
 	})
 	t.Run("unbound key", func(t *testing.T) {
 		m, cmd := installUpdate(t, stale(t), runeKey('d'))
-		if cmd != nil || m.state != installStateStaleVolume || m.volumeSel != 0 {
+		if cmd != nil || m.state != installStateStaleVolume || m.volume.sel != 0 {
 			t.Fatal("an unbound key acted on the pre-flight screen")
 		}
 	})

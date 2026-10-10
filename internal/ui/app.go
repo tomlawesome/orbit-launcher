@@ -169,7 +169,7 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	s.appURL = d.AppURL
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
-	s.selected = menuUpdate // a deployment's most likely next act
+	s.menu.sel = menuUpdate // a deployment's most likely next act
 	s.healthProbe = m.healthProbe
 	return s
 }
