@@ -12,17 +12,6 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
-// updateCheckTimeout bounds how long the splash screen's optional
-// self-update check may run before it's abandoned — the check is
-// entirely non-blocking (a background tea.Cmd; the screen renders
-// immediately either way), but a hung request should still eventually
-// give up rather than leak forever.
-const updateCheckTimeout = 3 * time.Second
-
-// healthProbeTimeout bounds the optional deployment health probe the
-// same way.
-const healthProbeTimeout = 2 * time.Second
-
 // updateAvailableMsg carries a newer stable release's tag back into the
 // bubbletea event loop once checkForUpdate resolves. It is never sent
 // on error or when already current — see SplashModel.checkForUpdateCmd.
@@ -249,13 +238,12 @@ func (m SplashModel) Init() tea.Cmd {
 // unreachable, no stable release published yet) is silently treated as
 // "nothing to report" — a failed update check must never surface as a
 // user-facing error on the one screen that renders unconditionally on
-// every launch.
+// every launch. The check bounds its own request (release.CheckForUpdate),
+// so the screen renders immediately and a hung server is abandoned.
 func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 	check := m.checkForUpdate
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
-		defer cancel()
-		version, hasUpdate, err := check(ctx)
+		version, hasUpdate, err := check(context.Background())
 		if err != nil || !hasUpdate {
 			return nil
 		}
@@ -265,13 +253,12 @@ func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 
 // probeHealthCmd asks the detected deployment whether it's answering.
 // Like the update check it runs in the background and never surfaces an
-// error — an unreachable deployment simply reads as degraded.
+// error — an unreachable deployment simply reads as degraded. The probe
+// bounds its own request (deploy.ProbeHealth).
 func (m SplashModel) probeHealthCmd() tea.Cmd {
 	probe, appURL := m.healthProbe, m.appURL
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), healthProbeTimeout)
-		defer cancel()
-		return healthResultMsg{healthy: probe(ctx, appURL)}
+		return healthResultMsg{healthy: probe(context.Background(), appURL)}
 	}
 }
 

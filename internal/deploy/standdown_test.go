@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestStandDownCommand_PassesEnvFile is the load-bearing test for issue
@@ -125,4 +126,13 @@ func TestShellQuote_RoundTripsThroughSh(t *testing.T) {
 			t.Errorf("shellQuote(%q) through sh = %q, want %q", p, out, p+"\n")
 		}
 	}
+}
+
+// setStandDownTimeout shortens StandDown's own limit to d for one test
+// and restores the default when it ends.
+func setStandDownTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := standDownTimeout
+	standDownTimeout = d
+	t.Cleanup(func() { standDownTimeout = prev })
 }
