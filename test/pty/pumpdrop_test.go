@@ -82,8 +82,9 @@ echo "Orbit installer: configuration, OIDC discovery, and Docker Compose preflig
 echo "phase=database component=postgres state=starting reason=database-boot action=wait elapsed=2s"
 for i in $(seq 1 400); do
   printf ' Container orbit-service-%04d  Started\n' "$i"
-  if (( i %% 250 == 0 )); then
-    printf 'phase=database component=postgres state=starting reason=database-boot action=wait elapsed=%%ss\n' "$((i/50+2))"
+  if (( i % 250 == 0 )); then
+    printf 'phase=database component=postgres state=starting reason=database-boot action=wait elapsed=%ss\n' "$((i/50+2))"
+    sleep 1
   fi
 done
 sleep 1
@@ -131,6 +132,15 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 
 	must("OIDC client secret")
 	send("pumpdrop-secret-value\r")
+
+	// The database phase is narrated mid-stream, between container
+	// lines. The engine pauses after the event at container 250, so the
+	// event line is the newest line on the console with that container
+	// line above it. The opening phase=database event is long scrolled
+	// off by then, so only the mid-stream event can put both on screen.
+	if err := console.expectWithin(60*time.Second, vtscreen.ContainsAll("orbit-service-0250", "postgres starting")); err != nil {
+		t.Fatalf("the mid-stream database-phase event never reached the console: %v", err)
+	}
 
 	if err := console.expectWithin(60*time.Second, vtscreen.ContainsAny("Get into Orbit")); err != nil {
 		t.Fatalf("launcher never reached the success screen — the engine pump was dropped (#159): %v", err)
