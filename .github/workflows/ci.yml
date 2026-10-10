@@ -64,7 +64,7 @@ jobs:
         run: bats scripts/test/
 
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+        run: go install honnef.co/go/tools/cmd/staticcheck@452d5bb86b45416c35891262f6a11dbd6a970117
 
       - name: Run staticcheck
         run: staticcheck ./...
