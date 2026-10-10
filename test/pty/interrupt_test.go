@@ -3,12 +3,13 @@ package pty
 import (
 	"bytes"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 )
 
 // An interrupt signal from outside (kill -INT, not a Ctrl-C keypress,
@@ -17,14 +18,13 @@ import (
 // one failure path; it moved the coverage ratchet when displayVersion
 // left main.go (#212), so it is pinned here.
 func TestApp_RealPTY_InterruptSignalExitsNonZeroAndSaysWhy(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console := newConsole(t, 80, 24, 10*time.Second)
 
 	cmd := exec.Command(binPath)
-	// startUnderPTY's environment: plain text, nothing off the machine.
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
-		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1")
+	// startUnderPTY's environment: the arrival kept for skipArrival,
+	// nothing off the machine.
+	cmd.Env = launcher.HermeticEnv(launcher.Animation)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	console.start(t, cmd)

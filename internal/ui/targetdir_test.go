@@ -21,6 +21,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // #205 (#199 WI-1: EN-1, UI-2, EN-12). AppModel resolves the target
@@ -67,13 +68,8 @@ func shortTempDir(t *testing.T) string {
 // stand-down is a docker call, so an empty record proves none started.
 func fakeDockerOnPath(t *testing.T) string {
 	t.Helper()
-	bin := t.TempDir()
-	record := filepath.Join(bin, "calls.log")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + record + "'\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	record := filepath.Join(t.TempDir(), "calls.log")
+	testutil.FakeExecutable(t, "docker", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+record+"'\nexit 0\n")
 	return record
 }
 

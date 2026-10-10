@@ -14,19 +14,8 @@ import (
 func trustedDeployment(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	scripts := filepath.Join(dir, "scripts")
-	if err := os.Mkdir(scripts, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	script := filepath.Join(scripts, "repair.sh")
-	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for path, mode := range map[string]os.FileMode{dir: 0o755, scripts: 0o755, script: 0o644} {
-		if err := os.Chmod(path, mode); err != nil {
-			t.Fatal(err)
-		}
-	}
+	chmod(t, dir, 0o755)
+	scriptTree(t, dir, 0o755, treeFile{"scripts/repair.sh", "#!/usr/bin/env bash\n", 0o644})
 	return dir
 }
 

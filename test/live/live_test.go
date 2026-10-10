@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
@@ -45,27 +46,20 @@ const testOIDCIssuer = "https://accounts.google.com"
 
 // binaryPath resolves the binary under test. Set
 // ORBIT_LAUNCHER_LIVE_BINARY to test a specific pre-built artifact;
-// unset, it builds fresh from source, which is what local runs and every
-// CI job now use — this repo no longer publishes launcher binaries of
+// unset, the harness builds it from source once for the package, which
+// is what local runs and every CI job now use — this repo no longer publishes launcher binaries of
 // its own (#171), so there is nothing else to point it at.
 func binaryPath(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("ORBIT_LAUNCHER_LIVE_BINARY"); p != "" {
 		return p
 	}
-
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	binPath := filepath.Join(t.TempDir(), "orbit-launcher")
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/orbit-launcher")
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build orbit-launcher: %v\n%s", err, out)
-	}
-	return binPath
+	return launcher.BuildBinary(t)
 }
+
+// TestMain lets the harness build the binary once for the whole package
+// and remove it after the last test.
+func TestMain(m *testing.M) { os.Exit(launcher.Run(m)) }
 
 // liveSession is one launcher process on one real pty, plus the
 // expectations driven against it. It exists so every expectation in this
@@ -589,7 +583,10 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 	cmd.Stderr = stderrFile // stdin and stdout are left to vtscreen: the pty
 	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
 	// goroutine, not just the one that took the signal.
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all",
+	//
+	// The health probe stays on, as an operator's launcher has it. Why
+	// the other behaviours HermeticEnv turns off matter to this suite:
+	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe), "GOTRACEBACK=all",
 		// The stale-database-volume pre-flight (issue #105) reads the
 		// host's volumes, so a volume left behind by a crashed earlier
 		// run would interrupt this install with a screen the test never
@@ -597,7 +594,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// a profile screen that isn't coming, which is precisely the
 		// hang class issue #100 exists to diagnose. Covered by its own
 		// unit and seam tests instead of on machine state.
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
+		//
 		// No arrival animation (issue #120). Menu rows render at
 		// introMenuStart but keys stay swallowed until introEnd
 		// (internal/ui/splash.go:98-102), so a test that matches "Install"
@@ -622,7 +619,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// visual-regression.yml. What this suite exists to pin is the
 		// install.sh handoff contract, which the animation only ever
 		// added nondeterminism to.
-		"ORBIT_LAUNCHER_NO_ANIMATION=1",
+		//
 		// The Compose project this run owns, and the whole of its
 		// isolation from any other Orbit on the daemon — see
 		// liveProjectName. It reaches the engine because nothing

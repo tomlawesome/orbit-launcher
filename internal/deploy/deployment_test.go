@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 func TestDetect_ReturnsNilWithoutErrorWhenNotInstalled(t *testing.T) {
@@ -19,15 +21,7 @@ func TestDetect_ReturnsNilWithoutErrorWhenNotInstalled(t *testing.T) {
 
 func TestDetect_ParsesRecognisedFields(t *testing.T) {
 	dir := t.TempDir()
-	env := "APP_URL=https://mail.example.com\n" +
-		"COMPOSE_PROFILES=processing,ai\n" +
-		"ORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n" +
-		"# a comment\n" +
-		"\n" +
-		"POSTGRES_DB=orbit\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(env), 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, EnvFile), "COMPOSE_PROFILES=processing,ai", "# a comment", "", "POSTGRES_DB=orbit")
 
 	d, err := Detect(dir)
 	if err != nil {

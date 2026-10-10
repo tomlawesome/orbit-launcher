@@ -3,7 +3,6 @@ package ui
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
@@ -104,10 +104,7 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 
 func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *testing.T) {
 	dir := t.TempDir()
-	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
-		t.Fatalf("failed to write fixture .env-orbit: %v", err)
-	}
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
 
 	m := NewAppModel().WithoutVolumeCheck() // the Update screen looks up the install date in Docker
 	m.targetDir = dir
@@ -264,10 +261,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 
 func TestAppModel_WithDeploymentStatusPreselectsUpdateAndSetsFQDN(t *testing.T) {
 	dir := t.TempDir()
-	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
 
 	m := NewAppModel()
 	m.targetDir = dir

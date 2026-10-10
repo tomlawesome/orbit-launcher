@@ -4,11 +4,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 func TestApp_RealPTY_NavigatingIntoInstallShowsTheProfileScreen(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
 

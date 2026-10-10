@@ -14,6 +14,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // Plain model tests for in-console configuration's failure, cancel and
@@ -200,13 +201,8 @@ func TestPromptWords_SafeBatchConfirmation(t *testing.T) {
 func configTree(t *testing.T, checkReport string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	script := "printf '%s\\n' " + shellQuoteLines(checkReport) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "configure.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testutil.StageTree(t, dir, 0o700, testutil.File{Path: "scripts/configure.sh", Body: script, Mode: 0o700})
 	return dir
 }
 

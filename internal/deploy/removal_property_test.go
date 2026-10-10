@@ -84,11 +84,7 @@ func isExecCall(call *ast.CallExpr) bool {
 }
 
 func TestStandDown_NeverPassesTheVolumeFlag(t *testing.T) {
-	fakeBin := t.TempDir()
-	callLog := filepath.Join(fakeBin, "calls.log")
-	writeFakeDocker(t, fakeBin, callLog)
-
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	callLog := fakeDockerLogging(t)
 
 	if err := StandDown(t.Context(), "/tmp/some-orbit-deployment"); err != nil {
 		t.Fatalf("StandDown: %v", err)
@@ -108,14 +104,5 @@ func TestStandDown_NeverPassesTheVolumeFlag(t *testing.T) {
 	}
 	if strings.Contains(calls, "rm") {
 		t.Errorf("StandDown must never invoke rm: logged calls = %q", calls)
-	}
-}
-
-func writeFakeDocker(t *testing.T, binDir, callLog string) {
-	t.Helper()
-	script := "#!/usr/bin/env bash\necho \"$@\" >> " + callLog + "\n"
-	path := filepath.Join(binDir, "docker")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker: %v", err)
 	}
 }

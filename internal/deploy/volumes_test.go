@@ -1,25 +1,11 @@
 package deploy
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// fakeDockerPrinting puts a docker on PATH that ignores its arguments and
-// prints stdout verbatim, so the parser is exercised against the exact
-// shape `docker volume ls --format` really emits.
-func fakeDockerPrinting(t *testing.T, stdout string, exitCode int) {
-	t.Helper()
-	binDir := t.TempDir()
-	script := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%%b' %q\nexit %d\n", stdout, exitCode)
-	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
 
 func TestUnownedDatabaseVolumes_ReadsNameAndProjectVerbatim(t *testing.T) {
 	fakeDockerPrinting(t, "orbit_orbit-db-data\torbit\nold-tree_orbit-db-data\told-tree\n", 0)
@@ -107,10 +93,7 @@ func TestUnownedDatabaseVolumes_FailureIsSilence(t *testing.T) {
 // staying quiet about one that does. It also pins the call to listing —
 // the pre-flight reads, it never removes.
 func TestUnownedDatabaseVolumes_ListsOnTheEnginesOwnPattern(t *testing.T) {
-	binDir := t.TempDir()
-	callLog := filepath.Join(binDir, "calls.log")
-	writeFakeDocker(t, binDir, callLog)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	callLog := fakeDockerLogging(t)
 
 	UnownedDatabaseVolumes(t.Context(), t.TempDir())
 

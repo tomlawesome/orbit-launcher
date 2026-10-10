@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +16,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // Plain model tests for the Repair flow's error, cancel and edge paths:
@@ -1035,12 +1034,7 @@ func TestRepairModel_UnsummarisedManualOnlyPlanDoesNotPointAtTheMenu(t *testing.
 // that counts requests, so a test can prove nothing was fetched (#190).
 func deploymentRepair(t *testing.T, dir, script string) (requests *atomic.Int32) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "repair.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testutil.StageTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: script, Mode: 0o700})
 	return countingScriptSource(t)
 }
 
@@ -1048,14 +1042,7 @@ func deploymentRepair(t *testing.T, dir, script string) (requests *atomic.Int32)
 // counts every request and serves a script for any path.
 func countingScriptSource(t *testing.T) *atomic.Int32 {
 	t.Helper()
-	var n atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n.Add(1)
-		_, _ = w.Write([]byte("#!/usr/bin/env bash\necho 'fetched — never run this'\nexit 0\n"))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", server.URL+"/scripts/install.sh")
-	return &n
+	return testutil.CountingScriptSource(t)
 }
 
 func TestDefaultPrepareRepair_RunsTheDeploymentsOwnScriptInTheRequestedMode(t *testing.T) {

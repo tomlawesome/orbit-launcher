@@ -250,12 +250,7 @@ func TestBuildInstallCommand_HandsInstallAFreshPrivateConfigTree(t *testing.T) {
 
 	// install.sh fills it on a configuration refusal; cleanup still
 	// removes all of it.
-	if err := os.MkdirAll(filepath.Join(tree, "scripts"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tree, "scripts", "configure.sh"), []byte("#!/bin/bash\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	scriptTree(t, tree, 0o700, treeFile{"scripts/configure.sh", "#!/bin/bash\n", 0o600})
 	if err := cleanup(); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}

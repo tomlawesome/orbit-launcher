@@ -224,17 +224,12 @@ func lingeringCheckTree(t *testing.T) (dir, pidFile string) {
 	t.Helper()
 	dir = t.TempDir()
 	pidFile = filepath.Join(t.TempDir(), "pids")
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	script := "#!/usr/bin/env bash\n" +
 		"echo $$ >> '" + pidFile + "'\n" +
 		"sleep 30 &\n" +
 		"echo $! >> '" + pidFile + "'\n" +
 		"wait\n"
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "configure.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	scriptTree(t, dir, 0o755, treeFile{"scripts/configure.sh", script, 0o700})
 	killRecordedOnCleanup(t, pidFile)
 	return dir, pidFile
 }
@@ -286,22 +281,6 @@ func TestRunConfigCheck_CancelStopsTheChecksChildren(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-}
-
-// hangingDockerOnPath puts a docker on PATH that never answers, and
-// kills every one it started when the test ends. It returns the file each
-// started docker records its pid in.
-func hangingDockerOnPath(t *testing.T) string {
-	t.Helper()
-	binDir := t.TempDir()
-	pidFile := filepath.Join(binDir, "pids")
-	script := "#!/usr/bin/env bash\necho $$ >> '" + pidFile + "'\nexec sleep 30\n"
-	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	killRecordedOnCleanup(t, pidFile)
-	return pidFile
 }
 
 // EN-3: StandDown gets a bound of its own (5 min by default) instead of
