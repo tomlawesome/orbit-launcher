@@ -93,7 +93,7 @@ func fakeCheckTree(t *testing.T, report string, exit int) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%s'\nexit %d\n", report, exit)
-	scriptTree(t, dir, 0o755, treeFile{"scripts/configure.sh", script, 0o700})
+	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/configure.sh", Body: script, Mode: 0o700})
 	return dir
 }
 
@@ -641,9 +641,9 @@ func handedOverTree(t *testing.T) string {
 	t.Helper()
 	tree := t.TempDir()
 	scriptTree(t, tree, 0o700,
-		treeFile{"scripts/configure.sh", "#!/usr/bin/env bash\necho configure\n", 0o600},
-		treeFile{"scripts/configuration.sh", "#!/usr/bin/env bash\n", 0o600},
-		treeFile{".env-orbit.example", "APP_URL=\n", 0o600})
+		testutil.File{Path: "scripts/configure.sh", Body: "#!/usr/bin/env bash\necho configure\n", Mode: 0o600},
+		testutil.File{Path: "scripts/configuration.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o600},
+		testutil.File{Path: ".env-orbit.example", Body: "APP_URL=\n", Mode: 0o600})
 	return tree
 }
 

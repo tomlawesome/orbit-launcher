@@ -2,7 +2,7 @@ package deploy
 
 // Test helpers shared by this package's tests (#219, EN-17): the fake
 // dockers, all put on PATH by testutil.FakeExecutable, and the one
-// scripts/ tree builder.
+// scripts/ tree builder, testutil.StageTree under this package's name.
 
 import (
 	"fmt"
@@ -41,37 +41,10 @@ func hangingDockerOnPath(t *testing.T) string {
 	return pidFile
 }
 
-// treeFile is one file scriptTree writes: its path from the tree's root
-// ("scripts/repair.sh", ".env-orbit.example"), its body and its mode.
-type treeFile struct {
-	path string
-	body string
-	mode os.FileMode
-}
-
-// scriptTree makes dir/scripts with scriptsMode and writes files into dir,
-// at its top or in scripts/: a deployment as install.sh leaves it, or the
-// configure tree it hands over. Every mode is set exactly, with Chmod, so
-// each test states the modes it runs against and the umask decides none.
-func scriptTree(t *testing.T, dir string, scriptsMode os.FileMode, files ...treeFile) {
+// scriptTree is testutil.StageTree: dir/scripts at scriptsMode, then
+// files at their own modes, every mode set exactly so each test states
+// the modes it runs against and the umask decides none.
+func scriptTree(t *testing.T, dir string, scriptsMode os.FileMode, files ...testutil.File) {
 	t.Helper()
-	scripts := filepath.Join(dir, "scripts")
-	if err := os.Mkdir(scripts, scriptsMode); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(scripts, scriptsMode); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		if parent := filepath.Dir(f.path); parent != "." && parent != "scripts" {
-			t.Fatalf("scriptTree writes only the tree's top and scripts/, not %s", f.path)
-		}
-		path := filepath.Join(dir, f.path)
-		if err := os.WriteFile(path, []byte(f.body), f.mode); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(path, f.mode); err != nil {
-			t.Fatal(err)
-		}
-	}
+	testutil.StageTree(t, dir, scriptsMode, files...)
 }

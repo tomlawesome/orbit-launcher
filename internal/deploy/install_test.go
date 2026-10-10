@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 func TestBuildInstallCommand_StagesScriptAndReturnsARunnableCommand(t *testing.T) {
@@ -250,7 +252,7 @@ func TestBuildInstallCommand_HandsInstallAFreshPrivateConfigTree(t *testing.T) {
 
 	// install.sh fills it on a configuration refusal; cleanup still
 	// removes all of it.
-	scriptTree(t, tree, 0o700, treeFile{"scripts/configure.sh", "#!/bin/bash\n", 0o600})
+	scriptTree(t, tree, 0o700, testutil.File{Path: "scripts/configure.sh", Body: "#!/bin/bash\n", Mode: 0o600})
 	if err := cleanup(); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}

@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // #207 (#199 WI-3: EN-3, EN-4). Every outbound call owns its time limit
@@ -229,7 +231,7 @@ func lingeringCheckTree(t *testing.T) (dir, pidFile string) {
 		"sleep 30 &\n" +
 		"echo $! >> '" + pidFile + "'\n" +
 		"wait\n"
-	scriptTree(t, dir, 0o755, treeFile{"scripts/configure.sh", script, 0o700})
+	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/configure.sh", Body: script, Mode: 0o700})
 	killRecordedOnCleanup(t, pidFile)
 	return dir, pidFile
 }

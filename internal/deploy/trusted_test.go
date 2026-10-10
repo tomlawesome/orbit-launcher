@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // trustedDeployment is a deployment directory holding scripts/repair.sh,
@@ -15,7 +17,7 @@ func trustedDeployment(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	chmod(t, dir, 0o755)
-	scriptTree(t, dir, 0o755, treeFile{"scripts/repair.sh", "#!/usr/bin/env bash\n", 0o644})
+	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o644})
 	return dir
 }
 

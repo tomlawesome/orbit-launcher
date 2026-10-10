@@ -14,7 +14,7 @@ import (
 func deploymentWithRepair(t *testing.T, script string) string {
 	t.Helper()
 	dir := t.TempDir()
-	scriptTree(t, dir, 0o755, treeFile{"scripts/repair.sh", script, 0o700})
+	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: script, Mode: 0o700})
 	return dir
 }
 
