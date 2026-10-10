@@ -29,7 +29,10 @@ Layout:
 
 ## Orbit and this repo are one project
 
-`ai/orbit` and this repo are one project, not siblings (owner, 2026-10-03).
+`ai/orbit` and this repo are one project, not siblings (owner, 2026-10-03),
+and so is `ai/orbit-site`, the public website: Orbit, orbit-launcher and
+orbit-site are one project, split into three repositories for development
+reasons (owner, 2026-10-10).
 When one needs something from the other, or something there is not working
 as intended, act on it -- file the issue, tell the Orbit session -- without
 asking first. Asking costs the owner a round trip on a question with only
