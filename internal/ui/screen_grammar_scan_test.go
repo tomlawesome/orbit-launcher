@@ -302,7 +302,7 @@ func TestScreenGrammar_SkyIsBuiltOnlyByNewSky(t *testing.T) {
 // UI-15: the optical-centre factor is typed once, in topOffsetFor.
 func TestScreenGrammar_OpticalCentreFactorTypedOnce(t *testing.T) {
 	fset, files := wi9Parse(t)
-	var where []string
+	var where, wherePath []string
 	var inFunc string
 	for path, f := range files {
 		for _, d := range f.Decls {
@@ -313,6 +313,7 @@ func TestScreenGrammar_OpticalCentreFactorTypedOnce(t *testing.T) {
 				}
 				if v, err := strconv.ParseFloat(lit.Value, 64); err == nil && v == 0.42 {
 					where = append(where, fset.Position(lit.Pos()).String())
+					wherePath = append(wherePath, path)
 					if fd, ok := d.(*ast.FuncDecl); ok && path == "scene.go" {
 						inFunc = fd.Name.Name
 					}
@@ -324,7 +325,8 @@ func TestScreenGrammar_OpticalCentreFactorTypedOnce(t *testing.T) {
 	if len(where) != 1 {
 		t.Fatalf("0.42 is typed at %d sites %v, want exactly 1, in scene.go topOffsetFor", len(where), where)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(where[0]), "scene.go") || inFunc != "topOffsetFor" {
+	// where[0] is "file:line:col", so the file is checked by its path.
+	if wherePath[0] != "scene.go" || inFunc != "topOffsetFor" {
 		t.Errorf("the one 0.42 is at %s (func %q), want scene.go topOffsetFor", where[0], inFunc)
 	}
 }
