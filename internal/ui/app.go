@@ -104,8 +104,9 @@ func (m AppModel) WithUpdateCheck(fn func(context.Context) (version string, hasU
 	return m
 }
 
-// WithVersion sets the version string rendered bottom-right on the
-// splash, the mission console and the success screen, e.g. "v0.1.0".
+// WithVersion sets the launcher version printed, as given, in the centred
+// foot of the splash and the mission console, e.g. "v0.1.0". An empty
+// version renders no foot; release.DisplayVersion decides the shape.
 func (m AppModel) WithVersion(v string) AppModel {
 	m.version = v
 	m.splash.version = v

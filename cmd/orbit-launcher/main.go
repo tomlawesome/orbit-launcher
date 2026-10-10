@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -57,7 +56,7 @@ func startApp(stdout, stderr io.Writer) int {
 	if os.Getenv("ORBIT_LAUNCHER_NO_UPDATE_CHECK") == "" {
 		app = app.WithUpdateCheck(release.CheckForUpdate)
 	}
-	app = app.WithVersion(displayVersion(release.Version))
+	app = app.WithVersion(release.DisplayVersion(release.Version))
 	// The health probe hits only the user's own deployment (its APP_URL),
 	// resolving the splash's alive/degraded state; the env gate mirrors
 	// ORBIT_LAUNCHER_NO_UPDATE_CHECK so tests stay offline-deterministic.
@@ -93,16 +92,4 @@ func startApp(stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-// displayVersion formats the release version for the splash's corner:
-// always v-prefixed, never a bare "dev" masquerading as a release.
-func displayVersion(v string) string {
-	if v == "" || v == "dev" {
-		return "dev"
-	}
-	if !strings.HasPrefix(v, "v") {
-		return "v" + v
-	}
-	return v
 }

@@ -252,11 +252,7 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 func (c ConsoleModel) view(width, height int) string {
 	lines := c.contentLines(width, height)
 	rows := compositeScene(c.sky, c.skyReady, width, height-1, lines, 1)
-	foot := ""
-	if c.version != "" {
-		foot = footerRow(width, "orbit-launcher "+c.version)
-	}
-	return strings.Join(rows, "\n") + "\n" + foot
+	return strings.Join(rows, "\n") + "\n" + footerRow(width, footVersion(c.version))
 }
 
 // contentLines builds the console's centred content block.

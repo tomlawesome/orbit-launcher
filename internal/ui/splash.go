@@ -176,7 +176,7 @@ type SplashModel struct {
 	// change what's displayed, but it never fights the user's hands.
 	userNavigated bool
 
-	// version is the launcher's own version ("v0.1.0", "dev");
+	// version is the launcher's own version as main hands it ("v0.1.0");
 	// orbitVersion is the detected deployment's applied orbit version.
 	// Both render in the single centred foot; orbitVersion may be empty.
 	version      string
@@ -382,13 +382,13 @@ func (m SplashModel) markStyle() lipgloss.Style {
 }
 
 // footText is the splash's whole foot: the launcher's version, plus the
-// deployment's orbit version once one is known.
+// deployment's orbit version once one is known. With no launcher version
+// there is no foot at all, as on the console.
 func (m SplashModel) footText() string {
-	launcher := m.version
-	if launcher == "" {
-		launcher = "dev"
+	text := footVersion(m.version)
+	if text == "" {
+		return ""
 	}
-	text := "orbit-launcher " + launcher
 	if m.orbitVersion != "" {
 		text += " · orbit " + m.orbitVersion
 	}

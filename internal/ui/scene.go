@@ -151,6 +151,17 @@ func footerRow(width int, text string) string {
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, style.Tagline.Render(text))
 }
 
+// footVersion is the launcher's version foot text, "orbit-launcher <v>",
+// shared by the splash and the console. An empty version gives "", which
+// footerRow renders as no foot at all: the UI prints the version it is
+// given and never invents one (release.DisplayVersion shapes it).
+func footVersion(v string) string {
+	if v == "" {
+		return ""
+	}
+	return "orbit-launcher " + v
+}
+
 // menuRow renders one stacked-menu row for the centred-menu grammar:
 // each label centres on the screen axis, and the selected row's caret
 // rides two cells left of its label — achieved by padding the selected
