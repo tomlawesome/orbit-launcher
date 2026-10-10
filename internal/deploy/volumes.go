@@ -4,7 +4,16 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// dockerQueryTimeout bounds each read-only Docker query this package
+// makes (UnownedDatabaseVolumes, InstalledAt). It is generous for
+// `docker volume ls` or `inspect` and still short enough that an
+// unreachable daemon costs a moment, not a wait: both answers are
+// advisory, so running out of time simply leaves them unsaid (#207:
+// the limit lives beside the call, not in the UI).
+const dockerQueryTimeout = 5 * time.Second
 
 // orbitDatabaseVolumePattern is the substring orbit's own installer
 // matches on when it refuses to start Compose over a database it cannot
@@ -45,18 +54,22 @@ type DatabaseVolume struct {
 // It returns nothing when targetDir does have a recognised deployment:
 // that deployment's own volume is not a surprise and not a blocker.
 //
-// Every failure — no docker on PATH, no reachable daemon, unreadable
-// output — returns no volumes and no error. This is advisory pre-flight
-// for a refusal the engine will make again on its own, so a detection
-// problem must never be able to stand between someone and an install.
+// Every failure — no docker on PATH, no reachable daemon, no answer
+// within dockerQueryTimeout, unreadable output — returns no volumes and
+// no error. This is advisory pre-flight for a refusal the engine will
+// make again on its own, so a detection problem must never be able to
+// stand between someone and an install.
 func UnownedDatabaseVolumes(ctx context.Context, targetDir string) []DatabaseVolume {
 	if d, err := Detect(targetDir); err != nil || d != nil {
 		return nil
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", "volume", "ls",
 		"--filter", "name="+orbitDatabaseVolumePattern,
 		"--format", `{{.Name}}	{{.Label "com.docker.compose.project"}}`)
+	cmd.WaitDelay = pipeWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

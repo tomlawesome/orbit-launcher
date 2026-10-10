@@ -48,18 +48,19 @@ func phaseIndex(token string) int {
 	return -1
 }
 
-// stateWords maps known engine states to the console's display words.
-// An unknown state renders as its literal token, unstyled — the
-// contract's renderable-but-unstyled rule.
+// stateWords maps known engine states to the console's display words;
+// most show as the engine's own word, completed reads as "done". An
+// unknown state renders as its literal token, unstyled — the contract's
+// renderable-but-unstyled rule.
 var stateWords = map[string]string{
-	"waiting":   "waiting",
-	"starting":  "starting",
-	"running":   "running",
-	"healthy":   "healthy",
-	"completed": "done",
-	"skipped":   "skipped",
-	"failed":    "failed",
-	"blocked":   "blocked",
+	engine.StateWaiting:   engine.StateWaiting,
+	engine.StateStarting:  engine.StateStarting,
+	engine.StateRunning:   engine.StateRunning,
+	engine.StateHealthy:   engine.StateHealthy,
+	engine.StateCompleted: "done",
+	engine.StateSkipped:   engine.StateSkipped,
+	engine.StateFailed:    engine.StateFailed,
+	engine.StateBlocked:   engine.StateBlocked,
 }
 
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
@@ -202,15 +203,15 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	ev := e.event
 	var glyph string
 	switch ev.State {
-	case "completed", "healthy":
+	case engine.StateCompleted, engine.StateHealthy:
 		glyph = style.SuccessText.Render(style.SymbolSuccess)
-	case "skipped":
+	case engine.StateSkipped:
 		glyph = style.Tagline.Render(style.SymbolQueued)
-	case "failed":
+	case engine.StateFailed:
 		glyph = style.ErrorText.Render(style.SymbolFailure)
-	case "blocked":
+	case engine.StateBlocked:
 		glyph = style.DegradedText.Render(style.SymbolFailure)
-	case "waiting", "starting", "running":
+	case engine.StateWaiting, engine.StateStarting, engine.StateRunning:
 		if latest {
 			glyph = style.WarmText.Render(string(spinnerFrames[c.spinner]))
 		} else {
@@ -228,11 +229,11 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	line := glyph + " " + style.MutedText.Render(ev.Component) + " "
 	if known {
 		switch ev.State {
-		case "completed", "healthy":
+		case engine.StateCompleted, engine.StateHealthy:
 			line += style.MutedText.Render(word)
-		case "failed":
+		case engine.StateFailed:
 			line += style.ErrorText.Render(word) + style.Tagline.Render(" — "+ev.Reason)
-		case "blocked":
+		case engine.StateBlocked:
 			line += style.DegradedText.Render(word) + style.Tagline.Render(" — "+ev.Reason)
 		default:
 			line += style.Tagline.Render(word)

@@ -103,6 +103,26 @@ type engineStreamEndedMsg struct{ reason error }
 // the engine did nothing wrong.
 var errNoEngineSender = errors.New("the launcher could not read the engine's output")
 
+// errEngineStoppedEarly is the one reason every flow gives for a stream
+// that closed before its DoneMsg.
+var errEngineStoppedEarly = errors.New("the engine stopped without reporting how the run finished")
+
+// streamWrap names the owning flow's messages for what the engine
+// stream reader sees: one message from the stream, and the stream's
+// end (reason is nil for an ordinary close). ended is handed the
+// stream so a flow that starts several in turn can tell a superseded
+// one's ending from its current one's.
+type streamWrap struct {
+	msg   func(msg any) tea.Msg
+	ended func(s *engine.Stream, reason error) tea.Msg
+}
+
+// engineRunStream is the install/update run's wrapping.
+var engineRunStream = streamWrap{
+	msg:   func(msg any) tea.Msg { return engineStreamMsg{msg: msg} },
+	ended: func(_ *engine.Stream, reason error) tea.Msg { return engineStreamEndedMsg{reason: reason} },
+}
+
 type engineRun struct {
 	action    string // "install" or "update" — the engine flag
 	targetDir string
@@ -235,7 +255,10 @@ func (r *engineRun) releaseRunFiles() {
 	r.configTree = ""
 }
 
-// readEngineStream starts the one long-lived reader for this run.
+// readEngineStream starts the one long-lived reader for an engine
+// stream, and is the only code that reads one: the install/update run,
+// Repair and in-console configuration all come through here, each with
+// its own wrapping (#206).
 //
 // It replaces a chain of one-shot commands, where each message was
 // fetched by a command that had to hand back a fresh one (#159). That
@@ -254,7 +277,11 @@ func (r *engineRun) releaseRunFiles() {
 // A goroutine reading until the channel closes holds no token to lose.
 // It ends by saying so, so a stream that stops early becomes a failure
 // the operator can see rather than a screen that never changes.
-func readEngineStream(send func(tea.Msg), s *engine.Stream) tea.Cmd {
+//
+// Messages reach the flow in the order the engine wrote them, because
+// send delivers each one before the next is read; the flows' state
+// guards depend on that order.
+func readEngineStream(send func(tea.Msg), s *engine.Stream, wrap streamWrap) tea.Cmd {
 	if send == nil {
 		// Every production path sets this. A nil sender means the flow
 		// was built without one, and the run would otherwise wait in
@@ -262,15 +289,15 @@ func readEngineStream(send func(tea.Msg), s *engine.Stream) tea.Cmd {
 		// this reader exists to remove, so it fails loudly instead.
 		logDiag("engine stream: no sender wired for this run")
 		return func() tea.Msg {
-			return engineStreamEndedMsg{reason: errNoEngineSender}
+			return wrap.ended(s, errNoEngineSender)
 		}
 	}
 	return func() tea.Msg {
 		go func() {
 			for msg := range s.C {
-				send(engineStreamMsg{msg: msg})
+				send(wrap.msg(msg))
 			}
-			send(engineStreamEndedMsg{})
+			send(wrap.ended(s, nil))
 		}()
 		return nil
 	}
@@ -307,7 +334,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		r.cleanup = msg.cleanup
 		r.configTree = msg.configTree
 		r.state = runStreaming
-		return r, readEngineStream(r.send, r.stream)
+		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
 		return r.handleStream(msg.msg)
@@ -315,7 +342,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)
 
-	case configPlanMsg, configStepMsg, configStreamMsg, configRecheckMsg, configAdoptedMsg:
+	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
@@ -410,7 +437,7 @@ func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.C
 	}
 	r.runErr = msg.reason
 	if r.runErr == nil {
-		r.runErr = errors.New("the engine stopped without reporting how the run finished")
+		r.runErr = errEngineStoppedEarly
 	}
 	r.state = runFailed
 	r.menuSel = 0

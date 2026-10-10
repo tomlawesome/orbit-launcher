@@ -17,7 +17,7 @@ import (
 
 func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 	m := NewAppModel()
-	m.targetDir = t.TempDir() // no .env-orbit here — a nil-deployment Remove flow
+	m.targetDir = t.TempDir() // no .env-orbit here: Remove stops at the start (#205)
 
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	skipArrival(tm)
@@ -32,10 +32,10 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("This stops Orbit and removes its containers"))
+		return bytes.Contains(out, []byte("No Orbit deployment found in"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // Cancel out of Remove
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -138,7 +138,10 @@ func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.
 	m.flowSeams = engineRunSeams{
 		prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`),
 	}
+	sender := &deferredSender{}
+	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	sender.attach(tm.Send)
 	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {

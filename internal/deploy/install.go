@@ -1,12 +1,12 @@
 package deploy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // ConfigTreeEnv names the private directory install.sh copies its
@@ -41,20 +41,34 @@ const ConfigTreeEnv = "ORBIT_LAUNCHER_CONFIG_TREE"
 // field name or validation rule; the handoff runs install.sh exactly
 // as if a person had run `curl -fsSL .../install.sh | bash` themselves.
 func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanup func() error, err error) {
+	scriptPath, env, cleanup, err := stageInstall(script)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd = exec.Command("bash", scriptPath)
+	cmd.Dir = targetDir
+	cmd.Env = env
+	return cmd, cleanup, nil
+}
+
+// stageInstall writes script to a temp file and makes the run's private
+// configure tree directory. It returns the script's path, the run's
+// environment, and the cleanup that removes both.
+func stageInstall(script []byte) (scriptPath string, env []string, cleanup func() error, err error) {
 	scriptFile, err := os.CreateTemp("", "orbit-launcher-install-*.sh")
 	if err != nil {
-		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
 	removeScript := func() error { return os.Remove(scriptFile.Name()) }
 
 	if _, err := scriptFile.Write(script); err != nil {
 		scriptFile.Close()
 		removeScript()
-		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
 	if err := scriptFile.Close(); err != nil {
 		removeScript()
-		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
 
 	// MkdirTemp creates the directory 0700, owned by this user, and
@@ -62,19 +76,17 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	configTree, err := os.MkdirTemp("", "orbit-launcher-config-*")
 	if err != nil {
 		removeScript()
-		return nil, nil, fmt.Errorf("stage configuration tree: %w", err)
+		return "", nil, nil, fmt.Errorf("stage configuration tree: %w", err)
 	}
 	cleanup = func() error {
 		return errors.Join(removeScript(), os.RemoveAll(configTree))
 	}
 
-	cmd = exec.Command("bash", scriptFile.Name())
-	cmd.Dir = targetDir
 	// Appended to the launcher's own environment, never replacing it:
 	// install.sh reads ORBIT_CHANNEL, COMPOSE_PROJECT_NAME and the rest
 	// from what the person (or CI) set.
-	cmd.Env = append(os.Environ(), ConfigTreeEnv+"="+configTree)
-	return cmd, cleanup, nil
+	env = append(os.Environ(), ConfigTreeEnv+"="+configTree)
+	return scriptFile.Name(), env, cleanup, nil
 }
 
 // ConfigTreeDir is the configure tree directory cmd hands install.sh,
@@ -114,11 +126,11 @@ func BuildEngineCommand(script []byte, targetDir, action string) (cmd *exec.Cmd,
 		return nil, nil, fmt.Errorf("unknown engine action %q", action)
 	}
 
-	cmd, cleanup, err = BuildInstallCommand(script, targetDir)
+	scriptPath, env, cleanup, err := stageInstall(script)
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd.Args = append(cmd.Args, "--plain", "--"+action)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd = detachedCommand(context.Background(), targetDir, "bash", scriptPath, "--plain", "--"+action)
+	cmd.Env = env
 	return cmd, cleanup, nil
 }

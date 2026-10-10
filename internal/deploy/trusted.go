@@ -108,7 +108,7 @@ func requireTrustedConfigDirs(dir string) error {
 	if err != nil {
 		return err
 	}
-	secrets := filepath.Join(dir, ".orbit-secrets")
+	secrets := filepath.Join(dir, SecretsDir)
 	info, err := os.Lstat(secrets)
 	if os.IsNotExist(err) {
 		return nil

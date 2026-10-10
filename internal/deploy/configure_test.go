@@ -495,8 +495,8 @@ func writeTestFile(t *testing.T, path, body string, mode os.FileMode) {
 func assertNoTemps(t *testing.T, targetDir string) {
 	t.Helper()
 	for _, pattern := range []string{
-		filepath.Join(targetDir, ".env-orbit.tmp-*"),
-		filepath.Join(targetDir, ".orbit-secrets", "*.tmp-*"),
+		filepath.Join(targetDir, EnvFile+stagingSuffix+"*"),
+		filepath.Join(targetDir, SecretsDir, "*"+stagingSuffix+"*"),
 	} {
 		if left, _ := filepath.Glob(pattern); len(left) != 0 {
 			t.Errorf("temp files left behind: %v", left)

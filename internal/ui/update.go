@@ -138,19 +138,12 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.deployment != nil && m.deployment.AppURL != "" {
 			title = "Update — " + displayHost(m.deployment.AppURL)
 		}
-		m.run = newEngineRun("update", m.resolvedTargetDir(), title, m.version).withSeams(m.seams).withSend(m.send)
+		m.run = newEngineRun("update", m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd
 	}
 	return m, nil
-}
-
-func (m UpdateModel) resolvedTargetDir() string {
-	if m.targetDir != "" {
-		return m.targetDir
-	}
-	return targetDirOrPlaceholder(m.deployment)
 }
 
 // View implements tea.Model.
