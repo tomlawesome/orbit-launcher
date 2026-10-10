@@ -1,6 +1,7 @@
 # Per-package statement coverage floors, enforced by tools/coveragefloor
 # (wired into .gitlab-ci.yml's `fast` job and .github/workflows/ci.yml's
-# `Test` step, right after `go test -coverprofile=coverage.out ./...`).
+# `Test` step, right after `scripts/coverage.sh -race` writes
+# coverage.out).
 #
 # This is a RATCHET, not a target: a floor here is never lowered to make
 # a change pass. If a change legitimately drops a package's coverage

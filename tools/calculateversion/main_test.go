@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/tools/internal/clitest"
 )
 
 func fixedTags(tags ...string) func() ([]string, error) {
@@ -143,5 +145,14 @@ func TestGitTagsFailsOutsideARepository(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git tag --list") {
 		t.Errorf("error %q does not name the command that failed", err)
+	}
+}
+
+// main hands its command line to run (#199 SU-17): the real main, run as
+// the command, answers -h with its usage on stderr and exit 0.
+func TestMainRunsTheCommand(t *testing.T) {
+	code, stdout, stderr := clitest.Main(t, main, "-h")
+	if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of calculateversion") || !strings.Contains(stderr, "-hotfix") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -hotfix on stderr", code, stdout, stderr)
 	}
 }

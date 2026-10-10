@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tomlawesome/orbit-launcher/tools/internal/clitest"
 	"github.com/tomlawesome/orbit-launcher/tools/licencereview/review"
 )
 
@@ -176,5 +177,15 @@ func TestCLI_FlagErrorsAndHelp(t *testing.T) {
 	}
 	if ran {
 		t.Error("the command ran despite a flag error or -h")
+	}
+}
+
+// main hands os.Args to cli, which drops the program name (#199 SU-17):
+// the real main, run as the command, answers -h with its usage on stderr
+// and exit 0 rather than treating -h as the program name.
+func TestMainRunsTheCommand(t *testing.T) {
+	code, stdout, stderr := clitest.Main(t, main, "-h")
+	if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of licencenotices") || !strings.Contains(stderr, "-check") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -check on stderr", code, stdout, stderr)
 	}
 }

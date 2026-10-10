@@ -1,8 +1,10 @@
 package floor
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func mustParseProfile(t *testing.T, body string) map[string]Coverage {
@@ -254,5 +256,14 @@ func TestCoveragePercent(t *testing.T) {
 				t.Errorf("Percent() = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// A floors file that cannot be read is an error naming the file, not an
+// empty or partial set of floors.
+func TestParseFloors_ReadErrorIsReported(t *testing.T) {
+	_, err := ParseFloors(iotest.ErrReader(errors.New("disk gone")))
+	if err == nil || !strings.Contains(err.Error(), "reading floors file") || !strings.Contains(err.Error(), "disk gone") {
+		t.Fatalf("err = %v, want the read failure reported against the floors file", err)
 	}
 }

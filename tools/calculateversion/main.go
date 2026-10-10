@@ -1,13 +1,14 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/tomlawesome/orbit-launcher/tools/internal/cli"
 )
 
 // gitTags lists the tags of the repository at dir; an empty dir means the
@@ -36,25 +37,18 @@ func main() {
 
 // run is main with its inputs and outputs passed in, so the flag handling,
 // the output and the exit codes can be tested without a real repository or
-// a subprocess. It behaves exactly as the command did when all of this lived
-// in main: exit 2 on a bad flag, 0 for -h, 1 when the tags cannot be read.
+// a subprocess. Exit codes are cli.Run's: 2 on a bad flag, 0 for -h, 1
+// when the tags cannot be read.
 func run(args []string, tags func() ([]string, error), stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("calculateversion", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	hotfix := fs.Bool("hotfix", false, "calculate a hotfix (patch) version instead of an ordinary (minor) train")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
+	return cli.Run("calculateversion", args, stderr, func(fs *flag.FlagSet) func() error {
+		hotfix := fs.Bool("hotfix", false, "calculate a hotfix (patch) version instead of an ordinary (minor) train")
+		return func() error {
+			list, err := tags()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(stdout, NextVersion(list, *hotfix))
+			return nil
 		}
-		return 2
-	}
-
-	list, err := tags()
-	if err != nil {
-		fmt.Fprintln(stderr, "calculateversion:", err)
-		return 1
-	}
-
-	fmt.Fprintln(stdout, NextVersion(list, *hotfix))
-	return 0
+	})
 }

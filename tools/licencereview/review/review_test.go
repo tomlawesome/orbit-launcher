@@ -356,3 +356,13 @@ func TestParseReviews_ErrorNamesTheFileLine(t *testing.T) {
 		t.Fatalf("err = %v, want one naming line 4", err)
 	}
 }
+
+// The review file is read line by line with a bounded line length (#199
+// SU-17's shared reader); a line past the bound is an error naming it,
+// never silently dropped.
+func TestParseReviews_OverlongLineIsAnError(t *testing.T) {
+	text := "# reviews\n" + strings.Repeat("x", 2<<20) + "\n"
+	if _, err := ParseReviews(text); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("err = %v, want an error naming line 2", err)
+	}
+}

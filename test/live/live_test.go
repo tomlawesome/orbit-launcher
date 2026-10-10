@@ -574,8 +574,9 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 	// and 10034 the dump never arrived, so the one artefact that would
 	// have shown the stall directly was the one the freeze could
 	// suppress. A file cannot block and cannot be starved by a reader.
-	// The name extends the raw log's, so CI's existing
-	// `.orbit-launcher-live-raw.log*` artifact glob keeps it too.
+	// The name extends the raw log's, so CI's existing artifact globs
+	// (`.live/live-raw.log.*` on GitLab, `live-raw.log.*` on GitHub) keep
+	// it too.
 	stderrPath := filepath.Join(t.TempDir(), "launcher-stderr.log")
 	if logPath != "" {
 		stderrPath = logPath + ".stderr"

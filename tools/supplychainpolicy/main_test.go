@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/tomlawesome/orbit-launcher/tools/internal/clitest"
 	scp "github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy/policy"
 )
 
@@ -622,5 +623,14 @@ func TestRunHelpExitsZeroAndDescribesTheFlags(t *testing.T) {
 	code, stdout, stderr := runCmd("-h")
 	if code != 0 || stdout != "" || !strings.Contains(stderr, "-write") || !strings.Contains(stderr, "-root") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// main hands its command line to run (#199 SU-17): the real main, run as
+// the command, answers -h with its usage on stderr and exit 0.
+func TestMainRunsTheCommand(t *testing.T) {
+	code, stdout, stderr := clitest.Main(t, main, "-h")
+	if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of supplychainpolicy") || !strings.Contains(stderr, "-write") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -write on stderr", code, stdout, stderr)
 	}
 }
