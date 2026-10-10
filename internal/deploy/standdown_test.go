@@ -79,7 +79,7 @@ func TestStandDown_FailureCarriesDockersOutput(t *testing.T) {
 // the reason StandDown does. The flag must sit inside the compose
 // invocation, before "down -v", not somewhere after the "&&".
 func TestRemovalCommand_PassesTheSameEnvFileAsStandDown(t *testing.T) {
-	got := RemovalCommand("/opt/orbit")
+	got := mustRemovalCommand(t, "/opt/orbit")
 	envAt := strings.Index(got, "--env-file /opt/orbit/.env-orbit")
 	if envAt < 0 {
 		t.Fatalf("RemovalCommand(%q) = %q, missing --env-file /opt/orbit/.env-orbit", "/opt/orbit", got)
@@ -98,10 +98,9 @@ func TestRemovalCommand_QuotesPathsTheShellWouldSplit(t *testing.T) {
 		{"/opt/orbit", `docker compose --project-directory /opt/orbit --env-file /opt/orbit/.env-orbit down -v && sudo rm -rf /opt/orbit`},
 		{"/mnt/My Drive/orbit", `docker compose --project-directory '/mnt/My Drive/orbit' --env-file '/mnt/My Drive/orbit/.env-orbit' down -v && sudo rm -rf '/mnt/My Drive/orbit'`},
 		{"/opt/tom's orbit", `docker compose --project-directory '/opt/tom'\''s orbit' --env-file '/opt/tom'\''s orbit/.env-orbit' down -v && sudo rm -rf '/opt/tom'\''s orbit'`},
-		{"", `docker compose --project-directory '' --env-file .env-orbit down -v && sudo rm -rf ''`},
 	}
 	for _, c := range cases {
-		if got := RemovalCommand(c.dir); got != c.want {
+		if got := mustRemovalCommand(t, c.dir); got != c.want {
 			t.Errorf("RemovalCommand(%q)\n got: %s\nwant: %s", c.dir, got, c.want)
 		}
 	}

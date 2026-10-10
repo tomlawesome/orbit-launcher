@@ -176,7 +176,7 @@ func TestRemoveModel_CopyWritesTheRemovalCommandAsOSC52(t *testing.T) {
 	if err != nil {
 		t.Fatalf("payload is not standard base64: %v", err)
 	}
-	if want := deploy.RemovalCommand("/opt/orbit"); string(decoded) != want {
+	if want := removalLine(t, "/opt/orbit"); string(decoded) != want {
 		t.Errorf("copied %q, want the removal command %q", decoded, want)
 	}
 }
