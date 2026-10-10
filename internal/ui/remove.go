@@ -25,6 +25,7 @@ const (
 	removeStateDone
 	removeStateFailed
 	removeStateCancelled
+	removeStateNotFound
 )
 
 // standDownResultMsg carries the outcome of the async StandDown call back
@@ -36,7 +37,9 @@ type standDownResultMsg struct{ err error }
 // command that this program never runs itself — see
 // design/mockups.html sections 09-11 and
 // internal/deploy/removal_property_test.go for the enforced half of that
-// promise.
+// promise. With no deployment detected it stops at the start: there is
+// nothing to stand down, and a removal command only ever names a
+// directory the launcher actually found (#205).
 type RemoveModel struct {
 	width, height int
 	star          starfield.Model
@@ -46,6 +49,11 @@ type RemoveModel struct {
 	doneSel       int // 0 = Copy command, 1 = Exit
 	standDownErr  error
 	copied        bool
+	wantsMenu     bool
+
+	// targetDir is where AppModel looked; the no-deployment screen names
+	// it. With a deployment, every command uses deployment.TargetDir.
+	targetDir string
 
 	// standDown is overridable in tests so they don't need a real Docker
 	// daemon — production code always leaves this nil and gets
@@ -65,9 +73,20 @@ type RemoveModel struct {
 	clipboard io.Writer
 }
 
-// NewRemoveModel constructs the Remove flow for a detected deployment.
+// NewRemoveModel constructs the Remove flow for a detected deployment. A
+// nil deployment means nothing was found, and the flow says so and
+// offers only the way back.
 func NewRemoveModel(d *deploy.Deployment) RemoveModel {
+	if d == nil {
+		return RemoveModel{state: removeStateNotFound}
+	}
 	return RemoveModel{deployment: d}
+}
+
+// Outcome surfaces the flow result to AppModel: only Back from the
+// no-deployment screen returns to the menu.
+func (m RemoveModel) Outcome() flowOutcome {
+	return flowOutcome{Done: m.wantsMenu, WantsMenu: m.wantsMenu}
 }
 
 func (m RemoveModel) standDownFunc() func(context.Context, string) error {
@@ -122,6 +141,12 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
+	case removeStateNotFound:
+		// Back is the only choice, and Esc is one step back (#205, 4a).
+		if msg.Code == tea.KeyEnter || msg.Code == tea.KeyEsc {
+			m.wantsMenu = true
+		}
+		return m, nil
 	case removeStateConfirm:
 		return m.handleConfirmKey(msg)
 	case removeStateDone, removeStateFailed:
@@ -144,10 +169,7 @@ func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			return m, tea.Quit
 		}
 		m.state = removeStateStandingDown
-		targetDir := ""
-		if m.deployment != nil {
-			targetDir = m.deployment.TargetDir
-		}
+		targetDir := m.deployment.TargetDir
 		standDown := m.standDownFunc()
 		return m, func() tea.Msg {
 			return standDownResultMsg{err: standDown(context.Background(), targetDir)}
@@ -162,8 +184,12 @@ func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.KeyEnter:
 		if m.state == removeStateDone && m.doneSel == 0 {
+			words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+			if err != nil {
+				return m, nil
+			}
 			m.copied = true
-			return m, copyToClipboard(m.clipboardWriter(), deploy.RemovalCommand(targetDirOrPlaceholder(m.deployment)))
+			return m, copyToClipboard(m.clipboardWriter(), strings.Join(words, " "))
 		}
 		return m, tea.Quit
 	case tea.KeyUp, tea.KeyDown:
@@ -206,6 +232,8 @@ func (m RemoveModel) view() string {
 		return ""
 	}
 	switch m.state {
+	case removeStateNotFound:
+		return m.viewNotFound()
 	case removeStateConfirm:
 		return m.viewConfirm()
 	case removeStateStandingDown:
@@ -222,6 +250,22 @@ func (m RemoveModel) view() string {
 // The flow screens speak the same starchart grammar as every other
 // screen (design/DECISIONS.md): centred block, ⟡ mark and bold title,
 // muted prose, individually-centred stacked menu, no keybind hints.
+
+func (m RemoveModel) viewNotFound() string {
+	var b strings.Builder
+	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
+	fmt.Fprintln(&b)
+	// The path is the one word here whose length nobody chose.
+	for _, line := range wrapWords("No Orbit deployment found in "+m.targetDir, min(m.width-4, proseWidth)) {
+		fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(line))
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, style.MutedText.Render("Remove acts only on a deployment the launcher has found."))
+	fmt.Fprintln(&b, style.MutedText.Render("Start it in the directory that holds .env-orbit."))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, []string{"Back"}, 0)
+	return skyBlock(m.star, m.width, m.height, b.String())
+}
 
 func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
@@ -249,10 +293,7 @@ func (m RemoveModel) viewDone() string {
 	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolSuccess)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit has been stood down"))
 	fmt.Fprintln(&b)
 
-	targetDir := "the deployment directory"
-	if m.deployment != nil && m.deployment.TargetDir != "" {
-		targetDir = m.deployment.TargetDir
-	}
+	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
 	// The path is the one word here whose length nobody chose.
 	for _, line := range wrapWords("volumes are still on disk at "+targetDir+" —", min(m.width-4, proseWidth)) {
@@ -262,12 +303,13 @@ func (m RemoveModel) viewDone() string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
 
-	// The command is 108 cells for the default path, and the box adds
+	// The command is over 100 cells for a short path, and the box adds
 	// four; a terminal cuts whatever is wider than it, and the cut end is
 	// the half that deletes everything. Wrapped, it reads whole at 80
-	// columns and still runs as typed; Copy command keeps the one-line form.
-	cmd := deploy.RemovalCommand(targetDirOrPlaceholder(m.deployment))
-	lines := wrapShellCommand(cmd, m.width-4)
+	// columns and still runs as typed; Copy command keeps the one-line
+	// form. Both are laid out from the same words.
+	words, _ := deploy.RemovalCommandWords(targetDir)
+	lines := wrapShellCommand(words, m.width-4)
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(style.BorderSoft).Padding(0, 1).Render(strings.Join(lines, "\n"))
 	fmt.Fprintln(&b, box)
 	fmt.Fprintln(&b, style.DegradedText.Render("this deletes all mail, documents, and configuration —"))
@@ -290,13 +332,6 @@ const (
 	proseWidth = 56
 	errorWidth = 72
 )
-
-func targetDirOrPlaceholder(d *deploy.Deployment) string {
-	if d != nil && d.TargetDir != "" {
-		return d.TargetDir
-	}
-	return "/opt/orbit"
-}
 
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder

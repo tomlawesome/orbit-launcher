@@ -46,7 +46,8 @@ type AppModel struct {
 
 	// targetDir is where an existing deployment, if any, would be found.
 	// Overridable in tests; production code leaves it empty and gets the
-	// working directory.
+	// working directory. resolvedTargetDir is the one place it is
+	// resolved: every flow is handed that directory and guesses nothing.
 	targetDir string
 
 	// flowSeams lets tests fake the engine/handoff dependencies of
@@ -241,7 +242,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateRemove:
 		updated, cmd := m.remove.Update(msg)
 		m.remove = updated.(RemoveModel)
-		return m, cmd
+		return m.watchOutcome(m.remove.Outcome(), cmd)
 	case appStateRepair:
 		updated, cmd := m.repair.Update(msg)
 		m.repair = updated.(RepairModel)
@@ -297,12 +298,13 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "Remove":
 		// deploy.Detect's error return only ever reflects a real I/O
 		// failure reading an existing .env-orbit, never "not installed"
-		// (that's a nil Deployment, nil error) — the Remove confirm
-		// screen already renders sensibly for a nil Deployment, so
-		// there's nothing actionable to do with an error here beyond
-		// proceeding with what we have.
-		deployment, _ := deploy.Detect(m.resolvedTargetDir())
+		// (that's a nil Deployment, nil error). Either way nothing usable
+		// was found, so Remove stops at the start and names where it
+		// looked.
+		dir := m.resolvedTargetDir()
+		deployment, _ := deploy.Detect(dir)
 		m.remove = NewRemoveModel(deployment)
+		m.remove.targetDir = dir
 		m.remove.lookupInstalledAt = m.flowInstalledAt
 		m.state = appStateRemove
 		// Init looks up the install date — read-only, so like Install's
@@ -325,8 +327,9 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// with the flow rather than waiting for a confirmation.
 		return m, tea.Batch(sizeCmd, m.install.Init())
 	case "Update":
-		deployment, _ := deploy.Detect(m.resolvedTargetDir())
-		m.update = NewUpdateModel(deployment, m.resolvedTargetDir(), m.version)
+		dir := m.resolvedTargetDir()
+		deployment, _ := deploy.Detect(dir)
+		m.update = NewUpdateModel(deployment, dir, m.version)
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
 		m.update.lookupInstalledAt = m.flowInstalledAt

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func rejoin(lines []string) string {
 
 func TestWrapShellCommand_FitsOnOneLineUnchanged(t *testing.T) {
 	cmd := removalLine(t, "/opt/orbit")
-	got := wrapShellCommand(cmd, len(cmd))
+	got := wrapShellCommand(removalWords(t, "/opt/orbit"), len(cmd))
 	if len(got) != 1 || got[0] != cmd {
 		t.Fatalf("wrapShellCommand(fits) = %q, want the command untouched", got)
 	}
@@ -34,8 +35,9 @@ func TestWrapShellCommand_FitsOnOneLineUnchanged(t *testing.T) {
 func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 	for _, dir := range []string{"/opt/orbit", "/srv/containers/mail/orbit-production", "/home/tom/my orbit", "/opt/it's"} {
 		cmd := removalLine(t, dir)
+		units := commandUnits(removalWords(t, dir))
 		for _, limit := range []int{40, 56, 76, 100} {
-			lines := wrapShellCommand(cmd, limit)
+			lines := wrapShellCommand(removalWords(t, dir), limit)
 			if got := rejoin(lines); got != cmd {
 				t.Errorf("limit %d, dir %q: lines %q read back as\n  %q\nwant\n  %q", limit, dir, lines, got, cmd)
 			}
@@ -43,7 +45,7 @@ func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 				// An option and its value are one unit by design; a line
 				// may only be over the limit when it holds a single unit.
 				content := strings.TrimSpace(strings.TrimSuffix(l, " \\"))
-				if lipgloss.Width(l) > limit && len(shellUnits(content)) > 1 {
+				if lipgloss.Width(l) > limit && !slices.Contains(units, content) {
 					t.Errorf("limit %d, dir %q: line %d is %d cells with a break available: %q", limit, dir, i, lipgloss.Width(l), l)
 				}
 				if i < len(lines)-1 && !strings.HasSuffix(l, " \\") {
@@ -60,8 +62,7 @@ func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 // A quoted path with a space in it is one shell word and must never be
 // broken, however narrow the screen.
 func TestWrapShellCommand_NeverBreaksInsideQuotes(t *testing.T) {
-	cmd := removalLine(t, "/home/tom/my orbit")
-	for _, l := range wrapShellCommand(cmd, 30) {
+	for _, l := range wrapShellCommand(removalWords(t, "/home/tom/my orbit"), 30) {
 		if strings.Count(l, "'")%2 != 0 {
 			t.Errorf("line breaks a quoted word: %q", l)
 		}
@@ -70,8 +71,7 @@ func TestWrapShellCommand_NeverBreaksInsideQuotes(t *testing.T) {
 
 // An option stays with its value: no line ends on "--env-file \".
 func TestWrapShellCommand_KeepsAnOptionWithItsValue(t *testing.T) {
-	cmd := removalLine(t, "/opt/orbit")
-	for _, l := range wrapShellCommand(cmd, 60) {
+	for _, l := range wrapShellCommand(removalWords(t, "/opt/orbit"), 60) {
 		trimmed := strings.TrimSuffix(l, " \\")
 		if strings.HasSuffix(trimmed, "--env-file") || strings.HasSuffix(trimmed, "--project-directory") {
 			t.Errorf("line ends on an option without its value: %q", l)

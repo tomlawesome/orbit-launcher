@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -39,23 +40,45 @@ func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 		"--project-directory", targetDir, "--env-file", envFile, "down")
 }
 
+// ErrNoTargetDir is returned for a stop or removal asked of no
+// directory: a removal command only ever names a deployment the
+// launcher actually found (#205).
+var ErrNoTargetDir = errors.New("no deployment directory given")
+
 // RemovalCommand returns the exact, copy-pasteable shell command that
 // fully and irreversibly removes an Orbit deployment — including its data
 // volumes and every file in targetDir. This package never executes it:
 // see removal_property_test.go, which asserts that as a real, checked
 // property, not just a comment someone could quietly invalidate later.
+// It is RemovalCommandWords joined by single spaces, so a screen built
+// from the words and a clipboard built from the line cannot disagree.
+func RemovalCommand(targetDir string) (string, error) {
+	words, err := RemovalCommandWords(targetDir)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(words, " "), nil
+}
+
+// RemovalCommandWords returns RemovalCommand as shell words, each
+// already quoted, so a caller can lay the command out on several lines
+// without parsing it back.
 //
 // It passes --env-file for the same reason StandDown does: Compose never
 // auto-loads .env-orbit, so without it "down -v" cannot resolve the
 // compose file's variables. Paths are quoted because the line is pasted
 // into a shell, so a directory name with a space or quote must still
 // arrive as one argument.
-func RemovalCommand(targetDir string) string {
-	envFile := filepath.Join(targetDir, ".env-orbit")
-	return fmt.Sprintf(
-		"docker compose --project-directory %s --env-file %s down -v && sudo rm -rf %s",
-		shellQuote(targetDir), shellQuote(envFile), shellQuote(targetDir),
-	)
+func RemovalCommandWords(targetDir string) ([]string, error) {
+	if targetDir == "" {
+		return nil, ErrNoTargetDir
+	}
+	dir := shellQuote(targetDir)
+	envFile := shellQuote(filepath.Join(targetDir, ".env-orbit"))
+	return []string{
+		"docker", "compose", "--project-directory", dir, "--env-file", envFile, "down", "-v",
+		"&&", "sudo", "rm", "-rf", dir,
+	}, nil
 }
 
 // shellSafe matches values that need no quoting in a POSIX shell.
