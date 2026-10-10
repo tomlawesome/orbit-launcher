@@ -226,7 +226,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Error("at 69 s the countdown must read 0:01")
 	}
 	m = update(t, m, runeKey('I'))
-	if m.notice.focus != noticeFocusBack || len(m.notice.typed) != 0 {
+	if m.notice.focus != noticeFocusBack || !m.notice.typed.empty() {
 		t.Fatal("letters must be ignored while the countdown runs")
 	}
 
@@ -237,8 +237,8 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Errorf("at 70 s the countdown row must be blank, got %q", stripANSI(countdown))
 	}
 	m = update(t, m, runeKey('I'))
-	if m.notice.focus != noticeFocusField || string(m.notice.typed) != "I" {
-		t.Errorf("once awake a letter must focus the box and type: focus %v, typed %q", m.notice.focus, string(m.notice.typed))
+	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I" {
+		t.Errorf("once awake a letter must focus the box and type: focus %v, typed %q", m.notice.focus, m.notice.typed.String())
 	}
 }
 
@@ -306,8 +306,8 @@ func TestNotice_ScrollKeysAndWheel(t *testing.T) {
 	}
 	m = update(t, m, key(tea.KeyPgUp))
 	m = update(t, m, key(tea.KeySpace))
-	if m.notice.offset != 11 || len(m.notice.typed) != 0 {
-		t.Errorf("Space while asleep: offset = %d, typed %q; want a page down", m.notice.offset, string(m.notice.typed))
+	if m.notice.offset != 11 || !m.notice.typed.empty() {
+		t.Errorf("Space while asleep: offset = %d, typed %q; want a page down", m.notice.offset, m.notice.typed.String())
 	}
 	m = update(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	if m.notice.offset != 8 {
@@ -330,15 +330,15 @@ func TestNotice_TypingFocusesTheBox(t *testing.T) {
 		t.Fatalf("typing must focus the box and show the text with the cursor:\n%s", screen(m))
 	}
 	m = update(t, m, key(tea.KeyBackspace))
-	if string(m.notice.typed) != "I've r" {
-		t.Errorf("Backspace: typed = %q, want %q", string(m.notice.typed), "I've r")
+	if m.notice.typed.String() != "I've r" {
+		t.Errorf("Backspace: typed = %q, want %q", m.notice.typed.String(), "I've r")
 	}
 	m = update(t, m, key(tea.KeyDown))
 	if m.notice.focus != noticeFocusBack || !strings.Contains(screen(m), "▸ Go back") {
 		t.Error("↓ from the box must move the caret to Go back")
 	}
 	m = update(t, m, key(tea.KeyUp))
-	if m.notice.focus != noticeFocusField || string(m.notice.typed) != "I've r" {
+	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I've r" {
 		t.Error("↑ from Go back must return to the box, keeping the text")
 	}
 }
@@ -362,7 +362,7 @@ func TestNotice_EnterChecksThePhrase(t *testing.T) {
 
 	m = typeText(t, m, "I read this and I understand")
 	m = update(t, m, key(tea.KeyEnter))
-	if !strings.Contains(screen(m), noticeRefusal) || string(m.notice.typed) != "I read this and I understand" {
+	if !strings.Contains(screen(m), noticeRefusal) || m.notice.typed.String() != "I read this and I understand" {
 		t.Fatal("a wrong phrase must be refused and kept for fixing")
 	}
 	m = update(t, m, key(tea.KeyBackspace))

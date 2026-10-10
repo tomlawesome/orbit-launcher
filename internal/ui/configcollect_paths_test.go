@@ -121,7 +121,7 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	}
 	// No prompt yet: typing goes nowhere.
 	r, _ = r.update(runeKey('h'))
-	if len(r.cfg.input) != 0 {
+	if !r.cfg.session.input.empty() {
 		t.Fatal("typing before a prompt was captured")
 	}
 
@@ -143,7 +143,7 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	// Backspace on an empty answer is harmless.
 	r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=OIDC_ISSUER kind=url required=true attempt=1"}})
 	r, _ = r.update(key(tea.KeyBackspace))
-	if len(r.cfg.input) != 0 {
+	if !r.cfg.session.input.empty() {
 		t.Fatal("backspace on empty input produced input")
 	}
 }

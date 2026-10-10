@@ -119,7 +119,7 @@ type noticeModel struct {
 	offset  int
 	endSeen bool // sticky: the whole notice has been on screen
 	focus   noticeFocus
-	typed   []rune
+	typed   inputLine
 	refused bool
 
 	doc           []noticeRow
@@ -232,7 +232,14 @@ func (n noticeModel) layout() noticeLayout {
 // matters, so a key that needs no gate reads no clock.
 func (n noticeModel) handleKey(msg tea.KeyPressMsg, now func() time.Time, d time.Duration) (noticeModel, noticeOutcome) {
 	n.refused = false
-	awake := func() bool { return n.awake(now(), d) }
+	var woke *bool // the gates' answer, read from the clock at most once
+	awake := func() bool {
+		if woke == nil {
+			w := n.awake(now(), d)
+			woke = &w
+		}
+		return *woke
+	}
 	switch msg.Code {
 	case tea.KeyEsc:
 		return n, noticeBack
@@ -256,33 +263,34 @@ func (n noticeModel) handleKey(msg tea.KeyPressMsg, now func() time.Time, d time
 			return n, noticeStay
 		}
 		return n.scrollBy(-1), noticeStay
-	case tea.KeySpace:
-		if !awake() {
-			return n.scrollBy(n.page()), noticeStay
-		}
-		n.focus = noticeFocusField
-		n.typed = append(n.typed, ' ')
-	case tea.KeyBackspace:
-		if n.focus == noticeFocusField && len(n.typed) > 0 {
-			n.typed = n.typed[:len(n.typed)-1]
-		}
 	case tea.KeyEnter:
 		if n.focus == noticeFocusBack {
 			return n, noticeBack
 		}
-		if len(n.typed) == 0 {
+		if n.typed.empty() {
 			return n, noticeStay
 		}
-		if phraseMatches(string(n.typed)) {
+		if phraseMatches(n.typed.String()) {
 			return n, noticeAccept
 		}
 		n.refused = true
-	default:
-		// Typing is what claims the box; while either gate is open it
-		// is ignored.
-		if msg.Text != "" && !msg.Mod.Contains(tea.ModCtrl) && awake() {
+		return n, noticeStay
+	}
+	if msg.Code == tea.KeySpace && !awake() {
+		return n.scrollBy(n.page()), noticeStay
+	}
+	// The rest is typing (inputLine). Typing is what claims the box,
+	// and is ignored while either gate is open; erasing edits only a
+	// focused box.
+	switch typed, edit := n.typed.edit(msg); edit {
+	case lineTyped:
+		if awake() {
 			n.focus = noticeFocusField
-			n.typed = append(n.typed, []rune(msg.Text)...)
+			n.typed = typed
+		}
+	case lineErased:
+		if n.focus == noticeFocusField {
+			n.typed = typed
 		}
 	}
 	return n, noticeStay
@@ -491,11 +499,8 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	contentW := 0
 	phrase := []rune(noticePhrase)
 	switch {
-	case focused && len(n.typed) > 0:
-		shown := n.typed
-		if len(shown) > inner-1 {
-			shown = shown[len(shown)-(inner-1):] // the tail, so the cursor stays visible
-		}
+	case focused && !n.typed.empty():
+		shown := n.typed.tail(inner - 1) // the tail, so the cursor stays visible
 		content = textStyle.Render(string(shown)) + style.AccentText.Render(style.SymbolCursor)
 		contentW = len(shown) + 1
 	case focused:

@@ -619,8 +619,8 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 
 	// Keys before any prompt has arrived go nowhere.
 	m, _ = repairUpdate(t, m, runeKey('r'))
-	if len(m.rotInput) != 0 {
-		t.Fatalf("typing before a prompt was captured: %q", string(m.rotInput))
+	if !m.rot.input.empty() {
+		t.Fatalf("typing before a prompt was captured: %q", m.rot.input.String())
 	}
 
 	stdin := &recordingStdin{}
@@ -650,7 +650,7 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 
 	// Backspace on an empty answer is harmless.
 	m, _ = repairUpdate(t, m, key(tea.KeyBackspace))
-	if len(m.rotInput) != 0 {
+	if !m.rot.input.empty() {
 		t.Fatal("backspace on empty input produced input")
 	}
 

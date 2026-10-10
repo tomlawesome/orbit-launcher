@@ -99,10 +99,9 @@ type configCollect struct {
 	stream *engine.Stream
 	stdin  io.WriteCloser
 
-	prompt    *engine.Prompt // non-nil while one answer is being typed
-	reason    string         // honest words for the last rejection
-	sawPrompt bool           // protocol capability evidence, per step
-	input     []rune
+	// session is the step's machine-prompt exchange; its sawPrompt is
+	// the protocol capability evidence, per step.
+	session promptSession
 	// origin is the accepted APP_URL answer, kept so a later field's
 	// guidance can name this deployment's real callback URL. Only ever
 	// set from a non-secret field.
@@ -261,9 +260,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		r.cfg.stream = msg.stream
 		r.cfg.stdin = msg.stdin
-		r.cfg.sawPrompt = false
-		r.cfg.prompt = nil
-		r.cfg.reason = ""
+		r.cfg.session = promptSession{}
 		return r, readEngineStream(r.send, msg.stream, configStream)
 
 	case configStreamMsg:
@@ -363,26 +360,9 @@ func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
 func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.RawLineMsg:
-		if parsed, ok := engine.ParsePromptLine(m.Text); ok {
-			switch p := parsed.(type) {
-			case engine.Prompt:
-				prompt := p
-				r.cfg.prompt = &prompt
-				r.cfg.sawPrompt = true
-				r.cfg.input = nil
-			case engine.PromptReject:
-				r.cfg.reason = rejectionWords(p.Reason)
-				r.cfg.prompt = nil
-			case engine.PromptAccept:
-				r.cfg.reason = ""
-				r.cfg.prompt = nil
-			case engine.PromptAbort:
-				// The engine gives up (third rejection or closed
-				// input) and exits through its refusal path; DoneMsg
-				// routes back to the refusal menu.
-				r.cfg.prompt = nil
-			}
-		}
+		// A prompt-abort exits through the engine's refusal path;
+		// DoneMsg routes back to the refusal menu.
+		r.cfg.session, _ = r.cfg.session.applyLine(m.Text)
 		return r, nil
 
 	case engine.EventMsg:
@@ -390,7 +370,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		return r, nil
 
 	case engine.DoneMsg:
-		sawPrompt := r.cfg.sawPrompt
+		sawPrompt := r.cfg.session.sawPrompt
 		if m.Err == nil {
 			// Step complete; mark it off and continue.
 			r.cfg.stream = nil
@@ -468,9 +448,9 @@ func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, te
 	return r.startNextConfigStep()
 }
 
-// handleConfigKey is the typing surface: append, backspace, enter
-// submits the answer line, esc cancels the whole session back to the
-// refusal menu.
+// handleConfigKey is the typing surface (promptSession.key: typing,
+// and Enter submits the answer line); esc cancels the whole session
+// back to the refusal menu.
 func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
@@ -478,31 +458,10 @@ func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		r.menu = menu{}
 		return r, nil
 	}
-	if r.cfg.prompt == nil {
-		return r, nil
-	}
-	switch msg.Code {
-	case tea.KeySpace:
-		r.cfg.input = append(r.cfg.input, ' ')
-	case tea.KeyBackspace:
-		if len(r.cfg.input) > 0 {
-			r.cfg.input = r.cfg.input[:len(r.cfg.input)-1]
-		}
-	case tea.KeyEnter:
-		if r.cfg.stdin != nil {
-			answer := string(r.cfg.input)
-			fmt.Fprintln(r.cfg.stdin, answer)
-			if r.cfg.prompt.Field == "APP_URL" {
-				r.cfg.origin = answer
-			}
-		}
-		r.cfg.prompt = nil
-		r.cfg.input = nil
-	default:
-		// Text is the printable character the key produced and is empty
-		// for every special key, so this takes typing and ignores the
-		// rest.
-		r.cfg.input = append(r.cfg.input, []rune(msg.Text)...)
+	var field, answer string
+	r.cfg.session, field, answer = r.cfg.session.key(msg, r.cfg.stdin)
+	if field == "APP_URL" && r.cfg.stdin != nil {
+		r.cfg.origin = answer
 	}
 	return r, nil
 }
@@ -669,36 +628,6 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Orbit needs your configuration")
 
-	p := r.cfg.prompt
-	if p == nil {
-		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return skyBlock(r.console.sky, width, height, b.String())
-	}
-
-	label, hint, notes := promptWords(p.Field, r.cfg.origin)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
-	if hint != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(hint))
-	}
-	for _, note := range notes {
-		fmt.Fprintln(&b, style.MutedText.Render(note))
-	}
-	fmt.Fprintln(&b)
-
-	// The input row. A secret is never echoed — not even its length.
-	shown := string(r.cfg.input)
-	if p.Kind == "secret" {
-		shown = ""
-	}
-	cursor := style.AccentText.Render(style.SymbolCursor)
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
-
-	if r.cfg.reason != "" {
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, style.DegradedText.Render(r.cfg.reason))
-	}
-	if p.Attempt > 1 {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
-	}
+	r.cfg.session.view(&b, r.cfg.origin)
 	return skyBlock(r.console.sky, width, height, b.String())
 }

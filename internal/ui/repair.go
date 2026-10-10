@@ -56,10 +56,8 @@ type RepairModel struct {
 	dangerous      *engine.Dangerous
 
 	// The dangerous rotation's machine-prompt session.
-	stdin     io.WriteCloser
-	rotPrompt *engine.Prompt
-	rotReason string
-	rotInput  []rune
+	stdin io.WriteCloser
+	rot   promptSession
 
 	stream *engine.Stream
 	// menu is the cursor on whichever menu screen is showing; each screen
@@ -219,7 +217,7 @@ func (m *RepairModel) startExecution() {
 	m.dangerous = nil
 	m.manualNotes = nil
 	m.stream, m.stdin = nil, nil
-	m.rotPrompt, m.rotReason, m.rotInput = nil, "", nil
+	m.rot = promptSession{}
 }
 
 // keepRunAfterCancel keeps a mutating run the engine started just as
@@ -329,21 +327,8 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 	switch s := msg.(type) {
 	case engine.RawLineMsg:
 		if m.state == repairRotating {
-			if parsed, ok := engine.ParsePromptLine(s.Text); ok {
-				switch p := parsed.(type) {
-				case engine.Prompt:
-					prompt := p
-					m.rotPrompt = &prompt
-					m.rotInput = nil
-				case engine.PromptReject:
-					m.rotReason = rejectionWords(p.Reason)
-					m.rotPrompt = nil
-				case engine.PromptAccept:
-					m.rotReason = ""
-					m.rotPrompt = nil
-				case engine.PromptAbort:
-					m.rotPrompt = nil
-				}
+			var ok bool
+			if m.rot, ok = m.rot.applyLine(s.Text); ok {
 				return m, nil
 			}
 		}
@@ -398,7 +383,7 @@ func (m RepairModel) handleStreamEnded(msg repairStreamEndedMsg) (tea.Model, tea
 		m.runErr = errEngineStoppedEarly
 	}
 	m.stdin = nil
-	m.rotPrompt, m.rotInput, m.rotReason = nil, nil, ""
+	m.rot = promptSession{}
 	m.state = repairError
 	m.menu = menu{}
 	return m, nil
@@ -609,7 +594,7 @@ func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func
 }
 
 // handleRotateKey is the rotation session's typing surface — the same
-// grammar as the in-console configuration prompts. Esc closes the
+// promptSession as the in-console configuration prompts. Esc closes the
 // session's input, which the engine treats as its documented abort at
 // its next prompt; a rotation already past its prompts is left to
 // finish. Either way the run ends on the after-picture.
@@ -617,27 +602,7 @@ func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
 		return m.stopRotation()
 	}
-	if m.rotPrompt == nil {
-		return m, nil
-	}
-	switch msg.Code {
-	case tea.KeySpace:
-		m.rotInput = append(m.rotInput, ' ')
-	case tea.KeyBackspace:
-		if len(m.rotInput) > 0 {
-			m.rotInput = m.rotInput[:len(m.rotInput)-1]
-		}
-	case tea.KeyEnter:
-		if m.stdin != nil {
-			fmt.Fprintln(m.stdin, string(m.rotInput))
-		}
-		m.rotPrompt = nil
-		m.rotInput = nil
-	default:
-		// See engineRun.handleConfigKey: Text is the printable character
-		// and empty for every special key.
-		m.rotInput = append(m.rotInput, []rune(msg.Text)...)
-	}
+	m.rot, _, _ = m.rot.key(msg, m.stdin)
 	return m, nil
 }
 
@@ -651,7 +616,7 @@ func (m RepairModel) stopRotation() (tea.Model, tea.Cmd) {
 	}
 	m.stdin.Close()
 	m.stdin = nil
-	m.rotPrompt, m.rotInput, m.rotReason = nil, nil, ""
+	m.rot = promptSession{}
 	return m, nil
 }
 
@@ -698,33 +663,7 @@ func (m RepairModel) viewRotating() string {
 		return skyBlock(m.star, m.width, m.height, b.String())
 	}
 
-	p := m.rotPrompt
-	if p == nil {
-		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return skyBlock(m.star, m.width, m.height, b.String())
-	}
-
-	label, hint, notes := promptWords(p.Field, "")
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
-	if hint != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(hint))
-	}
-	for _, note := range notes {
-		fmt.Fprintln(&b, style.MutedText.Render(note))
-	}
-	fmt.Fprintln(&b)
-	shown := string(m.rotInput)
-	if p.Kind == "secret" {
-		shown = ""
-	}
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+style.AccentText.Render(style.SymbolCursor))
-	if m.rotReason != "" {
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, style.DegradedText.Render(m.rotReason))
-	}
-	if p.Attempt > 1 {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
-	}
+	m.rot.view(&b, "")
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
