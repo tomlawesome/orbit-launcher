@@ -515,8 +515,12 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// execution is left to finish — killing a mutation
 			// mid-flight is the one thing more dangerous than running
 			// it.
+			// Still being started: cancel the start, as Ctrl-C does,
+			// or the process it launches outlives the screen (#221).
 			if m.stream != nil {
 				m.stream.Kill()
+			} else if m.cancel != nil {
+				m.cancel()
 			}
 			m.Done = true
 			m.WantsMenu = true
