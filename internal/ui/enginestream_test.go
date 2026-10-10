@@ -43,7 +43,7 @@ func TestEngineStreamReader_DeliversEveryMessageThenSaysTheStreamEnded(t *testin
 	stream := &engine.Stream{C: make(chan any, 4)}
 	delivered := make(chan tea.Msg, 8)
 
-	cmd := readEngineStream(func(msg tea.Msg) { delivered <- msg }, stream)
+	cmd := readEngineStream(func(msg tea.Msg) { delivered <- msg }, stream, engineRunStream)
 	if cmd == nil {
 		t.Fatal("no reader started: the run would never receive an engine message")
 	}
@@ -114,7 +114,7 @@ func TestEngineRun_AStreamEndingAfterTheRunResolvedChangesNothing(t *testing.T) 
 // at all, and the failure this whole change removes is precisely a run
 // that waits in silence for output that cannot arrive.
 func TestEngineRun_ARunWithNoSenderSaysSoRatherThanWaiting(t *testing.T) {
-	cmd := readEngineStream(nil, &engine.Stream{C: make(chan any)})
+	cmd := readEngineStream(nil, &engine.Stream{C: make(chan any)}, engineRunStream)
 	if cmd == nil {
 		t.Fatal("a run with no sender started nothing and would wait forever")
 	}

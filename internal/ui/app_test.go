@@ -138,7 +138,10 @@ func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.
 	m.flowSeams = engineRunSeams{
 		prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`),
 	}
+	sender := &deferredSender{}
+	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	sender.attach(tm.Send)
 	skipArrival(tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {

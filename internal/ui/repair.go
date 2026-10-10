@@ -79,6 +79,10 @@ type RepairModel struct {
 	Done      bool
 	WantsMenu bool
 
+	// send is the flow's way back into the event loop, for the engine
+	// stream reader; set by AppModel from the program's sender.
+	send func(tea.Msg)
+
 	// Test seams; nil gets the real implementations.
 	prepare       prepareRepairFunc
 	prepareRotate prepareRotateFunc
@@ -122,6 +126,22 @@ type repairRotateReadyMsg struct {
 
 // repairStreamMsg wraps one message from the diagnosis stream.
 type repairStreamMsg struct{ msg any }
+
+// repairStreamEndedMsg reports a repair stream closing; stream says
+// which run's, since a --plan rejected for --check, a fresh diagnosis
+// after an execution and the execution itself each have their own.
+type repairStreamEndedMsg struct {
+	stream *engine.Stream
+	reason error
+}
+
+// repairStream is Repair's wrapping for the engine stream reader.
+var repairStream = streamWrap{
+	msg: func(msg any) tea.Msg { return repairStreamMsg{msg: msg} },
+	ended: func(s *engine.Stream, reason error) tea.Msg {
+		return repairStreamEndedMsg{stream: s, reason: reason}
+	},
+}
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
@@ -226,16 +246,6 @@ func (m RepairModel) startRotate() tea.Cmd {
 	}
 }
 
-func pumpRepair(s *engine.Stream) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-s.C
-		if !ok {
-			return nil
-		}
-		return repairStreamMsg{msg: msg}
-	}
-}
-
 // Update implements tea.Model.
 func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -270,7 +280,7 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.stream = msg.stream
-		return m, pumpRepair(m.stream)
+		return m, readEngineStream(m.send, m.stream, repairStream)
 
 	case repairRotateReadyMsg:
 		if m.quitting {
@@ -288,7 +298,7 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = msg.stdin.Close()
 			}
 			m.stdin = nil
-			return m, pumpRepair(m.stream)
+			return m, readEngineStream(m.send, m.stream, repairStream)
 		}
 		if msg.err != nil {
 			m.runErr = msg.err
@@ -297,10 +307,13 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stream = msg.stream
 		m.stdin = msg.stdin
-		return m, pumpRepair(m.stream)
+		return m, readEngineStream(m.send, m.stream, repairStream)
 
 	case repairStreamMsg:
 		return m.handleStream(msg.msg)
+
+	case repairStreamEndedMsg:
+		return m.handleStreamEnded(msg)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -334,7 +347,7 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 				case engine.PromptAbort:
 					m.rotPrompt = nil
 				}
-				return m, pumpRepair(m.stream)
+				return m, nil
 			}
 		}
 		if f, ok := engine.ParseFinding(s.Text); ok {
@@ -356,13 +369,41 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 			diag := d
 			m.diagnosis = &diag
 		}
-		return m, pumpRepair(m.stream)
+		return m, nil
 	case engine.EventMsg:
 		// repair.sh emits no phase events; tolerate and move on.
-		return m, pumpRepair(m.stream)
+		return m, nil
 	case engine.DoneMsg:
 		return m.handleDone(s)
 	}
+	return m, nil
+}
+
+// handleStreamEnded closes out a run whose stream has stopped. The
+// ending of a stream that is not the current one — a --plan replaced
+// by --check, a run already resolved and left behind — belongs to
+// nothing. The current stream ending after its DoneMsg is the ordinary
+// case and changes nothing either. Only a run still waiting on its
+// stream has lost it: the engine stopped without reporting an outcome,
+// and the screen says so (#206).
+func (m RepairModel) handleStreamEnded(msg repairStreamEndedMsg) (tea.Model, tea.Cmd) {
+	if msg.stream != m.stream {
+		return m, nil
+	}
+	switch m.state {
+	case repairPreparing, repairExecuting, repairRotating:
+	default:
+		return m, nil
+	}
+	logDiag("repair stream: closed while the run was still streaming")
+	m.runErr = msg.reason
+	if m.runErr == nil {
+		m.runErr = errEngineStoppedEarly
+	}
+	m.stdin = nil
+	m.rotPrompt, m.rotInput, m.rotReason = nil, nil, ""
+	m.state = repairError
+	m.menuSel = 0
 	return m, nil
 }
 
