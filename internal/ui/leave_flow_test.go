@@ -257,9 +257,19 @@ func TestLeaveFlow_CtrlCQuitsFromEveryScreen(t *testing.T) {
 		leaveCase{"Remove removal-command screen", removeDone},
 		leaveCase{"Repair error screen", repairErr},
 	)
+	// A flow whose run is still being started cancels the start on
+	// Ctrl-C and quits when the start reports back, so it can kill a run
+	// that started anyway (TestRepairModel_CtrlCWhilePreparingCancelsAndQuitsOnceTheRunReportsBack).
+	// The report is fed in; it must then quit.
+	reportBack := map[string]tea.Msg{
+		"Repair reading": repairReadyMsg{err: context.Canceled},
+	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m, cmd := leavePress(t, c.model(t), ctrlC())
+			if report, ok := reportBack[c.name]; ok && cmd == nil {
+				m, cmd = leavePress(t, m, report)
+			}
 			if !isQuit(cmd) {
 				t.Fatal("Ctrl+C did not quit")
 			}
@@ -312,6 +322,9 @@ func TestLeaveFlow_AppReturnsToTheMenuFromEachFlow(t *testing.T) {
 			if isQuit(cmd) {
 				t.Fatalf("Esc on the %s first screen quit the launcher", f.name)
 			}
+			// The returning splash is sized by the command that comes
+			// back with it, as the program would run it.
+			m = appDrive(t, m, cmd)
 			if m.state != appStateSplash {
 				t.Fatalf("Esc on the %s first screen left state = %v, want the menu", f.name, m.state)
 			}
