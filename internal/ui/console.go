@@ -63,8 +63,6 @@ var stateWords = map[string]string{
 	engine.StateBlocked:   engine.StateBlocked,
 }
 
-var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-
 // consoleEntry is one displayed line: a parsed event or a raw
 // (non-event) stdout line shown verbatim.
 type consoleEntry struct {
@@ -153,7 +151,7 @@ func appendEntry(entries []consoleEntry, e consoleEntry) []consoleEntry {
 
 // setSize (re)builds the background sky for the given screen size.
 func (c ConsoleModel) setSize(width, height int) ConsoleModel {
-	c.sky = starfield.New(width, height, 1)
+	c.sky = newSky(width, height)
 	c.skyReady = true
 	return c
 }
@@ -161,7 +159,7 @@ func (c ConsoleModel) setSize(width, height int) ConsoleModel {
 // advance moves the spinner and the sky one frame (called on the
 // shared UI tick).
 func (c ConsoleModel) advance() ConsoleModel {
-	c.spinner = (c.spinner + 1) % len(spinnerFrames)
+	c.spinner = (c.spinner + 1) % len(style.SpinnerFrames)
 	if c.skyReady {
 		c.sky = c.sky.Advance()
 	}
@@ -213,7 +211,7 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 		glyph = style.DegradedText.Render(style.SymbolFailure)
 	case engine.StateWaiting, engine.StateStarting, engine.StateRunning:
 		if latest {
-			glyph = style.WarmText.Render(string(spinnerFrames[c.spinner]))
+			glyph = style.WarmText.Render(string(style.SpinnerFrames[c.spinner]))
 		} else {
 			glyph = style.Tagline.Render(style.SymbolQueued)
 		}

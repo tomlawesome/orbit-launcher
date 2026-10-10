@@ -71,7 +71,7 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.star = starfield.New(m.width, m.height, 1)
+		m.star = newSky(m.width, m.height)
 		m.starReady = true
 		return m, nil
 
@@ -179,9 +179,7 @@ func (m SuccessModel) view() string {
 
 	contentLines := m.centreBlockLines()
 	bodyHeight := m.height - 1
-	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
-
-	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffset)
+	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffsetFor(bodyHeight, len(contentLines)))
 
 	achieved := ""
 	if m.elapsed > 0 {

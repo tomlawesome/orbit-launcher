@@ -108,7 +108,7 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// SplashModel.Init started is still running and reaches this model
 		// the moment it owns the screen. See AppModel.refreshSplash.
 		m.width, m.height = msg.Width, msg.Height
-		m.star = starfield.New(msg.Width, msg.Height, 1)
+		m.star = newSky(msg.Width, msg.Height)
 		return m, nil
 
 	case tickMsg:
@@ -253,13 +253,9 @@ func (m RemoveModel) view() string {
 
 func (m RemoveModel) viewNotFound() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
 	// The path is the one word here whose length nobody chose.
-	for _, line := range wrapWords("No Orbit deployment found in "+m.targetDir, min(m.width-4, proseWidth)) {
-		fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(line))
-	}
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
+		wrapWords("No Orbit deployment found in "+m.targetDir, min(m.width-4, proseWidth))...)
 	fmt.Fprintln(&b, style.MutedText.Render("Remove acts only on a deployment the launcher has found."))
 	fmt.Fprintln(&b, style.MutedText.Render("Start it in the directory that holds "+deploy.EnvFile+"."))
 	fmt.Fprintln(&b)
@@ -269,10 +265,7 @@ func (m RemoveModel) viewNotFound() string {
 
 func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This stops Orbit and removes its containers"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "This stops Orbit and removes its containers")
 
 	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
 	fmt.Fprintln(&b)
@@ -285,13 +278,12 @@ func (m RemoveModel) viewConfirm() string {
 }
 
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("standing down Orbit…"))
+	return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("standing down Orbit…"))
 }
 
 func (m RemoveModel) viewDone() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolSuccess)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit has been stood down"))
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolSuccess), "Orbit has been stood down")
 
 	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
@@ -335,8 +327,7 @@ const (
 
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Could not stand down Orbit"))
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Could not stand down Orbit")
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.

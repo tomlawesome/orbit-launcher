@@ -611,10 +611,7 @@ func (r engineRun) view(width, height int) string {
 
 func (r engineRun) viewConfigPrompt(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
 	fmt.Fprintln(&b, style.MutedText.Render("The engine stopped before touching anything: some settings"))
 	fmt.Fprintln(&b, style.MutedText.Render("only you can provide. Continue to fill them in right here —"))
 	fmt.Fprintln(&b, style.MutedText.Render("every answer is checked by Orbit's own setup, which takes"))
@@ -626,8 +623,7 @@ func (r engineRun) viewConfigPrompt(width, height int) string {
 
 func (r engineRun) viewFailed(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(flowStoppedTitle(r.action)))
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
 	if r.lastFailed != nil {
 		word := r.lastFailed.Phase
 		if idx := phaseIndex(word); idx >= 0 {
@@ -672,10 +668,7 @@ func tailLines(lines []string, n int) []string {
 // the same vertical rhythm as the scene screens.
 func centreBlock(width, height int, content string) string {
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	topOffset := int(0.42 * float64(height-1-len(lines)))
-	if topOffset < 0 {
-		topOffset = 0
-	}
+	topOffset := topOffsetFor(height-1, len(lines))
 	var b strings.Builder
 	for i := 0; i < topOffset; i++ {
 		b.WriteString("\n")

@@ -620,10 +620,7 @@ var configSignInRows = []struct {
 // ever runs so the right ORBIT_CONFIGURE_AUTH_MODE can be set on it.
 func (r engineRun) viewConfigSignInMode(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("How will people sign in?"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "How will people sign in?")
 
 	// Unlike menuRow's individually centred labels, the two choices and
 	// their descriptions are one left-aligned block, as ratified: every
@@ -656,10 +653,7 @@ func (r engineRun) viewConfigSignInMode(width, height int) string {
 // asked for.
 func (r engineRun) viewConfigCollect(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Orbit needs your configuration")
 
 	p := r.cfg.prompt
 	if p == nil {
@@ -682,7 +676,7 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 	if p.Kind == "secret" {
 		shown = ""
 	}
-	cursor := style.AccentText.Render("▏")
+	cursor := style.AccentText.Render(style.SymbolCursor)
 	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
 
 	if r.cfg.reason != "" {

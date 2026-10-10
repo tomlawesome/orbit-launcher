@@ -248,7 +248,7 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// See RemoveModel.Update: the sky is built here, the tick chain
 		// is not — there is exactly one, and it is already running.
 		m.width, m.height = msg.Width, msg.Height
-		m.star = starfield.New(msg.Width, msg.Height, 1)
+		m.star = newSky(msg.Width, msg.Height)
 		return m, nil
 
 	case tickMsg:
@@ -669,7 +669,7 @@ func (m RepairModel) view() string {
 	case repairPreparing:
 		return skyBlock(m.star, m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
 	case repairExecuting:
-		return skyBlock(m.star, m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first")+
+		return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first")+
 			"\n"+style.Tagline.Render("can't be stopped from here — stopping halfway is the one unsafe step"))
 	case repairRotating:
 		return m.viewRotating()
@@ -688,10 +688,7 @@ func (m RepairModel) view() string {
 // what is at stake.
 func (m RepairModel) viewRotating() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Rotate database credentials"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Rotate database credentials")
 	fmt.Fprintln(&b, style.MutedText.Render("A passphrase-protected backup of the current credential is"))
 	fmt.Fprintln(&b, style.MutedText.Render("taken and verified before anything changes."))
 	fmt.Fprintln(&b)
@@ -722,7 +719,7 @@ func (m RepairModel) viewRotating() string {
 	if p.Kind == "secret" {
 		shown = ""
 	}
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+style.AccentText.Render("▏"))
+	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+style.AccentText.Render(style.SymbolCursor))
 	if m.rotReason != "" {
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, style.DegradedText.Render(m.rotReason))
@@ -737,7 +734,7 @@ func (m RepairModel) viewRotating() string {
 // fresh re-diagnosis the executor printed.
 func (m RepairModel) viewExecuted() string {
 	var b strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Foreground(style.Text)
+	var glyph, title string
 
 	result := ""
 	if m.execSummary != nil {
@@ -745,21 +742,21 @@ func (m RepairModel) viewExecuted() string {
 	}
 	switch result {
 	case engine.ResultComplete:
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Repairs applied"))
+		glyph, title = style.SuccessText.Render(style.SymbolMark), "Repairs applied"
 	case engine.ResultDeclined:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Nothing was changed"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Nothing was changed"
 	case engine.ResultUnactionable:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Nothing safe to run"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Nothing safe to run"
 	case engine.ResultEmpty:
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Nothing to repair"))
+		glyph, title = style.SuccessText.Render(style.SymbolMark), "Nothing to repair"
 	case engine.ResultFailed:
-		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Some repairs failed"))
+		glyph, title = style.ErrorText.Render(style.SymbolFailure), "Some repairs failed"
 	case engine.ResultRefused:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair refused"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repair refused"
 	default:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair run ended"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repair run ended"
 	}
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, glyph, title)
 
 	for _, e := range m.executeResults {
 		fmt.Fprintln(&b, executeLine(e))
@@ -833,10 +830,7 @@ func executeLine(e engine.ExecuteResult) string {
 
 func (m RepairModel) viewUnavailable() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Diagnosis needs a newer Orbit"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Diagnosis needs a newer Orbit")
 	fmt.Fprintln(&b, style.MutedText.Render("This Orbit release doesn't publish its repair diagnosis"))
 	fmt.Fprintln(&b, style.MutedText.Render("yet. Nothing on the deployment was touched."))
 	fmt.Fprintln(&b)
@@ -846,8 +840,7 @@ func (m RepairModel) viewUnavailable() string {
 
 func (m RepairModel) viewError() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Diagnosis couldn't run"))
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Diagnosis couldn't run")
 	if m.runErr != nil {
 		fmt.Fprintln(&b, style.Tagline.Render(m.runErr.Error()))
 		fmt.Fprintln(&b)
@@ -863,26 +856,26 @@ func (m RepairModel) viewDiagnosis() string {
 	if m.diagnosis != nil {
 		result = m.diagnosis.Result
 	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(style.Text)
+	var glyph, title string
 	switch {
 	case m.exitCode == engine.ExitNotInstalled:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("No Orbit installation here"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "No Orbit installation here"
 	case m.planSummary != nil && m.planSummary.Result == engine.ResultEmpty,
 		result == engine.ResultHealthy,
 		m.planSummary != nil && m.exitCode == engine.ExitHealthy:
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Diagnosis clear"))
+		glyph, title = style.SuccessText.Render(style.SymbolMark), "Diagnosis clear"
 	case m.planSummary != nil && m.exitCode == engine.ExitPlanAvailable:
 		// Plan mode's stdout carries only the plan (verified against
 		// the real script): the proposal is the story.
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repairs proposed"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repairs proposed"
 	case m.planSummary != nil:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Needs your attention"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Needs your attention"
 	case result == engine.ResultAttention:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Needs attention"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Needs attention"
 	default:
-		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Problems found"))
+		glyph, title = style.ErrorText.Render(style.SymbolFailure), "Problems found"
 	}
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, glyph, title)
 
 	for _, f := range sortedFindings(m.findings) {
 		fmt.Fprintln(&b, findingLine(f))
@@ -1027,7 +1020,7 @@ func findingLine(f engine.Finding) string {
 	case "fail":
 		glyph = style.ErrorText.Render(style.SymbolFailure)
 	case "warn":
-		glyph = style.DegradedText.Render("!")
+		glyph = style.DegradedText.Render(style.SymbolWarn)
 	}
 	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(targetWords(f.Target)) + style.Tagline.Render(" — "+classWords(f.Class))
 }

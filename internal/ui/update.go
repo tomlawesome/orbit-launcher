@@ -81,7 +81,7 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// it owns the screen.
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
-		m.star = starfield.New(resized.Width, resized.Height, 1)
+		m.star = newSky(resized.Width, resized.Height)
 	}
 	if _, ok := msg.(tickMsg); ok {
 		m.star = m.star.Advance()
@@ -171,10 +171,7 @@ func (m UpdateModel) view() string {
 
 func (m UpdateModel) viewNotFound() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("No Orbit deployment found here"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "No Orbit deployment found here")
 	fmt.Fprintln(&b, style.MutedText.Render("There's nothing to update in this directory —"))
 	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
 	fmt.Fprintln(&b)
@@ -184,10 +181,7 @@ func (m UpdateModel) viewNotFound() string {
 
 func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Pull the latest Orbit and update this deployment"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Pull the latest Orbit and update this deployment")
 
 	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
 	if image := m.deploymentImage(); image != "" {

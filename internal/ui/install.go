@@ -150,7 +150,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// sky's speed for the rest of the process (see AppModel.refreshSplash).
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
-		m.star = starfield.New(resized.Width, resized.Height, 1)
+		m.star = newSky(resized.Width, resized.Height)
 		if m.state == installStateNotice {
 			// A resize can reveal the end, which opens the scroll gate.
 			m.notice = m.notice.resize(resized.Width, resized.Height)
@@ -387,10 +387,7 @@ func (m InstallModel) view() string {
 // volume name they read here.
 func (m InstallModel) viewStaleVolume() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This machine already has an Orbit database"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This machine already has an Orbit database")
 
 	for _, v := range m.staleVolumes {
 		line := v.Name
@@ -421,10 +418,7 @@ func (m InstallModel) viewStaleVolume() string {
 
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Choose a deployment profile"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
 
 	profiles := []struct{ name, desc string }{
 		{"Standard", "mail, documents, calendar"},
@@ -441,10 +435,7 @@ func (m InstallModel) viewProfile() string {
 
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This profile isn't available yet"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
 	fmt.Fprintln(&b, style.MutedText.Render("AI and Full need local-model configuration that"))
 	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
 	fmt.Fprintln(&b)
@@ -459,10 +450,7 @@ func (m InstallModel) viewNotice() string {
 
 func (m InstallModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Ready to install"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Ready to install")
 	fmt.Fprintln(&b, style.MutedText.Render("Orbit's own installer runs inside the mission console —"))
 	fmt.Fprintln(&b, style.MutedText.Render("watch it validate, pull the image, and start the containers"))
 	fmt.Fprintln(&b, style.MutedText.Render("right here. If it needs configuration only you can provide,"))

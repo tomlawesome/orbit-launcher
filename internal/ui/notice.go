@@ -418,19 +418,22 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	gutter := strings.Repeat(" ", noticeGutter)
 	blank := pad("", 0)
 	textStyle := lipgloss.NewStyle().Foreground(style.Text)
-	mutedStyle := lipgloss.NewStyle().Foreground(style.TextMuted)
-	faintStyle := lipgloss.NewStyle().Foreground(style.TextFaint)
+	mutedStyle := style.MutedText
+	faintStyle := style.Tagline
 
 	awake := n.awake(now, d)
 	focused := n.focus == noticeFocusField
 	var lines []string
 
-	// Header.
+	// Header: the stacked flow header, each line centred in the block,
+	// with the notice's state line taking the place of its closing blank.
+	var header strings.Builder
+	writeHeader(&header, style.DegradedText.Render(style.SymbolMark), noticeTitle)
+	lines = append(lines, blank)
+	for _, h := range strings.Split(strings.TrimRight(header.String(), "\n"), "\n") {
+		lines = append(lines, centred(h, lipgloss.Width(h)))
+	}
 	lines = append(lines,
-		blank,
-		centred(style.DegradedText.Render(style.SymbolMark), 1),
-		blank,
-		centred(lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(noticeTitle), len(noticeTitle)),
 		centred(mutedStyle.Render(noticeStateLabel)+style.DegradedText.Render(noticeStateWord), len(noticeStateLabel)+len(noticeStateWord)),
 		blank,
 	)
@@ -493,11 +496,11 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		if len(shown) > inner-1 {
 			shown = shown[len(shown)-(inner-1):] // the tail, so the cursor stays visible
 		}
-		content = textStyle.Render(string(shown)) + style.AccentText.Render("▏")
+		content = textStyle.Render(string(shown)) + style.AccentText.Render(style.SymbolCursor)
 		contentW = len(shown) + 1
 	case focused:
 		example := phrase[:min(len(phrase), inner-1)]
-		content = style.AccentText.Render("▏") + faintStyle.Render(string(example))
+		content = style.AccentText.Render(style.SymbolCursor) + faintStyle.Render(string(example))
 		contentW = 1 + len(example)
 	default:
 		example := phrase[:min(len(phrase), inner)]

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -14,6 +15,40 @@ import (
 // The splash, the mission console and the success screen are all the
 // same scene with different content — extracting it keeps the three
 // pixel-identical in sky behaviour by construction.
+
+// newSky builds the background sky for a width × height screen. Every
+// screen seeds it the same, 1, so every sky is pixel-identical by
+// construction.
+func newSky(width, height int) starfield.Model {
+	return starfield.New(width, height, 1)
+}
+
+// topOffsetFor is the optical centre: the first row of a block of lines
+// set in bodyHeight rows, 0.42 of the spare rows down (a touch above
+// the true middle), never negative.
+func topOffsetFor(bodyHeight, lines int) int {
+	return max(int(0.42*float64(bodyHeight-lines)), 0)
+}
+
+// writeHeader writes the stacked flow-screen header: the rendered mark,
+// a blank line, the title (one or more lines) in style.Title, a blank
+// line.
+func writeHeader(b *strings.Builder, mark string, title ...string) {
+	fmt.Fprintln(b, mark)
+	fmt.Fprintln(b)
+	for _, line := range title {
+		fmt.Fprintln(b, style.Title.Render(line))
+	}
+	fmt.Fprintln(b)
+}
+
+// writeInlineHeader writes the one-line header of an outcome screen:
+// the rendered glyph and the title in style.Title on one line, then a
+// blank line.
+func writeInlineHeader(b *strings.Builder, glyph, title string) {
+	fmt.Fprintln(b, glyph+" "+style.Title.Render(title))
+	fmt.Fprintln(b)
+}
 
 // skyCell is one background cell: a glyph plus which style class draws
 // it. Class 0 is empty, 1 is a star; higher classes are planet kinds.
@@ -120,7 +155,7 @@ func compositeScene(star starfield.Model, ready bool, width, bodyHeight int, con
 	return rows
 }
 
-// skyBlock is centreBlock's grammar — the same 0.42 optical centre, the
+// skyBlock is centreBlock's grammar — the same optical centre, the
 // same per-line centring — rendered over the live sky instead of a bare
 // terminal. The flow screens (install, remove, update, repair, in-console
 // configuration) were built with centreBlock and so read as plain text on
@@ -132,11 +167,7 @@ func skyBlock(star starfield.Model, width, height int, content string) string {
 	if width <= 0 || height <= 0 {
 		return centreBlock(width, height, content)
 	}
-	topOffset := int(0.42 * float64(height-1-len(lines)))
-	if topOffset < 0 {
-		topOffset = 0
-	}
-	return strings.Join(compositeScene(star, true, width, height, lines, topOffset), "\n")
+	return strings.Join(compositeScene(star, true, width, height, lines, topOffsetFor(height-1, len(lines))), "\n")
 }
 
 // footerRow builds the screen's last row: a single centred faint line —

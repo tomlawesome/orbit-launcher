@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // The mission console's rarer renderings: every state's glyph and words,
@@ -43,11 +45,11 @@ func TestConsole_OnlyTheNewestActiveEntrySpins(t *testing.T) {
 	c := testConsole()
 	c = c.observeEvent(consoleEvent("database", "database", "starting", "database-health", "start"))
 	rows := strings.Join(consoleRows(c, 80, 26), "\n")
-	if !strings.Contains(rows, string(spinnerFrames[0])+" database starting") {
+	if !strings.Contains(rows, string(style.SpinnerFrames[0])+" database starting") {
 		t.Fatalf("the newest active entry should carry the spinner:\n%s", rows)
 	}
 	c = c.advance()
-	if rows := strings.Join(consoleRows(c, 80, 26), "\n"); !strings.Contains(rows, string(spinnerFrames[1])+" database starting") {
+	if rows := strings.Join(consoleRows(c, 80, 26), "\n"); !strings.Contains(rows, string(style.SpinnerFrames[1])+" database starting") {
 		t.Fatalf("the spinner did not move on a tick:\n%s", rows)
 	}
 }

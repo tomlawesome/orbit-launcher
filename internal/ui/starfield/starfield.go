@@ -11,12 +11,16 @@ package starfield
 import (
 	"math"
 	"math/rand"
+	"time"
 )
 
-// tickSeconds is the wall-clock duration one Advance() represents. It
-// must match internal/ui's tick interval (120ms); all periods below are
+// TickInterval is the wall-clock duration one Advance() represents, and
+// so the UI's animation tick: internal/ui ticks at exactly this interval.
+const TickInterval = 120 * time.Millisecond
+
+// tickSeconds is TickInterval in seconds; all periods below are
 // expressed in seconds and converted through it.
-const tickSeconds = 0.12
+const tickSeconds = float64(TickInterval) / float64(time.Second)
 
 // The sky moves as ONE body. Rotation is quantized: every stepTicks
 // ticks the whole field advances in a single synchronized step — the
