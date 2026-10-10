@@ -56,6 +56,24 @@ func appDrive(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
 	return m
 }
 
+// appDrainStream feeds what an engine stream reader pushes through
+// queue back into the model, as the program would, until the reader
+// reports the stream's end.
+func appDrainStream(t *testing.T, m AppModel, queue *sink) AppModel {
+	t.Helper()
+	for {
+		select {
+		case msg := <-queue.msgs:
+			m = appDrive(t, m, func() tea.Msg { return msg })
+			if _, ended := msg.(repairStreamEndedMsg); ended {
+				return m
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the engine stream never reported its end")
+		}
+	}
+}
+
 // appMessages runs cmd and every command in its batches, without
 // feeding the results back, and returns every message produced.
 func appMessages(t *testing.T, cmd tea.Cmd) []tea.Msg {
@@ -223,12 +241,15 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	m.targetDir = dir
 	m = m.WithDeploymentStatus(func(context.Context, string) bool { probes++; return true })
 	m.flowSeams = engineRunSeams{prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=1 skipped=0'; exit 0`)}
+	queue := newSink()
+	m = m.WithSender(queue.Send)
 	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// Repair, then its Menu row.
 	m, _ = appUpdate(t, m, key(tea.KeyDown)) // Update is preselected; Repair is next
 	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
 	m = appDrive(t, m, cmd)
+	m = appDrainStream(t, m, queue)
 	if !strings.Contains(stripANSI(m.View().Content), "Diagnosis clear") {
 		t.Fatalf("repair did not finish:\n%s", stripANSI(m.View().Content))
 	}

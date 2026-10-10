@@ -57,6 +57,22 @@ type configStepMsg struct {
 // configStreamMsg wraps one message from the configure stream.
 type configStreamMsg struct{ msg any }
 
+// configStreamEndedMsg reports a configure stream closing; stream says
+// which step's, since each step has its own.
+type configStreamEndedMsg struct {
+	stream *engine.Stream
+	reason error
+}
+
+// configStream is the configure steps' wrapping for the engine stream
+// reader.
+var configStream = streamWrap{
+	msg: func(msg any) tea.Msg { return configStreamMsg{msg: msg} },
+	ended: func(s *engine.Stream, reason error) tea.Msg {
+		return configStreamEndedMsg{stream: s, reason: reason}
+	},
+}
+
 // configAdoptedMsg reports the collected configuration landing in the
 // target.
 type configAdoptedMsg struct{ err error }
@@ -162,17 +178,6 @@ func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	}
 }
 
-// pumpConfig delivers the next configure-stream message.
-func pumpConfig(s *engine.Stream) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-s.C
-		if !ok {
-			return nil
-		}
-		return configStreamMsg{msg: msg}
-	}
-}
-
 // The four ways in-console collection can be abandoned, in fixed
 // phrases. Deliberately not built from the underlying error: it carries
 // local paths, and configure.sh's output carries answers. Neither
@@ -259,10 +264,33 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 		r.cfg.sawPrompt = false
 		r.cfg.prompt = nil
 		r.cfg.reason = ""
-		return r, pumpConfig(msg.stream)
+		return r, readEngineStream(r.send, msg.stream, configStream)
 
 	case configStreamMsg:
 		return r.handleConfigStream(msg.msg)
+
+	case configStreamEndedMsg:
+		if msg.stream != r.cfg.stream {
+			// A finished step's stream closing behind its DoneMsg,
+			// which already moved the session on.
+			return r, nil
+		}
+		// The step's stream closed before its DoneMsg: the engine
+		// stopped without saying how the step went, so the install
+		// stops here, visibly, rather than waiting on a prompt that
+		// will never come.
+		logDiag("configuration stream: closed while the step was still running")
+		r.cfg.close()
+		r.releaseRunFiles()
+		r.lastFailed = nil
+		r.stderrTail = nil
+		r.runErr = msg.reason
+		if r.runErr == nil {
+			r.runErr = errEngineStoppedEarly
+		}
+		r.state = runFailed
+		r.menuSel = 0
+		return r, nil
 
 	case configRecheckMsg:
 		if msg.err != nil {
@@ -355,11 +383,11 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 				r.cfg.prompt = nil
 			}
 		}
-		return r, pumpConfig(r.cfg.stream)
+		return r, nil
 
 	case engine.EventMsg:
 		// configure.sh emits no phase events; tolerate and move on.
-		return r, pumpConfig(r.cfg.stream)
+		return r, nil
 
 	case engine.DoneMsg:
 		sawPrompt := r.cfg.sawPrompt

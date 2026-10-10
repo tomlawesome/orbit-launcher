@@ -309,19 +309,20 @@ func TestRepairModel_CtrlCBeforeAMutationStartsCancelsAndQuits(t *testing.T) {
 	}
 }
 
-// assertKeptRunning runs the flow's next command, the pump on an adopted
-// run, and fails if it quits or the run says anything within 100 ms: a
-// kept run is never signalled. The pump is left waiting on the run,
-// which the test's cleanup kills.
-func assertKeptRunning(t *testing.T, cmd tea.Cmd) {
+// assertKeptRunning runs the flow's next command, the reader on an
+// adopted run, and fails if it quits or the run says anything through
+// pushed within 100 ms: a kept run is never signalled. The reader is
+// left waiting on the run, which the test's cleanup kills.
+func assertKeptRunning(t *testing.T, cmd tea.Cmd, pushed *sink) {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("nothing is watching the run that started")
 	}
-	got := make(chan tea.Msg, 1)
-	go func() { got <- cmd() }()
+	if msg := cmd(); msg != nil {
+		t.Fatalf("the run that started as Ctrl+C landed was quit or interrupted: %#v", msg)
+	}
 	select {
-	case msg := <-got:
+	case msg := <-pushed.msgs:
 		t.Fatalf("the run that started as Ctrl+C landed was quit or interrupted: %#v", msg)
 	case <-time.After(100 * time.Millisecond):
 	}
@@ -347,6 +348,8 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := sizedRepair(t)
+			pushed := newSink()
+			m.send = pushed.Send
 			m.state = tc.state
 			s, stdin := sleepingStream(t), &recordingStdin{}
 
@@ -371,7 +374,7 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 			if sc := repairScreen(m); !strings.Contains(sc, tc.screen) {
 				t.Fatalf("screen lacks %q:\n%s", tc.screen, sc)
 			}
-			assertKeptRunning(t, cmd)
+			assertKeptRunning(t, cmd, pushed)
 		})
 	}
 }
@@ -705,9 +708,11 @@ func TestRepairModel_StreamMessagesAfterAbandonAreIgnored(t *testing.T) {
 func TestRepairModel_EventsAndUnknownMessagesDoNotDisturbTheRun(t *testing.T) {
 	m := sizedRepair(t)
 	m.stream = &engine.Stream{C: make(chan any)}
+	// The shared reader keeps reading whatever the handler returns
+	// (#206), so what an event line must not do is end or fail the run.
 	m, cmd := repairUpdate(t, m, repairStreamMsg{msg: engine.EventMsg{Event: engine.Event{Phase: "host"}}})
-	if cmd == nil {
-		t.Fatal("an event line stopped the pump: the rest of the run would never be read")
+	if cmd != nil || m.state != repairPreparing || m.runErr != nil {
+		t.Fatal("an event line disturbed the run")
 	}
 	m, cmd = repairUpdate(t, m, repairStreamMsg{msg: 42})
 	if cmd != nil {

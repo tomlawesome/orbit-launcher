@@ -150,8 +150,10 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 func TestConfigCollect_EventLinesKeepTheSessionReading(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
+	// The shared reader keeps reading whatever the handler returns
+	// (#206), so what an event line must not do is end the session.
 	r, cmd := r.update(configStreamMsg{msg: engine.EventMsg{Event: engine.Event{Phase: "configuration"}}})
-	if cmd == nil || r.state != runConfigCollect {
+	if cmd != nil || r.state != runConfigCollect || r.cfg.stream == nil {
 		t.Fatal("an event line stopped the configuration session")
 	}
 }
