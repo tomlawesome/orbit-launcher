@@ -25,3 +25,10 @@ merge requests are made. GitHub is a public mirror of it.
   merged by merge request on GitLab.
 - Every change needs an issue first. The owner says when a merge request
   may be merged.
+
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) with the
+issue number at the end, for example
+`feat: name the database that blocks a fresh install (#105)` or
+`test: gate the live suite's volume pre-flight too (#105)`.

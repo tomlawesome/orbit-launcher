@@ -10,6 +10,12 @@
 # publishes or promotes, except the release button below (#178), which the
 # owner presses to cut a version tag.
 #
+# The mirror is set up in the GitLab project settings, not in this file. Its
+# identity is a GitLab-generated SSH key held as a write-access deploy key on
+# GitHub; "Deploy keys" is the only bypass on GitHub's rulesets, so nothing
+# else can push there. Nothing is filed, pushed or merged on GitHub by hand.
+# Issues 1-148 have the same number on both hosts; from 149 on, GitLab only.
+#
 # Deliberately not here:
 #
 #   1. codeql.yml: GitHub's own scanner keeps running on the mirror.
@@ -382,7 +388,8 @@ gitleaks:
 
 # visual-regression.yml. Same trigger: a merge request that touches the TUI or
 # the visual suite (or a pipeline started by hand). A failure here is a real
-# failure -- look at the diff, do not re-run it hoping for green (AGENTS.md).
+# failure -- the TUI's output is its interface, so look at the diff and never
+# re-run it hoping for green.
 #
 # The first run on this host is also the test of whether the committed
 # baselines survive the move: the browser build is the one the lock file

@@ -1,137 +1,32 @@
 # orbit-launcher agent instructions
 
-Created 2026-08-22 because the repo had no agent file at all.
+A full-screen terminal application (TUI) for installing, updating and repairing
+Orbit: animated starfield, static Orbit mark, a few clear choices. Layout:
+README and `docs/implementation-plan.md`. Hosts, CI and releases: `.gitlab-ci.yml`
+and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 
-## What this project is for
+- Not a shell-script wrapper (it supersedes `orbit#260`'s bash command centre):
+  changes pushing it back that way are wrong. Module
+  `github.com/tomlawesome/orbit-launcher`, AGPL-3.0 (`LICENSING.md`).
+- One project with Orbit and the site: see Orbit's `AGENTS.md`, "One project,
+  not siblings" (ADR-0036 in `ai/orbit`).
+- `gh-pages` is the branch for the published design iterations.
 
-A dedicated terminal application (TUI) for installing, updating, and
-repairing **Orbit** — full-screen, animated starfield, static Orbit mark,
-and a small set of clear choices.
+## Traps
 
-It supersedes the bash "command centre" approach from `orbit#260`. That
-work dressed up `install.sh` with more terminal control codes; this is a
-proper application instead. Keep that distinction: **changes that push
-this back toward being a shell-script wrapper are going the wrong way.**
-
-Go module `github.com/tomlawesome/orbit-launcher`. Licensed AGPL-3.0 (see
-`LICENSING.md`).
-
-Layout:
-
-- `cmd/orbit-launcher` — entry point
-- `internal/ui` — the TUI
-- `internal/engine` — install/update/repair logic
-- `internal/deploy`, `internal/release` — deployment and release handling
-- `scripts/get-orbit-launcher.sh` — retired; only points old links at Orbit's installer
-- `tools/calculateversion` — version derivation
-- `docs/implementation-plan.md`, `docs/releasing.md` — the roadmap and
-  the release contract
-
-## Orbit and this repo are one project
-
-`ai/orbit` and this repo are one project, not siblings (owner, 2026-10-03),
-and so is `ai/orbit-site`, the public website: Orbit, orbit-launcher and
-orbit-site are one project, split into three repositories for development
-reasons (owner, 2026-10-10).
-When one needs something from the other, or something there is not working
-as intended, act on it -- file the issue, tell the Orbit session -- without
-asking first. Asking costs the owner a round trip on a question with only
-one answer.
-
-## Hosts: GitLab first, GitHub is the mirror
-
-Since 2026-09-04 (#140) the project lives at
-`gitlab.tomlawson.io/ai/orbit-launcher` (project id 50): issues, merge
-requests, protected branches and the CI gate are there. Remote `gitlab`.
-
-GitHub `tomlawesome/orbit-launcher` (remote `origin`) is a push mirror
-GitLab updates after every merge, plus where CodeQL stays. Since #171
-(ai/orbit#1107, ADR-0031) this repo is not a download source at all:
-Orbit builds, signs and ships the launcher alongside itself, and this
-repo keeps only source, tags and CI. Nothing is filed, pushed or merged
-on GitHub by hand.
-
-- Mirror identity: a GitLab-generated SSH key held as a write-access deploy
-  key on GitHub; "Deploy keys" is the only bypass on GitHub's rulesets.
-- Issues 1–148 have the same number on both hosts; from 149 on, GitLab only.
-- Runner: `orbit-launcher-build` (privileged, for the live test); everything
-  else runs on the shared group runner.
-- Agent credential: `glab` with `GLAB_CONFIG_DIR=~/.config/glab-claude` (or
-  the Codex one) and `GITLAB_TOKEN` unset; the repo-local git credential
-  helper for the `gitlab` remote is `!glab auth git-credential`.
-- Start a pipeline by hand with `gl-pipeline-run ai/orbit-launcher <ref>
-  RUN_LIVE=true` to include the live test.
-- Renovate's pipelines are started by the project bot, which cannot read
-  ai/orbit; the live job then takes Orbit's files from the GitHub mirror
-  (#173). `ORBIT_FILES_SOURCE=github` forces that route.
-
-## Branching and review
-
-Flow: feature branch → `dev` → `preview` → `main`, all by merge request on
-GitLab, with `gh-pages` for the published site.
-
-- Protected branches are `dev`, `preview`, and `main` on both hosts.
-- Approval to merge into `dev` is not approval to promote.
-- Ask the owner in chat before every merge: the safety hook may let one
-  through without prompting (!191, 2026-10-05).
-
-## Commit style
-
-Observed convention is **Conventional Commits** with an issue reference:
-`feat: name the database that blocks a fresh install (#105)`,
-`test: gate the live suite's volume pre-flight too (#105)`. Match it.
-
-## CI
-
-Five workflows, several of which are unusually expensive to break:
-
-- `ci.yml`, `codeql.yml` — the standard gates (dependency review moved to
-  the GitLab `deps` job when merges left GitHub; see `.gitlab-ci.yml`)
-- `secret-scan.yml` — what the GitLab `gitleaks` job mirrors step for step
-- `live-install-test.yml` — a real install, end to end
-- `visual-regression.yml` — the TUI is a visual product; screenshots are
-  part of the contract
-
-Since #171 (ai/orbit#1107, ADR-0031) this repo no longer publishes
-runnable launcher binaries — Orbit builds, signs and ships the launcher
-alongside itself. What is left is the version tag Orbit pins: it is cut
-by pressing `release:version` on a green `dev` pipeline (#178,
-`docs/releasing.md`), never by hand, and the owner presses it.
-
-`.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
-diff is documentation only; `fast` and `deps` then skip themselves when it is,
-`gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (hand-started
-pipelines, or MR pipelines touching `internal/ui`, `test/visual` or
-`.gitlab-ci.yml`) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or
-a moved `UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin -- an image bump can no longer go
-green without being installed). A merge request that edits `.gitlab-ci.yml`
-waits for someone to start the `live` job by hand (#192). The GitHub workflows still run on the mirrored push as a
-second opinion; a failure there is advisory and never blocks a GitLab merge.
-Keep the two in step when changing a check.
-
-The `deps` job's licence check reads past declared licences (#176):
-`tools/licencereview` requires a reviewed entry in
-`.github/licence-review.txt` for every embedded, vendored or generated
-file, and every file whose comments say it came from elsewhere, in what
-the shipped binary links. Entries name an exact version, so a Renovate
-bump of such a module fails until its files are re-read. A licence
-decision there is the owner's.
-
-The binary carries every dependency's licence notice and prints them
-with `--licences` (#182). `internal/notices/THIRD_PARTY_NOTICES.txt` is
-generated: after any `go.mod` change run `go run ./tools/licencenotices`
-and commit the result, or `deps` fails. Code a module carries from
-elsewhere, named only in its comments, gets a hand-kept notice in
-`internal/notices/extra/`.
-
-Because a TUI's output *is* its interface, treat a visual-regression
-failure as a real failure and look at the diff. Do not re-run it hoping
-for green.
-
-## Run it before you ship it
-
-This is a full-screen terminal application: its correctness includes how
-it *looks* and how it behaves under a real terminal. A change that passes
-`go test` and was never run is not verified. Where something genuinely
-cannot be exercised here, say so plainly in the PR rather than letting
-"tested" imply more than was observed.
+- A visual-regression failure is real: look at the diff, never re-run hoping
+  for green.
+- After any `go.mod` change, run `go run ./tools/licencenotices` and commit
+  `internal/notices/THIRD_PARTY_NOTICES.txt`, or `deps` fails.
+- A Renovate bump of a licence-reviewed module fails `deps` until its files
+  are re-read. A licence decision there is the owner's.
+- Code a module carries from elsewhere, named only in its comments, gets a
+  hand-kept notice in `internal/notices/extra/`.
+- A merge request that edits `.gitlab-ci.yml` needs the `live` job started by
+  hand (#192).
+- GitHub workflow failures are advisory; they never block a GitLab merge. Change
+  a check on both hosts together.
+- Only the owner presses `release:version`, which cuts the release tag
+  (`docs/releasing.md`).
+- A green `go test` without running the TUI is not verified. Say plainly what
+  could not be exercised here.
