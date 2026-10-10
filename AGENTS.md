@@ -2,14 +2,14 @@
 
 A full-screen terminal application (TUI) for installing, updating and repairing
 Orbit: animated starfield, static Orbit mark, a few clear choices. Layout:
-README and `docs/implementation-plan.md`. Hosts, CI and releases: `.gitlab-ci.yml`
+`docs/implementation-plan.md`. Hosts, CI and releases: `.gitlab-ci.yml`
 and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 
 - Not a shell-script wrapper (it supersedes `orbit#260`'s bash command centre):
   changes pushing it back that way are wrong. Module
   `github.com/tomlawesome/orbit-launcher`, AGPL-3.0 (`LICENSING.md`).
-- One project with Orbit and the site: see Orbit's `AGENTS.md`, "One project,
-  not siblings" (ADR-0036 in `ai/orbit`).
+- One project with Orbit, its base image and the site: act across them without
+  asking (`ai/orbit` ADR-0036, `docs/adr/0036-the-orbit-family-is-one-project.md`).
 - `gh-pages` is the branch for the published design iterations.
 
 ## Traps

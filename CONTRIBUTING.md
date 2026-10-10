@@ -16,7 +16,7 @@ merge requests are made. GitHub is a public mirror of it.
 
 ## How changes are made here
 
-- There are three protected branches: `dev` (where work comes together),
+- There are three protected branches, protected on both hosts: `dev` (where work comes together),
   `preview` (the step between `dev` and a stable release) and `main`
   (stable). Tags are cut from `dev`. See
   [docs/releasing.md](docs/releasing.md).
