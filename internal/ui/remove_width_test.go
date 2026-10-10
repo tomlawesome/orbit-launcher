@@ -115,7 +115,7 @@ func assertWholeRemovalCommandOnScreen(t *testing.T, cols, rows int, targetDir s
 	// Every shell token of the command must be on screen, and the lines
 	// it was wrapped into must join back into exactly that command when
 	// the backslash continuations are honoured.
-	want := deploy.RemovalCommand(targetDir)
+	want := removalLine(t, targetDir)
 	got := joinedCommand(screen)
 	if got != want {
 		t.Fatalf("at %d columns the removal command on screen reads\n  %q\nwant\n  %q\nscreen:\n%s", cols, got, want, screen)

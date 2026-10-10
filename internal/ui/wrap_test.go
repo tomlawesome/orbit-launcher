@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
-
-	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 // rejoin reads wrapped lines back the way a shell does: a trailing
@@ -23,7 +21,7 @@ func rejoin(lines []string) string {
 }
 
 func TestWrapShellCommand_FitsOnOneLineUnchanged(t *testing.T) {
-	cmd := deploy.RemovalCommand("/opt/orbit")
+	cmd := removalLine(t, "/opt/orbit")
 	got := wrapShellCommand(cmd, len(cmd))
 	if len(got) != 1 || got[0] != cmd {
 		t.Fatalf("wrapShellCommand(fits) = %q, want the command untouched", got)
@@ -35,7 +33,7 @@ func TestWrapShellCommand_FitsOnOneLineUnchanged(t *testing.T) {
 // "&&" must lead its own line so the destructive half is a line apart.
 func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 	for _, dir := range []string{"/opt/orbit", "/srv/containers/mail/orbit-production", "/home/tom/my orbit", "/opt/it's"} {
-		cmd := deploy.RemovalCommand(dir)
+		cmd := removalLine(t, dir)
 		for _, limit := range []int{40, 56, 76, 100} {
 			lines := wrapShellCommand(cmd, limit)
 			if got := rejoin(lines); got != cmd {
@@ -62,7 +60,7 @@ func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 // A quoted path with a space in it is one shell word and must never be
 // broken, however narrow the screen.
 func TestWrapShellCommand_NeverBreaksInsideQuotes(t *testing.T) {
-	cmd := deploy.RemovalCommand("/home/tom/my orbit")
+	cmd := removalLine(t, "/home/tom/my orbit")
 	for _, l := range wrapShellCommand(cmd, 30) {
 		if strings.Count(l, "'")%2 != 0 {
 			t.Errorf("line breaks a quoted word: %q", l)
@@ -72,7 +70,7 @@ func TestWrapShellCommand_NeverBreaksInsideQuotes(t *testing.T) {
 
 // An option stays with its value: no line ends on "--env-file \".
 func TestWrapShellCommand_KeepsAnOptionWithItsValue(t *testing.T) {
-	cmd := deploy.RemovalCommand("/opt/orbit")
+	cmd := removalLine(t, "/opt/orbit")
 	for _, l := range wrapShellCommand(cmd, 60) {
 		trimmed := strings.TrimSuffix(l, " \\")
 		if strings.HasSuffix(trimmed, "--env-file") || strings.HasSuffix(trimmed, "--project-directory") {
