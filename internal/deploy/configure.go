@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // In-console guided configuration — orbit docs/engine-events.md
@@ -441,14 +440,12 @@ const (
 // mode — it only ever runs because the previous --init already decided
 // OIDC is on.
 func BuildConfigureCommand(treeDir string, step ConfigStep, mode AuthMode) *exec.Cmd {
-	cmd := exec.Command("bash", configureScript, string(step))
-	cmd.Dir = treeDir
+	cmd := detachedCommand(context.Background(), treeDir, "bash", configureScript, string(step))
 	env := append(os.Environ(), "ORBIT_CONFIGURE_PROMPTS=machine")
 	if step == ConfigStepInit && mode != "" {
 		env = append(env, "ORBIT_CONFIGURE_AUTH_MODE="+string(mode))
 	}
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }
 
@@ -503,12 +500,11 @@ func (c ConfigCheck) Unfixable() []string {
 // parses its readiness report. A non-zero exit with a parseable report
 // is the normal "something's missing" answer, not an error; an error
 // means the check itself couldn't run (structural failure, legacy
-// script misbehaviour).
+// script misbehaviour). Cancelling ctx stops the check and everything
+// it started, and returns without waiting on a pipe a child still holds
+// (detachedCommand).
 func RunConfigCheck(ctx context.Context, treeDir string) (ConfigCheck, error) {
-	cmd := exec.CommandContext(ctx, "bash", configureScript, "--check")
-	cmd.Dir = treeDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	out, runErr := cmd.Output()
+	out, runErr := detachedCommand(ctx, treeDir, "bash", configureScript, "--check").Output()
 
 	var check ConfigCheck
 	sawReport := false

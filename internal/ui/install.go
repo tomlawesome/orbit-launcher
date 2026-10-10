@@ -25,12 +25,6 @@ const (
 	installStateStaleVolume
 )
 
-// staleVolumeCheckTimeout bounds the pre-flight's one docker call. It is
-// generous for `docker volume ls` and still short enough that an
-// unreachable daemon costs a moment, not a wait — the check is advisory,
-// so timing out simply means the screen never appears.
-const staleVolumeCheckTimeout = 5 * time.Second
-
 // InstallModel is the Install flow: profile choice, confirmation, then
 // the mission console — the engine's event stream rendered natively
 // inside the TUI (see internal/ui/enginerun.go and design/mockups-v5.html
@@ -142,9 +136,7 @@ func (m InstallModel) Init() tea.Cmd {
 	}
 	targetDir := m.targetDir
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), staleVolumeCheckTimeout)
-		defer cancel()
-		return staleVolumesMsg{volumes: check(ctx, targetDir)}
+		return staleVolumesMsg{volumes: check(context.Background(), targetDir)}
 	}
 }
 

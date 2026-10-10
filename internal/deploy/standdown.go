@@ -8,7 +8,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
+
+// standDownTimeout bounds StandDown. `docker compose down` stops each
+// container with its own grace period, so a healthy stand-down takes
+// seconds to a minute or two; five minutes means Docker is stuck, and
+// past it the person is better served by a failed screen that says so
+// than by a spinner that never ends (#207). A var only so its test can
+// shorten it.
+var standDownTimeout = 5 * time.Minute
 
 // StandDown stops a deployment's containers and network — the safe,
 // reversible half of Remove. It deliberately never passes -v: data
@@ -23,9 +32,18 @@ import (
 // outright trying to interpolate ${ORBIT_IMAGE}, discovered via a real
 // live deployment (issue #54) that unit tests mocking StandDown could
 // never have caught.
+//
+// It gives up after standDownTimeout, or sooner if ctx ends, and the
+// error names the limit that applied.
 func StandDown(ctx context.Context, targetDir string) error {
+	limit := limitApplied(ctx, standDownTimeout)
+	ctx, cancel := context.WithTimeout(ctx, standDownTimeout)
+	defer cancel()
 	cmd := standDownCommand(ctx, targetDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("docker compose down did not finish within %s: %w: %s", limit, err, out)
+		}
 		return fmt.Errorf("docker compose down: %w: %s", err, out)
 	}
 	return nil
@@ -36,8 +54,10 @@ func StandDown(ctx context.Context, targetDir string) error {
 // against a real deployment) are directly, cheaply testable.
 func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 	envFile := filepath.Join(targetDir, ".env-orbit")
-	return exec.CommandContext(ctx, "docker", "compose",
+	cmd := exec.CommandContext(ctx, "docker", "compose",
 		"--project-directory", targetDir, "--env-file", envFile, "down")
+	cmd.WaitDelay = pipeWaitDelay
+	return cmd
 }
 
 // ErrNoTargetDir is returned for a stop or removal asked of no

@@ -85,10 +85,11 @@ func readInstallScriptFile(path string) ([]byte, error) {
 
 // fetchError words a transport failure for the failed screen. A deadline
 // hit is the one case a person can act on without reading the wrapped
-// error, so it gets its own sentence.
-func fetchError(what string, err error) error {
+// error, so it gets its own sentence, naming limit: the time the fetch
+// was actually given (#207).
+func fetchError(what string, err error, limit time.Duration) error {
 	if errors.Is(err, context.DeadlineExceeded) || isClientTimeout(err) {
-		return fmt.Errorf("fetch %s: the server did not answer within %s — check the network and try again", what, scriptFetchTimeout)
+		return fmt.Errorf("fetch %s: the server did not answer within %s — check the network and try again", what, limit)
 	}
 	return fmt.Errorf("fetch %s: %w", what, err)
 }
@@ -107,9 +108,10 @@ func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
+	limit := limitApplied(ctx, scriptFetchClient.Timeout)
 	resp, err := scriptFetchClient.Do(req)
 	if err != nil {
-		return nil, fetchError("install.sh", err)
+		return nil, fetchError("install.sh", err, limit)
 	}
 	defer resp.Body.Close()
 

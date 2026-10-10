@@ -227,7 +227,7 @@ func TestParseSemver(t *testing.T) {
 }
 
 // fakeTransport answers every request in-process, so the exported
-// CheckForUpdate (which hard-codes manifestURL and http.DefaultClient) can
+// CheckForUpdate (which hard-codes manifestURL and updateCheckClient) can
 // be driven without the network. It records the URL it was asked for.
 type fakeTransport struct {
 	requested string
@@ -245,14 +245,14 @@ func (f *fakeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// useFakeTransport swaps http.DefaultClient's transport for the test's
+// useFakeTransport swaps updateCheckClient's transport for the test's
 // duration. Not parallel-safe, so no test here calls t.Parallel.
 func useFakeTransport(t *testing.T, body string) *fakeTransport {
 	t.Helper()
 	fake := &fakeTransport{body: body}
-	prev := http.DefaultClient.Transport
-	http.DefaultClient.Transport = fake
-	t.Cleanup(func() { http.DefaultClient.Transport = prev })
+	prev := updateCheckClient.Transport
+	updateCheckClient.Transport = fake
+	t.Cleanup(func() { updateCheckClient.Transport = prev })
 	return fake
 }
 

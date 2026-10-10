@@ -13,14 +13,9 @@ import (
 // the zero time means Docker could not say, and the date is left out.
 type installedAtMsg struct{ at time.Time }
 
-// installDateLookupTimeout bounds the lookup's one docker call, for the
-// same reason as staleVolumeCheckTimeout: an unreachable daemon costs a
-// moment, and timing out simply leaves the date off the screen.
-const installDateLookupTimeout = 5 * time.Second
-
 // installedAtCmd looks up d's install date off the event loop. lookup is
-// a test seam; nil means deploy.InstalledAt. With no deployment there is
-// nothing to look up.
+// a test seam; nil means deploy.InstalledAt, which bounds its own Docker
+// call. With no deployment there is nothing to look up.
 func installedAtCmd(lookup func(context.Context, *deploy.Deployment) time.Time, d *deploy.Deployment) tea.Cmd {
 	if d == nil {
 		return nil
@@ -29,9 +24,7 @@ func installedAtCmd(lookup func(context.Context, *deploy.Deployment) time.Time, 
 		lookup = deploy.InstalledAt
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), installDateLookupTimeout)
-		defer cancel()
-		return installedAtMsg{at: lookup(ctx, d)}
+		return installedAtMsg{at: lookup(context.Background(), d)}
 	}
 }
 
