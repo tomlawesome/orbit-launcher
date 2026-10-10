@@ -453,7 +453,7 @@ func TestRepairModel_RefusedDangerousBatchSaysNothingWasRotated(t *testing.T) {
 			m := sizedRepair(t)
 			m.state = repairRotating
 			m = repairLines(t, m, "dangerous result=refused done=0 failed=0 reason="+tc.reason)
-			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: repairExitDangerousRefused, Err: errors.New("exit status 6")})
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitDangerousRefused, Err: errors.New("exit status 6")})
 			if m.state != repairExecuted {
 				t.Fatalf("exit 6 is an outcome, not an error: state = %v", m.state)
 			}
