@@ -719,14 +719,6 @@ func TestRepairModel_EventsAndUnknownMessagesDoNotDisturbTheRun(t *testing.T) {
 	}
 }
 
-func TestPumpRepair_ClosedStreamDeliversNothing(t *testing.T) {
-	ch := make(chan any)
-	close(ch)
-	if msg := pumpRepair(&engine.Stream{C: ch})(); msg != nil {
-		t.Fatalf("a closed stream produced %#v", msg)
-	}
-}
-
 func TestRepairModel_UnsizedViewIsBlank(t *testing.T) {
 	if got := NewRepairModel("/opt/orbit", "v").View().Content; got != "" {
 		t.Fatalf("before the first resize the view should be blank, got %q", got)

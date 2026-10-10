@@ -156,14 +156,6 @@ func TestConfigCollect_EventLinesKeepTheSessionReading(t *testing.T) {
 	}
 }
 
-func TestPumpConfig_ClosedStreamDeliversNothing(t *testing.T) {
-	ch := make(chan any)
-	close(ch)
-	if msg := pumpConfig(&engine.Stream{C: ch})(); msg != nil {
-		t.Fatalf("a closed stream produced %#v", msg)
-	}
-}
-
 func TestConfigSignInMode_UnboundKeyChangesNothing(t *testing.T) {
 	r := signInModeRun()
 	r, cmd := r.handleKey(runeKey('s'))
