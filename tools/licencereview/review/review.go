@@ -89,15 +89,23 @@ var generatedHeader = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
 // code.
 var provenance = regexp.MustCompile(`(?i)\b(ported|adapted|taken|copied|extracted|borrowed|translated) from\b|licen[cs]e agreement|unicode\.org/(license|copyright)|\bunder (the )?[\w.-]+ licen[cs]e\b|\blicensed under\b|SPDX-License-Identifier`)
 
-// licenceName matches the names go-licenses itself treats as licences.
-var licenceName = regexp.MustCompile(`(?i)^(licen[cs]e|copying|notice|unlicense)(\.|-|_|$)`)
+// licenceName is the licence-file name rule: a licence-style base name,
+// then optionally an upper-case licence tag after '.', '-' or '_'
+// (LICENSE-MIT, LICENSE.APACHE, COPYING.LESSER, LICENSE_APACHE-2.0), then
+// optionally a documentation extension (.txt, .md, .markdown, .rst).
+// The tag is case-sensitive so a lower-case source extension (.go, .c)
+// never reads as one.
+var licenceName = regexp.MustCompile(`^(?i:licen[cs]e|copying|notice|unlicense)([._-][A-Z0-9]+([.-][A-Z0-9]+)*)?(?i:\.(?:txt|md|markdown|rst))?$`)
 
-// LicenceFile reports whether a file called name is a licence file: the
-// names go-licenses itself treats as licences, with any suffix after a
-// '.', '-' or '_', so LICENSE-MIT and LICENSE.APACHE count. It is the one
-// rule for both tools: the review scan, which reads a nested licence file
-// as marking someone else's code, and the notices builder, which ships
-// every licence file at a module's root (#199 SU-1).
+// LicenceFile reports whether a file called name is a licence file. It is
+// the one rule for both tools (#199 SU-1, #218): the review scan, which
+// reads a nested licence file as marking someone else's code, and the
+// notices builder, which ships every licence file at a module's root.
+// It is a name-only rule, not go-licenses' (which matches any name
+// starting LICENSE, COPYING, README or NOTICE and then classifies the
+// content): it is narrower, rejecting source files such as license.go or
+// COPYING.c, because the notices builder copies licence files verbatim
+// into what the binary ships.
 func LicenceFile(name string) bool {
 	return licenceName.MatchString(name)
 }
