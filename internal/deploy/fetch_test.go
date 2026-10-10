@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // setScriptFetchTimeout swaps the shared fetch client for one with a short
@@ -260,5 +262,23 @@ func TestFetchInstallScript_RefusedConnectionKeepsTheRealReason(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fetch install.sh") {
 		t.Errorf("error should name what failed, got: %v", err)
+	}
+}
+
+// #219: testutil cannot import deploy, so it types the install.sh
+// override's name itself. Were the two to drift apart, CountingScriptSource
+// would count requests nobody sends, and every "nothing was fetched"
+// assertion built on it would pass whatever the code fetched. A fetch
+// with the source in place must reach it.
+func TestCountingScriptSource_IsWhereFetchInstallScriptFetches(t *testing.T) {
+	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", "") // a local copy would skip the fetch
+	requests := testutil.CountingScriptSource(t)
+
+	_, err := FetchInstallScript(t.Context())
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("FetchInstallScript made %d request(s) to testutil's counting source, want 1: the override it sets is not the one deploy reads", n)
+	}
+	if err != nil {
+		t.Errorf("FetchInstallScript: %v", err)
 	}
 }
