@@ -135,6 +135,7 @@ func tempOnly(t T) { t.Setenv("PATH", t.TempDir()) }
 func docker() { os.WriteFile(filepath.Join(d, "docker"), nil, 0o755) }
 func tree() { os.MkdirAll(filepath.Join(d, "scripts"), 0o755) }
 func treeVar() { scripts := x; os.Mkdir(scripts, 0o755) }
+func staged() { testutil.StageTree(t, d, 0o755) }
 func neither() { os.WriteFile(filepath.Join(d, "other"), nil, 0o644) }
 `)
 	files := []en17File{f}
@@ -153,6 +154,9 @@ func neither() { os.WriteFile(filepath.Join(d, "other"), nil, 0o644) }
 	}
 	if got := en17Funcs(files, en17MakesScriptsDir); len(got) != 2 {
 		t.Errorf("scripts-dir makers = %v, want [tree treeVar]", got)
+	}
+	if got := en17Funcs(files, en17CallsStageTree); len(got) != 1 || got[0] != "snippet.go:staged" {
+		t.Errorf("StageTree callers = %v, want [staged]", got)
 	}
 }
 
@@ -188,10 +192,12 @@ func TestEN17_OneFakeDockerWriter(t *testing.T) {
 // Six builders used 0644/0700/0600 by accident, and only trustedDeployment
 // set the mode exactly (through Chmod, not the umask); the one builder must
 // take its modes as arguments and set them exactly, so each test says what
-// mode it is testing.
+// mode it is testing. The decisions make testutil's StageTree the one
+// stager across packages (SU-20), so the builder may hand its modes to it;
+// StageTree must then be the one that sets them with Chmod.
 func TestEN17_OneScriptTreeBuilderWithExplicitModes(t *testing.T) {
 	files := en17Tests(t)
-	got := en17Funcs(files, en17MakesScriptsDir)
+	got := en17Funcs(files, func(fd *ast.FuncDecl) bool { return en17MakesScriptsDir(fd) || en17CallsStageTree(fd) })
 	if len(got) != 1 {
 		t.Fatalf("deploy tests build a scripts/ tree in %d places %v, want exactly 1", len(got), got)
 	}
@@ -207,15 +213,54 @@ func TestEN17_OneScriptTreeBuilderWithExplicitModes(t *testing.T) {
 			if !en17TakesMode(files, fd) {
 				t.Errorf("%s takes no file-mode argument: its modes are not explicit", got[0])
 			}
-			exact := en17Calls(fd.Body, func(c *ast.CallExpr) bool {
-				_, n := en17Name(c)
-				return n == "Chmod" || n == "chmod"
-			}) > 0
-			if !exact {
+			if en17CallsStageTree(fd) {
+				en17StageTreeSetsModes(t)
+				continue
+			}
+			if !en17SetsModes(fd) {
 				t.Errorf("%s never calls Chmod: the umask, not the caller, decides the modes", got[0])
 			}
 		}
 	}
+}
+
+func en17SetsModes(fd *ast.FuncDecl) bool {
+	return en17Calls(fd.Body, func(c *ast.CallExpr) bool {
+		_, n := en17Name(c)
+		return n == "Chmod" || n == "chmod"
+	}) > 0
+}
+
+// en17CallsStageTree is a function that hands its tree to testutil.StageTree.
+func en17CallsStageTree(fd *ast.FuncDecl) bool {
+	return en17Calls(fd.Body, func(c *ast.CallExpr) bool {
+		p, n := en17Name(c)
+		return p == "testutil" && n == "StageTree"
+	}) > 0
+}
+
+// en17StageTreeSetsModes holds testutil.StageTree to what the builder
+// would have to do itself: make scripts/, take a FileMode, call Chmod.
+func en17StageTreeSetsModes(t *testing.T) {
+	t.Helper()
+	util := en17Parse(t, filepath.Join("..", "testutil", "testutil.go"), nil)
+	for _, d := range util.file.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != "StageTree" {
+			continue
+		}
+		if !en17MakesScriptsDir(fd) {
+			t.Error("testutil.StageTree makes no scripts/ directory")
+		}
+		if !en17TakesMode([]en17File{util}, fd) {
+			t.Error("testutil.StageTree takes no file-mode argument: its modes are not explicit")
+		}
+		if !en17SetsModes(fd) {
+			t.Error("testutil.StageTree never calls Chmod: the umask, not the caller, decides the modes")
+		}
+		return
+	}
+	t.Error("internal/testutil/testutil.go declares no StageTree")
 }
 
 // en17TakesMode reports whether fd has a parameter that is a FileMode, or
