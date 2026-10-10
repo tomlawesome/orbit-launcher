@@ -72,8 +72,13 @@ variables:
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
   UBUNTU_IMAGE: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
-  # Same pins as the workflows.
-  STATICCHECK_VERSION: v0.8.1
+  # Same pins as the workflows. A commit on staticcheck's master, not a
+  # release: go1.27.2 writes compiler export data version 5, and every release
+  # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
+  # so staticcheck fails on every package (#202). Master moved to x/tools
+  # v0.51.0 and Go 1.27 on 2026-10-09. Move back to a release tag once one
+  # carries it.
+  STATICCHECK_VERSION: 452d5bb86b45416c35891262f6a11dbd6a970117
   # The `deps` job's two tools.
   GOVULNCHECK_VERSION: v1.8.0
   GO_LICENSES_VERSION: v2.0.1
