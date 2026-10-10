@@ -136,4 +136,11 @@ func TestWithVersion_CommentIsTrue(t *testing.T) {
 			t.Errorf("WithVersion's comment still says %q, which is not true:\n%s", claim, doc)
 		}
 	}
+	// Absence alone passes any comment that avoids two words; the true
+	// claim is that the splash and the console both carry the foot.
+	for _, claim := range []string{"splash", "console"} {
+		if !strings.Contains(lower, claim) {
+			t.Errorf("WithVersion's comment does not name the %s, which shows the version:\n%s", claim, doc)
+		}
+	}
 }
