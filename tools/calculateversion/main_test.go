@@ -148,11 +148,27 @@ func TestGitTagsFailsOutsideARepository(t *testing.T) {
 	}
 }
 
-// main hands its command line to run (#199 SU-17): the real main, run as
-// the command, answers -h with its usage on stderr and exit 0.
+// main hands its command line to run and run's exit code to os.Exit
+// (#199 SU-17): the real main, run as the command, exits 0 for -h, 2 for
+// a bad flag and 1 when the tags cannot be read.
 func TestMainRunsTheCommand(t *testing.T) {
-	code, stdout, stderr := clitest.Main(t, main, "-h")
-	if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of calculateversion") || !strings.Contains(stderr, "-hotfix") {
-		t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -hotfix on stderr", code, stdout, stderr)
-	}
+	t.Run("help exits 0", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-h")
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of calculateversion") || !strings.Contains(stderr, "-hotfix") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -hotfix on stderr", code, stdout, stderr)
+		}
+	})
+	t.Run("bad flag exits 2", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-bogus")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "flag provided but not defined: -bogus") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 naming the bad flag on stderr", code, stdout, stderr)
+		}
+	})
+	t.Run("unreadable tags exit 1", func(t *testing.T) {
+		t.Setenv("GIT_DIR", t.TempDir()) // an empty directory is no repository
+		code, stdout, stderr := clitest.Main(t, main)
+		if code != 1 || stdout != "" || !strings.HasPrefix(stderr, "calculateversion: ") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 1 and the git failure on stderr", code, stdout, stderr)
+		}
+	})
 }

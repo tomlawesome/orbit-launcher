@@ -161,12 +161,20 @@ func TestCLI_FlagErrorsAndHelp(t *testing.T) {
 	}
 }
 
-// main hands os.Args to cli, which drops the program name (#199 SU-17):
-// the real main, run as the command, answers -h with its usage on stderr
-// and exit 0 rather than treating -h as the program name.
+// main hands os.Args to cli, which drops the program name, and cli's
+// exit code to os.Exit (#199 SU-17): the real main, run as the command,
+// exits 0 for -h and 2 for a bad flag.
 func TestMainRunsTheCommand(t *testing.T) {
-	code, stdout, stderr := clitest.Main(t, main, "-h")
-	if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of licencereview") || !strings.Contains(stderr, "-review") {
-		t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -review on stderr", code, stdout, stderr)
-	}
+	t.Run("help exits 0", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-h")
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of licencereview") || !strings.Contains(stderr, "-review") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -review on stderr", code, stdout, stderr)
+		}
+	})
+	t.Run("bad flag exits 2", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-bogus")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "flag provided but not defined: -bogus") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 naming the bad flag on stderr", code, stdout, stderr)
+		}
+	})
 }
