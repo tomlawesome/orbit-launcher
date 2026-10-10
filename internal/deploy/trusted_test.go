@@ -554,8 +554,8 @@ func TestOpenConfigTree_TreeThatIsAFileIsAnError(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := OpenConfigTree(tree)
-	if err == nil || errors.Is(err, ErrNoConfigTree) || !strings.Contains(err.Error(), "configuration tree") {
-		t.Fatalf("err = %v, want a configuration-tree error", err)
+	if err == nil || errors.Is(err, ErrNoConfigTree) || !strings.Contains(err.Error(), "configure.sh") {
+		t.Fatalf("err = %v, want an error naming configure.sh", err)
 	}
 }
 

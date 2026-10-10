@@ -1043,7 +1043,7 @@ func targetWords(target string) string {
 	case "directory":
 		return "target directory"
 	case "env-file":
-		return ".env-orbit"
+		return deploy.EnvFile
 	case "compose-file":
 		return "docker-compose.yml"
 	case "compose":

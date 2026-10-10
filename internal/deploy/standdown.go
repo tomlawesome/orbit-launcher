@@ -53,7 +53,7 @@ func StandDown(ctx context.Context, targetDir string) error {
 // out so its arguments (not just its behaviour once actually executed
 // against a real deployment) are directly, cheaply testable.
 func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
-	envFile := filepath.Join(targetDir, ".env-orbit")
+	envFile := filepath.Join(targetDir, EnvFile)
 	cmd := exec.CommandContext(ctx, "docker", "compose",
 		"--project-directory", targetDir, "--env-file", envFile, "down")
 	cmd.WaitDelay = pipeWaitDelay
@@ -94,7 +94,7 @@ func RemovalCommandWords(targetDir string) ([]string, error) {
 		return nil, ErrNoTargetDir
 	}
 	dir := shellQuote(targetDir)
-	envFile := shellQuote(filepath.Join(targetDir, ".env-orbit"))
+	envFile := shellQuote(filepath.Join(targetDir, EnvFile))
 	return []string{
 		"docker", "compose", "--project-directory", dir, "--env-file", envFile, "down", "-v",
 		"&&", "sudo", "rm", "-rf", dir,

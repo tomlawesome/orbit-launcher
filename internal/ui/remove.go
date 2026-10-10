@@ -261,7 +261,7 @@ func (m RemoveModel) viewNotFound() string {
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("Remove acts only on a deployment the launcher has found."))
-	fmt.Fprintln(&b, style.MutedText.Render("Start it in the directory that holds .env-orbit."))
+	fmt.Fprintln(&b, style.MutedText.Render("Start it in the directory that holds "+deploy.EnvFile+"."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, []string{"Back"}, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
