@@ -229,8 +229,10 @@ func TestUpdateAsIsTheOnlyUpdateLoop(t *testing.T) {
 }
 
 // screenKind classifies a helper whose whole body is
-// `return stripANSI(<x>.View().Content)` ("view") or
-// `return stripANSI(<x>.view(w, h))` ("run"); "" otherwise.
+// `return ansi.Strip(<x>.View().Content)` ("view") or
+// `return ansi.Strip(<x>.view(w, h))` ("run"); "" otherwise. ansi.Strip
+// is the one stripper since #214 (wi10_widths_test.go forbids a local
+// stripANSI).
 func screenKind(h helperFunc) string {
 	stmts := h.decl.Body.List
 	if len(stmts) != 1 {
@@ -244,7 +246,11 @@ func screenKind(h helperFunc) string {
 	if !ok || len(call.Args) != 1 {
 		return ""
 	}
-	if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "stripANSI" {
+	fn, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || fn.Sel.Name != "Strip" {
+		return ""
+	}
+	if pkg, ok := fn.X.(*ast.Ident); !ok || pkg.Name != "ansi" {
 		return ""
 	}
 	switch arg := call.Args[0].(type) {
