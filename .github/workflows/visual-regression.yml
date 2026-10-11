@@ -14,9 +14,23 @@ jobs:
   visual:
     name: Screenshot the rendered TUI
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
+    # The same pinned Playwright image GitLab's visual job runs in (#216,
+    # SU-5): the exact Chromium test/visual/package-lock.json expects, and the
+    # same system fonts, so a screenshot difference means the same thing on
+    # both hosts. Typed in, because a job's `container:` cannot read `env`;
+    # copied from .gitlab-ci.yml's PLAYWRIGHT_IMAGE, and test/supplychain
+    # fails when the two differ.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+
+    env:
+      # Copied from .gitlab-ci.yml's variables, the source of truth;
+      # test/supplychain fails when a copy here differs (#216).
+      TTYD_VERSION: "1.7.7"
+      TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 
     steps:
       - name: Check out repository
@@ -29,25 +43,19 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: test/visual/package-lock.json
-
+      # Node and the browser come with the image, as on GitLab: no
+      # setup-node and no `playwright install` here.
       - name: Install ttyd
         run: |
-          curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          set -euo pipefail
+          bash scripts/ci/fetch-verified.sh \
+            "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+            "${TTYD_SHA256}" /usr/local/bin/ttyd
           chmod +x /usr/local/bin/ttyd
 
       - name: Install visual-test dependencies
         working-directory: test/visual
         run: npm ci
-
-      - name: Install Playwright browser
-        working-directory: test/visual
-        run: npx playwright install --with-deps chromium
 
       - name: Run visual regression tests
         working-directory: test/visual

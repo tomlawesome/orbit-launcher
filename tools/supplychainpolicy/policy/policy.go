@@ -35,6 +35,7 @@ const (
 	PolicyPath   = ".github/supply-chain-policy.json"
 	workflowsDir = ".github/workflows"
 	secretScan   = ".github/workflows/secret-scan.yml"
+	gitlabCI     = ".gitlab-ci.yml"
 )
 
 // Action is one third-party action pinned by the workflows.
@@ -94,7 +95,12 @@ var (
 	usesLine = regexp.MustCompile(`^\s*(?:-\s+)?uses:\s+(\S+?)@(\S+)(?:\s+#\s*(\S+))?`)
 	sha40    = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	envValue = func(key string) *regexp.Regexp {
-		return regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:\s*(\S+)\s*$`)
+		return regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:[ \t]*(\S.*?)\s*$`)
+	}
+	// A top-level pipeline variable in .gitlab-ci.yml: two spaces in, under
+	// `variables:`, so a job's own override of the same name is not the pin.
+	gitlabVariable = func(key string) *regexp.Regexp {
+		return regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:[ \t]*(\S.*?)\s*$`)
 	}
 )
 
@@ -151,23 +157,69 @@ func CollectPins(root string) ([]Pin, error) {
 	return pins, nil
 }
 
-// GitleaksPin reads the version and digest that secret-scan.yml actually pins.
+// GitleaksPin reads the version and digest the two hosts pin (#216, SU-8):
+// GitHub's secret-scan.yml and GitLab's .gitlab-ci.yml each type the pin, and
+// they quote it differently. Both are read, quote- and comment-tolerantly, and
+// a pin that is missing on either host or differs between them is an error:
+// reading one file alone would let the other drift unseen.
 func GitleaksPin(root string) (version, sha256 string, err error) {
-	body, err := os.ReadFile(filepath.Join(root, secretScan))
+	ghVersion, ghSum, err := gitleaksPinIn(root, secretScan, envValue)
 	if err != nil {
-		return "", "", fmt.Errorf("reading secret-scan.yml: %w", err)
+		return "", "", err
 	}
-	get := func(k string) string {
-		if m := envValue(k).FindStringSubmatch(string(body)); m != nil {
-			return m[1]
+	glVersion, glSum, err := gitleaksPinIn(root, gitlabCI, gitlabVariable)
+	if err != nil {
+		return "", "", err
+	}
+	if ghVersion != glVersion || ghSum != glSum {
+		return "", "", fmt.Errorf("the hosts pin gitleaks differently: secret-scan.yml %s / %s, .gitlab-ci.yml %s / %s",
+			ghVersion, ghSum, glVersion, glSum)
+	}
+	return ghVersion, ghSum, nil
+}
+
+// gitleaksPinIn reads GITLEAKS_VERSION and GITLEAKS_SHA256 from one file.
+// Every line setting a key must agree, so a second copy cannot hide.
+func gitleaksPinIn(root, rel string, line func(string) *regexp.Regexp) (version, sha256 string, err error) {
+	name := filepath.Base(rel)
+	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", "", fmt.Errorf("reading %s: %w", name, err)
+	}
+	get := func(k string) (string, error) {
+		v := ""
+		for _, m := range line(k).FindAllStringSubmatch(string(body), -1) {
+			got := pinValue(m[1])
+			if v != "" && got != v {
+				return "", fmt.Errorf("%s sets %s twice, to %s and %s", name, k, v, got)
+			}
+			v = got
 		}
-		return ""
+		return v, nil
 	}
-	version, sha256 = get("GITLEAKS_VERSION"), get("GITLEAKS_SHA256")
+	if version, err = get("GITLEAKS_VERSION"); err != nil {
+		return "", "", err
+	}
+	if sha256, err = get("GITLEAKS_SHA256"); err != nil {
+		return "", "", err
+	}
 	if version == "" || sha256 == "" {
-		return "", "", fmt.Errorf("secret-scan.yml no longer sets GITLEAKS_VERSION and GITLEAKS_SHA256")
+		return "", "", fmt.Errorf("%s no longer sets GITLEAKS_VERSION and GITLEAKS_SHA256", name)
 	}
 	return version, sha256, nil
+}
+
+// pinValue strips a trailing YAML comment and one pair of matching quotes,
+// so `8.30.1`, `"8.30.1"` and `'8.30.1' # note` all read as 8.30.1.
+func pinValue(raw string) string {
+	v := strings.TrimSpace(raw)
+	if i := strings.Index(v, " #"); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
+		v = v[1 : len(v)-1]
+	}
+	return v
 }
 
 // Load reads the committed policy.

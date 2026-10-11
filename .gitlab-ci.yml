@@ -14,6 +14,15 @@
 #
 #   1. codeql.yml: GitHub's own scanner keeps running on the mirror.
 #
+# And the one exception the other way: `deps` has no GitHub counterpart. It
+# replaced GitHub's dependency-review.yml when merges moved here (#140), so
+# GitHub carries no copy on purpose (AGENTS.md).
+#
+# The pins below are the source of truth. The GitHub workflows copy the tool
+# pins by hand, and test/supplychain fails when a copy differs (#216). Every
+# pinned download on both hosts goes through scripts/ci/fetch-verified.sh,
+# which refuses a file whose digest differs and leaves nothing behind.
+#
 # This repo no longer publishes runnable launcher binaries at all (#171,
 # ai/orbit#1107 ADR-0031): Orbit builds, signs and ships the launcher
 # alongside itself. This repo keeps its source, tags and CI tests only.
@@ -132,9 +141,8 @@ variables:
 # pipeline variables above, exactly as they do in the Go image.
 .go_tarball: &go_tarball |
   tarball="go${GO_VERSION}.linux-amd64.tar.gz"
-  curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
-    "https://go.dev/dl/${tarball}"
-  echo "${GO_SHA256}  /tmp/${tarball}" | sha256sum -c -
+  bash scripts/ci/fetch-verified.sh "https://go.dev/dl/${tarball}" \
+    "${GO_SHA256}" "/tmp/${tarball}"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "/tmp/${tarball}"
   export PATH="/usr/local/go/bin:${PATH}"
@@ -289,11 +297,11 @@ fast:
         exit 1
       fi
     - go build ./... && go vet ./...
-    - shellcheck scripts/get-orbit-launcher.sh
+    - shellcheck scripts/*.sh scripts/ci/*.sh
     - |
-      curl --fail --silent --show-error --location --output /tmp/bats.tar.gz \
-        "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz"
-      echo "${BATS_SHA256}  /tmp/bats.tar.gz" | sha256sum -c -
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" \
+        "${BATS_SHA256}" /tmp/bats.tar.gz
       mkdir -p /tmp/bats-core
       tar -xzf /tmp/bats.tar.gz -C /tmp/bats-core --strip-components=1
       export PATH="/tmp/bats-core/bin:${PATH}"
@@ -378,9 +386,9 @@ gitleaks:
     - |
       set -euo pipefail
       tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-      curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
-        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
-      echo "${GITLEAKS_SHA256}  /tmp/${tarball}" | sha256sum -c -
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}" \
+        "${GITLEAKS_SHA256}" "/tmp/${tarball}"
       mkdir -p /tmp/bin
       tar -xzf "/tmp/${tarball}" -C /tmp/bin gitleaks
       chmod +x /tmp/bin/gitleaks
@@ -414,9 +422,9 @@ visual:
   before_script:
     - *go_tarball
     - |
-      curl --fail --silent --show-error --location --output /usr/local/bin/ttyd \
-        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
-      echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+        "${TTYD_SHA256}" /usr/local/bin/ttyd
       chmod +x /usr/local/bin/ttyd
   script:
     - cd test/visual

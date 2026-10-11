@@ -109,6 +109,11 @@ waits for someone to start the `live` job by hand (#192). The GitHub workflows s
 second opinion; a failure there is advisory and never blocks a GitLab merge.
 Keep the two in step when changing a check.
 
+Tool pins live in `.gitlab-ci.yml`'s variables; the GitHub workflows copy
+them, and `test/supplychain` fails when a copy differs (#216). Every pinned
+download on both hosts goes through `scripts/ci/fetch-verified.sh <url>
+<sha256> <dest>`, never a hand-typed checksum line.
+
 The `deps` job's licence check reads past declared licences (#176):
 `tools/licencereview` requires a reviewed entry in
 `.github/licence-review.txt` for every embedded, vendored or generated
