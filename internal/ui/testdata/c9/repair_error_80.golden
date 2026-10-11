@@ -6,7 +6,7 @@
                                                                                 
                                                         [38;2;143;184;255m●[m           [38;2;216;180;90m●[m           
                        [38;2;74;84;104m✦[m                                                        
-        [38;2;74;84;104m·[m                   [38;2;248;113;113m✗[m [1;38;2;231;233;238mDiagnosis couldn't run[m                            
+        [38;2;74;84;104m·[m                     [38;2;248;113;113m✗[m [1;38;2;231;233;238mDiagnosis stopped[m                               
                                                                     [38;2;74;84;104m·[m           
      [38;2;74;84;104mCannot connect to the Docker daemon at unix:///var/run/docker.sock. Is[m     
     [38;2;74;84;104mthe docker daemon running? permission denied while trying to connect to[m     

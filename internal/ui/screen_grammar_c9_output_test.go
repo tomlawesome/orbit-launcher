@@ -66,8 +66,10 @@ func c9Screens(t *testing.T) map[string]string {
 		rm := c9Size(t, NewRemoveModel(deployment), w)
 		rm.installedAt = installedAt
 		rm.state = removeStateDone
+		rm.after = newMenu(removeDoneRows...) // as the stand-down's answer sets it
 		out["remove_done_"+tag] = rm.View().Content
 		rm.state = removeStateFailed
+		rm.after = newMenu(removeFailedRows...)
 		rm.standDownErr = errors.New(c9LongErr)
 		out["remove_failed_"+tag] = rm.View().Content
 
@@ -113,12 +115,12 @@ func c9Screens(t *testing.T) map[string]string {
 			p := p
 			s := promptSession{prompt: &p, input: inputLine{runes: []rune("https://orbit.example.com/with/a/long/enough/path")}}
 			var b strings.Builder
-			s.view(&b, "https://orbit.example.com", w)
+			s.view(&b, "https://orbit.example.com", w, 0)
 			out[fmt.Sprintf("prompt_%s_%d", name, w)] = b.String()
 		}
 	}
 	var waiting strings.Builder
-	promptSession{}.view(&waiting, "", 80)
+	promptSession{}.view(&waiting, "", 80, 0)
 	out["prompt_waiting"] = waiting.String()
 
 	// repair: results, plan lines and findings are plain ink.
