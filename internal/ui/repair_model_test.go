@@ -100,7 +100,7 @@ func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 		t.Fatalf("state = %v, want repairError", m.state)
 	}
 	s := screen(m)
-	for _, want := range []string{"Diagnosis couldn't run", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
+	for _, want := range []string{"Diagnosis stopped", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("error screen lacks %q:\n%s", want, s)
 		}
@@ -131,7 +131,7 @@ func TestRepairModel_DiagnosisCrashIsAnErrorNotAVerdict(t *testing.T) {
 		t.Fatal("an unexpected exit must not start another run")
 	}
 	s := screen(m)
-	if !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "exit status 1") {
+	if !strings.Contains(s, "Diagnosis stopped") || !strings.Contains(s, "exit status 1") {
 		t.Fatalf("exit 1 should be reported as a failed run with its error:\n%s", s)
 	}
 	if strings.Contains(s, "Diagnosis clear") || strings.Contains(s, "Problems found") {
@@ -778,7 +778,7 @@ func TestRepairModel_UnsummarisedPlanNeedsAttention(t *testing.T) {
 // enum that slipped back to its raw form would be noticed only by them.
 func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 	targets := map[string]string{
-		"directory":          "target directory",
+		"directory":          "deployment directory",
 		"env-file":           ".env-orbit",
 		"compose-file":       "docker-compose.yml",
 		"compose":            "compose configuration",
@@ -802,7 +802,7 @@ func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 	}
 
 	classes := map[string]string{
-		"not-orbit-directory":                 "no recognizable Orbit installation",
+		"not-orbit-directory":                 "no recognisable Orbit installation",
 		"managed-file-missing":                "missing",
 		"managed-file-symlink":                "is a symlink, refusing to trust it",
 		"managed-file-permissions":            "permissions aren't restricted to the owner",
@@ -1189,7 +1189,7 @@ func TestDefaultPrepareRepair_UntrustedScriptIsRefused(t *testing.T) {
 	if !errors.As(m.runErr, &untrusted) || untrusted.Path != script {
 		t.Fatalf("runErr = %v, want a refusal naming %s", m.runErr, script)
 	}
-	if s := screen(m); !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "writable by everyone") {
+	if s := screen(m); !strings.Contains(s, "Diagnosis stopped") || !strings.Contains(s, "writable by everyone") {
 		t.Fatalf("screen:\n%s", s)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {

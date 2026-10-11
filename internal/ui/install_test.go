@@ -294,7 +294,7 @@ func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
 		t.Fatalf("run state = %v, want runFailed", m.run.state)
 	}
 	view := m.View().Content
-	for _, want := range []string{"Installation stopped", "image-registry", "Could not pull"} {
+	for _, want := range []string{"Install stopped", "image-registry", "Could not pull"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("failure view missing %q", want)
 		}

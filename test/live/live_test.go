@@ -269,7 +269,7 @@ func (s *liveSession) runStarted() {
 	s.t.Helper()
 	const what = "expected the mission console"
 	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
-		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Installation stopped")); err != nil {
+		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Install stopped")); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
@@ -743,7 +743,7 @@ const signInModeMarker = "[local/oidc]"
 
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	const stopScreen = "Installation stopped"
+	const stopScreen = "Install stopped"
 	// Each look is at one 120x40 screen, so it costs the same however
 	// much the install has printed. The stream matcher that once fell so
 	// far behind the launcher's repaints that a finished install looked
@@ -959,7 +959,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// reports nothing and lands on the failure screen. Both
 		// screens' default option leads to the guided configuration.
 		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-			vtscreen.ContainsAny("Orbit needs your configuration", "Installation stopped"))
+			vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
 		sendLine("") // Continue — guided configuration / Open the guided installer
 		session.chooseSSO()
 
@@ -1145,7 +1145,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
 	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-		vtscreen.ContainsAny("Orbit needs your configuration", "Installation stopped"))
+		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
 	sendLine("")
 	session.chooseSSO()
 
@@ -1164,7 +1164,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// proceeds into compose and dies on the held port. The launcher's own
 	// failure screen — not a hang, not a fake success — is the contract,
 	// with its stacked menu present.
-	acceptMenusUntil(t, session, "Installation stopped")
+	acceptMenusUntil(t, session, "Install stopped")
 	session.must("Menu")
 
 	// Exit via the failure menu (guided installer, Menu, Exit).

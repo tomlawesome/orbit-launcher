@@ -91,7 +91,7 @@ func TestScreenWait_KeepsUpWithFastRepaints(t *testing.T) {
 
 	const budget = 60 * time.Second
 	start := time.Now()
-	screen, err := Wait(term, budget, ContainsAny("Get into Orbit", "Installation stopped"))
+	screen, err := Wait(term, budget, ContainsAny("Get into Orbit", "Install stopped"))
 	if err != nil {
 		t.Fatalf("the marker after %d frames (%d bytes) was not reached: %v", frames, frames*frame.Len(), err)
 	}

@@ -66,7 +66,7 @@ func TestEngineRun_DefaultPrepareFailuresReachTheFailedScreen(t *testing.T) {
 		r, cmd := r.start(80, 26)
 		r, _ = runUpdate(t, r, cmd())
 		s := runScreen(r)
-		if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, deploy.InstallScriptPathEnv) {
+		if r.state != runFailed || !strings.Contains(s, "Install stopped") || !strings.Contains(s, deploy.InstallScriptPathEnv) {
 			t.Fatalf("state = %v, screen:\n%s", r.state, s)
 		}
 	})
@@ -85,7 +85,7 @@ func TestEngineRun_UpdateFailureIsTitledUpdateStopped(t *testing.T) {
 	r := startedRun(t, "update", engineRunSeams{})
 	r, _ = runUpdate(t, r, engineReadyMsg{err: errors.New("fetch install.sh: timed out")})
 	s := runScreen(r)
-	if !strings.Contains(s, "Update stopped") || strings.Contains(s, "Installation stopped") {
+	if !strings.Contains(s, "Update stopped") || strings.Contains(s, "Install stopped") {
 		t.Fatalf("an update's failure must say Update stopped:\n%s", s)
 	}
 	if !strings.Contains(s, "fetch install.sh: timed out") {

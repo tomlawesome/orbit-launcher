@@ -10,28 +10,46 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/release"
 )
 
+// --version prints the same version shape every screen does (#230,
+// #200 C8): "orbit-launcher <DisplayVersion> (<revision>)", v-prefixed,
+// and "dev" for an unreleased build.
 func TestRun_VersionFlag(t *testing.T) {
-	startAppCalled := false
-	stub := func(stdout, stderr io.Writer) int {
-		startAppCalled = true
-		return 99
+	cases := []struct {
+		name, version, revision, want string
+	}{
+		{"release without prefix", "1.2.3", "abc", "orbit-launcher v1.2.3 (abc)\n"},
+		{"release with prefix", "v1.2.3", "abc", "orbit-launcher v1.2.3 (abc)\n"},
+		{"unset version", "", "abc", "orbit-launcher dev (abc)\n"},
+		{"dev version", "dev", "abc", "orbit-launcher dev (abc)\n"},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			oldVersion, oldRevision := release.Version, release.Revision
+			t.Cleanup(func() { release.Version, release.Revision = oldVersion, oldRevision })
+			release.Version, release.Revision = c.version, c.revision
 
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"--version"}, &stdout, &stderr, stub)
+			startAppCalled := false
+			stub := func(stdout, stderr io.Writer) int {
+				startAppCalled = true
+				return 99
+			}
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
-	}
-	if startAppCalled {
-		t.Error("--version must not start the TUI")
-	}
-	want := "orbit-launcher " + release.Version + " (" + release.Revision + ")\n"
-	if stdout.String() != want {
-		t.Errorf("stdout = %q, want %q", stdout.String(), want)
-	}
-	if stderr.String() != "" {
-		t.Errorf("stderr = %q, want empty", stderr.String())
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"--version"}, &stdout, &stderr, stub)
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0", code)
+			}
+			if startAppCalled {
+				t.Error("--version must not start the TUI")
+			}
+			if stdout.String() != c.want {
+				t.Errorf("stdout = %q, want %q", stdout.String(), c.want)
+			}
+			if stderr.String() != "" {
+				t.Errorf("stderr = %q, want empty", stderr.String())
+			}
+		})
 	}
 }
 

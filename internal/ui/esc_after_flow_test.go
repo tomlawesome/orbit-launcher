@@ -359,7 +359,7 @@ func TestEscAfterFlow_AppExitRowAndCtrlCStillQuitAndQDoesNothing(t *testing.T) {
 func TestEscAfterFlow_RepairPostRunScreensStillGoBackToTheMenu(t *testing.T) {
 	t.Run("error screen", func(t *testing.T) {
 		m, _ := updateAs(t, sizedRepair(t), repairReadyMsg{err: errors.New("target directory: no such file")})
-		if !strings.Contains(screen(m), "Diagnosis couldn't run") {
+		if !strings.Contains(screen(m), "Diagnosis stopped") {
 			t.Fatalf("not on the error screen:\n%s", screen(m))
 		}
 		if leftForMenu(m.Outcome()) {

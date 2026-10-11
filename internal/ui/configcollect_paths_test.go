@@ -88,7 +88,7 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 		t.Fatal("a failed adoption must not retry the engine")
 	}
 	s := runScreen(r)
-	if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
+	if r.state != runFailed || !strings.Contains(s, "Install stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
 		t.Fatalf("state = %v, screen:\n%s", r.state, s)
 	}
 }
@@ -167,7 +167,7 @@ func TestConfigSignInMode_UnboundKeyChangesNothing(t *testing.T) {
 
 func TestConfigCollect_RejectionReasonsInWords(t *testing.T) {
 	reasons := map[string]string{
-		"empty":              "cannot be empty",
+		"empty":              "can't be empty",
 		"invalid-characters": "contains whitespace or control characters",
 		"not-https":          "must start with https://",
 		"not-absolute-url":   "isn't a plain https:// address",

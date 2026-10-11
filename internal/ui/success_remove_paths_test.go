@@ -152,7 +152,7 @@ func TestRemoveModel_FailedScreenNamesTheErrorAndOffersMenuThenExit(t *testing.T
 	}
 	m, _ = updateAs(t, m, cmd())
 	s := screen(m)
-	for _, want := range []string{"Could not stand down Orbit", "docker daemon not running", "▸ Menu"} {
+	for _, want := range []string{"Stand-down stopped", "docker daemon not running", "▸ Menu"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("failed screen lacks %q:\n%s", want, s)
 		}
