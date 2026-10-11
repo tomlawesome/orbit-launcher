@@ -75,6 +75,16 @@ func (s promptSession) key(msg tea.KeyPressMsg, stdin io.Writer) (_ promptSessio
 	return s, "", ""
 }
 
+// paste adds a paste to the answer while a prompt is open (inputLine.
+// paste); it never submits, whatever the text holds. With no prompt
+// open it does nothing.
+func (s promptSession) paste(text string) promptSession {
+	if s.prompt != nil {
+		s.input = s.input.paste(text)
+	}
+	return s
+}
+
 // view writes the session's part of the screen: the waiting words, or
 // the field's label, guidance, input row, rejection and attempt count.
 // origin is the accepted APP_URL, for guidance that names this

@@ -312,6 +312,13 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		// Only the rotation prompt takes a paste (#222).
+		if m.state == repairRotating {
+			m.rot = m.rot.paste(msg.Content)
+		}
+		return m, nil
 	}
 	return m, nil
 }

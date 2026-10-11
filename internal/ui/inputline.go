@@ -1,6 +1,10 @@
 package ui
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"unicode"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 // inputLine is one line of typed text, and the keys every typing
 // surface shares: the development notice's phrase box, the
@@ -40,6 +44,19 @@ func (l inputLine) edit(msg tea.KeyPressMsg) (inputLine, lineEdit) {
 		return l, lineTyped
 	}
 	return l, lineUntouched
+}
+
+// paste adds a bracketed paste (tea.PasteMsg) at the end of the line
+// (#222). Line breaks and other control characters are removed, not
+// replaced: a pasted line break must never act as Enter, and one line
+// has nowhere to show a tab or an escape.
+func (l inputLine) paste(text string) inputLine {
+	for _, r := range text {
+		if !unicode.IsControl(r) {
+			l.runes = append(l.runes, r)
+		}
+	}
+	return l
 }
 
 // typingMods are the modifiers that leave a key typing: Shift and the

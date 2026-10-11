@@ -380,6 +380,13 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return r.handleKey(msg)
+
+	case tea.PasteMsg:
+		// Only the configuration prompt takes a paste (#222).
+		if r.state == runConfigCollect {
+			r.cfg.session = r.cfg.session.paste(msg.Content)
+		}
+		return r, nil
 	}
 	return r, nil
 }
