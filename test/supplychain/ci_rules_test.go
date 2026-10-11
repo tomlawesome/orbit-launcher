@@ -15,9 +15,10 @@ import (
 	"testing"
 )
 
-// liveRules returns the `live` job's rules as one string per `- ` item, with
-// comment lines dropped.
-func liveRules(t *testing.T, ciYAML string) []string {
+// liveJobLines returns the `live` job's raw lines, from after `live:` up to
+// the next top-level key, comments and blank lines included. Both live-job
+// scanners read the job through it.
+func liveJobLines(t *testing.T, ciYAML string) []string {
 	t.Helper()
 	lines := strings.Split(ciYAML, "\n")
 
@@ -32,14 +33,26 @@ func liveRules(t *testing.T, ciYAML string) []string {
 		t.Fatal("no top-level `live:` job in .gitlab-ci.yml")
 	}
 
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		l := lines[i]
+		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
+			end = i // next top-level key: the job has ended
+			break
+		}
+	}
+	return lines[start+1 : end]
+}
+
+// liveRules returns the `live` job's rules as one string per `- ` item, with
+// comment lines dropped.
+func liveRules(t *testing.T, ciYAML string) []string {
+	t.Helper()
 	var rules []string
 	var cur []string
 	inRules := false
-	for _, l := range lines[start+1:] {
+	for _, l := range liveJobLines(t, ciYAML) {
 		trimmed := strings.TrimSpace(l)
-		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
-			break // next top-level key: the job has ended
-		}
 		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
 			continue
 		}

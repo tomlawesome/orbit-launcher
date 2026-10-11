@@ -31,14 +31,6 @@
       "updateOwner": "orbit-launcher maintainers"
     },
     {
-      "name": "actions/setup-node",
-      "version": "v7.0.0",
-      "commit": "820762786026740c76f36085b0efc47a31fe5020",
-      "license": "MIT",
-      "source": "https://github.com/actions/setup-node/releases/tag/v7.0.0",
-      "updateOwner": "orbit-launcher maintainers"
-    },
-    {
       "name": "actions/upload-artifact",
       "version": "v7.0.1",
       "commit": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",

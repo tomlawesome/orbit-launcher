@@ -14,6 +14,15 @@
 #
 #   1. codeql.yml: GitHub's own scanner keeps running on the mirror.
 #
+# And the one exception the other way: `deps` has no GitHub counterpart. It
+# replaced GitHub's dependency-review.yml when merges moved here (#140), so
+# GitHub carries no copy on purpose (AGENTS.md).
+#
+# The pins below are the source of truth. The GitHub workflows copy the tool
+# pins by hand, and test/supplychain fails when a copy differs (#216). Every
+# pinned download on both hosts goes through scripts/ci/fetch-verified.sh,
+# which refuses a file whose digest differs and leaves nothing behind.
+#
 # This repo no longer publishes runnable launcher binaries at all (#171,
 # ai/orbit#1107 ADR-0031): Orbit builds, signs and ships the launcher
 # alongside itself. This repo keeps its source, tags and CI tests only.
@@ -132,9 +141,8 @@ variables:
 # pipeline variables above, exactly as they do in the Go image.
 .go_tarball: &go_tarball |
   tarball="go${GO_VERSION}.linux-amd64.tar.gz"
-  curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
-    "https://go.dev/dl/${tarball}"
-  echo "${GO_SHA256}  /tmp/${tarball}" | sha256sum -c -
+  bash scripts/ci/fetch-verified.sh "https://go.dev/dl/${tarball}" \
+    "${GO_SHA256}" "/tmp/${tarball}"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "/tmp/${tarball}"
   export PATH="/usr/local/go/bin:${PATH}"
@@ -146,6 +154,30 @@ variables:
 .privileged_runner:
   tags:
     - orbit-launcher-build
+
+# Every job names its own image, and GitLab never merges `default: image:`
+# into a job's own `image:` -- the job's replaces it whole
+# (docs.gitlab.com/ci/yaml/#default) -- so the pull policy cannot live in
+# `default:`. It is written once here instead and merged into each job's
+# image with `<<: *pull_if_not_present`.
+.pull_if_not_present: &pull_if_not_present
+  pull_policy: if-not-present
+
+# `DOCS_ONLY` comes from `classify`; `fast` and `deps` run this first. Unset
+# means run: this default is the whole point of the gate. Exiting here ends
+# the job successfully, and every later `script:` entry with it, because the
+# runner executes them all in one shell.
+.docs_only_skip: &docs_only_skip |
+  if [ "${DOCS_ONLY:-false}" = "true" ]; then
+    echo "skipped: every changed path is documentation (#153)"
+    exit 0
+  fi
+
+# The start of every apt install here; each job then installs its own
+# packages.
+.apt_prologue: &apt_prologue |
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
 
 # The daemon inside the job's own container, copied from ai/orbit's
 # `.docker_in_job`. The dind *service* pattern cannot be used here: install.sh
@@ -206,15 +238,14 @@ classify:
   stage: classify
   tags: [light]
   image:
+    <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-    pull_policy: if-not-present
   timeout: 5m
   variables:
     # The base commit has to be in the checkout for the diff to read at all.
     GIT_DEPTH: 0
   before_script:
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends git
   script:
     - |
@@ -234,33 +265,25 @@ classify:
 fast:
   stage: fast
   image:
+    <<: *pull_if_not_present
     name: $GO_IMAGE
-    pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
   needs:
     - job: classify
       artifacts: true
   before_script:
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
-    # `DOCS_ONLY` comes from `classify`. Unset means run: this default is the
-    # whole point of the gate. Exiting here ends the job successfully, and
-    # every later `script:` entry with it, because the runner executes them all
-    # in one shell.
-    #
-    # coverage.out is written even when nothing ran, because the artifact is
-    # declared `when: always` and an empty upload logs an error. `mode: set`
-    # with no lines under it is a valid, honest profile: no statements were
-    # measured.
+    # coverage.out is written before anything can stop the job, because the
+    # artifact is declared `when: always` and an empty upload logs an error.
+    # `mode: set` with no lines under it is a valid, honest profile: no
+    # statements were measured. scripts/coverage.sh overwrites it when the
+    # gate runs.
     - |
-      if [ "${DOCS_ONLY:-false}" = "true" ]; then
-        echo "skipped: every changed path is documentation (#153)"
-        printf 'mode: set\n' > coverage.out
-        exit 0
-      fi
+      printf 'mode: set\n' > coverage.out
+    - *docs_only_skip
     - |
       # The tracked Go files, not `gofmt -l .`: GitLab's cache can only carry
       # paths inside the project directory, so GOMODCACHE lives there and a
@@ -274,11 +297,11 @@ fast:
         exit 1
       fi
     - go build ./... && go vet ./...
-    - shellcheck scripts/get-orbit-launcher.sh
+    - shellcheck scripts/*.sh scripts/ci/*.sh
     - |
-      curl --fail --silent --show-error --location --output /tmp/bats.tar.gz \
-        "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz"
-      echo "${BATS_SHA256}  /tmp/bats.tar.gz" | sha256sum -c -
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" \
+        "${BATS_SHA256}" /tmp/bats.tar.gz
       mkdir -p /tmp/bats-core
       tar -xzf /tmp/bats.tar.gz -C /tmp/bats-core --strip-components=1
       export PATH="/tmp/bats-core/bin:${PATH}"
@@ -313,20 +336,15 @@ deps:
   # move it back to big (owner decision, ai/agent-infra#3, 2026-09-05).
   tags: [light]
   image:
+    <<: *pull_if_not_present
     name: $GO_IMAGE
-    pull_policy: if-not-present
   extends: .go_cache
   timeout: 10m
   needs:
     - job: classify
       artifacts: true
   script:
-    # As in `fast`: unset means run.
-    - |
-      if [ "${DOCS_ONLY:-false}" = "true" ]; then
-        echo "skipped: every changed path is documentation (#153)"
-        exit 0
-      fi
+    - *docs_only_skip
     - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
     - govulncheck ./...
     - go install "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
@@ -356,22 +374,21 @@ gitleaks:
   needs: []
   tags: [light]
   image:
+    <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-    pull_policy: if-not-present
   timeout: 10m
   variables:
     GIT_DEPTH: 0
   before_script:
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git
   script:
     - |
       set -euo pipefail
       tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-      curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
-        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
-      echo "${GITLEAKS_SHA256}  /tmp/${tarball}" | sha256sum -c -
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}" \
+        "${GITLEAKS_SHA256}" "/tmp/${tarball}"
       mkdir -p /tmp/bin
       tar -xzf "/tmp/${tarball}" -C /tmp/bin gitleaks
       chmod +x /tmp/bin/gitleaks
@@ -390,24 +407,27 @@ gitleaks:
 visual:
   stage: acceptance
   image:
+    <<: *pull_if_not_present
     name: $PLAYWRIGHT_IMAGE
-    pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
   needs: []
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
+    # The Go tarball and ttyd come in through the checked-download script, so
+    # a change to it alone is a change to what this job runs on (#216).
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - internal/ui/**/*
         - test/visual/**/*
         - .gitlab-ci.yml
+        - scripts/ci/fetch-verified.sh
   before_script:
     - *go_tarball
     - |
-      curl --fail --silent --show-error --location --output /usr/local/bin/ttyd \
-        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
-      echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+        "${TTYD_SHA256}" /usr/local/bin/ttyd
       chmod +x /usr/local/bin/ttyd
   script:
     - cd test/visual
@@ -441,8 +461,8 @@ visual:
 live:
   stage: acceptance
   image:
+    <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-    pull_policy: if-not-present
   extends:
     - .privileged_runner
     - .go_cache
@@ -470,9 +490,15 @@ live:
     # privileged unreviewed. `allow_failure: false` keeps the merge blocked
     # until someone starts it; starting it is the review. The RUN_LIVE and
     # label routes above stay automatic, because a person set them.
+    #
+    # The Go tarball comes in through scripts/ci/fetch-verified.sh, so a change
+    # to that script alone changes what the install runs on, and starts this
+    # route too (#216). classify-changed-paths.sh's LIVE_PIN_PATHS lists the
+    # same files, so the gate below lets the job through for them.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
+        - scripts/ci/fetch-verified.sh
       when: manual
       allow_failure: false
   variables:
@@ -481,7 +507,7 @@ live:
     # Why this job exists decides whether it does the work. RUN_LIVE and the
     # label are deliberate requests and always run. The third route is not: it
     # fires on any edit to this file, so unless a pin the install actually runs
-    # on moved, stop here -- before the apt-get, the Go tarball and the Docker
+    # on moved (or a file those downloads go through changed), stop here -- before the apt-get, the Go tarball and the Docker
     # daemon below, which is where the minutes are. An unset verdict means run.
     - |
       if [ "${RUN_LIVE:-}" != "true" ] \
@@ -491,8 +517,7 @@ live:
         echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
         exit 0
       fi
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
     - *go_tarball
     - *docker_in_job
@@ -679,8 +704,8 @@ renovate:
   # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
   # gigabytes of pull on a shared runner every week.
   image:
+    <<: *pull_if_not_present
     name: renovate/renovate:44.133.0@sha256:05c512c35c764ef6a179e69c3b30567eca254d67f13a0143479fe3c84852c67a
-    pull_policy: if-not-present
   timeout: 1h
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
   # and runs `go mod tidy` inside the job, which can pass the light lane's
@@ -739,8 +764,8 @@ renovate:
 release:version:
   stage: release
   image:
+    <<: *pull_if_not_present
     name: $GO_IMAGE
-    pull_policy: if-not-present
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
@@ -771,8 +796,8 @@ release:gitlab:
   # this job creates the tag. release-cli is published only on GitLab's own
   # registry, so it cannot come through a Docker Hub proxy.
   image:
+    <<: *pull_if_not_present
     name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
-    pull_policy: if-not-present
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"

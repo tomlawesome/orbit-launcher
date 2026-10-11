@@ -18,24 +18,8 @@ import (
 // key, with comment lines and blank lines dropped and indentation trimmed.
 func liveJob(t *testing.T, ciYAML string) []string {
 	t.Helper()
-	lines := strings.Split(ciYAML, "\n")
-
-	start := -1
-	for i, l := range lines {
-		if l == "live:" {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		t.Fatal("no top-level `live:` job in .gitlab-ci.yml")
-	}
-
 	var job []string
-	for _, l := range lines[start+1:] {
-		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
-			break // next top-level key: the job has ended
-		}
+	for _, l := range liveJobLines(t, ciYAML) {
 		trimmed := strings.TrimSpace(l)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue

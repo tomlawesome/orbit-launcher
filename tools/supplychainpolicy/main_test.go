@@ -31,6 +31,9 @@ const ciWorkflow = "" +
 
 const secretScanWorkflow = "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + gitleaksDigest + "\n"
 
+// gitlabPipeline is .gitlab-ci.yml's gitleaks pin, quoted as the real file is.
+const gitlabPipeline = "variables:\n  GITLEAKS_VERSION: \"8.30.1\"\n  GITLEAKS_SHA256: " + gitleaksDigest + "\n"
+
 // repo builds a throwaway repository root with the given workflows and makes
 // it the working directory, so the default -root of "." finds it (as `go run`
 // from the repository root does).
@@ -45,6 +48,11 @@ func repo(t *testing.T, workflows map[string]string) string {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// The GitLab half of the gitleaks pin, agreeing with secretScanWorkflow:
+	// GitleaksPin reads both hosts since #216 (SU-8).
+	if err := os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte(gitlabPipeline), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	t.Chdir(root)
 	return root
