@@ -118,9 +118,11 @@ func TestRepairError_MultiLineDockerErrorKeepsItsBreak(t *testing.T) {
 	m = updated.(RepairModel)
 	m, _ = repairUpdate(t, m, repairReadyMsg{err: errors.New("Error response from daemon:\n" + wi10DockerError)})
 	screen := wi10Plain(m.View().Content)
+	// The row holding the first line holds none of the second (the sky
+	// may put a star on it, so the row is not compared whole).
 	found := false
 	for _, row := range strings.Split(screen, "\n") {
-		if strings.TrimSpace(row) == "Error response from daemon:" {
+		if strings.Contains(row, "Error response from daemon:") && !strings.Contains(row, "Cannot") {
 			found = true
 		}
 	}
