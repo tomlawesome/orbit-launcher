@@ -1,9 +1,20 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+)
+
+// proseWidth is how wide the flow screens' hand-broken prose runs (the
+// confirm screen's lines are 56 cells, and the install notice's prose
+// measure is the same); errorWidth is the most an
+// unbroken error line gets before it wraps, so a long one reads as a
+// paragraph rather than a ribbon.
+const (
+	proseWidth = 56
+	errorWidth = 72
 )
 
 // wrapShellCommand lays a shell command, given as its already-quoted
@@ -89,4 +100,18 @@ func wrapWords(text string, limit int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// writeWrapped writes text that nobody sized — a path, Docker's own
+// words — in ink, as wrapWords lines of at most limit cells so it is
+// never cut at the screen's edge. Text that fits is written as given,
+// blank or indented, one line.
+func writeWrapped(b *strings.Builder, ink lipgloss.Style, text string, limit int) {
+	if lipgloss.Width(text) <= limit {
+		fmt.Fprintln(b, ink.Render(text))
+		return
+	}
+	for _, line := range wrapWords(text, limit) {
+		fmt.Fprintln(b, ink.Render(line))
+	}
 }

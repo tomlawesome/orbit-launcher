@@ -783,7 +783,8 @@ func (m RepairModel) viewError() string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Diagnosis couldn't run")
 	if m.runErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(m.runErr.Error()))
+		// Docker's words, at Docker's length.
+		writeWrapped(&b, style.Tagline, m.runErr.Error(), min(m.width-4, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.menu.over(repairMenu).write(&b)

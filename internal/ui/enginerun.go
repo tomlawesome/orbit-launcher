@@ -491,10 +491,7 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 		// viewFailed prefers lastFailed over runErr.
 		r.lastFailed = nil
 		r.stderrTail = nil
-		// Short enough to survive an 80-column screen: the renderer
-		// truncates a content line to the terminal width, and a reason
-		// nobody can read is not a loud failure. The variable's name
-		// goes in the diagnostic line above, which has no such limit.
+		// The variable's name is in the diagnostic line above.
 		r.runErr = errors.New("in-console configuration required — terminal handoff refused")
 		r.state = runFailed
 		r.menu = menu{}
@@ -630,17 +627,28 @@ func (r engineRun) viewConfigPrompt(width, height int) string {
 func (r engineRun) viewFailed(width, height int) string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
+	// Docker's words, at Docker's length: wrapped, never cut at the edge.
+	limit := min(width-4, errorWidth)
 	if r.lastFailed != nil {
 		word := r.lastFailed.Phase
 		if idx := phaseIndex(word); idx >= 0 {
 			word = consolePhases[idx].word
 		}
-		fmt.Fprintln(&b, style.ErrorText.Render(word)+style.Tagline.Render(" — "+r.lastFailed.Reason+" · next: "+r.lastFailed.Action))
+		// The phase word leads in the error colour; the rest wraps.
+		lines := wrapWords(word+" — "+r.lastFailed.Reason+" · next: "+r.lastFailed.Action, limit)
+		for i, line := range lines {
+			if rest, ok := strings.CutPrefix(line, word); i == 0 && ok {
+				line = style.ErrorText.Render(word) + style.Tagline.Render(rest)
+			} else {
+				line = style.Tagline.Render(line)
+			}
+			fmt.Fprintln(&b, line)
+		}
 	} else if r.runErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(r.runErr.Error()))
+		writeWrapped(&b, style.Tagline, r.runErr.Error(), limit)
 	}
 	for _, line := range tailLines(r.stderrTail, 6) {
-		fmt.Fprintln(&b, style.Tagline.Render(line))
+		writeWrapped(&b, style.Tagline, line, limit)
 	}
 	fmt.Fprintln(&b)
 	r.menu.over(failedMenu).write(&b)

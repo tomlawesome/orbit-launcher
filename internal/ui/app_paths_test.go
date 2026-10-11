@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
@@ -141,7 +142,7 @@ func TestAppModel_WithoutVolumeCheckNeverInterruptsInstall(t *testing.T) {
 	}
 	// Run the flow's start commands (size, pre-flight) as the program would.
 	m = appDrive(t, m, cmd)
-	if m.install.state != installStateProfile || !strings.Contains(stripANSI(m.View().Content), "Choose a deployment profile") {
+	if m.install.state != installStateProfile || !strings.Contains(ansi.Strip(m.View().Content), "Choose a deployment profile") {
 		t.Fatalf("the install flow was interrupted: state = %v", m.install.state)
 	}
 }
@@ -250,8 +251,8 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
 	m = appDrive(t, m, cmd)
 	m = appDrainStream(t, m, queue)
-	if !strings.Contains(stripANSI(m.View().Content), "Diagnosis clear") {
-		t.Fatalf("repair did not finish:\n%s", stripANSI(m.View().Content))
+	if !strings.Contains(ansi.Strip(m.View().Content), "Diagnosis clear") {
+		t.Fatalf("repair did not finish:\n%s", ansi.Strip(m.View().Content))
 	}
 	m, cmd = appUpdate(t, m, key(tea.KeyEnter))
 	if m.state != appStateSplash {
@@ -264,7 +265,7 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	if probes != 1 || checks != 1 {
 		t.Fatalf("return to menu ran %d probes and %d update checks, want one of each", probes, checks)
 	}
-	s := stripANSI(m.View().Content)
+	s := ansi.Strip(m.View().Content)
 	if !strings.Contains(s, "mail.example.test") || !strings.Contains(s, "v9.9.10") {
 		t.Fatalf("the refreshed menu should greet the deployment and the update:\n%s", s)
 	}

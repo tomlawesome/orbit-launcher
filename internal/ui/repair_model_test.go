@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
@@ -54,7 +55,7 @@ func repairDone(t *testing.T, m RepairModel, done engine.DoneMsg) (RepairModel, 
 	return repairUpdate(t, m, repairStreamMsg{msg: done})
 }
 
-func repairScreen(m RepairModel) string { return stripANSI(m.View().Content) }
+func repairScreen(m RepairModel) string { return ansi.Strip(m.View().Content) }
 
 // recordingStdin stands in for the rotation session's stdin pipe.
 type recordingStdin struct {
@@ -802,7 +803,7 @@ func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 		"future-target":      "future-target",
 	}
 	for target, want := range targets {
-		got := stripANSI(findingLine(engine.Finding{Class: "x", Target: target, Severity: "info"}))
+		got := ansi.Strip(findingLine(engine.Finding{Class: "x", Target: target, Severity: "info"}))
 		if !strings.Contains(got, " "+want+" — x") {
 			t.Errorf("target %q renders %q, want %q", target, got, want)
 		}
@@ -834,7 +835,7 @@ func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 		"future-class":                        "future-class",
 	}
 	for class, want := range classes {
-		got := stripANSI(findingLine(engine.Finding{Class: class, Target: "database", Severity: "warn"}))
+		got := ansi.Strip(findingLine(engine.Finding{Class: class, Target: "database", Severity: "warn"}))
 		if !strings.HasSuffix(got, "database — "+want) {
 			t.Errorf("class %q renders %q, want it to end %q", class, got, want)
 		}
@@ -853,7 +854,7 @@ func TestPlanLine_ActionWords(t *testing.T) {
 		"future-action":              "future-action",
 	}
 	for action, want := range actions {
-		got := stripANSI(planLine(engine.PlanAction{Action: action, Resolves: "migration-failed", Backup: "not-required"}))
+		got := ansi.Strip(planLine(engine.PlanAction{Action: action, Resolves: "migration-failed", Backup: "not-required"}))
 		if !strings.Contains(got, want+" — a migration failed") {
 			t.Errorf("action %q renders %q, want %q", action, got, want)
 		}

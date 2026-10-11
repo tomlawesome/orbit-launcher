@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -191,13 +192,13 @@ func TestUpdateModel_EngineFailureReachesFailedState(t *testing.T) {
 func TestUpdateModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
 	m, _ := newTestUpdateModel(testDeployment(), engineRunSeams{})
 
-	before := stripANSI(m.View().Content)
+	before := ansi.Strip(m.View().Content)
 	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
 		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
 	}
 
 	updated, _ := m.Update(installedAtMsg{at: time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)})
-	after := stripANSI(updated.(UpdateModel).View().Content)
+	after := ansi.Strip(updated.(UpdateModel).View().Content)
 	if !strings.Contains(after, "mail.example.com · installed 2026-06-14") {
 		t.Fatalf("after the lookup answers, want the date beside the host:\n%s", after)
 	}

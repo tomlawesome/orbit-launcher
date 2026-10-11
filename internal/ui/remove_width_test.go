@@ -9,9 +9,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/charmbracelet/x/vt"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
@@ -35,7 +37,7 @@ func screenOf(out []byte, cols, rows int) string {
 		_ = pw.Close()
 	}
 	<-done
-	lines := strings.Split(stripANSI(rendered), "\n")
+	lines := strings.Split(ansi.Strip(rendered), "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " ")
 	}
@@ -121,7 +123,7 @@ func assertWholeRemovalCommandOnScreen(t *testing.T, cols, rows int, targetDir s
 		t.Fatalf("at %d columns the removal command on screen reads\n  %q\nwant\n  %q\nscreen:\n%s", cols, got, want, screen)
 	}
 	for _, row := range strings.Split(screen, "\n") {
-		if w := len([]rune(row)); w > cols {
+		if w := lipgloss.Width(row); w > cols {
 			t.Errorf("a row is %d cells on a %d-column screen: %q", w, cols, row)
 		}
 	}

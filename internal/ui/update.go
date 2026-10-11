@@ -153,8 +153,8 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "Update Orbit":
 		m.state = updateStateRunning
 		title := "Update"
-		if m.deployment != nil && m.deployment.AppURL != "" {
-			title = "Update — " + displayHost(m.deployment.AppURL)
+		if m.deployment != nil {
+			title = "Update — " + deploymentIdentity(m.deployment)
 		}
 		m.run = newEngineRun("update", m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd

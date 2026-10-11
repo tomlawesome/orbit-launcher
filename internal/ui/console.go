@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -283,34 +284,18 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	lines = append(lines, c.titleRow(boxWidth))
 	lines = append(lines, strings.Repeat(" ", boxWidth))
 
-	border := lipgloss.NewStyle().Foreground(style.Border)
-	lines = append(lines, border.Render("╭"+strings.Repeat("─", boxWidth-2)+"╮"))
-
 	visible := c.entries
 	if len(visible) > boxInterior {
 		visible = visible[len(visible)-boxInterior:]
 	}
-	pad := boxInterior - len(visible)
-	for i := 0; i < pad; i++ {
-		lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
-	}
+	// Padding rows first, so the log sits at the bottom of the box.
+	rows := make([]string, boxInterior-len(visible), boxInterior)
 	for i, e := range visible {
-		if interior == 0 {
-			// No room inside the frame: the row is its borders, the
-			// same as a padding row, rather than a frame wider than
-			// the box.
-			lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
-			continue
-		}
-		latest := i == len(visible)-1
-		content := truncateStyled(c.entryLine(e, latest), interior)
-		gap := interior - lipgloss.Width(content)
-		if gap < 0 {
-			gap = 0
-		}
-		lines = append(lines, border.Render("│")+" "+content+strings.Repeat(" ", gap+1)+border.Render("│"))
+		// With no room inside the frame (interior 0) drawBox draws the
+		// row as its borders, the same as a padding row.
+		rows = append(rows, truncateStyled(c.entryLine(e, i == len(visible)-1), interior))
 	}
-	lines = append(lines, border.Render("╰"+strings.Repeat("─", boxWidth-2)+"╯"))
+	lines = append(lines, drawBox(lipgloss.NewStyle().Foreground(style.Border), boxWidth, rows)...)
 	lines = append(lines, strings.Repeat(" ", boxWidth))
 
 	// The stage bar: fill is phases reached out of the canonical
@@ -404,32 +389,22 @@ func formatAchieved(d time.Duration) string {
 
 // truncateStyled bounds a styled line to w cells. Styled segments make
 // exact truncation fiddly; entries are built to fit, so this is a
-// guard: over-wide lines fall back to their plain text truncated.
+// guard: over-wide lines fall back to their plain text, cut to the
+// characters that fit in w cells (a wide character is two).
 func truncateStyled(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	plain := []rune(stripANSI(s))
-	if len(plain) > w {
-		plain = plain[:w]
-	}
-	return string(plain)
-}
-
-func stripANSI(s string) string {
-	var b strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case inEscape:
-			if r == 'm' {
-				inEscape = false
-			}
-		case r == '\x1b':
-			inEscape = true
-		default:
-			b.WriteRune(r)
+	// One pass from the front, stopping at the first character that
+	// would not fit: an engine line can be a hundred thousand characters
+	// of carriage-return progress (#157), so the cut must not re-measure
+	// the whole line per character.
+	plain := ansi.Strip(s)
+	cells := 0
+	for i, r := range plain {
+		if cells += lipgloss.Width(string(r)); cells > w {
+			return plain[:i]
 		}
 	}
-	return b.String()
+	return plain
 }

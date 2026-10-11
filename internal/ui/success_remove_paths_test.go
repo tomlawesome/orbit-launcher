@@ -10,6 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
 
 // Edge and exit paths on the two end screens: the success screen and
@@ -41,8 +43,8 @@ func TestSuccessModel_EveryWayOutLeavesForTheTerminal(t *testing.T) {
 
 func TestSuccessModel_UpFromTheTopWrapsToMenu(t *testing.T) {
 	m, _ := successUpdate(t, newTestSuccessModel(), key(tea.KeyUp))
-	if !strings.Contains(stripANSI(m.View().Content), "▸ Menu") {
-		t.Fatalf("Up from Get into Orbit should select Menu:\n%s", stripANSI(m.View().Content))
+	if !strings.Contains(ansi.Strip(m.View().Content), "▸ Menu") {
+		t.Fatalf("Up from Get into Orbit should select Menu:\n%s", ansi.Strip(m.View().Content))
 	}
 }
 
@@ -54,8 +56,8 @@ func TestSuccessModel_NoURLMeansNoBrowserLaunch(t *testing.T) {
 	if opened {
 		t.Fatal("a launch was attempted with no URL to open")
 	}
-	if !strings.Contains(stripANSI(m.View().Content), "no browser here — copy the URL above") {
-		t.Fatalf("screen:\n%s", stripANSI(m.View().Content))
+	if !strings.Contains(ansi.Strip(m.View().Content), "no browser here — copy the URL above") {
+		t.Fatalf("screen:\n%s", ansi.Strip(m.View().Content))
 	}
 }
 
@@ -159,11 +161,11 @@ func removeUpdate(t *testing.T, m RemoveModel, msgs ...tea.Msg) (RemoveModel, te
 func TestRemoveModel_FailedScreenNamesTheErrorAndOnlyExits(t *testing.T) {
 	m := newTestRemoveModel(func(context.Context, string) error { return errors.New("docker daemon not running") })
 	m, cmd := removeUpdate(t, m, key(tea.KeyEnter))
-	if !strings.Contains(stripANSI(m.View().Content), "standing down Orbit…") {
-		t.Fatalf("working screen:\n%s", stripANSI(m.View().Content))
+	if !strings.Contains(ansi.Strip(m.View().Content), "standing down Orbit…") {
+		t.Fatalf("working screen:\n%s", ansi.Strip(m.View().Content))
 	}
 	m, _ = removeUpdate(t, m, cmd())
-	s := stripANSI(m.View().Content)
+	s := ansi.Strip(m.View().Content)
 	for _, want := range []string{"Could not stand down Orbit", "docker daemon not running", "▸ Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("failed screen lacks %q:\n%s", want, s)
@@ -216,8 +218,8 @@ func TestRemoveModel_KeysWhileStandingDownAreIgnored(t *testing.T) {
 
 func TestRemoveModel_ConfirmToggleAndUnboundKey(t *testing.T) {
 	m, _ := removeUpdate(t, newTestRemoveModel(nil), key(tea.KeyDown))
-	if !strings.Contains(stripANSI(m.View().Content), "▸ Cancel") {
-		t.Fatalf("Down should select Cancel:\n%s", stripANSI(m.View().Content))
+	if !strings.Contains(ansi.Strip(m.View().Content), "▸ Cancel") {
+		t.Fatalf("Down should select Cancel:\n%s", ansi.Strip(m.View().Content))
 	}
 	m, cmd := removeUpdate(t, m, runeKey('y'))
 	if cmd != nil || m.state != removeStateConfirm {

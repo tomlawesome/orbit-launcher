@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -26,7 +27,7 @@ func startedRun(t *testing.T, action string, seams engineRunSeams) engineRun {
 	return r
 }
 
-func runScreen(r engineRun) string { return stripANSI(r.view(80, 26)) }
+func runScreen(r engineRun) string { return ansi.Strip(r.view(80, 26)) }
 
 func runUpdate(t *testing.T, r engineRun, msg tea.Msg) (engineRun, tea.Cmd) {
 	t.Helper()

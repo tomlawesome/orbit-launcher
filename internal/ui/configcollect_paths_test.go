@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
@@ -30,7 +31,7 @@ func collectingRun(t *testing.T, seams engineRunSeams) engineRun {
 	return r
 }
 
-func collectScreen(r engineRun) string { return stripANSI(r.view(80, 26)) }
+func collectScreen(r engineRun) string { return ansi.Strip(r.view(80, 26)) }
 
 // handoffSeams records whether the terminal handoff was prepared.
 func handoffSeams(prepared *bool) engineRunSeams {

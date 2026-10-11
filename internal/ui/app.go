@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"net/url"
 	"os"
 	"time"
 
@@ -165,7 +164,7 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	if err != nil || d == nil {
 		return s
 	}
-	s.fqdn = displayHost(d.AppURL)
+	s.fqdn = deploymentIdentity(d)
 	s.appURL = d.AppURL
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
@@ -204,18 +203,6 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 		cmds = append(cmds, s.probeHealthCmd())
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// displayHost reduces an APP_URL to the bare FQDN the identity block
-// shows — scheme and path are launcher noise at a glance.
-func displayHost(appURL string) string {
-	if u, err := url.Parse(appURL); err == nil && u.Host != "" {
-		return u.Host
-	}
-	if appURL != "" {
-		return appURL
-	}
-	return "deployment detected"
 }
 
 func (m AppModel) resolvedTargetDir() string {

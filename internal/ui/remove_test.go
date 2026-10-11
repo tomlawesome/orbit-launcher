@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
@@ -144,7 +145,7 @@ func TestRemoveModel_DoneScreenCopyThenExit(t *testing.T) {
 	if !m.copied {
 		t.Error("expected copied to be true after selecting Copy command")
 	}
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "▸ Copy command · copied") {
+	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "▸ Copy command · copied") {
 		t.Errorf("the copy row should say it has copied, still selected:\n%s", s)
 	}
 	// The row's label changed on screen, not in the menu: Enter copies
@@ -222,13 +223,13 @@ func TestRemoveModel_NeverInvokesStandDownAutomatically(t *testing.T) {
 func TestRemoveModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
 	m := newTestRemoveModel(func(context.Context, string) error { return nil })
 
-	before := stripANSI(m.View().Content)
+	before := ansi.Strip(m.View().Content)
 	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
 		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
 	}
 
 	updated, _ := m.Update(installedAtMsg{at: time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)})
-	after := stripANSI(updated.(RemoveModel).View().Content)
+	after := ansi.Strip(updated.(RemoveModel).View().Content)
 	if !strings.Contains(after, "mail.example.com · installed 2026-06-14") {
 		t.Fatalf("after the lookup answers, want the date beside the host:\n%s", after)
 	}

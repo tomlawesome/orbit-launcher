@@ -19,6 +19,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
@@ -136,7 +137,7 @@ func settle(t *testing.T, m AppModel, cmd tea.Cmd, pushed *sink) AppModel {
 	}
 }
 
-func appScreen(m AppModel) string { return stripANSI(m.View().Content) }
+func appScreen(m AppModel) string { return ansi.Strip(m.View().Content) }
 
 // openRemove takes the menu to Remove and lets the flow start.
 func openRemove(t *testing.T, m AppModel) AppModel {
@@ -358,16 +359,16 @@ func removeDone(t *testing.T, dir string, width int) (RemoveModel, *bytes.Buffer
 	m.lookupInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	m.clipboard = &clip
 	m, _ = removeUpdate(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "Stand down Orbit") {
+	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "Stand down Orbit") {
 		t.Fatalf("confirm screen:\n%s", s)
 	}
-	assertNamesOnly(t, "the confirm screen", stripANSI(m.View().Content), dir)
+	assertNamesOnly(t, "the confirm screen", ansi.Strip(m.View().Content), dir)
 	m, cmd := removeUpdate(t, m, key(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("confirm did not start the stand-down")
 	}
 	m, _ = removeUpdate(t, m, cmd())
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "stood down") {
+	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "stood down") {
 		t.Fatalf("stood-down screen:\n%s", s)
 	}
 	return m, &clip, &stoodDown
@@ -384,7 +385,7 @@ func TestRemoveModel_BoxAndClipboardAreTheSameWords(t *testing.T) {
 	} {
 		for _, width := range []int{80, 60} {
 			m, clip, stoodDown := removeDone(t, dir, width)
-			s := stripANSI(m.View().Content)
+			s := ansi.Strip(m.View().Content)
 			words := removalWords(t, dir)
 			want := strings.Join(words, " ")
 			if want != removalLine(t, dir) {

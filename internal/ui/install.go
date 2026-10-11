@@ -474,7 +474,8 @@ func (m InstallModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("right here. If it needs configuration only you can provide,"))
 	fmt.Fprintln(&b, style.MutedText.Render("it stops safely and asks first."))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render(m.targetDir))
+	// The path is the one word here whose length nobody chose.
+	writeWrapped(&b, style.Tagline, m.targetDir, min(m.width-4, proseWidth))
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())

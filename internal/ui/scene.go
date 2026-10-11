@@ -50,6 +50,31 @@ func writeInlineHeader(b *strings.Builder, glyph, title string) {
 	fmt.Fprintln(b)
 }
 
+// drawBox draws the one rounded box every screen uses (the console's
+// event log, the notice's typing field, the removal command), width
+// cells wide with one row per entry of rows, its frame in border:
+// "│ " and " │" either side of each row, the row padded to the inside
+// width with spaces. Rows are measured in cells and must already fit;
+// a box too narrow for any inside (under four cells) is frame only.
+func drawBox(border lipgloss.Style, width int, rows []string) []string {
+	if width < 2 {
+		return nil
+	}
+	inner := width - 4
+	side := border.Render("│")
+	lines := make([]string, 0, len(rows)+2)
+	lines = append(lines, border.Render("╭"+strings.Repeat("─", width-2)+"╮"))
+	for _, row := range rows {
+		if inner <= 0 {
+			lines = append(lines, side+strings.Repeat(" ", width-2)+side)
+			continue
+		}
+		gap := max(inner-lipgloss.Width(row), 0)
+		lines = append(lines, side+" "+row+strings.Repeat(" ", gap+1)+side)
+	}
+	return append(lines, border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+}
+
 // skyCell is one background cell: a glyph plus which style class draws
 // it. Class 0 is empty, 1 is a star; higher classes are planet kinds.
 type skyCell struct {

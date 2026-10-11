@@ -30,10 +30,10 @@ const (
 	// motion beat, so it keeps its own.
 	noticeTickInterval = time.Second
 
-	noticeMeasure    = 56 // prose wrap width, in cells
-	noticeGutter     = 2  // cells either side of the measure
-	noticeHeaderRows = 6  // blank, mark, blank, title, state, blank
-	noticePinnedRows = 8  // countdown, prompt, box ×3, feedback, Go back, blank
+	noticeMeasure    = proseWidth // prose wrap width, in cells
+	noticeGutter     = 2          // cells either side of the measure
+	noticeHeaderRows = 6          // blank, mark, blank, title, state, blank
+	noticePinnedRows = 8          // countdown, prompt, box ×3, feedback, Go back, blank
 	noticeWheelRows  = 3
 
 	noticeTitle       = "A note before you install"
@@ -87,7 +87,7 @@ func (r noticeRow) plain() string {
 	return b.String()
 }
 
-func (r noticeRow) width() int { return len([]rune(r.plain())) }
+func (r noticeRow) width() int { return lipgloss.Width(r.plain()) }
 
 type noticeFocus int
 
@@ -133,7 +133,7 @@ func newNotice(start time.Time, width, height int) noticeModel {
 	return noticeModel{start: start}.resize(width, height)
 }
 
-// noticeMeasureFor is the prose measure for a terminal width: 56, or
+// noticeMeasureFor is the prose measure for a terminal width: proseWidth, or
 // width-4 on a terminal narrower than the 60-cell block (never below
 // 20). The house minimum is 80×26, so the narrow case only has to not
 // panic.
@@ -380,7 +380,7 @@ func wrapNotice(p string, measure int) []noticeRow {
 		cur, length = nil, 0
 	}
 	for _, w := range words {
-		wl := w.end - w.start
+		wl := lipgloss.Width(string(text[w.start:w.end]))
 		if len(cur) > 0 && length+1+wl > measure {
 			flush()
 		}
@@ -442,7 +442,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		lines = append(lines, centred(h, lipgloss.Width(h)))
 	}
 	lines = append(lines,
-		centred(mutedStyle.Render(noticeStateLabel)+style.DegradedText.Render(noticeStateWord), len(noticeStateLabel)+len(noticeStateWord)),
+		centred(mutedStyle.Render(noticeStateLabel)+style.DegradedText.Render(noticeStateWord), lipgloss.Width(noticeStateLabel)+lipgloss.Width(noticeStateWord)),
 		blank,
 	)
 
@@ -471,7 +471,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		if cells-fill > 0 {
 			bar += lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", cells-fill))
 		}
-		lines = append(lines, pad(gutter+bar+"  "+style.Tagline.Render(clock), noticeGutter+cells+2+len(clock)))
+		lines = append(lines, pad(gutter+bar+"  "+style.Tagline.Render(clock), noticeGutter+cells+2+lipgloss.Width(clock)))
 	} else {
 		lines = append(lines, blank)
 	}
@@ -482,7 +482,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		labelStyle, phraseStyle = mutedStyle, textStyle
 	}
 	lines = append(lines, pad(gutter+labelStyle.Render(noticePromptLabel)+phraseStyle.Render(noticePhrase),
-		noticeGutter+len(noticePromptLabel)+len([]rune(noticePhrase))))
+		noticeGutter+lipgloss.Width(noticePromptLabel)+lipgloss.Width(noticePhrase)))
 
 	// The box, two cells in from the block's edge so the caret at the
 	// edge shares Go back's column.
@@ -493,44 +493,46 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		border = faintStyle
 	}
 	boxIndent := strings.Repeat(" ", 2*noticeGutter)
-	lines = append(lines, pad(boxIndent+border.Render("╭"+strings.Repeat("─", boxW-2)+"╮"), 2*noticeGutter+boxW))
 
 	var content string
-	contentW := 0
 	phrase := []rune(noticePhrase)
 	switch {
 	case focused && !n.typed.empty():
 		shown := n.typed.tail(inner - 1) // the tail, so the cursor stays visible
+		for len(shown) > 0 && lipgloss.Width(string(shown)) > inner-1 {
+			shown = shown[1:] // a wide character takes two cells
+		}
 		content = textStyle.Render(string(shown)) + style.AccentText.Render(style.SymbolCursor)
-		contentW = len(shown) + 1
 	case focused:
 		example := phrase[:min(len(phrase), inner-1)]
 		content = style.AccentText.Render(style.SymbolCursor) + faintStyle.Render(string(example))
-		contentW = 1 + len(example)
 	default:
 		example := phrase[:min(len(phrase), inner)]
 		content = faintStyle.Render(string(example))
-		contentW = len(example)
 	}
 	lead := boxIndent
 	if focused {
 		lead = gutter + style.MenuCaret.Render(style.SymbolSelected) + " "
 	}
-	lines = append(lines, pad(lead+border.Render("│")+" "+content+strings.Repeat(" ", max(inner-contentW, 0))+" "+border.Render("│"), 2*noticeGutter+boxW))
-	lines = append(lines, pad(boxIndent+border.Render("╰"+strings.Repeat("─", boxW-2)+"╯"), 2*noticeGutter+boxW))
+	box := drawBox(border, boxW, []string{content})
+	lines = append(lines,
+		pad(boxIndent+box[0], 2*noticeGutter+boxW),
+		pad(lead+box[1], 2*noticeGutter+boxW),
+		pad(boxIndent+box[2], 2*noticeGutter+boxW),
+	)
 
 	// Feedback, aligned with the box's text.
 	if n.refused {
-		lines = append(lines, pad(strings.Repeat(" ", 2*noticeGutter+2)+style.DegradedText.Render(noticeRefusal), 2*noticeGutter+2+len(noticeRefusal)))
+		lines = append(lines, pad(strings.Repeat(" ", 2*noticeGutter+2)+style.DegradedText.Render(noticeRefusal), 2*noticeGutter+2+lipgloss.Width(noticeRefusal)))
 	} else {
 		lines = append(lines, blank)
 	}
 
 	// Go back.
 	if focused {
-		lines = append(lines, pad(boxIndent+mutedStyle.Render(noticeGoBack), 2*noticeGutter+len(noticeGoBack)))
+		lines = append(lines, pad(boxIndent+mutedStyle.Render(noticeGoBack), 2*noticeGutter+lipgloss.Width(noticeGoBack)))
 	} else {
-		lines = append(lines, pad(gutter+style.MenuCaret.Render(style.SymbolSelected)+" "+textStyle.Render(noticeGoBack), 2*noticeGutter+len(noticeGoBack)))
+		lines = append(lines, pad(gutter+style.MenuCaret.Render(style.SymbolSelected)+" "+textStyle.Render(noticeGoBack), 2*noticeGutter+lipgloss.Width(noticeGoBack)))
 	}
 	lines = append(lines, blank)
 

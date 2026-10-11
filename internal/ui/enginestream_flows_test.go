@@ -16,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -115,7 +116,7 @@ func repairViaApp(t *testing.T, prepare prepareRepairFunc) (*AppModel, *flowLoop
 	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}, key(tea.KeyDown), key(tea.KeyDown)) // Install, Update, Repair
 	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
 	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}) // a flow draws nothing until sized
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "reading the deployment") {
+	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "reading the deployment") {
 		t.Fatalf("Repair did not open:\n%s", s)
 	}
 	app := &m
@@ -136,7 +137,7 @@ func TestRepair_DiagnosisStreamClosingEarlyFailsVisibly(t *testing.T) {
 	})
 	loop.settle(cmd)
 
-	s := stripANSI(app.View().Content)
+	s := ansi.Strip(app.View().Content)
 	if strings.Contains(s, "reading the deployment") {
 		t.Fatalf("the diagnosis stopped and Repair is still waiting on it — silence, not a failure:\n%s", s)
 	}
@@ -160,13 +161,13 @@ func TestRepair_ExecutionStreamClosingEarlyFailsVisibly(t *testing.T) {
 		return engine.Start(exec.Command("bash", "-c", safePlanStream))
 	})
 	loop.settle(cmd)
-	if s := stripANSI(app.View().Content); !strings.Contains(s, "Run the safe repairs") {
+	if s := ansi.Strip(app.View().Content); !strings.Contains(s, "Run the safe repairs") {
 		t.Fatalf("the plan screen never arrived:\n%s", s)
 	}
 
 	loop.settle(loop.update(key(tea.KeyEnter))) // "Run the safe repairs" is preselected
 
-	s := stripANSI(app.View().Content)
+	s := ansi.Strip(app.View().Content)
 	if strings.Contains(s, "running the safe repairs") {
 		t.Fatalf("the repair stopped and the flow is still waiting on it — silence, not a failure:\n%s", s)
 	}
@@ -196,7 +197,7 @@ func TestRepair_TheSupersededRunsStreamEndingDoesNotFailTheNewRun(t *testing.T) 
 	})
 	loop.settle(cmd)
 
-	s := stripANSI(app.View().Content)
+	s := ansi.Strip(app.View().Content)
 	if !strings.Contains(s, "Diagnosis clear") {
 		t.Fatalf("the --check rerun's verdict did not stand:\n%s", s)
 	}
@@ -233,11 +234,11 @@ func configViaInstall(t *testing.T, start startConfigFunc) (*InstallModel, *flow
 		return next
 	})
 	loop.settle(cmd)
-	if s := stripANSI(install.View().Content); !strings.Contains(s, "Continue — guided configuration") {
+	if s := ansi.Strip(install.View().Content); !strings.Contains(s, "Continue — guided configuration") {
 		t.Fatalf("the engine's configuration refusal never arrived:\n%s", s)
 	}
 	loop.settle(loop.update(key(tea.KeyEnter))) // Continue — guided configuration
-	if s := stripANSI(install.View().Content); !strings.Contains(s, "How will people sign in?") {
+	if s := ansi.Strip(install.View().Content); !strings.Contains(s, "How will people sign in?") {
 		t.Fatalf("the guided session did not reach the sign-in question:\n%s", s)
 	}
 	return install, loop
@@ -253,7 +254,7 @@ func TestConfig_StreamClosingEarlyFailsVisibly(t *testing.T) {
 	})
 	loop.settle(loop.update(key(tea.KeyEnter))) // Local accounts: --init starts
 
-	s := stripANSI(install.View().Content)
+	s := ansi.Strip(install.View().Content)
 	if strings.Contains(s, "Public Orbit origin") || strings.Contains(s, "talking to the engine") {
 		t.Fatalf("the configuration step stopped and the session is still waiting on it — silence, not a failure:\n%s", s)
 	}
@@ -282,7 +283,7 @@ func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 	if started == nil {
 		t.Fatal("--init never started")
 	}
-	if s := stripANSI(install.View().Content); !strings.Contains(s, "Public Orbit origin") {
+	if s := ansi.Strip(install.View().Content); !strings.Contains(s, "Public Orbit origin") {
 		t.Fatalf("the session's first prompt never arrived:\n%s", s)
 	}
 
@@ -290,7 +291,7 @@ func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 	started.Kill() // whatever Esc did to the engine, its stream now ends
 	loop.settle(nil)
 
-	s := stripANSI(install.View().Content)
+	s := ansi.Strip(install.View().Content)
 	if !strings.Contains(s, "Continue — guided configuration") {
 		t.Fatalf("Esc should leave the operator on the refusal menu:\n%s", s)
 	}

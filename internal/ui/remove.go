@@ -307,9 +307,7 @@ func (m RemoveModel) viewDone() string {
 	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
 	// The path is the one word here whose length nobody chose.
-	for _, line := range wrapWords("volumes are still on disk at "+targetDir+" —", min(m.width-4, proseWidth)) {
-		fmt.Fprintln(&b, style.MutedText.Render(line))
-	}
+	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", min(m.width-4, proseWidth))
 	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
@@ -321,8 +319,13 @@ func (m RemoveModel) viewDone() string {
 	// form. Both are laid out from the same words.
 	words, _ := deploy.RemovalCommandWords(targetDir)
 	lines := wrapShellCommand(words, m.width-4)
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(style.BorderSoft).Padding(0, 1).Render(strings.Join(lines, "\n"))
-	fmt.Fprintln(&b, box)
+	boxW := 0
+	for _, l := range lines {
+		boxW = max(boxW, lipgloss.Width(l))
+	}
+	for _, l := range drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines) {
+		fmt.Fprintln(&b, l)
+	}
 	fmt.Fprintln(&b, style.DegradedText.Render("this deletes all mail, documents, and configuration —"))
 	fmt.Fprintln(&b, style.DegradedText.Render("it cannot be undone"))
 	fmt.Fprintln(&b)
@@ -337,24 +340,13 @@ func (m RemoveModel) viewDone() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
-// proseWidth is how wide the flow screens' hand-broken prose runs (the
-// confirm screen's lines are 56 cells); errorWidth is the most an
-// unbroken error line gets before it wraps, so a long one reads as a
-// paragraph rather than a ribbon.
-const (
-	proseWidth = 56
-	errorWidth = 72
-)
-
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Could not stand down Orbit")
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.
-		for _, line := range wrapWords(m.standDownErr.Error(), min(m.width-4, errorWidth)) {
-			fmt.Fprintln(&b, style.Tagline.Render(line))
-		}
+		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), min(m.width-4, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	writeStackedMenu(&b, []string{"Exit"}, 0)

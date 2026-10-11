@@ -16,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -231,9 +232,9 @@ func TestLeaveFlow_CtrlCQuitsFromEveryScreen(t *testing.T) {
 		m := newTestRemoveModel(func(context.Context, string) error { return nil })
 		m2, cmd := leavePress(t, m, key(tea.KeyEnter))
 		m3, _ := leavePress(t, m2, cmd())
-		if !strings.Contains(stripANSI(m3.View().Content), "irreversible") &&
-			!strings.Contains(stripANSI(m3.View().Content), "rm ") {
-			t.Fatalf("not on the removal-command screen:\n%s", stripANSI(m3.View().Content))
+		if !strings.Contains(ansi.Strip(m3.View().Content), "irreversible") &&
+			!strings.Contains(ansi.Strip(m3.View().Content), "rm ") {
+			t.Fatalf("not on the removal-command screen:\n%s", ansi.Strip(m3.View().Content))
 		}
 		return m3
 	}
@@ -290,7 +291,7 @@ func leaveApp(t *testing.T) AppModel {
 	m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	m.targetDir = dir
 	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "O R B I T") {
+	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "O R B I T") {
 		t.Fatalf("not on the menu:\n%s", s)
 	}
 	return m
@@ -314,7 +315,7 @@ func TestLeaveFlow_AppReturnsToTheMenuFromEachFlow(t *testing.T) {
 			m, _ = appUpdate(t, m, f.keys...)
 			m, cmd := appUpdate(t, m, key(tea.KeyEnter))
 			m = appDrive(t, m, cmd)
-			if s := stripANSI(m.View().Content); m.state == appStateSplash || !strings.Contains(s, f.want) {
+			if s := ansi.Strip(m.View().Content); m.state == appStateSplash || !strings.Contains(s, f.want) {
 				t.Fatalf("not on the %s first screen (state %v):\n%s", f.name, m.state, s)
 			}
 
@@ -328,7 +329,7 @@ func TestLeaveFlow_AppReturnsToTheMenuFromEachFlow(t *testing.T) {
 			if m.state != appStateSplash {
 				t.Fatalf("Esc on the %s first screen left state = %v, want the menu", f.name, m.state)
 			}
-			if s := stripANSI(m.View().Content); !strings.Contains(s, "O R B I T") {
+			if s := ansi.Strip(m.View().Content); !strings.Contains(s, "O R B I T") {
 				t.Fatalf("the menu is not showing after Esc:\n%s", s)
 			}
 		})

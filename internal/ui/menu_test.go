@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
 
 // A menu with no rows (a model built without its constructor, before a
@@ -33,7 +35,7 @@ func TestMenu_OverKeepsTheSelection(t *testing.T) {
 	}
 	var b strings.Builder
 	m.over([]string{"x", "y"}).write(&b)
-	if s := stripANSI(b.String()); !strings.Contains(s, "▸ y") {
+	if s := ansi.Strip(b.String()); !strings.Contains(s, "▸ y") {
 		t.Fatalf("write did not draw the caret on the selected row:\n%s", s)
 	}
 }

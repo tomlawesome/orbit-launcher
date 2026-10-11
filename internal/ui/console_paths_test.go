@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
@@ -14,7 +17,7 @@ import (
 func consoleRows(c ConsoleModel, width, height int) []string {
 	var rows []string
 	for _, l := range c.contentLines(width, height) {
-		rows = append(rows, stripANSI(l))
+		rows = append(rows, ansi.Strip(l))
 	}
 	return rows
 }
@@ -78,7 +81,7 @@ func TestConsole_OverWideLineIsCutToTheBox(t *testing.T) {
 	c = c.observeRaw(strings.Repeat("y", 200))
 	for _, row := range c.contentLines(80, 26) {
 		if w := visibleWidth(row); w > 76 {
-			t.Fatalf("a row is %d cells wide, past the 76-cell box:\n%s", w, stripANSI(row))
+			t.Fatalf("a row is %d cells wide, past the 76-cell box:\n%s", w, ansi.Strip(row))
 		}
 	}
 }
@@ -92,7 +95,7 @@ func TestConsole_NarrowTerminals(t *testing.T) {
 	// width — down to the clock's own width and below it (#187).
 	for width := 2; width <= 40; width++ {
 		for _, row := range consoleRows(c, width, 26) {
-			if w := len([]rune(row)); w > width {
+			if w := lipgloss.Width(row); w > width {
 				t.Fatalf("a row is %d cells on a %d-column terminal: %q", w, width, row)
 			}
 		}

@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
 
 func parseSnippet(t *testing.T, src string) (*token.FileSet, *ast.File) {
@@ -187,7 +189,7 @@ func TestTwoRowConfirmScreensToggleWithEitherArrow(t *testing.T) {
 		{"Update", confirmUpdate, "▸ Update Orbit", "▸ Cancel"},
 		{"Remove", confirmRemove, "▸ Stand down Orbit", "▸ Cancel"},
 	}
-	view := func(m tea.Model) string { return stripANSI(m.View().Content) }
+	view := func(m tea.Model) string { return ansi.Strip(m.View().Content) }
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
 			m := r.model(t)
@@ -216,7 +218,7 @@ func TestTwoRowConfirmScreensToggleWithEitherArrow(t *testing.T) {
 // its three rows (the count must come from the menu, not a typed 3).
 func TestInstallProfileMenuWrapsOverAllRows(t *testing.T) {
 	m := profileInstall(t)
-	view := func(m tea.Model) string { return stripANSI(m.View().Content) }
+	view := func(m tea.Model) string { return ansi.Strip(m.View().Content) }
 	seen := []string{}
 	for _, want := range []string{"▸ AI", "▸ Full", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyDown))

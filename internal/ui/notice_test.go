@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
@@ -59,7 +60,7 @@ func awakeNotice(t *testing.T, seams engineRunSeams) InstallModel {
 	return update(t, m, key(tea.KeyEnd))
 }
 
-func screen(m InstallModel) string { return stripANSI(m.View().Content) }
+func screen(m InstallModel) string { return ansi.Strip(m.View().Content) }
 
 // passNotice takes a teatest journey through the development notice.
 // The journey's AppModel sets flowNoticeDuration to a millisecond, so
@@ -189,7 +190,7 @@ func TestNotice_WrapsTheApprovedCopy(t *testing.T) {
 	m, _, _ := openNotice(t, 80, 26, engineRunSeams{})
 	for i, line := range strings.Split(m.notice.view(m.now(), m.noticeDur()), "\n") {
 		if w := visibleWidth(line); w != noticeMeasure+4 {
-			t.Errorf("block line %d is %d cells, want %d: %q", i, w, noticeMeasure+4, stripANSI(line))
+			t.Errorf("block line %d is %d cells, want %d: %q", i, w, noticeMeasure+4, ansi.Strip(line))
 		}
 	}
 }
@@ -233,8 +234,8 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	clock.advance(time.Second)
 	block := strings.Split(m.notice.view(m.now(), m.noticeDur()), "\n")
 	countdown := block[noticeHeaderRows+len(m.notice.layout().rows)]
-	if strings.TrimSpace(stripANSI(countdown)) != "" {
-		t.Errorf("at 70 s the countdown row must be blank, got %q", stripANSI(countdown))
+	if strings.TrimSpace(ansi.Strip(countdown)) != "" {
+		t.Errorf("at 70 s the countdown row must be blank, got %q", ansi.Strip(countdown))
 	}
 	m = update(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I" {

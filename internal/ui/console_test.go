@@ -5,12 +5,15 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
-// visibleWidth counts terminal cells, ignoring ANSI styling.
+// visibleWidth counts terminal cells, ignoring ANSI styling, the way
+// the product measures (a wide character is two cells).
 func visibleWidth(row string) int {
-	return len([]rune(stripANSI(row)))
+	return lipgloss.Width(row)
 }
 
 func testConsole() ConsoleModel {
