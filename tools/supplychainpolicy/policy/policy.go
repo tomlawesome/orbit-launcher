@@ -97,10 +97,12 @@ var (
 	envValue = func(key string) *regexp.Regexp {
 		return regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:[ \t]*(\S.*?)\s*$`)
 	}
-	// A top-level pipeline variable in .gitlab-ci.yml: two spaces in, under
-	// `variables:`, so a job's own override of the same name is not the pin.
+	// A pipeline variable in .gitlab-ci.yml at any depth: the top-level pin
+	// and any job's own `variables:` copy alike. A job's override is what
+	// that job runs, so gitleaksPinIn requires every copy to agree rather
+	// than reading the top-level line alone (#216).
 	gitlabVariable = func(key string) *regexp.Regexp {
-		return regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:[ \t]*(\S.*?)\s*$`)
+		return regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:[ \t]*(\S.*?)\s*$`)
 	}
 )
 

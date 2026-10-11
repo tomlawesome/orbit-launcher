@@ -94,3 +94,39 @@ func TestGitleaksPinFailsWhenGitLabStopsPinning(t *testing.T) {
 		t.Error("a missing GITLEAKS_SHA256 in .gitlab-ci.yml returned no error; the digest could vanish there unnoticed")
 	}
 }
+
+// A job's own `variables:` beats the pipeline's in GitLab, so a job-level
+// GITLEAKS_VERSION is what that job runs. Reading only the top-level line
+// would pass a job that runs a different gitleaks (#216): every line that
+// sets the key, at any depth, must agree, as on the GitHub side.
+func TestGitleaksPinRefusesAJobLevelOverride(t *testing.T) {
+	job := func(version string) string {
+		return "gitleaks:\n  variables:\n    GITLEAKS_VERSION: " + version + "\n  script:\n    - gitleaks version\n"
+	}
+	for _, c := range []struct {
+		name, override string
+		wantErr        bool
+	}{
+		{"a different version in a job", `"9.9.9"`, true},
+		{"the same version in a job", `"8.30.1"`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := hostsRepo(t, "8.30.1", hostsDigest, `"8.30.1"`, hostsDigest)
+			path := filepath.Join(root, ".gitlab-ci.yml")
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, append(body, job(c.override)...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			version, _, err := GitleaksPin(root)
+			if c.wantErr && err == nil {
+				t.Errorf("GitleaksPin accepted a job that overrides GITLEAKS_VERSION to %s and returned %q", c.override, version)
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("GitleaksPin refused a job-level copy that agrees: %v", err)
+			}
+		})
+	}
+}
