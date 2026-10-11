@@ -33,7 +33,11 @@ tmp="$(mktemp "${dir}/.fetch-verified.XXXXXX")"
 trap 'rm -f -- "$tmp"' EXIT
 
 # --fail: an HTTP error is a failed download, whatever page came with it.
-if ! curl --fail --silent --show-error --location --output "$tmp" "$url"; then
+# --proto/--proto-redir: fetch https only and follow redirects to https
+# only, so a file://, http:// or other URL -- typed, or reached through a
+# redirect -- is refused before anything is read.
+if ! curl --fail --silent --show-error --location \
+  --proto '=https' --proto-redir '=https' --output "$tmp" "$url"; then
   echo "fetch-verified.sh: could not download ${url}; ${dest} left as it was" >&2
   exit 1
 fi
