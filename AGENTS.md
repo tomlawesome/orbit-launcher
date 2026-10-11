@@ -101,8 +101,8 @@ by pressing `release:version` on a green `dev` pipeline (#178,
 `.gitlab-ci.yml` is the gate merges wait on: `classify` (decides whether the
 diff is documentation only; `fast` and `deps` then skip themselves when it is,
 `gitleaks` never does), `fast`, `deps`, `gitleaks`, `visual` (hand-started
-pipelines, or MR pipelines touching `internal/ui`, `test/visual` or
-`.gitlab-ci.yml`) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or
+pipelines, or MR pipelines touching `internal/ui`, `test/visual`,
+`.gitlab-ci.yml` or `scripts/ci/fetch-verified.sh`) and `live` (MR label `run-live-matrix`, `RUN_LIVE=true`, or
 a moved `UBUNTU_IMAGE`/`GO_VERSION`/`GO_SHA256` pin or a changed
 `scripts/ci/fetch-verified.sh`, which live's Go download goes through -- an
 image bump can no longer go green without being installed). A merge request

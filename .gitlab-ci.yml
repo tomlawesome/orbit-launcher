@@ -414,11 +414,14 @@ visual:
   needs: []
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
+    # The Go tarball and ttyd come in through the checked-download script, so
+    # a change to it alone is a change to what this job runs on (#216).
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - internal/ui/**/*
         - test/visual/**/*
         - .gitlab-ci.yml
+        - scripts/ci/fetch-verified.sh
   before_script:
     - *go_tarball
     - |

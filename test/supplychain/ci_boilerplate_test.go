@@ -276,9 +276,9 @@ func fastPlaceholderFirst(t *testing.T, script string) string {
 // Every pinned download used to type its own `curl` and `sha256sum -c`; each
 // now calls scripts/ci/fetch-verified.sh with the same URL, the same digest
 // variable and the same destination. fast's shellcheck step widens from the
-// retired bootstrap script to every script. live's manual change route also
-// watches the checked-download script its Go tarball now comes through, so a
-// change to that script alone still starts live. Each rewrite names its jobs and
+// retired bootstrap script to every script. live's and visual's change
+// routes also watch the checked-download script their Go tarball now comes
+// through, so a change to that script alone still starts them. Each rewrite names its jobs and
 // the key it edits ("" for the script, matched as whole lines; any other key
 // matched in its dump), and must find its old text exactly once in each, so
 // it cannot excuse any other change.
@@ -332,6 +332,12 @@ echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -`,
 		key:  "rules",
 		old:  `"changes": [".gitlab-ci.yml"]`,
 		new:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		key:  "rules",
+		old:  `"changes": ["internal/ui/**/*", "test/visual/**/*", ".gitlab-ci.yml"]`,
+		new:  `"changes": ["internal/ui/**/*", "test/visual/**/*", ".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
 	},
 }
 

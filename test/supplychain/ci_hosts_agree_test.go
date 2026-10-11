@@ -637,6 +637,48 @@ func TestCheckedDownloadScriptStartsTheLiveJob(t *testing.T) {
 	}
 }
 
+// The same holds for every job that starts on file changes: if it downloads
+// through the checked-download script, each of its `changes:` routes lists
+// that script, or a change to it alone never runs the job (#216). Jobs with
+// no `changes:` route run on every pipeline and need nothing.
+func TestJobsDownloadingThroughFetchVerifiedStartWhenItChanges(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	checked := 0
+	for _, name := range doc.root.keys {
+		if strings.HasPrefix(name, ".") || doc.root.vals[name].kind != 'm' {
+			continue
+		}
+		job, err := doc.effectiveJob(name)
+		if err != nil {
+			continue // stages, workflow, default, variables
+		}
+		if !strings.Contains(job.Script, "bash "+fetchVerified+" ") {
+			continue
+		}
+		rules := job.Keys["rules"]
+		if rules == nil {
+			continue
+		}
+		for i, r := range rules.items {
+			ch, ok := r.vals["changes"]
+			if r.kind != 'm' || !ok {
+				continue
+			}
+			checked++
+			listed := false
+			for _, it := range ch.items {
+				listed = listed || it.str == fetchVerified
+			}
+			if !listed {
+				t.Errorf("job %q downloads through %s, but its rule %d's `changes:` does not list it (#216)", name, fetchVerified, i+1)
+			}
+		}
+	}
+	if checked < 2 {
+		t.Fatalf("checked %d `changes:` routes; want at least visual's and live's", checked)
+	}
+}
+
 // ---- SU-8: the real repository through the policy package -------------------
 
 // Passed already: GitleaksPin must keep returning clean values for the real
