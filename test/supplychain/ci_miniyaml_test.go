@@ -4,16 +4,18 @@
 // go.mod's module graph carries no YAML library (gopkg.in/yaml.v3 is neither
 // required nor in `go mod graph`), and importing one would add a dependency,
 // so ci_boilerplate_test.go reads the pipeline through this instead. It
-// supports block mappings and sequences, block scalars (| and >), single-line
+// supports block mappings and sequences, literal block scalars (|), single-line
 // flow sequences, quoted and plain scalars, `&anchor`, `*alias` and `<<`. It
-// stops with an error on anything else (flow mappings, multi-line plain
-// scalars), so a construct it cannot read never passes silently.
+// stops with an error on anything else (folded `>` blocks, flow mappings,
+// multi-line plain scalars), so a construct it cannot read never passes
+// silently.
 package supplychain
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+	"testing"
 )
 
 type yamlNode struct {
@@ -231,8 +233,13 @@ func (p *yamlParser) parseValue(text string, parent int) *yamlNode {
 		}
 		a.usedBy[p.top] = true
 		v = a.node
-	case text[0] == '|' || text[0] == '>':
+	case text[0] == '|':
 		v = p.blockScalar(parent)
+	case text[0] == '>':
+		// Folding joins the lines with spaces, so a script written this way
+		// runs as one command. The pipeline has no folded block; reading one
+		// as literal would hide exactly that change (#217).
+		panic(fmt.Sprintf("line %d: folded block scalars (>) are not supported; use |", p.pos))
 	case text[0] == '[':
 		v = p.flowSeq(text)
 	case text[0] == '{':
@@ -273,9 +280,8 @@ func (p *yamlParser) flowSeq(text string) *yamlNode {
 	return n
 }
 
-// blockScalar reads the indented lines under a "|" or ">" header (comment
-// lines inside it are content). Lines are joined with newlines either way:
-// the callers compare two files read the same way.
+// blockScalar reads the indented lines under a "|" header (comment lines
+// inside it are content), joined with newlines as YAML keeps them.
 func (p *yamlParser) blockScalar(parent int) *yamlNode {
 	var body []string
 	contentIndent := -1
@@ -478,4 +484,28 @@ func deepMerge(base, over *yamlNode) *yamlNode {
 		out.vals[k] = ov
 	}
 	return out
+}
+
+// A folded block (`>`) joins its lines with spaces, so an apt prologue
+// written as `>` runs as one command -- `export ... apt-get update -qq` -- and
+// apt-get update never runs (#217). The pipeline uses no folded block, so the
+// reader refuses one rather than read it as a literal block and pass.
+func TestMiniYAMLRefusesFoldedBlocks(t *testing.T) {
+	for _, src := range []string{
+		".a: &a >\n  export X=1\n  apt-get update -qq\n",
+		"job:\n  script:\n    - >-\n      one\n      two\n",
+		"job:\n  description: >\n    text\n",
+	} {
+		if _, err := parseMiniYAML(src); err == nil {
+			t.Errorf("parseMiniYAML read a folded block without an error:\n%s", src)
+		}
+	}
+	// The literal form stays readable, lines kept apart.
+	doc, err := parseMiniYAML(".a: &a |\n  export X=1\n  apt-get update -qq\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.root.vals[".a"].str; got != "export X=1\napt-get update -qq" {
+		t.Errorf("literal block read as %q", got)
+	}
 }
