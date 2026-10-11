@@ -130,6 +130,9 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fixture: %v", err)
 		}
+		if name == "fast" {
+			want.Script = fastPlaceholderFirst(t, want.Script)
+		}
 		got, err := newDoc.effectiveJob(name)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -150,6 +153,42 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	if want, _ := oldDoc.effectiveJob("fast"); !strings.Contains(want.Script, "DOCS_ONLY") {
 		t.Fatal("the fixture's `fast` job does not carry the docs-only skip: the reader lost it")
 	}
+}
+
+// The one line #217 moves on purpose. fast and deps share one docs-only skip,
+// so fast's empty profile cannot stay inside it: fast writes it as its own
+// step just before the skip instead. scripts/coverage.sh overwrites it when
+// the gate runs, so the only change anyone sees is that a fast job failing
+// before coverage.sh now uploads an empty profile instead of none -- which is
+// what the artifact's `when: always` asked for anyway.
+const fastPlaceholder = `printf 'mode: set\n' > coverage.out`
+
+// fastPlaceholderFirst rewrites ce4b412's fast script the way #217 does:
+// the placeholder line leaves the docs-only `if` and runs just before it.
+// It fails unless the fixture has exactly that shape, so it cannot quietly
+// excuse any other change.
+func fastPlaceholderFirst(t *testing.T, script string) string {
+	t.Helper()
+	const skipIf = `if [ "${DOCS_ONLY:-false}" = "true" ]; then`
+	inside := "  " + fastPlaceholder
+	lines := strings.Split(script, "\n")
+	var out []string
+	moved, placed := 0, 0
+	for _, l := range lines {
+		switch l {
+		case inside:
+			moved++
+			continue
+		case skipIf:
+			out = append(out, fastPlaceholder)
+			placed++
+		}
+		out = append(out, l)
+	}
+	if moved != 1 || placed != 1 {
+		t.Fatalf("ce4b412's fast script should hold the placeholder once inside one docs-only skip; found %d placeholders and %d skips", moved, placed)
+	}
+	return strings.Join(out, "\n")
 }
 
 // anchorsHolding returns the anchors whose resolved value contains needle,
