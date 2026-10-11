@@ -487,9 +487,15 @@ live:
     # privileged unreviewed. `allow_failure: false` keeps the merge blocked
     # until someone starts it; starting it is the review. The RUN_LIVE and
     # label routes above stay automatic, because a person set them.
+    #
+    # The Go tarball comes in through scripts/ci/fetch-verified.sh, so a change
+    # to that script alone changes what the install runs on, and starts this
+    # route too (#216). classify-changed-paths.sh's LIVE_PIN_PATHS lists the
+    # same files, so the gate below lets the job through for them.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
+        - scripts/ci/fetch-verified.sh
       when: manual
       allow_failure: false
   variables:
@@ -498,7 +504,7 @@ live:
     # Why this job exists decides whether it does the work. RUN_LIVE and the
     # label are deliberate requests and always run. The third route is not: it
     # fires on any edit to this file, so unless a pin the install actually runs
-    # on moved, stop here -- before the apt-get, the Go tarball and the Docker
+    # on moved (or a file those downloads go through changed), stop here -- before the apt-get, the Go tarball and the Docker
     # daemon below, which is where the minutes are. An unset verdict means run.
     - |
       if [ "${RUN_LIVE:-}" != "true" ] \

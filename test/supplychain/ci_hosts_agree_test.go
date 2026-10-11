@@ -585,6 +585,58 @@ func TestLivePinKeysMatchAgentsMd(t *testing.T) {
 	}
 }
 
+// The live job installs Go through the checked-download script, so a change
+// to that script alone is a change to what live runs on, exactly as a moved
+// GO_SHA256 is (#216). Three places must agree that it starts live: the
+// classifier's LIVE_PIN_PATHS (the in-job gate), the live job's manual
+// change route (which creates the job), and AGENTS.md's live paragraph.
+func TestCheckedDownloadScriptStartsTheLiveJob(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	live, err := loadCI(t, ci).effectiveJob("live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(live.Script, "bash "+fetchVerified+" ") {
+		t.Fatalf("the live job no longer downloads through %s; revisit LIVE_PIN_PATHS", fetchVerified)
+	}
+
+	script := readRepoFile(t, "scripts", "ci", "classify-changed-paths.sh")
+	m := regexp.MustCompile(`(?m)^LIVE_PIN_PATHS='([^']+)'$`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal("no LIVE_PIN_PATHS='...' line in classify-changed-paths.sh: a change to " + fetchVerified + " alone never sets LIVE_PINS_CHANGED (#216)")
+	}
+	paths := strings.Split(m[1], "|")
+	watched := false
+	for _, p := range paths {
+		watched = watched || p == fetchVerified
+		readRepoFile(t, filepath.FromSlash(p)) // a path that does not exist watches nothing
+	}
+	if !watched {
+		t.Errorf("LIVE_PIN_PATHS %v does not name %s (#216)", paths, fetchVerified)
+	}
+
+	var changeRule string
+	for _, r := range liveRules(t, ci) {
+		if strings.Contains(r, "changes:") && hasLine(r, "- .gitlab-ci.yml") {
+			changeRule = r
+		}
+	}
+	var para string
+	for _, p := range strings.Split(readRepoFile(t, "AGENTS.md"), "\n\n") {
+		if strings.Contains(p, "run-live-matrix") && strings.Contains(p, "RUN_LIVE") {
+			para = p
+		}
+	}
+	for _, p := range paths {
+		if !hasLine(changeRule, "- "+p) {
+			t.Errorf("the live job's change route does not list %s, so a change to it alone never creates the job (#216)\nrule:\n%s", p, changeRule)
+		}
+		if !strings.Contains(para, "`"+p+"`") {
+			t.Errorf("AGENTS.md's live-job paragraph does not name `%s` as a live trigger (#216)", p)
+		}
+	}
+}
+
 // ---- SU-8: the real repository through the policy package -------------------
 
 // Passed already: GitleaksPin must keep returning clean values for the real

@@ -144,6 +144,19 @@ live_pins() { printf '%s' "${lines[1]}"; }
   [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
 }
 
+@test "a changed checked-download script runs the live install" {
+  echo "# change" > scripts/ci/fetch-verified.sh
+  classify
+  [ "$(docs_only)" = "DOCS_ONLY=false" ]
+  [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
+}
+
+@test "another CI script alone does not run the live install" {
+  echo "# change" > scripts/ci/other.sh
+  classify
+  [ "$(live_pins)" = "LIVE_PINS_CHANGED=false" ]
+}
+
 @test "an ordinary pipeline edit does not run the live install" {
   echo "# a comment" >> .gitlab-ci.yml
   classify
