@@ -1,0 +1,404 @@
+// The GitLab pipeline's repeated boilerplate lives in one place (#217, from
+// #199 WI-13, findings SU-13 and SU-18): the docs-only skip and the apt
+// prologue are YAML anchors, `default:` sets the image pull policy once, and
+// the two live-job scanners share one `liveJobLines` helper. None of it may
+// change what any job runs or when, so every job keeps its name and its
+// effective rules and script -- compared with the file as it stood at ce4b412,
+// kept in testdata/ and read by ci_miniyaml_test.go with anchors, merge keys,
+// `extends:` and `default:` resolved.
+package supplychain
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// oldCIFixture is .gitlab-ci.yml at ce4b412, before the restructure.
+const oldCIFixture = "testdata/gitlab-ci.ce4b412.txt"
+
+// topLevelKeysAtCE4B412 is every top-level key of .gitlab-ci.yml at ce4b412:
+// the pipeline keywords, the hidden templates and the jobs. Typed here, not
+// read from the fixture, so the fixture cannot drift from the list unnoticed.
+var topLevelKeysAtCE4B412 = []string{
+	"stages", "workflow", "default", "variables",
+	".go_cache", ".go_tarball", ".privileged_runner", ".docker_in_job",
+	"classify", "fast", "deps", "gitleaks", "visual", "live",
+	"renovate", "release:version", "release:gitlab",
+}
+
+func loadCI(t *testing.T, ciYAML string) *yamlDoc {
+	t.Helper()
+	doc, err := parseMiniYAML(ciYAML)
+	if err != nil {
+		t.Fatalf("reading the pipeline as YAML: %v", err)
+	}
+	if doc.root.kind != 'm' {
+		t.Fatal("the pipeline is not a YAML mapping")
+	}
+	return doc
+}
+
+// nonCommentLines returns the file's lines with comment-only lines dropped,
+// so a count of a literal ignores prose that quotes it.
+func nonCommentLines(src string) []string {
+	var out []string
+	for _, l := range strings.Split(src, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(l), "#") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func countLinesContaining(src, needle string) int {
+	n := 0
+	for _, l := range nonCommentLines(src) {
+		if strings.Contains(l, needle) {
+			n++
+		}
+	}
+	return n
+}
+
+// Passed already: guards the reader. The typed key list must match the
+// fixture, and the fixture must parse, or every comparison below is empty.
+func TestCIFixtureMatchesTypedKeyList(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, "test", "supplychain", oldCIFixture))
+	got := append([]string(nil), doc.root.keys...)
+	want := append([]string(nil), topLevelKeysAtCE4B412...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("the ce4b412 fixture's top-level keys are\n  %v\nbut the typed list says\n  %v", got, want)
+	}
+	live, err := doc.effectiveJob("live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(strings.Split(live.Script, "\n")); n < 100 {
+		t.Errorf("the fixture's `live` job reads as %d script lines, want over 100: the reader is dropping lines", n)
+	}
+}
+
+// Passed already: every job and template keeps its name (and extras may only
+// be hidden templates, which GitLab never runs). The restructure adds anchors;
+// it must not rename, split or drop a job.
+func TestCIJobNamesUnchanged(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	have := map[string]bool{}
+	for _, k := range doc.root.keys {
+		have[k] = true
+	}
+	typed := map[string]bool{}
+	for _, k := range topLevelKeysAtCE4B412 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("top-level key %q from ce4b412 is gone from .gitlab-ci.yml: job names must not change (#217)", k)
+		}
+	}
+	for _, k := range doc.root.keys {
+		if !typed[k] && !strings.HasPrefix(k, ".") {
+			t.Errorf("new top-level key %q is not a hidden template (it would be a new job): the restructure may add only `.`-prefixed templates (#217)", k)
+		}
+	}
+}
+
+// Passed already (it must stay passing): each job's effective rules and the
+// lines it runs -- before_script, script, after_script, in order -- are what
+// they were at ce4b412. This is the check that the anchors changed no
+// behaviour.
+func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
+	oldDoc := loadCI(t, readRepoFile(t, "test", "supplychain", oldCIFixture))
+	newDoc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+
+	compared := 0
+	for _, name := range topLevelKeysAtCE4B412 {
+		switch name {
+		case "stages", "workflow", "default", "variables":
+			continue
+		}
+		if oldDoc.root.vals[name].kind != 'm' {
+			continue // an anchored scalar such as .go_tarball: no rules, no script
+		}
+		want, err := oldDoc.effectiveJob(name)
+		if err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+		got, err := newDoc.effectiveJob(name)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		compared++
+		if got.Rules != want.Rules {
+			t.Errorf("job %q: effective rules changed (#217)\nwant: %s\n got: %s", name, want.Rules, got.Rules)
+		}
+		if got.Script != want.Script {
+			t.Errorf("job %q: effective script changed (#217)\nwant:\n%s\n got:\n%s", name, want.Script, got.Script)
+		}
+	}
+	// A reader that found no jobs would pass the loop above vacuously.
+	if compared < 8 {
+		t.Fatalf("compared only %d jobs: the reader is not finding them", compared)
+	}
+	if want, _ := oldDoc.effectiveJob("fast"); !strings.Contains(want.Script, "DOCS_ONLY") {
+		t.Fatal("the fixture's `fast` job does not carry the docs-only skip: the reader lost it")
+	}
+}
+
+// anchorsHolding returns the anchors whose resolved value contains needle,
+// with the top-level keys that alias each.
+func anchorsHolding(doc *yamlDoc, needle string) map[string][]string {
+	out := map[string][]string{}
+	for name, a := range doc.anchors {
+		if !strings.Contains(a.node.dump(), needle) {
+			continue
+		}
+		var users []string
+		for k := range a.usedBy {
+			users = append(users, k)
+		}
+		sort.Strings(users)
+		out[name] = users
+	}
+	return out
+}
+
+// The docs-only skip was written out in `fast` and `deps` (SU-13). It is one
+// anchor now, written once and used by both.
+func TestDocsOnlySkipIsOneAnchor(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	doc := loadCI(t, ci)
+
+	// The anchor's own line is a definition, not a repeat; every other
+	// mention of the test means a job still carries a hand-written copy.
+	if n := countLinesContaining(ci, `DOCS_ONLY:-false`); n != 1 {
+		t.Errorf("the docs-only test `${DOCS_ONLY:-false}` is written on %d lines of .gitlab-ci.yml; want exactly 1, inside the anchor (SU-13, #217)", n)
+	}
+
+	holders := anchorsHolding(doc, "DOCS_ONLY:-false")
+	if len(holders) == 0 {
+		t.Fatal("no YAML anchor holds the docs-only skip (SU-13, #217)")
+	}
+	used := false
+	for name, users := range holders {
+		have := map[string]bool{}
+		for _, u := range users {
+			have[u] = true
+		}
+		if have["fast"] && have["deps"] {
+			used = true
+			continue
+		}
+		t.Logf("anchor %q is used by %v", name, users)
+	}
+	if !used {
+		t.Error("no anchor holding the docs-only skip is used by both `fast` and `deps` (SU-13, #217)")
+	}
+
+	// The pair to the absence above: both jobs really do skip on DOCS_ONLY
+	// once the anchor is expanded, and fast alone still writes coverage.out.
+	fast, err := doc.effectiveJob("fast")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps, err := doc.effectiveJob("deps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, e := range map[string]jobEffective{"fast": fast, "deps": deps} {
+		if !strings.Contains(e.Script, `DOCS_ONLY:-false`) {
+			t.Errorf("job %q no longer skips on DOCS_ONLY after anchor expansion", name)
+		}
+	}
+	if !strings.Contains(fast.Script, "coverage.out") {
+		t.Error("job `fast` must still write coverage.out when it skips: the artifact is declared `when: always`")
+	}
+}
+
+// `export DEBIAN_FRONTEND=noninteractive` and `apt-get update -qq` led four
+// jobs' setup (SU-13). They are one anchor now, used by all four.
+func TestAptPrologueIsOneAnchor(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	doc := loadCI(t, ci)
+
+	for _, line := range []string{"export DEBIAN_FRONTEND=noninteractive", "apt-get update -qq"} {
+		if n := countLinesContaining(ci, line); n != 1 {
+			t.Errorf("%q is written on %d lines of .gitlab-ci.yml; want exactly 1, inside the anchor (SU-13, #217)", line, n)
+		}
+	}
+
+	holders := anchorsHolding(doc, "apt-get update -qq")
+	if len(holders) == 0 {
+		t.Fatal("no YAML anchor holds the apt prologue (SU-13, #217)")
+	}
+	want := []string{"classify", "fast", "gitleaks", "live"}
+	best := ""
+	for name, users := range holders {
+		have := map[string]bool{}
+		for _, u := range users {
+			have[u] = true
+		}
+		ok := true
+		for _, w := range want {
+			ok = ok && have[w]
+		}
+		if ok {
+			best = name
+		}
+	}
+	if best == "" {
+		t.Errorf("no anchor holding the apt prologue is used by all of %v (SU-13, #217); anchors found: %v", want, holders)
+	}
+
+	// Each of the four still installs its own packages after the prologue.
+	for job, pkg := range map[string]string{
+		"classify": "git", "fast": "shellcheck", "gitleaks": "ca-certificates curl git", "live": "ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl",
+	} {
+		e, err := doc.effectiveJob(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(e.Script, "apt-get install -y -qq --no-install-recommends "+pkg) {
+			t.Errorf("job %q must still install %q after the prologue", job, pkg)
+		}
+	}
+}
+
+// `pull_policy: if-not-present` was written out in ten jobs (SU-13). It is set
+// once under `default:` (or in an anchor that `default:` pulls in); no job
+// spells it out.
+func TestPullPolicyIsSetOnceInDefault(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	doc := loadCI(t, ci)
+
+	if n := countLinesContaining(ci, "pull_policy:"); n != 1 {
+		t.Errorf("`pull_policy:` is written on %d lines of .gitlab-ci.yml; want exactly 1 (SU-13, #217)", n)
+	}
+
+	def, ok := doc.root.vals["default"]
+	if !ok {
+		t.Fatal("no `default:` block")
+	}
+	pp, ok := def.find("pull_policy")
+	if !ok {
+		t.Fatal("`default:` does not set pull_policy (SU-13, #217)")
+	}
+	if pp.str != "if-not-present" {
+		t.Errorf("`default:` sets pull_policy to %q, want if-not-present", pp.str)
+	}
+
+	// Outside `default:`, only a hidden template may carry the one line.
+	for _, k := range doc.root.keys {
+		if k == "default" || strings.HasPrefix(k, ".") {
+			continue
+		}
+		if _, repeats := doc.root.vals[k].find("pull_policy"); repeats {
+			t.Errorf("job %q spells out pull_policy by hand: it comes from `default:` (SU-13, #217)", k)
+		}
+	}
+}
+
+// ciTestFiles parses every _test.go file in the package, apart from this
+// item's own, so the scan sees only the existing and the builder's files.
+func ciTestFiles(t *testing.T) map[string]*ast.File {
+	t.Helper()
+	dir := filepath.Join(root, "test", "supplychain")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	out := map[string]*ast.File{}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, "_test.go") || strings.HasPrefix(name, "ci_boilerplate") || strings.HasPrefix(name, "ci_miniyaml") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		out[name] = f
+	}
+	return out
+}
+
+func callsTo(f *ast.File, fn string) int {
+	n := 0
+	ast.Inspect(f, func(node ast.Node) bool {
+		if c, ok := node.(*ast.CallExpr); ok {
+			if id, ok := c.Fun.(*ast.Ident); ok && id.Name == fn {
+				n++
+			}
+		}
+		return true
+	})
+	return n
+}
+
+// SU-18: ci_rules_test and live_manifest_test each carried their own copy of
+// the loop that finds `live:` and stops at the next top-level key. One
+// `liveJobLines` helper does it now and both tests read through it.
+func TestLiveJobLinesIsDeclaredOnceAndUsedByBothScanners(t *testing.T) {
+	files := ciTestFiles(t)
+
+	var declaredIn []string
+	for name, f := range files {
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "liveJobLines" {
+				declaredIn = append(declaredIn, name)
+			}
+		}
+	}
+	sort.Strings(declaredIn)
+	if len(declaredIn) != 1 {
+		t.Fatalf("liveJobLines is declared in %v; want exactly one declaration in test/supplychain (SU-18, #217)", declaredIn)
+	}
+
+	for _, name := range []string{"ci_rules_test.go", "live_manifest_test.go"} {
+		f, ok := files[name]
+		if !ok {
+			t.Fatalf("%s is gone", name)
+		}
+		if callsTo(f, "liveJobLines") == 0 {
+			t.Errorf("%s does not call liveJobLines: it must read the live job through the shared helper (SU-18, #217)", name)
+		}
+	}
+}
+
+// Nothing but the helper may carry the "find the `live:` line" scan. The
+// literal is how both old copies recognised the job.
+func TestOnlyLiveJobLinesLooksForTheLiveKey(t *testing.T) {
+	files := ciTestFiles(t)
+	helperFound := false
+	for name, f := range files {
+		for _, d := range f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			isHelper := fd.Recv == nil && fd.Name.Name == "liveJobLines"
+			helperFound = helperFound || isHelper
+			if isHelper {
+				continue
+			}
+			ast.Inspect(fd, func(n ast.Node) bool {
+				if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && lit.Value == `"live:"` {
+					t.Errorf("%s: %s repeats the scan for the \"live:\" line; use liveJobLines (SU-18, #217)", name, fd.Name.Name)
+				}
+				return true
+			})
+		}
+	}
+	// Without the helper the loop above proves nothing.
+	if !helperFound {
+		t.Fatal("liveJobLines is not declared, so the absence checked here is vacuous (SU-18, #217)")
+	}
+}
