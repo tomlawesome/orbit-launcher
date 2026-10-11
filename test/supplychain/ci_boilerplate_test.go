@@ -7,8 +7,8 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216 and #198 make on purpose, listed in changedBy216 and
-// changedBy198.
+// the ones #216, #198 and #241 make on purpose, listed in changedBy216,
+// changedBy198 and changedBy241.
 package supplychain
 
 import (
@@ -421,12 +421,37 @@ var changedBy198 = []struct {
 	},
 }
 
-// applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216 and then
-// #198 do. Each rewrite for this job must match exactly once; a key it names
+// What #241 changes on purpose: straight after the live job exports the
+// verified preview manifest, it points install.sh at the registry the manifest
+// names and logs in to it. Same form and the same exactly-once rule as
+// changedBy216.
+var changedBy241 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old:  `  export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"`,
+		new: `  export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
+  # Install what the manifest names (#241): its image is in the GitLab
+  # registry that built it. install.sh ignores the manifest's
+  # repository and defaults to ghcr.io, where the GitHub copy can lag
+  # by up to two hours or never arrive. The token goes in on stdin.
+  image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
+  export ORBIT_REGISTRY="${image_repository%%/*}"
+  export ORBIT_REPOSITORY="${image_repository#*/}"
+  printf '%s' "$CI_JOB_TOKEN" | docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+  echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"`,
+	},
+}
+
+// applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
+// #198, then #241 do. Each rewrite for this job must match exactly once; a key it names
 // that the job lacks is a failure too, so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	t.Helper()
-	for _, r := range append(changedBy216[:len(changedBy216):len(changedBy216)], changedBy198...) {
+	for _, r := range append(append(changedBy216[:len(changedBy216):len(changedBy216)], changedBy198...), changedBy241...) {
 		applies := false
 		for _, j := range r.jobs {
 			applies = applies || j == job

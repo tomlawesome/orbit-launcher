@@ -626,6 +626,15 @@ live:
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
         export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
+        # Install what the manifest names (#241): its image is in the GitLab
+        # registry that built it. install.sh ignores the manifest's
+        # repository and defaults to ghcr.io, where the GitHub copy can lag
+        # by up to two hours or never arrive. The token goes in on stdin.
+        image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
+        export ORBIT_REGISTRY="${image_repository%%/*}"
+        export ORBIT_REPOSITORY="${image_repository#*/}"
+        printf '%s' "$CI_JOB_TOKEN" | docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+        echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"
         echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
         # The update leg's first install (#198): an earlier preview release,
         # so the update goes from one signed image to another. Its manifest
