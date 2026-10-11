@@ -391,13 +391,18 @@ func (n *yamlNode) find(key string) (*yamlNode, bool) {
 	return nil, false
 }
 
-// jobEffective is what a job runs and when, once `extends:` (GitLab's deep
-// merge: mappings merge, anything else is replaced) and `default:` (for the
-// script hooks) are applied: the non-blank lines the runner
-// executes, in order, and the rules.
+// jobEffective is what a job runs and how, once `extends:` (GitLab's deep
+// merge: mappings merge, anything else is replaced) and `default:` (a job
+// keyword wins outright; `default:` fills in only the keywords the job does
+// not set) are applied: the non-blank lines the runner executes, in order,
+// and every other key of the job.
 type jobEffective struct {
 	Script string
-	Rules  string
+	Keys   map[string]*yamlNode // every key but the three script hooks
+}
+
+func isScriptHook(k string) bool {
+	return k == "before_script" || k == "script" || k == "after_script"
 }
 
 func (d *yamlDoc) effectiveJob(name string) (jobEffective, error) {
@@ -409,19 +414,30 @@ func (d *yamlDoc) effectiveJob(name string) (jobEffective, error) {
 	if err != nil {
 		return jobEffective{}, err
 	}
+	def := d.root.vals["default"]
+	if def != nil && def.kind != 'm' {
+		def = nil
+	}
 	var all []string
 	for _, hook := range []string{"before_script", "script", "after_script"} {
 		v, set := merged.vals[hook]
-		if !set {
-			if def, hasDef := d.root.vals["default"]; hasDef && hook != "script" {
-				v = def.vals[hook]
-			}
+		if !set && def != nil && hook != "script" {
+			v = def.vals[hook]
 		}
 		all = append(all, v.flatScripts()...)
 	}
-	rules := "(none)"
-	if r, set := merged.vals["rules"]; set {
-		rules = r.dump()
+	keys := map[string]*yamlNode{}
+	for _, k := range merged.keys {
+		if !isScriptHook(k) {
+			keys[k] = merged.vals[k]
+		}
+	}
+	if def != nil {
+		for _, k := range def.keys {
+			if _, set := keys[k]; !set && !isScriptHook(k) {
+				keys[k] = def.vals[k]
+			}
+		}
 	}
 	// Line by line: the runner executes every entry in one shell, so where one
 	// entry ends and the next begins carries no meaning, and an anchor may
@@ -434,7 +450,7 @@ func (d *yamlDoc) effectiveJob(name string) (jobEffective, error) {
 			}
 		}
 	}
-	return jobEffective{Script: strings.Join(lines, "\n"), Rules: rules}, nil
+	return jobEffective{Script: strings.Join(lines, "\n"), Keys: keys}, nil
 }
 
 func (d *yamlDoc) extendsMerge(job *yamlNode, depth int) (*yamlNode, error) {

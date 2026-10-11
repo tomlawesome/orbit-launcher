@@ -110,13 +110,24 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 	}
 }
 
-// Passed already (it must stay passing): each job's effective rules and the
-// lines it runs -- before_script, script, after_script, in order -- are what
-// they were at ce4b412. This is the check that the anchors changed no
-// behaviour.
+// Passed already (it must stay passing): each job's effective script -- the
+// lines it runs, before_script, script, after_script, in order -- and every
+// other key it has (image, extends and the cache it brings, needs, rules,
+// timeout, tags, artifacts, variables, when, allow_failure, interruptible,
+// and whatever `default:` supplies) are what they were at ce4b412. This is
+// the check that the anchors changed no behaviour.
 func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	oldDoc := loadCI(t, readRepoFile(t, "test", "supplychain", oldCIFixture))
 	newDoc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+
+	// The pipeline-wide keys that decide when anything runs. `variables:`
+	// holds the pins Renovate moves, and `default:` is compared through each
+	// job, so neither is compared whole.
+	for _, k := range []string{"stages", "workflow"} {
+		if o, n := oldDoc.root.vals[k].dump(), newDoc.root.vals[k].dump(); o != n {
+			t.Errorf("top-level %q changed (#217)\nwant: %s\n got: %s", k, o, n)
+		}
+	}
 
 	compared := 0
 	for _, name := range topLevelKeysAtCE4B412 {
@@ -134,18 +145,35 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 		if name == "fast" {
 			want.Script = fastPlaceholderFirst(t, want.Script)
 		}
-		want.Script = checkedDownloadsAndShellcheck(t, name, want.Script)
 		got, err := newDoc.effectiveJob(name)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
 		compared++
-		if got.Rules != want.Rules {
-			t.Errorf("job %q: effective rules changed (#217)\nwant: %s\n got: %s", name, want.Rules, got.Rules)
+		wantKeys := map[string]string{}
+		for k, v := range want.Keys {
+			wantKeys[k] = jobKeyDump(k, v)
 		}
-		if got.Script != want.Script {
-			t.Errorf("job %q: effective script changed (#217)\nwant:\n%s\n got:\n%s", name, want.Script, got.Script)
+		wantKeys["script"] = want.Script
+		applyChangedBy216(t, name, wantKeys)
+		gotKeys := map[string]string{"script": got.Script}
+		for k, v := range got.Keys {
+			gotKeys[k] = jobKeyDump(k, v)
+		}
+		for _, k := range unionOfKeys(wantKeys, gotKeys) {
+			w, okW := wantKeys[k]
+			g, okG := gotKeys[k]
+			switch {
+			case !okG:
+				t.Errorf("job %q: %s is gone (#217)\nwas: %s", name, k, w)
+			case !okW:
+				t.Errorf("job %q: %s is new (#217)\nnow: %s", name, k, g)
+			case w != g && k == "script":
+				t.Errorf("job %q: effective script changed (#217)\nwant:\n%s\n got:\n%s", name, w, g)
+			case w != g:
+				t.Errorf("job %q: effective %s changed (#217)\nwant: %s\n got: %s", name, k, w, g)
+			}
 		}
 	}
 	// A reader that found no jobs would pass the loop above vacuously.
@@ -155,6 +183,56 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	if want, _ := oldDoc.effectiveJob("fast"); !strings.Contains(want.Script, "DOCS_ONLY") {
 		t.Fatal("the fixture's `fast` job does not carry the docs-only skip: the reader lost it")
 	}
+	if want, _ := oldDoc.effectiveJob("deps"); want.Keys["cache"] == nil || want.Keys["tags"] == nil {
+		t.Fatal("the fixture's `deps` job reads with no cache or no tags: `extends:` or `default:` is not being applied")
+	}
+}
+
+// jobKeyDump renders one job key for comparison. A literal image name keeps
+// its repository but not its tag or digest: Renovate moves those, and a
+// version bump is not a restructure, while a different image still differs.
+// Images named by a variable (`$GO_IMAGE`) compare as written.
+func jobKeyDump(key string, v *yamlNode) string {
+	if key != "image" {
+		return v.dump()
+	}
+	strip := func(name string) string {
+		if strings.HasPrefix(name, "$") {
+			return name
+		}
+		name, _, _ = strings.Cut(name, "@")
+		if i := strings.LastIndex(name, ":"); i > strings.LastIndex(name, "/") {
+			name = name[:i]
+		}
+		return name
+	}
+	if v.kind == 's' {
+		return (&yamlNode{kind: 's', str: strip(v.str)}).dump()
+	}
+	if v.kind != 'm' || v.vals["name"] == nil {
+		return v.dump()
+	}
+	c := &yamlNode{kind: 'm', keys: v.keys, vals: map[string]*yamlNode{}}
+	for k, x := range v.vals {
+		c.vals[k] = x
+	}
+	c.vals["name"] = &yamlNode{kind: 's', str: strip(v.vals["name"].str)}
+	return c.dump()
+}
+
+func unionOfKeys(a, b map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range []map[string]string{a, b} {
+		for k := range m {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // The one line #217 moves on purpose. fast and deps share one docs-only skip,
@@ -193,15 +271,17 @@ func fastPlaceholderFirst(t *testing.T, script string) string {
 	return strings.Join(out, "\n")
 }
 
-// The lines #216 changes on purpose, and nothing else (#199 SU-12, SU-15).
+// What #216 changes on purpose, and nothing else (#199 SU-12, SU-15).
 // Every pinned download used to type its own `curl` and `sha256sum -c`; each
 // now calls scripts/ci/fetch-verified.sh with the same URL, the same digest
 // variable and the same destination. fast's shellcheck step widens from the
 // retired bootstrap script to every script. Each rewrite names its jobs and
-// must find its old lines exactly once in each, so it cannot excuse any
-// other change.
+// the key it edits ("" for the script, matched as whole lines; any other key
+// matched in its dump), and must find its old text exactly once in each, so
+// it cannot excuse any other change.
 var changedBy216 = []struct {
 	jobs     []string
+	key      string
 	old, new string
 }{
 	{ // the Go tarball, through the .go_tarball anchor
@@ -246,12 +326,11 @@ echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -`,
 	},
 }
 
-// checkedDownloadsAndShellcheck rewrites one ce4b412 job script the way #216
-// does. Lines are matched whole, and each rewrite for this job must match
-// exactly once.
-func checkedDownloadsAndShellcheck(t *testing.T, job, script string) string {
+// applyChangedBy216 rewrites one ce4b412 job's keys the way #216 does. Each
+// rewrite for this job must match exactly once; a key it names that the job
+// lacks is a failure too, so no entry can go unused.
+func applyChangedBy216(t *testing.T, job string, keys map[string]string) {
 	t.Helper()
-	framed := "\n" + script + "\n"
 	for _, r := range changedBy216 {
 		applies := false
 		for _, j := range r.jobs {
@@ -260,13 +339,23 @@ func checkedDownloadsAndShellcheck(t *testing.T, job, script string) string {
 		if !applies {
 			continue
 		}
-		old := "\n" + r.old + "\n"
-		if n := strings.Count(framed, old); n != 1 {
-			t.Fatalf("ce4b412's %s script should hold these lines once, found %d:\n%s", job, n, r.old)
+		key, from, to, text := r.key, r.old, r.new, ""
+		if key == "" {
+			key = "script"
+			from, to = "\n"+from+"\n", "\n"+to+"\n"
+			text = "\n" + keys[key] + "\n"
+		} else {
+			text = keys[key]
 		}
-		framed = strings.Replace(framed, old, "\n"+r.new+"\n", 1)
+		if n := strings.Count(text, from); n != 1 {
+			t.Fatalf("ce4b412's %s %s should hold this once, found %d:\n%s", job, key, n, r.old)
+		}
+		text = strings.Replace(text, from, to, 1)
+		if r.key == "" {
+			text = text[1 : len(text)-1]
+		}
+		keys[key] = text
 	}
-	return framed[1 : len(framed)-1]
 }
 
 // anchorsHolding returns the anchors whose resolved value contains needle,
