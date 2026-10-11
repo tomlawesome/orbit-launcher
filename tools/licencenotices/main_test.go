@@ -42,7 +42,7 @@ func repo(t *testing.T) func() ([]review.Package, error) {
 func licencenotices(t *testing.T, lister func() ([]review.Package, error), args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = cli(append([]string{"licencenotices"}, args...), &out, &errOut, lister)
+	code = command(append([]string{"licencenotices"}, args...), &out, &errOut, lister)
 	return code, out.String(), errOut.String()
 }
 
