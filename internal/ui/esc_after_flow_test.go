@@ -5,7 +5,8 @@ package ui
 // (2026-10-11, answer 3a): on the screens shown after a flow finishes,
 // Esc goes back to the main menu, as it already does after Repair. That
 // is Remove's "removed" and "failed" screens and Install's success
-// screen. Rows that say Exit/Terminal, `q` and Ctrl-C still quit.
+// screen. Rows that say Exit/Terminal and Ctrl-C still quit; there is no `q`
+// shortcut on any of them (#226).
 //
 // "Back to the menu" is the flow's leave outcome: Outcome() reading Done
 // and WantsMenu without Succeeded, and no tea.Quit (see leave_flow_test.go).
@@ -34,10 +35,6 @@ type finishedScreen struct {
 	// exitKeys are the keys from that screen's default row to its
 	// Exit/Terminal row, ending with the Enter that chooses it.
 	exitKeys []tea.Msg
-	// quitsOnQ is whether q quits on that screen today. Only Install's
-	// success screen has a q key; the issue says q "still" quits, which
-	// holds there, so the others are left out rather than invented.
-	quitsOnQ bool
 }
 
 func removeFinished(t *testing.T, standDownErr error) tea.Model {
@@ -81,11 +78,11 @@ func installSuccessScreen(t *testing.T) tea.Model {
 func finishedScreens() []finishedScreen {
 	return []finishedScreen{
 		// Copy command is the default row; Exit is the one below it.
-		{"Remove removed", removedScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}, false},
+		{"Remove removed", removedScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 		// Exit is the only row.
-		{"Remove failed", removeFailedScreen, []tea.Msg{key(tea.KeyEnter)}, false},
+		{"Remove failed", removeFailedScreen, []tea.Msg{key(tea.KeyEnter)}},
 		// Get into Orbit, then Terminal.
-		{"Install success", installSuccessScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}, true},
+		{"Install success", installSuccessScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 	}
 }
 
@@ -143,7 +140,7 @@ func outcomeIfAny(m tea.Model) flowOutcome {
 	return flowOutcome{}
 }
 
-func TestEscAfterFlow_ExitRowQKeyAndCtrlCStillQuit(t *testing.T) {
+func TestEscAfterFlow_ExitRowAndCtrlCStillQuitAndQDoesNothing(t *testing.T) {
 	for _, c := range finishedScreens() {
 		t.Run(c.name+"/exit row", func(t *testing.T) {
 			m, cmd := updateAs(t, c.model(t), c.exitKeys...)
@@ -154,16 +151,15 @@ func TestEscAfterFlow_ExitRowQKeyAndCtrlCStillQuit(t *testing.T) {
 				t.Fatal("the Exit/Terminal row was taken as back-to-menu")
 			}
 		})
-		t.Run(c.name+"/q", func(t *testing.T) {
-			if !c.quitsOnQ {
-				t.Skip("q does not quit on this screen today")
-			}
-			m, cmd := updateAs(t, c.model(t), runeKey('q'))
-			if !isQuit(cmd) {
-				t.Fatal("q did not quit")
-			}
-			if leftForMenuOrChosen(m) {
-				t.Fatal("q was taken as back-to-menu")
+		t.Run(c.name+"/q does nothing", func(t *testing.T) {
+			for _, r := range []rune{'q', 'Q'} {
+				m, cmd := updateAs(t, c.model(t), runeKey(r))
+				if cmd != nil || isQuit(cmd) {
+					t.Fatalf("%q did something (quit = %v); it has no meaning here", r, isQuit(cmd))
+				}
+				if leftForMenuOrChosen(m) {
+					t.Fatalf("%q left the screen", r)
+				}
 			}
 		})
 		t.Run(c.name+"/ctrl-c", func(t *testing.T) {
@@ -187,7 +183,6 @@ type appFinished struct {
 	// app builds the AppModel on the screen.
 	app      func(t *testing.T) AppModel
 	exitKeys []tea.Msg
-	quitsOnQ bool
 }
 
 func appOnRemoveScreen(t *testing.T, standDownErr error) AppModel {
@@ -261,7 +256,7 @@ func appFinishedScreens() []appFinished {
 	return []appFinished{
 		{name: "Remove removed", app: appOnRemoved, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 		{name: "Remove failed", app: appOnRemoveFailed, exitKeys: []tea.Msg{key(tea.KeyEnter)}},
-		{name: "Install success", app: appOnInstallSuccess, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}, quitsOnQ: true},
+		{name: "Install success", app: appOnInstallSuccess, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 	}
 }
 
@@ -321,23 +316,27 @@ func TestEscAfterFlow_AppShowsTheMenuSizedAndLive(t *testing.T) {
 	}
 }
 
-func TestEscAfterFlow_AppExitRowQKeyAndCtrlCStillQuit(t *testing.T) {
+func TestEscAfterFlow_AppExitRowAndCtrlCStillQuitAndQDoesNothing(t *testing.T) {
 	for _, c := range appFinishedScreens() {
 		t.Run(c.name+"/exit row", func(t *testing.T) {
 			if _, cmd := updateAs(t, c.app(t), c.exitKeys...); !isQuit(cmd) {
 				t.Fatal("the Exit/Terminal row did not quit the program")
 			}
 		})
-		t.Run(c.name+"/q", func(t *testing.T) {
-			if !c.quitsOnQ {
-				t.Skip("q does not quit on this screen today")
-			}
-			m, cmd := updateAs(t, c.app(t), runeKey('q'))
-			if !isQuit(cmd) {
-				t.Fatal("q did not quit the program")
-			}
-			if m.state == appStateSplash {
-				t.Fatal("q went back to the menu")
+		t.Run(c.name+"/q does nothing", func(t *testing.T) {
+			for _, r := range []rune{'q', 'Q'} {
+				before := c.app(t)
+				m, cmd := updateAs(t, before, runeKey(r))
+				if isQuit(cmd) {
+					t.Fatalf("%q quit the program; there is no q shortcut", r)
+				}
+				m = drive(t, m, cmd)
+				if m.state != before.state {
+					t.Fatalf("%q moved the app from state %v to %v", r, before.state, m.state)
+				}
+				if screen(m) != screen(before) {
+					t.Fatalf("%q changed the screen:\n%s", r, screen(m))
+				}
 			}
 		})
 		t.Run(c.name+"/ctrl-c", func(t *testing.T) {

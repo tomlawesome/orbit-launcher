@@ -96,7 +96,7 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 	}, teatest.WithDuration(2*time.Second))
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // confirm -> profile
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // profile -> quit
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // profile -> menu
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}

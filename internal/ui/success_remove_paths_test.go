@@ -16,17 +16,22 @@ import (
 // the Remove flow.
 
 func TestSuccessModel_EveryWayOutLeavesForTheTerminal(t *testing.T) {
-	// Esc is one step back, to the menu (#225); every other way out quits.
-	for name, k := range map[string]tea.KeyPressMsg{"Ctrl+C": ctrlC(), "q": runeKey('q')} {
-		m, cmd := updateAs(t, newTestSuccessModel(), k)
-		if m.Chosen != "terminal" || !isQuit(cmd) {
-			t.Errorf("%s: Chosen = %q, quit = %v; want terminal and quit", name, m.Chosen, isQuit(cmd))
+	// Esc is one step back, to the menu (#225); Ctrl+C quits. There is no
+	// q shortcut (#226).
+	m, cmd := updateAs(t, newTestSuccessModel(), ctrlC())
+	if m.Chosen != "terminal" || !isQuit(cmd) {
+		t.Errorf("Ctrl+C: Chosen = %q, quit = %v; want terminal and quit", m.Chosen, isQuit(cmd))
+	}
+	for _, r := range []rune{'q', 'Q'} {
+		m, cmd := updateAs(t, newTestSuccessModel(), runeKey(r))
+		if m.Chosen != "" || isQuit(cmd) || cmd != nil {
+			t.Errorf("%q: Chosen = %q, cmd = %v; want q to do nothing", r, m.Chosen, cmd != nil)
 		}
 	}
 	if m, _ := updateAs(t, newTestSuccessModel(), key(tea.KeyEsc)); m.Outcome() != backToMenu || m.Chosen == "terminal" {
 		t.Errorf("Esc: Chosen = %q; want back to the menu", m.Chosen)
 	}
-	m, cmd := updateAs(t, newTestSuccessModel(), runeKey('x'))
+	m, cmd = updateAs(t, newTestSuccessModel(), runeKey('x'))
 	if m.Chosen != "" || cmd != nil {
 		t.Fatal("an unbound key left the success screen")
 	}
