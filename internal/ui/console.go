@@ -137,8 +137,14 @@ func (c ConsoleModel) observeEvent(e engine.Event) ConsoleModel {
 }
 
 // observeRaw records a non-event stdout line — legacy-engine prose,
-// displayed dim and verbatim.
+// displayed dim after being made safe to draw: a carriage return or
+// cursor escape would otherwise move the terminal cursor and
+// overwrite the box border.
 func (c ConsoleModel) observeRaw(line string) ConsoleModel {
+	line = cleanLine(ansi.Strip(line))
+	if strings.TrimSpace(line) == "" {
+		return c // an all-escape line is not an entry
+	}
 	c.entries = appendEntry(c.entries, consoleEntry{raw: line})
 	return c
 }
