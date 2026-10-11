@@ -141,3 +141,20 @@ func TestWrapWords_LongWhitespaceRunsAreLinear(t *testing.T) {
 		}
 	}
 }
+
+// An indent is kept while it and the first word fit; an indent wider
+// than the row would push the text off the screen, so it goes.
+func TestWrapWords_IndentWiderThanTheRowGoes(t *testing.T) {
+	if got := wrapWords("  indented "+strings.Repeat("word ", 20), 40); len(got) < 2 || !strings.HasPrefix(got[0], "  indented") {
+		t.Errorf("a fitting indent was lost: %q", got)
+	}
+	got := wrapWords(strings.Repeat(" ", 100)+strings.Repeat("word ", 20), 40)
+	for _, row := range got {
+		if w := lipgloss.Width(row); w > 40 {
+			t.Errorf("a row is %d cells, past 40: %q", w, row)
+		}
+	}
+	if len(got) == 0 || got[0] != strings.TrimRight(strings.Repeat("word ", 8), " ") {
+		t.Errorf("first row = %q, want the words from column 0", got)
+	}
+}
