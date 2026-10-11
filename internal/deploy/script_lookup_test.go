@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // #208 (#199 WI-4, EN-7). Finding a deployment's script is one rule,
@@ -38,6 +40,9 @@ var scriptLookups = []scriptLookup{
 		script:   "repair.sh",
 		sentinel: ErrRepairUnavailable,
 		run: func(t *testing.T, dir string) error {
+			// Repair needs a deployment to look in: the env file is what
+			// makes the directory one (#237).
+			testutil.WriteEnvOrbit(t, filepath.Join(dir, EnvFile))
 			cmd, err := RepairCommand(dir, RepairCheck)
 			if (cmd == nil) == (err == nil) {
 				t.Errorf("RepairCommand returned cmd=%v with err=%v; want exactly one", cmd, err)
@@ -240,11 +245,13 @@ func TestScriptLookup_AbsentScriptWritesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(entries) != 0 {
-			var names []string
-			for _, e := range entries {
+		var names []string
+		for _, e := range entries {
+			if e.Name() != EnvFile { // the repair lookup's own fixture: it needs a deployment to look in (#237)
 				names = append(names, e.Name())
 			}
+		}
+		if len(names) != 0 {
 			t.Errorf("%s: looking for an absent script left %v behind", l.script, names)
 		}
 	}

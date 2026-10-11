@@ -17,6 +17,7 @@ func trustedDeployment(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	chmod(t, dir, 0o755)
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, EnvFile))
 	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o644})
 	return dir
 }
@@ -525,15 +526,17 @@ func TestRequireTrustedPath_MissingDirIsNotExist(t *testing.T) {
 }
 
 // A target that is a file is an error, not "this deployment has no
-// repair diagnosis": the person pointed the launcher at the wrong path.
+// repair diagnosis" or "no deployment here": the person pointed the
+// launcher at the wrong path. Detect reads it first, so the error names
+// the deployment read (#237).
 func TestRepairCommand_TargetThatIsAFileIsAnError(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "orbit")
 	if err := os.WriteFile(target, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := RepairCommand(target, RepairPlan)
-	if err == nil || errors.Is(err, ErrRepairUnavailable) || !strings.Contains(err.Error(), "repair.sh") {
-		t.Fatalf("err = %v, want an error naming repair.sh", err)
+	if err == nil || errors.Is(err, ErrRepairUnavailable) || errors.Is(err, ErrNoDeployment) || !strings.Contains(err.Error(), "read the deployment") {
+		t.Fatalf("err = %v, want an error naming the deployment read", err)
 	}
 }
 

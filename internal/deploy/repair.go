@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +21,14 @@ import (
 // configure.sh), and its diagnosis is read-only by construction (the
 // script's own contract, contract-tested orbit-side).
 
+// ErrNoDeployment means there is no Orbit deployment in the directory
+// at all (no .env-orbit): the caller's cue for the shared no-deployment
+// screen rather than "diagnosis unavailable" (#237).
+var ErrNoDeployment = errors.New("no Orbit deployment here (no " + EnvFile + ")")
+
 // ErrRepairUnavailable means the deployment has no scripts/repair.sh —
-// it predates the repair diagnosis, or there is no deployment here:
-// diagnosis honestly isn't available rather than being guessed at.
+// it predates the repair diagnosis: diagnosis honestly isn't available
+// rather than being guessed at.
 var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (no scripts/repair.sh)")
 
 // repairScript is repair.sh's name in the deployment's scripts
@@ -30,10 +36,19 @@ var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (
 const repairScript = "repair.sh"
 
 // RepairCommand builds one repair run against the deployment's own
-// scripts/repair.sh. An absent script is ErrRepairUnavailable; one on a
-// path RequireTrustedPath refuses is an UntrustedPathError. There is no
-// fallback to any other copy.
+// scripts/repair.sh. No deployment in the directory is ErrNoDeployment
+// (checked first, so diagnosis and rotation both get it); an absent
+// script is ErrRepairUnavailable; one on a path RequireTrustedPath
+// refuses is an UntrustedPathError. There is no fallback to any other
+// copy.
 func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
+	d, err := Detect(targetDir)
+	if err != nil {
+		return nil, fmt.Errorf("read the deployment: %w", err)
+	}
+	if d == nil {
+		return nil, ErrNoDeployment
+	}
 	if err := requireScript(targetDir, repairScript, ErrRepairUnavailable); err != nil {
 		return nil, err
 	}
