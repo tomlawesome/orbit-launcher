@@ -1,13 +1,18 @@
 package pty
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTYInDir(t, binPath, t.TempDir())
 	skipArrival(t, console)
 
@@ -30,13 +35,9 @@ func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 
 func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *testing.T) {
 	dir := t.TempDir()
-	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:" +
-		"0000000000000000000000000000000000000000000000000000000000000000\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
-		t.Fatalf("write fixture .env-orbit: %v", err)
-	}
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
 
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTYInDir(t, binPath, dir)
 	skipArrival(t, console)
 
@@ -59,7 +60,13 @@ func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *test
 		t.Fatalf("did not see the detected deployment's host: %v", err)
 	}
 
-	console.send("\x1b") // Escape cancels, never touches Docker
+	// Escape is one step back, to the menu (#210, owner 4a), and never
+	// touches Docker; Ctrl-C quits from anywhere.
+	console.send("\x1b")
+	if err := console.expectWithin(10*time.Second, vtscreen.ContainsAll("Install", "Update", "Repair")); err != nil {
+		t.Fatalf("Escape on the confirm screen did not return to the menu: %v", err)
+	}
+	console.send("\x03")
 
 	waitForExit(t, cmd)
 }

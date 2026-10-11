@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -14,6 +15,65 @@ import (
 // The splash, the mission console and the success screen are all the
 // same scene with different content — extracting it keeps the three
 // pixel-identical in sky behaviour by construction.
+
+// newSky builds the background sky for a width × height screen. Every
+// screen seeds it the same, 1, so every sky is pixel-identical by
+// construction.
+func newSky(width, height int) starfield.Model {
+	return starfield.New(width, height, 1)
+}
+
+// topOffsetFor is the optical centre: the first row of a block of lines
+// set in bodyHeight rows, 0.42 of the spare rows down (a touch above
+// the true middle), never negative.
+func topOffsetFor(bodyHeight, lines int) int {
+	return max(int(0.42*float64(bodyHeight-lines)), 0)
+}
+
+// writeHeader writes the stacked flow-screen header: the rendered mark,
+// a blank line, the title (one or more lines) in style.Title, a blank
+// line.
+func writeHeader(b *strings.Builder, mark string, title ...string) {
+	fmt.Fprintln(b, mark)
+	fmt.Fprintln(b)
+	for _, line := range title {
+		fmt.Fprintln(b, style.Title.Render(line))
+	}
+	fmt.Fprintln(b)
+}
+
+// writeInlineHeader writes the one-line header of an outcome screen:
+// the rendered glyph and the title in style.Title on one line, then a
+// blank line.
+func writeInlineHeader(b *strings.Builder, glyph, title string) {
+	fmt.Fprintln(b, glyph+" "+style.Title.Render(title))
+	fmt.Fprintln(b)
+}
+
+// drawBox draws the one rounded box every screen uses (the console's
+// event log, the notice's typing field, the removal command), width
+// cells wide with one row per entry of rows, its frame in border:
+// "│ " and " │" either side of each row, the row padded to the inside
+// width with spaces. Rows are measured in cells and must already fit;
+// a box too narrow for any inside (under four cells) is frame only.
+func drawBox(border lipgloss.Style, width int, rows []string) []string {
+	if width < 2 {
+		return nil
+	}
+	inner := width - 4
+	side := border.Render("│")
+	lines := make([]string, 0, len(rows)+2)
+	lines = append(lines, border.Render("╭"+strings.Repeat("─", width-2)+"╮"))
+	for _, row := range rows {
+		if inner <= 0 {
+			lines = append(lines, side+strings.Repeat(" ", width-2)+side)
+			continue
+		}
+		gap := max(inner-lipgloss.Width(row), 0)
+		lines = append(lines, side+" "+row+strings.Repeat(" ", gap+1)+side)
+	}
+	return append(lines, border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+}
 
 // skyCell is one background cell: a glyph plus which style class draws
 // it. Class 0 is empty, 1 is a star; higher classes are planet kinds.
@@ -120,7 +180,7 @@ func compositeScene(star starfield.Model, ready bool, width, bodyHeight int, con
 	return rows
 }
 
-// skyBlock is centreBlock's grammar — the same 0.42 optical centre, the
+// skyBlock is centreBlock's grammar — the same optical centre, the
 // same per-line centring — rendered over the live sky instead of a bare
 // terminal. The flow screens (install, remove, update, repair, in-console
 // configuration) were built with centreBlock and so read as plain text on
@@ -132,11 +192,7 @@ func skyBlock(star starfield.Model, width, height int, content string) string {
 	if width <= 0 || height <= 0 {
 		return centreBlock(width, height, content)
 	}
-	topOffset := int(0.42 * float64(height-1-len(lines)))
-	if topOffset < 0 {
-		topOffset = 0
-	}
-	return strings.Join(compositeScene(star, true, width, height, lines, topOffset), "\n")
+	return strings.Join(compositeScene(star, true, width, height, lines, topOffsetFor(height-1, len(lines))), "\n")
 }
 
 // footerRow builds the screen's last row: a single centred faint line —
@@ -149,6 +205,17 @@ func footerRow(width int, text string) string {
 		return ""
 	}
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, style.Tagline.Render(text))
+}
+
+// footVersion is the launcher's version foot text, "orbit-launcher <v>",
+// shared by the splash and the console. An empty version gives "", which
+// footerRow renders as no foot at all: the UI prints the version it is
+// given and never invents one (release.DisplayVersion shapes it).
+func footVersion(v string) string {
+	if v == "" {
+		return ""
+	}
+	return "orbit-launcher " + v
 }
 
 // menuRow renders one stacked-menu row for the centred-menu grammar:

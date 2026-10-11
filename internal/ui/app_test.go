@@ -3,7 +3,6 @@ package ui
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
@@ -35,7 +35,7 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 		return bytes.Contains(out, []byte("No Orbit deployment found in"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 	}, teatest.WithDuration(2*time.Second))
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // confirm -> profile
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // profile -> quit
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // profile -> menu
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -104,10 +104,7 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 
 func TestAppModel_SelectingUpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *testing.T) {
 	dir := t.TempDir()
-	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
-		t.Fatalf("failed to write fixture .env-orbit: %v", err)
-	}
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
 
 	m := NewAppModel().WithoutVolumeCheck() // the Update screen looks up the install date in Docker
 	m.targetDir = dir
@@ -163,7 +160,7 @@ func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.
 		return bytes.Contains(out, []byte("O R B I T"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -264,17 +261,14 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 
 func TestAppModel_WithDeploymentStatusPreselectsUpdateAndSetsFQDN(t *testing.T) {
 	dir := t.TempDir()
-	envContent := "APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte(envContent), 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
 
 	m := NewAppModel()
 	m.targetDir = dir
 	m = m.WithDeploymentStatus(nil)
 
-	if m.splash.selected != menuUpdate {
-		t.Errorf("selected = %d, want Update preselected for a detected deployment", m.splash.selected)
+	if m.splash.menu.sel != menuUpdate {
+		t.Errorf("selected = %d, want Update preselected for a detected deployment", m.splash.menu.sel)
 	}
 	if m.splash.fqdn != "mail.example.com" {
 		t.Errorf("fqdn = %q, want the bare host", m.splash.fqdn)
@@ -289,8 +283,8 @@ func TestAppModel_WithDeploymentStatusIsANoOpWithoutADeployment(t *testing.T) {
 	m.targetDir = t.TempDir()
 	m = m.WithDeploymentStatus(nil)
 
-	if m.splash.selected != menuInstall {
-		t.Errorf("selected = %d, want Install for a dormant machine", m.splash.selected)
+	if m.splash.menu.sel != menuInstall {
+		t.Errorf("selected = %d, want Install for a dormant machine", m.splash.menu.sel)
 	}
 	if m.splash.state != stateDormant {
 		t.Errorf("state = %v, want stateDormant", m.splash.state)

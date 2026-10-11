@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
@@ -25,8 +26,6 @@ func startedRun(t *testing.T, action string, seams engineRunSeams) engineRun {
 	return r
 }
 
-func runScreen(r engineRun) string { return stripANSI(r.view(80, 26)) }
-
 func runUpdate(t *testing.T, r engineRun, msg tea.Msg) (engineRun, tea.Cmd) {
 	t.Helper()
 	return r.update(msg)
@@ -40,7 +39,7 @@ func installScriptAt(t *testing.T, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+	t.Setenv(deploy.InstallScriptPathEnv, path)
 }
 
 func TestEngineRun_DefaultPrepareRunsTheScriptInPlainModeForTheAction(t *testing.T) {
@@ -62,12 +61,12 @@ func TestEngineRun_DefaultPrepareRunsTheScriptInPlainModeForTheAction(t *testing
 
 func TestEngineRun_DefaultPrepareFailuresReachTheFailedScreen(t *testing.T) {
 	t.Run("script cannot be read", func(t *testing.T) {
-		t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", filepath.Join(t.TempDir(), "missing.sh"))
+		t.Setenv(deploy.InstallScriptPathEnv, filepath.Join(t.TempDir(), "missing.sh"))
 		r := newEngineRun("install", t.TempDir(), "Install", "v")
 		r, cmd := r.start(80, 26)
 		r, _ = runUpdate(t, r, cmd())
 		s := runScreen(r)
-		if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, "ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH") {
+		if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, deploy.InstallScriptPathEnv) {
 			t.Fatalf("state = %v, screen:\n%s", r.state, s)
 		}
 	})
@@ -237,7 +236,7 @@ func TestEngineRun_ConfigurationPromptMenu(t *testing.T) {
 	t.Run("unbound key", func(t *testing.T) {
 		r := refused(t)
 		r, cmd := runUpdate(t, r, runeKey('z'))
-		if cmd != nil || r.Done || r.menuSel != 0 || r.state != runConfigPrompt {
+		if cmd != nil || r.Done || r.menu.sel != 0 || r.state != runConfigPrompt {
 			t.Fatal("an unbound key changed the prompt")
 		}
 	})

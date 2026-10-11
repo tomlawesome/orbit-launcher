@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/tools/internal/cli"
 	scp "github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy/policy"
 )
 
@@ -38,7 +39,7 @@ var fileComment = []string{
 	"",
 	"There is deliberately no review date. A date could only be moved by hand, and for an",
 	"action that simply has not released it went stale while nothing was wrong. Currency is",
-	"driven by Dependabot opening a bump, and by test/supplychain refusing a bump that leaves",
+	"driven by Renovate opening a bump, and by test/supplychain refusing a bump that leaves",
 	"this file behind.",
 }
 
@@ -47,25 +48,14 @@ func main() {
 }
 
 // run is main with its arguments and outputs passed in, so tests can drive
-// the command and read what it printed. It behaves as the command did when
-// this lived in main: exit 2 on a bad flag, 0 for -h, 1 on any failure.
+// the command and read what it printed. Exit codes are cli.Run's: 2 on a
+// bad flag, 0 for -h, 1 on any failure.
 func run(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("supplychainpolicy", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	write := fs.Bool("write", false, "regenerate the policy file (requires network access)")
-	root := fs.String("root", ".", "repository root")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 2
-	}
-
-	if err := execute(*root, *write, stdout); err != nil {
-		fmt.Fprintf(stderr, "supplychainpolicy: %v\n", err)
-		return 1
-	}
-	return 0
+	return cli.Run("supplychainpolicy", args, stderr, func(fs *flag.FlagSet) func() error {
+		write := fs.Bool("write", false, "regenerate the policy file (requires network access)")
+		root := fs.String("root", ".", "repository root")
+		return func() error { return execute(*root, *write, stdout) }
+	})
 }
 
 func execute(root string, write bool, stdout io.Writer) error {

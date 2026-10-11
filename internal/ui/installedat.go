@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -28,14 +29,30 @@ func installedAtCmd(lookup func(context.Context, *deploy.Deployment) time.Time, 
 	}
 }
 
-// identityLine is the confirm screens' one line of deployment identity:
-// the host, and the install date only when Docker has said what it is.
-func identityLine(d *deploy.Deployment, installedAt time.Time) string {
-	if d == nil || d.AppURL == "" {
+// deploymentIdentity names a deployment the one way every screen does
+// (the splash, the Remove and Update confirm screens, Update's title):
+// the bare host of its APP_URL, since scheme and path are launcher noise
+// at a glance; "deployment detected" when its env file has no APP_URL;
+// "no deployment details found" when there is no deployment at all.
+func deploymentIdentity(d *deploy.Deployment) string {
+	switch {
+	case d == nil:
 		return "no deployment details found"
+	case d.AppURL == "":
+		return "deployment detected"
 	}
-	identity := displayHost(d.AppURL)
-	if !installedAt.IsZero() {
+	if u, err := url.Parse(d.AppURL); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return d.AppURL
+}
+
+// identityLine is the confirm screens' one line of deployment identity:
+// deploymentIdentity, and the install date only when Docker has said
+// what it is.
+func identityLine(d *deploy.Deployment, installedAt time.Time) string {
+	identity := deploymentIdentity(d)
+	if d != nil && !installedAt.IsZero() {
 		identity += " · installed " + installedAt.Format("2006-01-02")
 	}
 	return identity

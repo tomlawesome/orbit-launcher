@@ -356,3 +356,56 @@ func TestParseReviews_ErrorNamesTheFileLine(t *testing.T) {
 		t.Fatalf("err = %v, want one naming line 4", err)
 	}
 }
+
+// The review file is read line by line with a bounded line length (#199
+// SU-17's shared reader); a line past the bound is an error naming it,
+// never silently dropped.
+func TestParseReviews_OverlongLineIsAnError(t *testing.T) {
+	text := "# reviews\n" + strings.Repeat("x", 2<<20) + "\n"
+	if _, err := ParseReviews(text); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("err = %v, want an error naming line 2", err)
+	}
+}
+
+// LicenceFile is one name rule for both tools (#218). Licence-style names
+// count with no extension, a documentation extension, or an upper-case
+// licence tag; a source-code extension makes the file code, not a
+// licence, because the notices builder copies licence files verbatim.
+func TestLicenceFile_NamesTextNotSource(t *testing.T) {
+	for _, name := range []string{
+		"LICENSE", "LICENCE", "license", "License.txt", "LICENSE.md", "license.markdown",
+		"LICENSE.rst", "LICENSE-MIT", "LICENSE.APACHE", "LICENSE_APACHE-2.0", "LICENSE-MIT.txt",
+		"COPYING", "COPYING.LESSER", "NOTICE", "NOTICE.md", "UNLICENSE",
+	} {
+		if !LicenceFile(name) {
+			t.Errorf("LicenceFile(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{
+		"license.go", "notice.go", "LICENSE_test.go", "COPYING.c", "license.py", "notice.h",
+		"licenser", "LICENSES", "README", "MIT.txt",
+	} {
+		if LicenceFile(name) {
+			t.Errorf("LicenceFile(%q) = true, want false", name)
+		}
+	}
+}
+
+// A package whose own source file is named like a licence is not marked
+// as someone else's code by it; a real nested licence file still marks it.
+func TestScan_SourceNamedLikeALicenceIsNoMarker(t *testing.T) {
+	root := fakeModule(t, map[string]string{
+		"LICENSE":                        "MIT",
+		"internal/lic/license.go":        plain,
+		"internal/apache/LICENSE.APACHE": "Apache",
+		"internal/apache/a.go":           plain,
+	})
+	got := scan(t,
+		pkg(root, "example.com/m", "internal/lic", []string{"license.go"}),
+		pkg(root, "example.com/m", "internal/apache", []string{"a.go"}),
+	)
+	want := []Finding{{Module: "example.com/m@v1.2.3", Path: "internal/apache/a.go", Kind: Vendored}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

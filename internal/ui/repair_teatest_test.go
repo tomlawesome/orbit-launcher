@@ -44,7 +44,7 @@ func newRepairTestModel(t *testing.T, m RepairModel, width, height int) *teatest
 
 func TestRepairModel_TeaTest_DiagnosisRendersAndReturnsToMenu(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`
+	m.prepareRepair = fakeRepairStream(`
 echo 'finding class=managed-file-missing target=compose-file severity=fail'
 echo 'finding class=database-credential-mismatch target=database severity=fail'
 echo 'finding class=secret-missing target=session-secret severity=warn'
@@ -71,7 +71,7 @@ exit 4`)
 
 func TestRepairModel_TeaTest_HealthyDiagnosis(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`)
+	m.prepareRepair = fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`)
 	tm := newRepairTestModel(t, m, 80, 24)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
@@ -89,7 +89,7 @@ func TestRepairModel_TeaTest_HealthyDiagnosis(t *testing.T) {
 
 func TestRepairModel_UnavailableOrbitLine(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = func(_ context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+	m.prepareRepair = func(_ context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 		return nil, deploy.ErrRepairUnavailable
 	}
 	tm := newRepairTestModel(t, m, 80, 24)
@@ -118,7 +118,7 @@ func TestRepairModel_MenuOutcomeWantsMenu(t *testing.T) {
 
 func TestRepairModel_NotAnOrbitInstallation(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`
+	m.prepareRepair = fakeRepairStream(`
 echo 'finding class=not-orbit-directory target=directory severity=fail'
 echo 'diagnosis result=failed checked=1 skipped=12'
 exit 5`)
@@ -140,7 +140,7 @@ exit 5`)
 // value-free "manual step:" guidance on stderr, no finding lines.
 func TestRepairModel_TeaTest_PlanRenders(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`
+	m.prepareRepair = fakeRepairStream(`
 echo 'plan action=regenerate-secret resolves=secret-missing mutation=reversible backup=not-required'
 echo 'plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required'
 echo 'plan action=manual resolves=database-unreachable mutation=none backup=not-required'
@@ -168,7 +168,7 @@ exit 3`)
 
 func TestRepairModel_TeaTest_PlanEmptyIsClear(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`echo 'plan result=empty actions=0 manual=0'; exit 0`)
+	m.prepareRepair = fakeRepairStream(`echo 'plan result=empty actions=0 manual=0'; exit 0`)
 	tm := newRepairTestModel(t, m, 80, 24)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
@@ -187,7 +187,7 @@ func TestRepairModel_TeaTest_PlanEmptyIsClear(t *testing.T) {
 // it (exit 2), and the flow silently reruns --check.
 func TestRepairModel_TeaTest_OldScriptFallsBackToCheck(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = func(_ context.Context, _ string, mode deploy.RepairMode) (*engine.Stream, error) {
+	m.prepareRepair = func(_ context.Context, _ string, mode deploy.RepairMode) (*engine.Stream, error) {
 		if mode == deploy.RepairPlan {
 			return engine.Start(exec.Command("bash", "-c", `echo "Usage: repair.sh --check" >&2; exit 2`))
 		}
@@ -239,7 +239,7 @@ func modalRepairStream(planScript, executeScript string) prepareRepairFunc {
 
 func TestRepairModel_TeaTest_SafeExecutionRunsAndShowsAfterPicture(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = modalRepairStream(safePlanStream, safeExecuteStream)
+	m.prepareRepair = modalRepairStream(safePlanStream, safeExecuteStream)
 	tm := newRepairTestModel(t, m, 80, 26)
 
 	// The action's sentence is asserted here, on the plan screen, because
@@ -275,7 +275,7 @@ func TestRepairModel_TeaTest_SafeExecutionRunsAndShowsAfterPicture(t *testing.T)
 
 func TestRepairModel_TeaTest_NoExecutionOfferedWithoutSafeActions(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`
+	m.prepareRepair = fakeRepairStream(`
 echo 'plan action=manual resolves=database-unreachable mutation=none backup=not-required'
 echo 'plan result=manual-required actions=0 manual=1'
 exit 4`)
@@ -316,7 +316,7 @@ exit 0`
 
 func TestRepairModel_TeaTest_DangerousRotationDrivenInConsole(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`
+	m.prepareRepair = fakeRepairStream(`
 echo 'plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required'
 echo 'plan result=ready actions=1 manual=0'
 exit 3`)
@@ -380,7 +380,7 @@ exit 3`)
 
 func TestRepairModel_TeaTest_EscAbandonsRotationUnchanged(t *testing.T) {
 	m := NewRepairModel(t.TempDir(), "v0.6.0")
-	m.prepare = fakeRepairStream(`
+	m.prepareRepair = fakeRepairStream(`
 echo 'plan action=rotate-database-credential resolves=database-credential-mismatch mutation=credential-rotation backup=required'
 echo 'plan result=ready actions=1 manual=0'
 exit 3`)
@@ -405,7 +405,7 @@ exit 3`)
 		return bytes.Contains(out, []byte("nothing was rotated"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}

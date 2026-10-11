@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // setScriptFetchTimeout swaps the shared fetch client for one with a short
@@ -94,7 +96,7 @@ func TestFetchInstallScript_URLOverrideRedirectsAwayFromOrbitMain(t *testing.T) 
 	}))
 	defer srv.Close()
 
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+	t.Setenv(InstallScriptURLEnv, srv.URL)
 
 	body, err := FetchInstallScript(context.Background())
 	if err != nil {
@@ -107,18 +109,18 @@ func TestFetchInstallScript_URLOverrideRedirectsAwayFromOrbitMain(t *testing.T) 
 
 func TestFetchInstallScript_PathOverrideSkipsTheNetworkEntirely(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("no HTTP request should be made when ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH is set")
+		t.Fatal("no HTTP request should be made when " + InstallScriptPathEnv + " is set")
 	}))
 	defer srv.Close()
 
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+	t.Setenv(InstallScriptURLEnv, srv.URL)
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "install.sh")
 	if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\necho from-local-file\n"), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+	t.Setenv(InstallScriptPathEnv, path)
 
 	body, err := FetchInstallScript(context.Background())
 	if err != nil {
@@ -130,11 +132,11 @@ func TestFetchInstallScript_PathOverrideSkipsTheNetworkEntirely(t *testing.T) {
 }
 
 func TestFetchInstallScript_PathOverrideRefusesAMissingFile(t *testing.T) {
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", filepath.Join(t.TempDir(), "does-not-exist.sh"))
+	t.Setenv(InstallScriptPathEnv, filepath.Join(t.TempDir(), "does-not-exist.sh"))
 
 	_, err := FetchInstallScript(context.Background())
 	if err == nil {
-		t.Fatal("expected an error for a missing ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH")
+		t.Fatal("expected an error for a missing " + InstallScriptPathEnv)
 	}
 }
 
@@ -147,11 +149,11 @@ func TestFetchInstallScript_PathOverrideRefusesAnUnreadableFile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: file permissions don't block reads")
 	}
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+	t.Setenv(InstallScriptPathEnv, path)
 
 	_, err := FetchInstallScript(context.Background())
 	if err == nil {
-		t.Fatal("expected an error for an unreadable ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH")
+		t.Fatal("expected an error for an unreadable " + InstallScriptPathEnv)
 	}
 }
 
@@ -161,11 +163,11 @@ func TestFetchInstallScript_PathOverrideRefusesAnEmptyFile(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH", path)
+	t.Setenv(InstallScriptPathEnv, path)
 
 	_, err := FetchInstallScript(context.Background())
 	if err == nil {
-		t.Fatal("expected an error for an empty ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH")
+		t.Fatal("expected an error for an empty " + InstallScriptPathEnv)
 	}
 }
 
@@ -177,7 +179,7 @@ func TestFetchInstallScript_UnsetPathKeepsDownloading(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+	t.Setenv(InstallScriptURLEnv, srv.URL)
 
 	body, err := FetchInstallScript(context.Background())
 	if err != nil {
@@ -260,5 +262,23 @@ func TestFetchInstallScript_RefusedConnectionKeepsTheRealReason(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fetch install.sh") {
 		t.Errorf("error should name what failed, got: %v", err)
+	}
+}
+
+// #219: testutil cannot import deploy, so it types the install.sh
+// override's name itself. Were the two to drift apart, CountingScriptSource
+// would count requests nobody sends, and every "nothing was fetched"
+// assertion built on it would pass whatever the code fetched. A fetch
+// with the source in place must reach it.
+func TestCountingScriptSource_IsWhereFetchInstallScriptFetches(t *testing.T) {
+	t.Setenv(InstallScriptPathEnv, "") // a local copy would skip the fetch
+	requests := testutil.CountingScriptSource(t)
+
+	_, err := FetchInstallScript(t.Context())
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("FetchInstallScript made %d request(s) to testutil's counting source, want 1: the override it sets is not the one deploy reads", n)
+	}
+	if err != nil {
+		t.Errorf("FetchInstallScript: %v", err)
 	}
 }

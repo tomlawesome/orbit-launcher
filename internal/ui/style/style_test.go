@@ -2,16 +2,11 @@ package style
 
 import (
 	"image/color"
-	"regexp"
 	"strconv"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
-
-var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-func stripANSI(s string) string {
-	return ansiEscape.ReplaceAllString(s, "")
-}
 
 func TestWordmark_TracksLetters(t *testing.T) {
 	cases := []struct {
@@ -28,7 +23,7 @@ func TestWordmark_TracksLetters(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := stripANSI(Wordmark(c.in))
+			got := ansi.Strip(Wordmark(c.in))
 			if got != c.want {
 				t.Errorf("Wordmark(%q) visible text = %q, want %q", c.in, got, c.want)
 			}
@@ -44,8 +39,8 @@ func TestWordmark_AppliesBoldAndTextColour(t *testing.T) {
 	if rendered == "HI" {
 		t.Fatalf("Wordmark(%q) = %q, applied no styling at all", "HI", rendered)
 	}
-	if stripANSI(rendered) != "H I" {
-		t.Errorf("Wordmark(%q) visible text = %q, want %q", "HI", stripANSI(rendered), "H I")
+	if ansi.Strip(rendered) != "H I" {
+		t.Errorf("Wordmark(%q) visible text = %q, want %q", "HI", ansi.Strip(rendered), "H I")
 	}
 }
 
@@ -73,16 +68,16 @@ func TestDistinctStylesRenderDifferently(t *testing.T) {
 		if ra == rb {
 			t.Errorf("%s and %s render identically (%q) -- they should be visually distinct", a.name, b.name, ra)
 		}
-		if stripANSI(ra) != text || stripANSI(rb) != text {
-			t.Errorf("%s or %s altered the text itself: %q, %q", a.name, b.name, stripANSI(ra), stripANSI(rb))
+		if ansi.Strip(ra) != text || ansi.Strip(rb) != text {
+			t.Errorf("%s or %s altered the text itself: %q, %q", a.name, b.name, ansi.Strip(ra), ansi.Strip(rb))
 		}
 	}
 }
 
 func TestMarkStyle_RendersAccentColour(t *testing.T) {
 	rendered := MarkStyle.Render("⟡")
-	if stripANSI(rendered) != "⟡" {
-		t.Errorf("MarkStyle.Render altered the mark glyph: got %q", stripANSI(rendered))
+	if ansi.Strip(rendered) != "⟡" {
+		t.Errorf("MarkStyle.Render altered the mark glyph: got %q", ansi.Strip(rendered))
 	}
 	if rendered == "⟡" {
 		t.Error("MarkStyle.Render applied no colour at all")

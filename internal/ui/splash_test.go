@@ -9,14 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// A key press is a code plus the modifiers held with it, and Text is the
-// printable character it produced — empty for special keys like Enter.
-func key(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
-func runeKey(r rune) tea.KeyPressMsg {
-	return tea.KeyPressMsg{Code: r, Text: string(r)}
-}
-func ctrlC() tea.KeyPressMsg { return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl} }
-
 // settled skips the arrival, as any keypress would — behaviour and view
 // tests exercise the lit room unless they are about the arrival itself.
 func settled(m SplashModel) SplashModel { m.introDone = true; return m }
@@ -24,26 +16,26 @@ func settled(m SplashModel) SplashModel { m.introDone = true; return m }
 func TestSplashModel_ArrowNavigationWraps(t *testing.T) {
 	m := settled(NewSplashModel())
 
-	if m.selected != 0 {
-		t.Fatalf("initial selection = %d, want 0", m.selected)
+	if m.menu.sel != 0 {
+		t.Fatalf("initial selection = %d, want 0", m.menu.sel)
 	}
 
 	updated, _ := m.Update(key(tea.KeyUp))
 	m = updated.(SplashModel)
-	if m.selected != len(MainMenu)-1 {
-		t.Errorf("Up from index 0 = %d, want wrap to %d", m.selected, len(MainMenu)-1)
+	if m.menu.sel != len(MainMenu)-1 {
+		t.Errorf("Up from index 0 = %d, want wrap to %d", m.menu.sel, len(MainMenu)-1)
 	}
 
 	updated, _ = m.Update(key(tea.KeyDown))
 	m = updated.(SplashModel)
-	if m.selected != 0 {
-		t.Errorf("Down from the last index = %d, want wrap to 0", m.selected)
+	if m.menu.sel != 0 {
+		t.Errorf("Down from the last index = %d, want wrap to 0", m.menu.sel)
 	}
 }
 
 func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
 	m := settled(NewSplashModel())
-	m.selected = 2 // Repair
+	m.menu.sel = 2 // Repair
 
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(SplashModel)
@@ -62,8 +54,8 @@ func TestSplashModel_NumberKeyJumpsAndChooses(t *testing.T) {
 	updated, cmd := m.Update(runeKey('4')) // 1-indexed: Remove
 	m = updated.(SplashModel)
 
-	if m.selected != 3 {
-		t.Errorf("selected = %d, want 3 (Remove)", m.selected)
+	if m.menu.sel != 3 {
+		t.Errorf("selected = %d, want 3 (Remove)", m.menu.sel)
 	}
 	if m.Chosen != "Remove" {
 		t.Errorf("Chosen = %q, want %q", m.Chosen, "Remove")
@@ -87,10 +79,10 @@ func TestSplashModel_NumberKeyBeyondMenuLengthIsIgnored(t *testing.T) {
 	}
 }
 
-func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
-	for _, k := range []tea.KeyPressMsg{key(tea.KeyEsc), ctrlC()} {
+func TestSplashModel_CtrlCQuitsWithoutChoosing(t *testing.T) {
+	for _, k := range []tea.KeyPressMsg{ctrlC()} {
 		m := settled(NewSplashModel())
-		m.selected = 1
+		m.menu.sel = 1
 
 		updated, cmd := m.Update(k)
 		m = updated.(SplashModel)
@@ -107,16 +99,92 @@ func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
 	}
 }
 
-func TestSplashModel_QLowercaseQuitsWithoutChoosing(t *testing.T) {
+// Esc on the lit menu does nothing (#226, answer 3a): backing out stops
+// at the menu, so pressing Esc repeatedly never closes the launcher.
+func TestSplashModel_EscDoesNothingOnTheLitMenu(t *testing.T) {
 	m := settled(NewSplashModel())
-	updated, cmd := m.Update(runeKey('q'))
+	m.menu.sel = 1
+	updated, cmd := m.Update(key(tea.KeyEsc))
 	m = updated.(SplashModel)
 
-	if m.Chosen != "" {
-		t.Errorf("Chosen = %q, want empty", m.Chosen)
+	if m.Chosen != "" || m.quitting || cmd != nil {
+		t.Fatalf("Esc on the menu: Chosen = %q, quitting = %v, cmd = %v; want it to do nothing", m.Chosen, m.quitting, cmd != nil)
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected 'q' to issue tea.Quit")
+	if m.menu.sel != 1 {
+		t.Errorf("Esc moved the selection to %d, want it left on 1", m.menu.sel)
+	}
+	updated, _ = m.Update(key(tea.KeyDown))
+	if got := updated.(SplashModel).menu.sel; got != 2 {
+		t.Errorf("Down after Esc moved to %d, want 2: the menu is not live", got)
+	}
+}
+
+func TestSplashModel_EscDuringTheArrivalSkipsItAndIsSwallowed(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+	if m.introDone {
+		t.Fatal("the arrival should be playing on a fresh animated splash")
+	}
+
+	updated, cmd := m.Update(key(tea.KeyEsc))
+	m = updated.(SplashModel)
+	if isQuit(cmd) || m.quitting || m.Chosen != "" {
+		t.Fatalf("Esc during the arrival quit or chose: quit=%v quitting=%v Chosen=%q", isQuit(cmd), m.quitting, m.Chosen)
+	}
+	if !m.introDone {
+		t.Error("Esc during the arrival must skip it, like any other key")
+	}
+	if !strings.Contains(m.View().Content, "Install") {
+		t.Error("after the skip, the lit menu must be showing")
+	}
+}
+
+// There is no q shortcut (#226): leaving takes the Exit row or Ctrl-C.
+// On the lit menu q is an unbound key.
+func TestSplashModel_QDoesNothingOnTheLitMenu(t *testing.T) {
+	for _, r := range []rune{'q', 'Q'} {
+		m := settled(NewSplashModel())
+		m.menu.sel = 1
+		updated, cmd := m.Update(runeKey(r))
+		m = updated.(SplashModel)
+
+		if m.Chosen != "" {
+			t.Errorf("%q: Chosen = %q, want empty", r, m.Chosen)
+		}
+		if m.quitting {
+			t.Errorf("%q: the menu is quitting", r)
+		}
+		if cmd != nil {
+			t.Errorf("%q: issued a command (quit = %v), want none", r, isQuit(cmd))
+		}
+		if m.menu.sel != 1 {
+			t.Errorf("%q: selection moved to %d, want it left on 1", r, m.menu.sel)
+		}
+	}
+}
+
+func TestSplashModel_QDuringTheArrivalSkipsItAndIsSwallowed(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+	if m.introDone {
+		t.Fatal("the arrival should be playing on a fresh animated splash")
+	}
+
+	updated, cmd := m.Update(runeKey('q'))
+	m = updated.(SplashModel)
+	if isQuit(cmd) || m.quitting || m.Chosen != "" {
+		t.Fatalf("q during the arrival quit or chose: quit=%v quitting=%v Chosen=%q", isQuit(cmd), m.quitting, m.Chosen)
+	}
+	if !m.introDone {
+		t.Error("q during the arrival must skip it, like any other key")
+	}
+	if m.menu.sel != 0 {
+		t.Error("the skipping q must be swallowed")
+	}
+	if !strings.Contains(m.View().Content, "Install") {
+		t.Error("after the skip, the lit menu must be showing")
 	}
 }
 
@@ -235,7 +303,7 @@ func TestSplashModel_ViewIsEmptyAfterQuitting(t *testing.T) {
 	m := NewSplashModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(SplashModel)
-	updated, _ = m.Update(key(tea.KeyEsc))
+	updated, _ = m.Update(ctrlC())
 	m = updated.(SplashModel)
 
 	if view := m.View().Content; view != "" {
@@ -248,7 +316,7 @@ func seedDeployment(m SplashModel) SplashModel {
 	m.fqdn = "mail.example.com"
 	m.appURL = "https://mail.example.com"
 	m.state = stateUnknown
-	m.selected = menuUpdate
+	m.menu.sel = menuUpdate
 	return m
 }
 
@@ -261,8 +329,8 @@ func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
 	if m.state != stateAlive {
 		t.Errorf("state = %v, want stateAlive", m.state)
 	}
-	if m.selected != menuUpdate {
-		t.Errorf("selected = %d, want Update to stay preselected", m.selected)
+	if m.menu.sel != menuUpdate {
+		t.Errorf("selected = %d, want Update to stay preselected", m.menu.sel)
 	}
 }
 
@@ -275,8 +343,8 @@ func TestSplashModel_HealthResultDegradedPreselectsRepair(t *testing.T) {
 	if m.state != stateDegraded {
 		t.Errorf("state = %v, want stateDegraded", m.state)
 	}
-	if m.selected != menuRepair {
-		t.Errorf("selected = %d, want Repair preselected on a degraded deployment", m.selected)
+	if m.menu.sel != menuRepair {
+		t.Errorf("selected = %d, want Repair preselected on a degraded deployment", m.menu.sel)
 	}
 }
 
@@ -285,7 +353,7 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 
 	updated, _ := m.Update(key(tea.KeyDown)) // the user takes over
 	m = updated.(SplashModel)
-	navigatedTo := m.selected
+	navigatedTo := m.menu.sel
 
 	updated, _ = m.Update(healthResultMsg{healthy: false})
 	m = updated.(SplashModel)
@@ -293,8 +361,8 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 	if m.state != stateDegraded {
 		t.Errorf("state = %v, want stateDegraded (display still updates)", m.state)
 	}
-	if m.selected != navigatedTo {
-		t.Errorf("selected = %d, want %d — the probe must never fight the user's hands", m.selected, navigatedTo)
+	if m.menu.sel != navigatedTo {
+		t.Errorf("selected = %d, want %d — the probe must never fight the user's hands", m.menu.sel, navigatedTo)
 	}
 }
 
@@ -371,7 +439,7 @@ func TestSplashModel_AnyKeySkipsTheArrivalAndIsSwallowed(t *testing.T) {
 	if !m.introDone {
 		t.Error("any key must skip the arrival")
 	}
-	if m.selected != 0 {
+	if m.menu.sel != 0 {
 		t.Error("the skipping key must be swallowed, not treated as navigation")
 	}
 	if !strings.Contains(m.View().Content, "Install") {

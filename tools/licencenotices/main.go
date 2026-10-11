@@ -8,7 +8,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	toolcli "github.com/tomlawesome/orbit-launcher/tools/internal/cli"
 	"github.com/tomlawesome/orbit-launcher/tools/licencenotices/notices"
 	"github.com/tomlawesome/orbit-launcher/tools/licencereview/review"
 )
@@ -33,23 +33,13 @@ func main() {
 // cli is the whole command bar os.Exit, so its tests need no subprocess.
 // What ships is a parameter, review.Shipped from main, so a test can hand
 // it fixed packages rather than run go list over this module, whose
-// notices change with every dependency bump. Flags behave as the default
-// flag set's would: usage on stderr, exit 2 on a bad flag, 0 on -h.
+// notices change with every dependency bump. args is os.Args; the flags
+// and exit codes are toolcli.Run's.
 func cli(args []string, stdout, stderr io.Writer, shipped func() ([]review.Package, error)) int {
-	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	check := fs.Bool("check", false, "fail if "+outPath+" is not what this would write")
-	if err := fs.Parse(args[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 2
-	}
-	if err := run(*check, stdout, shipped); err != nil {
-		fmt.Fprintln(stderr, "licencenotices:", err)
-		return 1
-	}
-	return 0
+	return toolcli.Run("licencenotices", args[1:], stderr, func(fs *flag.FlagSet) func() error {
+		check := fs.Bool("check", false, "fail if "+outPath+" is not what this would write")
+		return func() error { return run(*check, stdout, shipped) }
+	})
 }
 
 func run(check bool, stdout io.Writer, shipped func() ([]review.Package, error)) error {

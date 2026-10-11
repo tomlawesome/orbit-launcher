@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 func TestImportAndAdoptConfig_RoundTripWithModes(t *testing.T) {
@@ -90,13 +92,8 @@ func TestAdoptConfig_NoEnvOrbitIsAnError(t *testing.T) {
 func fakeCheckTree(t *testing.T, report string, exit int) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	script := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%s'\nexit %d\n", report, exit)
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "configure.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/configure.sh", Body: script, Mode: 0o700})
 	return dir
 }
 
@@ -643,25 +640,17 @@ func TestRunConfigCheck_CleanExitWithNoReportIsAnError(t *testing.T) {
 func handedOverTree(t *testing.T) string {
 	t.Helper()
 	tree := t.TempDir()
-	if err := os.Mkdir(filepath.Join(tree, "scripts"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range map[string]string{
-		"scripts/configure.sh":     "#!/usr/bin/env bash\necho configure\n",
-		"scripts/configuration.sh": "#!/usr/bin/env bash\n",
-		".env-orbit.example":       "APP_URL=\n",
-	} {
-		if err := os.WriteFile(filepath.Join(tree, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	scriptTree(t, tree, 0o700,
+		testutil.File{Path: "scripts/configure.sh", Body: "#!/usr/bin/env bash\necho configure\n", Mode: 0o600},
+		testutil.File{Path: "scripts/configuration.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o600},
+		testutil.File{Path: ".env-orbit.example", Body: "APP_URL=\n", Mode: 0o600})
 	return tree
 }
 
 // #190: the configure tree is what install.sh handed over, never a
 // download — opening it fetches nothing and writes nothing.
 func TestOpenConfigTree_UsesTheHandedOverTreeWithoutFetching(t *testing.T) {
-	requests := noScriptSource(t)
+	requests := testutil.CountingScriptSource(t)
 	tree := handedOverTree(t)
 
 	endSession, err := OpenConfigTree(tree)
@@ -702,7 +691,7 @@ func TestOpenConfigTree_UsesTheHandedOverTreeWithoutFetching(t *testing.T) {
 // is nothing verified to run, so the caller falls back to the terminal
 // handoff rather than fetching anything.
 func TestOpenConfigTree_EmptyTreeIsNoTree(t *testing.T) {
-	requests := noScriptSource(t)
+	requests := testutil.CountingScriptSource(t)
 	endSession, err := OpenConfigTree(t.TempDir())
 	if !errors.Is(err, ErrNoConfigTree) {
 		t.Fatalf("err = %v, want ErrNoConfigTree", err)

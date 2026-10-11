@@ -30,6 +30,8 @@ import (
 
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
 
 // PollInterval is how often a wait looks at the screen.
@@ -143,51 +145,13 @@ func (t *Terminal) Close() error {
 // program writing without pause (the starfield, or a tight echo loop)
 // retakes it between every two cells, so one 120x40 read starves for
 // seconds (#181). One lock also means a screen is never two frames mixed.
-// Render's styling is stripped here.
+// Render's styling is stripped here, by the shared ansi.Strip.
 func Screen(term *Terminal) string {
-	lines := strings.Split(stripEscapes(term.emu.Render()), "\n")
+	lines := strings.Split(ansi.Strip(term.emu.Render()), "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " ")
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
-}
-
-// stripEscapes drops the escape sequences Render writes: CSI (styles),
-// OSC (hyperlinks), and any other ESC sequence. Every byte of
-// an escape sequence is ASCII and every byte of a multi-byte UTF-8
-// character is not, so a byte scan cannot cut a character in half.
-func stripEscapes(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] != 0x1b {
-			b.WriteByte(s[i])
-			continue
-		}
-		i++
-		if i >= len(s) {
-			break
-		}
-		switch s[i] {
-		case '[': // CSI: parameters, then one final byte in 0x40-0x7e
-			for i++; i < len(s) && (s[i] < 0x40 || s[i] > 0x7e); i++ {
-			}
-		case ']': // OSC: ends at BEL or ST (ESC \)
-			for i++; i < len(s); i++ {
-				if s[i] == 0x07 {
-					break
-				}
-				if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
-					i++
-					break
-				}
-			}
-		default: // other ESC sequences: intermediates 0x20-0x2f, then a final byte
-			for ; i < len(s) && s[i] >= 0x20 && s[i] <= 0x2f; i++ {
-			}
-		}
-	}
-	return b.String()
 }
 
 // Send types text into term as raw input, escape sequences and all, the

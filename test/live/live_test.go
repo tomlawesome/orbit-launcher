@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
@@ -45,27 +46,20 @@ const testOIDCIssuer = "https://accounts.google.com"
 
 // binaryPath resolves the binary under test. Set
 // ORBIT_LAUNCHER_LIVE_BINARY to test a specific pre-built artifact;
-// unset, it builds fresh from source, which is what local runs and every
-// CI job now use — this repo no longer publishes launcher binaries of
+// unset, the harness builds it from source once for the package, which
+// is what local runs and every CI job now use — this repo no longer publishes launcher binaries of
 // its own (#171), so there is nothing else to point it at.
 func binaryPath(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("ORBIT_LAUNCHER_LIVE_BINARY"); p != "" {
 		return p
 	}
-
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	binPath := filepath.Join(t.TempDir(), "orbit-launcher")
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/orbit-launcher")
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build orbit-launcher: %v\n%s", err, out)
-	}
-	return binPath
+	return launcher.BuildBinary(t)
 }
+
+// TestMain lets the harness build the binary once for the whole package
+// and remove it after the last test.
+func TestMain(m *testing.M) { os.Exit(launcher.Run(m)) }
 
 // liveSession is one launcher process on one real pty, plus the
 // expectations driven against it. It exists so every expectation in this
@@ -583,8 +577,9 @@ func startLiveEnv(t *testing.T, binPath, dir string, extraEnv ...string) *liveSe
 	// and 10034 the dump never arrived, so the one artefact that would
 	// have shown the stall directly was the one the freeze could
 	// suppress. A file cannot block and cannot be starved by a reader.
-	// The name extends the raw log's, so CI's existing
-	// `.orbit-launcher-live-raw.log*` artifact glob keeps it too.
+	// The name extends the raw log's, so CI's existing artifact globs
+	// (`.live/live-raw.log.*` on GitLab, `live-raw.log.*` on GitHub) keep
+	// it too.
 	stderrPath := filepath.Join(t.TempDir(), "launcher-stderr.log")
 	if logPath != "" {
 		stderrPath = logPath + ".stderr"
@@ -595,42 +590,47 @@ func startLiveEnv(t *testing.T, binPath, dir string, extraEnv ...string) *liveSe
 	}
 	t.Cleanup(func() { stderrFile.Close() })
 	cmd.Stderr = stderrFile // stdin and stdout are left to vtscreen: the pty
-	// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps every
-	// goroutine, not just the one that took the signal.
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "GOTRACEBACK=all",
-		// The stale-database-volume pre-flight (issue #105) reads the
-		// host's volumes, so a volume left behind by a crashed earlier
-		// run would interrupt this install with a screen the test never
-		// expects — and the gate would sit out its full 600s waiting for
-		// a profile screen that isn't coming, which is precisely the
-		// hang class issue #100 exists to diagnose. Covered by its own
-		// unit and seam tests instead of on machine state.
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
-		// No arrival animation (issue #120). Menu rows render at
-		// introMenuStart but keys stay swallowed until introEnd
-		// (internal/ui/splash.go:98-102), so a test that matches "Install"
-		// and immediately sends a selection can have it eaten as the skip,
-		// leaving the menu settled with nothing chosen.
-		//
-		// Sending a separate skip key first was measured not to fix it:
-		// that attempt hung in exactly the same place as no skip key at
-		// all, because the bubbletea of the day batched consecutive
-		// printable runes into a single key message and handleKey's
-		// swallow returns before the digit shortcuts are examined
-		// (splash.go:343-380), so "s" and the selection sent back-to-back
-		// were discarded together. Each printable character is its own
-		// key press now, so the two would arrive separately — but this
-		// suite does not need the arrival either way, for the reason
-		// below.
-		//
-		// This costs no coverage. The arrival's own behaviour — any key
-		// skips and is swallowed, it finishes on its own after enough
-		// ticks, NO_ANIMATION never plays it — is asserted by
-		// internal/ui/splash_test.go, and how it looks belongs to
-		// visual-regression.yml. What this suite exists to pin is the
-		// install.sh handoff contract, which the animation only ever
-		// added nondeterminism to.
-		"ORBIT_LAUNCHER_NO_ANIMATION=1",
+
+	// The health probe stays on, as an operator's launcher has it. The
+	// other behaviours HermeticEnv turns off matter to this suite as
+	// follows.
+	//
+	// The stale-database-volume pre-flight (issue #105) reads the
+	// host's volumes, so a volume left behind by a crashed earlier
+	// run would interrupt this install with a screen the test never
+	// expects — and the gate would sit out its full 600s waiting for
+	// a profile screen that isn't coming, which is precisely the
+	// hang class issue #100 exists to diagnose. Covered by its own
+	// unit and seam tests instead of on machine state.
+	//
+	// No arrival animation (issue #120). Menu rows render at
+	// introMenuStart but keys stay swallowed until introEnd
+	// (internal/ui/splash.go:98-102), so a test that matches "Install"
+	// and immediately sends a selection can have it eaten as the skip,
+	// leaving the menu settled with nothing chosen.
+	//
+	// Sending a separate skip key first was measured not to fix it:
+	// that attempt hung in exactly the same place as no skip key at
+	// all, because the bubbletea of the day batched consecutive
+	// printable runes into a single key message and handleKey's
+	// swallow returns before the digit shortcuts are examined
+	// (splash.go:343-380), so "s" and the selection sent back-to-back
+	// were discarded together. Each printable character is its own
+	// key press now, so the two would arrive separately — but this
+	// suite does not need the arrival either way, for the reason
+	// below.
+	//
+	// This costs no coverage. The arrival's own behaviour — any key
+	// skips and is swallowed, it finishes on its own after enough
+	// ticks, NO_ANIMATION never plays it — is asserted by
+	// internal/ui/splash_test.go, and how it looks belongs to
+	// visual-regression.yml. What this suite exists to pin is the
+	// install.sh handoff contract, which the animation only ever
+	// added nondeterminism to.
+	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe),
+		// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps
+		// every goroutine, not just the one that took the signal.
+		"GOTRACEBACK=all",
 		// The Compose project this run owns, and the whole of its
 		// isolation from any other Orbit on the daemon — see
 		// liveProjectName. It reaches the engine because nothing

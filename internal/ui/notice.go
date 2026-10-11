@@ -30,10 +30,10 @@ const (
 	// motion beat, so it keeps its own.
 	noticeTickInterval = time.Second
 
-	noticeMeasure    = 56 // prose wrap width, in cells
-	noticeGutter     = 2  // cells either side of the measure
-	noticeHeaderRows = 6  // blank, mark, blank, title, state, blank
-	noticePinnedRows = 8  // countdown, prompt, box ×3, feedback, Go back, blank
+	noticeMeasure    = proseWidth // prose wrap width, in cells
+	noticeGutter     = 2          // cells either side of the measure
+	noticeHeaderRows = 6          // blank, mark, blank, title, state, blank
+	noticePinnedRows = 8          // countdown, prompt, box ×3, feedback, Go back, blank
 	noticeWheelRows  = 3
 
 	noticeTitle       = "A note before you install"
@@ -87,7 +87,7 @@ func (r noticeRow) plain() string {
 	return b.String()
 }
 
-func (r noticeRow) width() int { return len([]rune(r.plain())) }
+func (r noticeRow) width() int { return lipgloss.Width(r.plain()) }
 
 type noticeFocus int
 
@@ -119,7 +119,7 @@ type noticeModel struct {
 	offset  int
 	endSeen bool // sticky: the whole notice has been on screen
 	focus   noticeFocus
-	typed   []rune
+	typed   inputLine
 	refused bool
 
 	doc           []noticeRow
@@ -133,7 +133,7 @@ func newNotice(start time.Time, width, height int) noticeModel {
 	return noticeModel{start: start}.resize(width, height)
 }
 
-// noticeMeasureFor is the prose measure for a terminal width: 56, or
+// noticeMeasureFor is the prose measure for a terminal width: proseWidth, or
 // width-4 on a terminal narrower than the 60-cell block (never below
 // 20). The house minimum is 80×26, so the narrow case only has to not
 // panic.
@@ -232,7 +232,14 @@ func (n noticeModel) layout() noticeLayout {
 // matters, so a key that needs no gate reads no clock.
 func (n noticeModel) handleKey(msg tea.KeyPressMsg, now func() time.Time, d time.Duration) (noticeModel, noticeOutcome) {
 	n.refused = false
-	awake := func() bool { return n.awake(now(), d) }
+	var woke *bool // the gates' answer, read from the clock at most once
+	awake := func() bool {
+		if woke == nil {
+			w := n.awake(now(), d)
+			woke = &w
+		}
+		return *woke
+	}
 	switch msg.Code {
 	case tea.KeyEsc:
 		return n, noticeBack
@@ -256,33 +263,34 @@ func (n noticeModel) handleKey(msg tea.KeyPressMsg, now func() time.Time, d time
 			return n, noticeStay
 		}
 		return n.scrollBy(-1), noticeStay
-	case tea.KeySpace:
-		if !awake() {
-			return n.scrollBy(n.page()), noticeStay
-		}
-		n.focus = noticeFocusField
-		n.typed = append(n.typed, ' ')
-	case tea.KeyBackspace:
-		if n.focus == noticeFocusField && len(n.typed) > 0 {
-			n.typed = n.typed[:len(n.typed)-1]
-		}
 	case tea.KeyEnter:
 		if n.focus == noticeFocusBack {
 			return n, noticeBack
 		}
-		if len(n.typed) == 0 {
+		if n.typed.empty() {
 			return n, noticeStay
 		}
-		if phraseMatches(string(n.typed)) {
+		if phraseMatches(n.typed.String()) {
 			return n, noticeAccept
 		}
 		n.refused = true
-	default:
-		// Typing is what claims the box; while either gate is open it
-		// is ignored.
-		if msg.Text != "" && !msg.Mod.Contains(tea.ModCtrl) && awake() {
+		return n, noticeStay
+	}
+	if msg.Code == tea.KeySpace && !awake() {
+		return n.scrollBy(n.page()), noticeStay
+	}
+	// The rest is typing (inputLine). Typing is what claims the box,
+	// and is ignored while either gate is open; erasing edits only a
+	// focused box.
+	switch typed, edit := n.typed.edit(msg); edit {
+	case lineTyped:
+		if awake() {
 			n.focus = noticeFocusField
-			n.typed = append(n.typed, []rune(msg.Text)...)
+			n.typed = typed
+		}
+	case lineErased:
+		if n.focus == noticeFocusField {
+			n.typed = typed
 		}
 	}
 	return n, noticeStay
@@ -372,7 +380,7 @@ func wrapNotice(p string, measure int) []noticeRow {
 		cur, length = nil, 0
 	}
 	for _, w := range words {
-		wl := w.end - w.start
+		wl := lipgloss.Width(string(text[w.start:w.end]))
 		if len(cur) > 0 && length+1+wl > measure {
 			flush()
 		}
@@ -418,20 +426,23 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	gutter := strings.Repeat(" ", noticeGutter)
 	blank := pad("", 0)
 	textStyle := lipgloss.NewStyle().Foreground(style.Text)
-	mutedStyle := lipgloss.NewStyle().Foreground(style.TextMuted)
-	faintStyle := lipgloss.NewStyle().Foreground(style.TextFaint)
+	mutedStyle := style.MutedText
+	faintStyle := style.Tagline
 
 	awake := n.awake(now, d)
 	focused := n.focus == noticeFocusField
 	var lines []string
 
-	// Header.
+	// Header: the stacked flow header, each line centred in the block,
+	// with the notice's state line taking the place of its closing blank.
+	var header strings.Builder
+	writeHeader(&header, style.DegradedText.Render(style.SymbolMark), noticeTitle)
+	lines = append(lines, blank)
+	for _, h := range strings.Split(strings.TrimRight(header.String(), "\n"), "\n") {
+		lines = append(lines, centred(h, lipgloss.Width(h)))
+	}
 	lines = append(lines,
-		blank,
-		centred(style.DegradedText.Render(style.SymbolMark), 1),
-		blank,
-		centred(lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(noticeTitle), len(noticeTitle)),
-		centred(mutedStyle.Render(noticeStateLabel)+style.DegradedText.Render(noticeStateWord), len(noticeStateLabel)+len(noticeStateWord)),
+		centred(mutedStyle.Render(noticeStateLabel)+style.DegradedText.Render(noticeStateWord), lipgloss.Width(noticeStateLabel)+lipgloss.Width(noticeStateWord)),
 		blank,
 	)
 
@@ -460,7 +471,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		if cells-fill > 0 {
 			bar += lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", cells-fill))
 		}
-		lines = append(lines, pad(gutter+bar+"  "+style.Tagline.Render(clock), noticeGutter+cells+2+len(clock)))
+		lines = append(lines, pad(gutter+bar+"  "+style.Tagline.Render(clock), noticeGutter+cells+2+lipgloss.Width(clock)))
 	} else {
 		lines = append(lines, blank)
 	}
@@ -471,7 +482,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		labelStyle, phraseStyle = mutedStyle, textStyle
 	}
 	lines = append(lines, pad(gutter+labelStyle.Render(noticePromptLabel)+phraseStyle.Render(noticePhrase),
-		noticeGutter+len(noticePromptLabel)+len([]rune(noticePhrase))))
+		noticeGutter+lipgloss.Width(noticePromptLabel)+lipgloss.Width(noticePhrase)))
 
 	// The box, two cells in from the block's edge so the caret at the
 	// edge shares Go back's column.
@@ -482,47 +493,43 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		border = faintStyle
 	}
 	boxIndent := strings.Repeat(" ", 2*noticeGutter)
-	lines = append(lines, pad(boxIndent+border.Render("╭"+strings.Repeat("─", boxW-2)+"╮"), 2*noticeGutter+boxW))
 
 	var content string
-	contentW := 0
 	phrase := []rune(noticePhrase)
 	switch {
-	case focused && len(n.typed) > 0:
-		shown := n.typed
-		if len(shown) > inner-1 {
-			shown = shown[len(shown)-(inner-1):] // the tail, so the cursor stays visible
-		}
-		content = textStyle.Render(string(shown)) + style.AccentText.Render("▏")
-		contentW = len(shown) + 1
+	case focused && !n.typed.empty():
+		shown := n.typed.tail(inner - 1) // the tail, so the cursor stays visible
+		content = textStyle.Render(shown) + style.AccentText.Render(style.SymbolCursor)
 	case focused:
 		example := phrase[:min(len(phrase), inner-1)]
-		content = style.AccentText.Render("▏") + faintStyle.Render(string(example))
-		contentW = 1 + len(example)
+		content = style.AccentText.Render(style.SymbolCursor) + faintStyle.Render(string(example))
 	default:
 		example := phrase[:min(len(phrase), inner)]
 		content = faintStyle.Render(string(example))
-		contentW = len(example)
 	}
 	lead := boxIndent
 	if focused {
 		lead = gutter + style.MenuCaret.Render(style.SymbolSelected) + " "
 	}
-	lines = append(lines, pad(lead+border.Render("│")+" "+content+strings.Repeat(" ", max(inner-contentW, 0))+" "+border.Render("│"), 2*noticeGutter+boxW))
-	lines = append(lines, pad(boxIndent+border.Render("╰"+strings.Repeat("─", boxW-2)+"╯"), 2*noticeGutter+boxW))
+	box := drawBox(border, boxW, []string{content})
+	lines = append(lines,
+		pad(boxIndent+box[0], 2*noticeGutter+boxW),
+		pad(lead+box[1], 2*noticeGutter+boxW),
+		pad(boxIndent+box[2], 2*noticeGutter+boxW),
+	)
 
 	// Feedback, aligned with the box's text.
 	if n.refused {
-		lines = append(lines, pad(strings.Repeat(" ", 2*noticeGutter+2)+style.DegradedText.Render(noticeRefusal), 2*noticeGutter+2+len(noticeRefusal)))
+		lines = append(lines, pad(strings.Repeat(" ", 2*noticeGutter+2)+style.DegradedText.Render(noticeRefusal), 2*noticeGutter+2+lipgloss.Width(noticeRefusal)))
 	} else {
 		lines = append(lines, blank)
 	}
 
 	// Go back.
 	if focused {
-		lines = append(lines, pad(boxIndent+mutedStyle.Render(noticeGoBack), 2*noticeGutter+len(noticeGoBack)))
+		lines = append(lines, pad(boxIndent+mutedStyle.Render(noticeGoBack), 2*noticeGutter+lipgloss.Width(noticeGoBack)))
 	} else {
-		lines = append(lines, pad(gutter+style.MenuCaret.Render(style.SymbolSelected)+" "+textStyle.Render(noticeGoBack), 2*noticeGutter+len(noticeGoBack)))
+		lines = append(lines, pad(gutter+style.MenuCaret.Render(style.SymbolSelected)+" "+textStyle.Render(noticeGoBack), 2*noticeGutter+lipgloss.Width(noticeGoBack)))
 	}
 	lines = append(lines, blank)
 

@@ -69,6 +69,12 @@ type flowOutcome struct {
 	Elapsed   time.Duration
 }
 
+// backToMenu is leaving a flow for the main menu before anything has
+// run: Esc on the flow's first screen, or the Cancel or Back row there,
+// which is the same act (#210, owner decision 4a). Ctrl-C is never this;
+// it quits.
+var backToMenu = flowOutcome{Done: true, WantsMenu: true}
+
 func outcomeOf(r engineRun) flowOutcome {
 	return flowOutcome{
 		Done:      r.Done,
@@ -161,7 +167,9 @@ type engineRun struct {
 	stderrTail    []string
 	runErr        error
 
-	menuSel int
+	// menu is the cursor on whichever post-run screen is showing; each
+	// screen names its own rows (configPromptMenu, failedMenu).
+	menu menu
 
 	// Done/Succeeded/WantsMenu are read by the owning flow model and
 	// AppModel. URL and Elapsed feed the success screen.
@@ -177,15 +185,7 @@ type engineRun struct {
 	send func(tea.Msg)
 
 	// Test seams; nil gets the real implementations.
-	prepareEngine  prepareEngineFunc
-	prepareInstall prepareInstallFunc
-	runHandoff     runHandoffFunc
-	detect         detectFunc
-	now            nowFunc
-	prepareConfig  prepareConfigFunc
-	startConfig    startConfigFunc
-	adoptConfig    adoptConfigFunc
-	recheckConfig  recheckConfigFunc
+	engineRunSeams
 }
 
 func newEngineRun(action, targetDir, title, version string) engineRun {
@@ -372,6 +372,13 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return r.handleKey(msg)
+
+	case tea.PasteMsg:
+		// Only the configuration prompt takes a paste (#222).
+		if r.state == runConfigCollect {
+			r.cfg.session = r.cfg.session.paste(msg.Content)
+		}
+		return r, nil
 	}
 	return r, nil
 }
@@ -409,11 +416,11 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			// engine just handed over, which is why the run's files
 			// are kept until that is over.
 			r.state = runConfigPrompt
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	return r, nil
@@ -440,7 +447,7 @@ func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.C
 		r.runErr = errEngineStoppedEarly
 	}
 	r.state = runFailed
-	r.menuSel = 0
+	r.menu = menu{}
 	return r, nil
 }
 
@@ -483,13 +490,10 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 		// viewFailed prefers lastFailed over runErr.
 		r.lastFailed = nil
 		r.stderrTail = nil
-		// Short enough to survive an 80-column screen: the renderer
-		// truncates a content line to the terminal width, and a reason
-		// nobody can read is not a loud failure. The variable's name
-		// goes in the diagnostic line above, which has no such limit.
+		// The variable's name is in the diagnostic line above.
 		r.runErr = errors.New("in-console configuration required — terminal handoff refused")
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	r.state = runHandoffRunning
@@ -527,31 +531,31 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		return r.handleConfigKey(msg)
 
 	case runConfigPrompt:
-		return r.handleMenuKey(msg, len(configPromptMenu), func(sel int) (engineRun, tea.Cmd) {
-			switch sel {
-			case 0:
+		return r.handleMenuKey(msg, configPromptMenu, func(label string) (engineRun, tea.Cmd) {
+			switch label {
+			case "Continue — guided configuration":
 				return r.beginConfigCollect()
-			case 1:
+			case "Menu":
 				r.releaseRunFiles()
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
-			default:
+			default: // Exit
 				r.releaseRunFiles()
 				return r, tea.Quit
 			}
 		})
 
 	case runFailed:
-		return r.handleMenuKey(msg, len(failedMenu), func(sel int) (engineRun, tea.Cmd) {
-			switch sel {
-			case 0:
+		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
+			switch label {
+			case "Open the guided installer":
 				return r.beginHandoff()
-			case 1:
+			case "Menu":
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
-			default:
+			default: // Exit
 				return r, tea.Quit
 			}
 		})
@@ -559,23 +563,21 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
-func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items int, choose func(int) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+// handleMenuKey drives a post-run screen's menu over items: Esc is back
+// to the main menu, and Enter hands choose the selected row's label.
+func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose func(string) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
 		r.releaseRunFiles()
 		r.Done = true
 		r.WantsMenu = true
 		return r, nil
-	case tea.KeyUp:
-		r.menuSel = (r.menuSel - 1 + items) % items
-		return r, nil
-	case tea.KeyDown:
-		r.menuSel = (r.menuSel + 1) % items
-		return r, nil
-	case tea.KeyEnter:
-		return choose(r.menuSel)
 	}
-	return r, nil
+	var chosen string
+	r.menu, chosen = r.menu.over(items).update(msg)
+	if chosen == "" {
+		return r, nil
+	}
+	return choose(chosen)
 }
 
 // Both post-run screens offer the same three exits, in the same order:
@@ -611,37 +613,44 @@ func (r engineRun) view(width, height int) string {
 
 func (r engineRun) viewConfigPrompt(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
 	fmt.Fprintln(&b, style.MutedText.Render("The engine stopped before touching anything: some settings"))
 	fmt.Fprintln(&b, style.MutedText.Render("only you can provide. Continue to fill them in right here —"))
 	fmt.Fprintln(&b, style.MutedText.Render("every answer is checked by Orbit's own setup, which takes"))
 	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+r.action+" resumes."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, configPromptMenu, r.menuSel)
+	r.menu.over(configPromptMenu).write(&b)
 	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 func (r engineRun) viewFailed(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(flowStoppedTitle(r.action)))
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
+	// Docker's words, at Docker's length: wrapped, never cut at the edge.
+	limit := min(width-4, errorWidth)
 	if r.lastFailed != nil {
 		word := r.lastFailed.Phase
 		if idx := phaseIndex(word); idx >= 0 {
 			word = consolePhases[idx].word
 		}
-		fmt.Fprintln(&b, style.ErrorText.Render(word)+style.Tagline.Render(" — "+r.lastFailed.Reason+" · next: "+r.lastFailed.Action))
+		// The phase word leads in the error colour; the rest wraps.
+		lines := wrapWords(word+" — "+r.lastFailed.Reason+" · next: "+r.lastFailed.Action, limit)
+		for i, line := range lines {
+			if rest, ok := strings.CutPrefix(line, word); i == 0 && ok {
+				line = style.ErrorText.Render(word) + style.Tagline.Render(rest)
+			} else {
+				line = style.Tagline.Render(line)
+			}
+			fmt.Fprintln(&b, line)
+		}
 	} else if r.runErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(r.runErr.Error()))
+		writeWrapped(&b, style.Tagline, r.runErr.Error(), limit)
 	}
 	for _, line := range tailLines(r.stderrTail, 6) {
-		fmt.Fprintln(&b, style.Tagline.Render(line))
+		writeWrapped(&b, style.Tagline, line, limit)
 	}
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, failedMenu, r.menuSel)
+	r.menu.over(failedMenu).write(&b)
 	return skyBlock(r.console.sky, width, height, b.String())
 }
 
@@ -672,10 +681,7 @@ func tailLines(lines []string, n int) []string {
 // the same vertical rhythm as the scene screens.
 func centreBlock(width, height int, content string) string {
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	topOffset := int(0.42 * float64(height-1-len(lines)))
-	if topOffset < 0 {
-		topOffset = 0
-	}
+	topOffset := topOffsetFor(height-1, len(lines))
 	var b strings.Builder
 	for i := 0; i < topOffset; i++ {
 		b.WriteString("\n")

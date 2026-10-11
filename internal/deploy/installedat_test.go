@@ -40,10 +40,7 @@ func TestInstalledAt_ComesFromTheDatabaseVolumeNotTheEnvFile(t *testing.T) {
 // The date is read from this deployment's own database volume, and the
 // lookup only ever inspects: it never removes anything.
 func TestInstalledAt_InspectsThisDeploymentsDatabaseVolume(t *testing.T) {
-	binDir := t.TempDir()
-	callLog := filepath.Join(binDir, "calls.log")
-	writeFakeDocker(t, binDir, callLog)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	callLog := fakeDockerLogging(t)
 
 	InstalledAt(t.Context(), &Deployment{TargetDir: "/opt/orbit", Project: "my-orbit"})
 

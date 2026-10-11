@@ -46,9 +46,13 @@ type InstallModel struct {
 	targetDir     string
 	version       string
 
-	profileSel int // 0 = Standard, 1 = AI, 2 = Full
-	confirmSel int // 0 = Install now, 1 = Back
-	volumeSel  int // 0 = Continue anyway, 1 = Back
+	profile menu // installProfiles
+	confirm menu // installConfirmRows
+	volume  menu // installVolumeRows
+
+	// left is Esc or Back on the flow's first screen: back to the main
+	// menu with nothing started (#210).
+	left bool
 
 	// staleVolumes carries the pre-flight's finding (issue #105): Orbit
 	// database volumes this machine already has and this target cannot
@@ -78,7 +82,10 @@ type InstallModel struct {
 	seams engineRunSeams
 }
 
-// engineRunSeams bundles the overridable dependencies tests inject.
+// engineRunSeams bundles the overridable dependencies tests inject; nil
+// fields get the real implementations. It is the one list of seams:
+// engineRun and RepairModel embed it, Install and Update hold it and
+// hand it to their run, and AppModel passes it down whole.
 type engineRunSeams struct {
 	prepareEngine  prepareEngineFunc
 	prepareInstall prepareInstallFunc
@@ -90,6 +97,7 @@ type engineRunSeams struct {
 	adoptConfig    adoptConfigFunc
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
+	prepareRotate  prepareRotateFunc
 }
 
 // withSend gives the run its way back into the event loop.
@@ -99,26 +107,44 @@ func (r engineRun) withSend(send func(tea.Msg)) engineRun {
 }
 
 func (r engineRun) withSeams(s engineRunSeams) engineRun {
-	r.prepareEngine = s.prepareEngine
-	r.prepareInstall = s.prepareInstall
-	r.runHandoff = s.runHandoff
-	r.detect = s.detect
-	r.now = s.now
-	r.prepareConfig = s.prepareConfig
-	r.startConfig = s.startConfig
-	r.adoptConfig = s.adoptConfig
-	r.recheckConfig = s.recheckConfig
+	r.engineRunSeams = s
 	return r
 }
 
 // NewInstallModel constructs the Install flow for targetDir.
 func NewInstallModel(targetDir, version string) InstallModel {
-	return InstallModel{targetDir: targetDir, version: version}
+	return InstallModel{
+		targetDir: targetDir,
+		version:   version,
+		profile:   newMenu(installProfiles...),
+		confirm:   newMenu(installConfirmRows...),
+		volume:    newMenu(installVolumeRows...),
+	}
 }
 
-// Done, Succeeded, WantsMenu, SuccessURL and SuccessElapsed surface the
-// engine run's outcome to AppModel.
-func (m InstallModel) Outcome() flowOutcome { return outcomeOf(m.run) }
+// The profile screen's rows. Only Standard is wired; AI and Full lead to
+// the honest dead end.
+const installStandard = "Standard  ·  mail, documents, calendar"
+
+var installProfiles = []string{
+	installStandard,
+	"AI  ·  adds a local model for search & suggestions",
+	"Full  ·  AI features plus every optional service",
+}
+
+var (
+	installConfirmRows = []string{"Install now", "Back"}
+	installVolumeRows  = []string{"Continue anyway", "Back"}
+)
+
+// Outcome surfaces the flow's result to AppModel: back to the menu when
+// the person left on the first screen, otherwise the engine run's.
+func (m InstallModel) Outcome() flowOutcome {
+	if m.left {
+		return backToMenu
+	}
+	return outcomeOf(m.run)
+}
 
 // staleVolumesMsg carries the pre-flight's finding back into the event
 // loop. An empty slice is the overwhelmingly common case and means the
@@ -150,7 +176,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// sky's speed for the rest of the process (see AppModel.refreshSplash).
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
-		m.star = starfield.New(resized.Width, resized.Height, 1)
+		m.star = newSky(resized.Width, resized.Height)
 		if m.state == installStateNotice {
 			// A resize can reveal the end, which opens the scroll gate.
 			m.notice = m.notice.resize(resized.Width, resized.Height)
@@ -191,7 +217,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(found.volumes) > 0 && m.state == installStateProfile {
 			m.staleVolumes = found.volumes
 			m.state = installStateStaleVolume
-			m.volumeSel = 0
+			m.volume = newMenu(installVolumeRows...)
 		}
 		return m, nil
 	}
@@ -236,58 +262,54 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // always offered and always works: this screen reports what the engine
 // is about to refuse, and a detection mistake here must never be able to
 // stand between someone and an install.
+//
+// It takes the first screen's place when it fires, so Esc and Back are
+// the same act here as on the profile screen: back to the main menu.
 func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		return m, tea.Quit
-	case tea.KeyUp, tea.KeyDown:
-		m.volumeSel = 1 - m.volumeSel
+	if msg.Code == tea.KeyEsc {
+		m.left = true
 		return m, nil
-	case tea.KeyEnter:
-		if m.volumeSel == 1 {
-			return m, tea.Quit
-		}
+	}
+	var chosen string
+	m.volume, chosen = m.volume.update(msg)
+	switch chosen {
+	case "Continue anyway":
 		m.state = installStateProfile
-		return m, nil
+	case "Back":
+		m.left = true
 	}
 	return m, nil
 }
 
 func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		return m, tea.Quit
-	case tea.KeyUp:
-		m.profileSel = (m.profileSel - 1 + 3) % 3
+	if msg.Code == tea.KeyEsc {
+		m.left = true
 		return m, nil
-	case tea.KeyDown:
-		m.profileSel = (m.profileSel + 1) % 3
-		return m, nil
-	case tea.KeyEnter:
-		if m.profileSel != 0 {
-			m.state = installStateUnavailableProfile
-			return m, nil
-		}
+	}
+	var chosen string
+	m.profile, chosen = m.profile.update(msg)
+	switch chosen {
+	case "": // a move, or a key the menu does not use
+	case installStandard:
 		m.state = installStateConfirm
-		m.confirmSel = 0
-		return m, nil
+		m.confirm = newMenu(installConfirmRows...)
+	default:
+		m.state = installStateUnavailableProfile
 	}
 	return m, nil
 }
 
 func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		m.state = installStateProfile
 		return m, nil
-	case tea.KeyUp, tea.KeyDown:
-		m.confirmSel = 1 - m.confirmSel
-		return m, nil
-	case tea.KeyEnter:
-		if m.confirmSel == 1 {
-			m.state = installStateProfile
-			return m, nil
-		}
+	}
+	var chosen string
+	m.confirm, chosen = m.confirm.update(msg)
+	switch chosen {
+	case "Back":
+		m.state = installStateProfile
+	case "Install now":
 		// Install now opens the development notice (#175), fresh every
 		// time: going back and coming again restarts the countdown and
 		// closes the scroll gate.
@@ -387,10 +409,7 @@ func (m InstallModel) view() string {
 // volume name they read here.
 func (m InstallModel) viewStaleVolume() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This machine already has an Orbit database"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This machine already has an Orbit database")
 
 	for _, v := range m.staleVolumes {
 		line := v.Name
@@ -415,25 +434,14 @@ func (m InstallModel) viewStaleVolume() string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("nothing has been changed, and nothing will be by this screen"))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Continue anyway", "Back"}, m.volumeSel)
+	m.volume.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Choose a deployment profile"))
-	fmt.Fprintln(&b)
-
-	profiles := []struct{ name, desc string }{
-		{"Standard", "mail, documents, calendar"},
-		{"AI", "adds a local model for search & suggestions"},
-		{"Full", "AI features plus every optional service"},
-	}
-	for i, p := range profiles {
-		fmt.Fprintln(&b, menuRow(p.name+"  ·  "+p.desc, i == m.profileSel))
-	}
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
+	m.profile.write(&b)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -441,10 +449,7 @@ func (m InstallModel) viewProfile() string {
 
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("This profile isn't available yet"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
 	fmt.Fprintln(&b, style.MutedText.Render("AI and Full need local-model configuration that"))
 	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
 	fmt.Fprintln(&b)
@@ -459,17 +464,15 @@ func (m InstallModel) viewNotice() string {
 
 func (m InstallModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Ready to install"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Ready to install")
 	fmt.Fprintln(&b, style.MutedText.Render("Orbit's own installer runs inside the mission console —"))
 	fmt.Fprintln(&b, style.MutedText.Render("watch it validate, pull the image, and start the containers"))
 	fmt.Fprintln(&b, style.MutedText.Render("right here. If it needs configuration only you can provide,"))
 	fmt.Fprintln(&b, style.MutedText.Render("it stops safely and asks first."))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render(m.targetDir))
+	// The path is the one word here whose length nobody chose.
+	writeWrapped(&b, style.Tagline, m.targetDir, min(m.width-4, proseWidth))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Install now", "Back"}, m.confirmSel)
+	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }

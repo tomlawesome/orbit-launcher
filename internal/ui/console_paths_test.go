@@ -4,6 +4,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // The mission console's rarer renderings: every state's glyph and words,
@@ -12,17 +17,17 @@ import (
 func consoleRows(c ConsoleModel, width, height int) []string {
 	var rows []string
 	for _, l := range c.contentLines(width, height) {
-		rows = append(rows, stripANSI(l))
+		rows = append(rows, ansi.Strip(l))
 	}
 	return rows
 }
 
 func TestConsole_EachStateHasItsGlyphAndWords(t *testing.T) {
 	c := testConsole()
-	c = c.observeEvent(consoleEvent("pull", "image", "skipped", "image-present", "skip"))
-	c = c.observeEvent(consoleEvent("database", "database", "blocked", "volume-ownership", "stop"))
-	c = c.observeEvent(consoleEvent("database", "migrations", "waiting", "migration", "wait"))
-	c = c.observeEvent(consoleEvent("application", "application", "running", "application-health", "start"))
+	c = c.observeEvent(ev("pull", "image", "skipped", "image-present", "skip").Event)
+	c = c.observeEvent(ev("database", "database", "blocked", "volume-ownership", "stop").Event)
+	c = c.observeEvent(ev("database", "migrations", "waiting", "migration", "wait").Event)
+	c = c.observeEvent(ev("application", "application", "running", "application-health", "start").Event)
 	c = c.observeRaw("legacy prose line")
 	rows := strings.Join(consoleRows(c, 80, 26), "\n")
 	for _, want := range []string{
@@ -41,13 +46,13 @@ func TestConsole_EachStateHasItsGlyphAndWords(t *testing.T) {
 
 func TestConsole_OnlyTheNewestActiveEntrySpins(t *testing.T) {
 	c := testConsole()
-	c = c.observeEvent(consoleEvent("database", "database", "starting", "database-health", "start"))
+	c = c.observeEvent(ev("database", "database", "starting", "database-health", "start").Event)
 	rows := strings.Join(consoleRows(c, 80, 26), "\n")
-	if !strings.Contains(rows, string(spinnerFrames[0])+" database starting") {
+	if !strings.Contains(rows, string(style.SpinnerFrames[0])+" database starting") {
 		t.Fatalf("the newest active entry should carry the spinner:\n%s", rows)
 	}
 	c = c.advance()
-	if rows := strings.Join(consoleRows(c, 80, 26), "\n"); !strings.Contains(rows, string(spinnerFrames[1])+" database starting") {
+	if rows := strings.Join(consoleRows(c, 80, 26), "\n"); !strings.Contains(rows, string(style.SpinnerFrames[1])+" database starting") {
 		t.Fatalf("the spinner did not move on a tick:\n%s", rows)
 	}
 }
@@ -76,7 +81,7 @@ func TestConsole_OverWideLineIsCutToTheBox(t *testing.T) {
 	c = c.observeRaw(strings.Repeat("y", 200))
 	for _, row := range c.contentLines(80, 26) {
 		if w := visibleWidth(row); w > 76 {
-			t.Fatalf("a row is %d cells wide, past the 76-cell box:\n%s", w, stripANSI(row))
+			t.Fatalf("a row is %d cells wide, past the 76-cell box:\n%s", w, ansi.Strip(row))
 		}
 	}
 }
@@ -90,7 +95,7 @@ func TestConsole_NarrowTerminals(t *testing.T) {
 	// width — down to the clock's own width and below it (#187).
 	for width := 2; width <= 40; width++ {
 		for _, row := range consoleRows(c, width, 26) {
-			if w := len([]rune(row)); w > width {
+			if w := lipgloss.Width(row); w > width {
 				t.Fatalf("a row is %d cells on a %d-column terminal: %q", w, width, row)
 			}
 		}
@@ -147,8 +152,8 @@ func TestConsole_ShortTerminalStillShowsThreeEntryRows(t *testing.T) {
 
 func TestConsole_RollbackColoursTheBarAndNamesTheStage(t *testing.T) {
 	c := testConsole()
-	c = c.observeEvent(consoleEvent("database", "database", "completed", "database-health", "start"))
-	c = c.observeEvent(consoleEvent("rollback", "installer", "running", "rollback", "rollback"))
+	c = c.observeEvent(ev("database", "database", "completed", "database-health", "start").Event)
+	c = c.observeEvent(ev("rollback", "installer", "running", "rollback", "rollback").Event)
 	rows := consoleRows(c, 80, 26)
 	if got := rows[len(rows)-1]; !strings.HasPrefix(got, c.stageWord()) {
 		t.Fatalf("stage row = %q, want it to lead with %q", got, c.stageWord())

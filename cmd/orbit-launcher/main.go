@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -51,18 +50,18 @@ func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr i
 // startApp's signature matches what run expects.
 func startApp(stdout, stderr io.Writer) int {
 	app := ui.NewAppModel()
-	if os.Getenv("ORBIT_LAUNCHER_NO_ANIMATION") != "" {
+	if os.Getenv(deploy.NoAnimationEnv) != "" {
 		app = ui.NewAppModelNoAnimation()
 	}
-	if os.Getenv("ORBIT_LAUNCHER_NO_UPDATE_CHECK") == "" {
+	if os.Getenv(deploy.NoUpdateCheckEnv) == "" {
 		app = app.WithUpdateCheck(release.CheckForUpdate)
 	}
-	app = app.WithVersion(displayVersion(release.Version))
+	app = app.WithVersion(release.DisplayVersion(release.Version))
 	// The health probe hits only the user's own deployment (its APP_URL),
 	// resolving the splash's alive/degraded state; the env gate mirrors
 	// ORBIT_LAUNCHER_NO_UPDATE_CHECK so tests stay offline-deterministic.
 	var probe func(context.Context, string) bool
-	if os.Getenv("ORBIT_LAUNCHER_NO_HEALTH_PROBE") == "" {
+	if os.Getenv(deploy.NoHealthProbeEnv) == "" {
 		probe = deploy.ProbeHealth
 	}
 	app = app.WithDeploymentStatus(probe)
@@ -71,7 +70,7 @@ func startApp(stdout, stderr io.Writer) int {
 	// the machine the test runs on — and on any machine that has ever
 	// run Orbit it legitimately interrupts the profile screen. Same
 	// hermeticity gate as the two above, for the same reason.
-	if os.Getenv("ORBIT_LAUNCHER_NO_VOLUME_CHECK") != "" {
+	if os.Getenv(deploy.NoVolumeCheckEnv) != "" {
 		app = app.WithoutVolumeCheck()
 	}
 
@@ -93,16 +92,4 @@ func startApp(stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-// displayVersion formats the release version for the splash's corner:
-// always v-prefixed, never a bare "dev" masquerading as a release.
-func displayVersion(v string) string {
-	if v == "" || v == "dev" {
-		return "dev"
-	}
-	if !strings.HasPrefix(v, "v") {
-		return "v" + v
-	}
-	return v
 }

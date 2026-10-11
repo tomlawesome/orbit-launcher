@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 func TestBuildInstallCommand_StagesScriptAndReturnsARunnableCommand(t *testing.T) {
@@ -214,7 +216,7 @@ func TestBuildEngineCommand_UnstageableScriptReturnsNoCommand(t *testing.T) {
 // install.sh, and whether it is set at all.
 func configTreeEnv(cmd *exec.Cmd) (string, bool) {
 	for _, kv := range cmd.Env {
-		if v, ok := strings.CutPrefix(kv, "ORBIT_LAUNCHER_CONFIG_TREE="); ok {
+		if v, ok := strings.CutPrefix(kv, ConfigTreeEnv+"="); ok {
 			return v, true
 		}
 	}
@@ -232,7 +234,7 @@ func TestBuildInstallCommand_HandsInstallAFreshPrivateConfigTree(t *testing.T) {
 	tree, ok := configTreeEnv(cmd)
 	if !ok || tree == "" {
 		cleanup()
-		t.Fatalf("ORBIT_LAUNCHER_CONFIG_TREE not set in the engine's environment: %v", cmd.Env)
+		t.Fatalf("%s not set in the engine's environment: %v", ConfigTreeEnv, cmd.Env)
 	}
 	if got := ConfigTreeDir(cmd); got != tree {
 		t.Errorf("ConfigTreeDir = %q, want %q", got, tree)
@@ -250,12 +252,7 @@ func TestBuildInstallCommand_HandsInstallAFreshPrivateConfigTree(t *testing.T) {
 
 	// install.sh fills it on a configuration refusal; cleanup still
 	// removes all of it.
-	if err := os.MkdirAll(filepath.Join(tree, "scripts"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tree, "scripts", "configure.sh"), []byte("#!/bin/bash\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	scriptTree(t, tree, 0o700, testutil.File{Path: "scripts/configure.sh", Body: "#!/bin/bash\n", Mode: 0o600})
 	if err := cleanup(); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -285,8 +282,8 @@ func TestBuildInstallCommand_EachRunGetsItsOwnConfigTree(t *testing.T) {
 // COMPOSE_PROJECT_NAME and the job's ORBIT_CHANNEL reach the engine
 // only because nothing scrubs them.
 func TestBuildEngineCommand_EngineSeesTheConfigTreeAndTheInheritedEnvironment(t *testing.T) {
-	t.Setenv("ORBIT_LAUNCHER_TEST_INHERITED", "kept")
-	script := []byte("#!/usr/bin/env bash\n[[ -d \"$ORBIT_LAUNCHER_CONFIG_TREE\" ]] || exit 7\n[[ \"$ORBIT_LAUNCHER_TEST_INHERITED\" == kept ]] || exit 8\n")
+	t.Setenv("ORBIT_TEST_INHERITED", "kept")
+	script := []byte("#!/usr/bin/env bash\n[[ -d \"$" + ConfigTreeEnv + "\" ]] || exit 7\n[[ \"$ORBIT_TEST_INHERITED\" == kept ]] || exit 8\n")
 	cmd, cleanup, err := BuildEngineCommand(script, t.TempDir(), "install")
 	if err != nil {
 		t.Fatalf("BuildEngineCommand: %v", err)

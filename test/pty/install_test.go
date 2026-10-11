@@ -1,9 +1,15 @@
 package pty
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
+)
 
 func TestApp_RealPTY_NavigatingIntoInstallShowsTheProfileScreen(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
 
@@ -32,7 +38,13 @@ func TestApp_RealPTY_NavigatingIntoInstallShowsTheProfileScreen(t *testing.T) {
 	if err := console.expectString("Choose a deployment profile"); err != nil {
 		t.Fatalf("did not return to the profile screen: %v", err)
 	}
-	console.send("\x1b") // Escape quits
+	// The profile screen is the flow's first: Escape is one step back,
+	// to the menu (#210, owner 4a), and Ctrl-C quits from anywhere.
+	console.send("\x1b")
+	if err := console.expectWithin(10*time.Second, vtscreen.ContainsAll("Install", "Update", "Repair")); err != nil {
+		t.Fatalf("Escape on the profile screen did not return to the menu: %v", err)
+	}
+	console.send("\x03")
 
 	waitForExit(t, cmd)
 }

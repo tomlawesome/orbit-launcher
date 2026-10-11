@@ -13,12 +13,17 @@ import (
 // Lines carry only the fixed field/kind/reason vocabulary — never a
 // configuration value, never the secret.
 
+// PromptMaxAttempts is how many answers the engine takes for one field:
+// when the last of them is rejected it sends PromptAbort, not another
+// Prompt.
+const PromptMaxAttempts = 3
+
 // Prompt is the engine's request for one configuration value. The
 // engine is now blocked reading one answer line from stdin.
 type Prompt struct {
 	Field    string
 	Kind     string // url | text | secret — unknown values carried verbatim
-	Attempt  int    // 1-based; bounded at 3 by the engine
+	Attempt  int    // 1-based; bounded at PromptMaxAttempts by the engine
 	Required bool
 }
 

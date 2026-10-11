@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
@@ -24,15 +25,7 @@ import (
 //
 // Only the retried run hits it in CI because the first run refuses for
 // configuration long before the database phase.
-const fakeLongLineRetryEngine = `#!/usr/bin/env bash
-printf '%s\n' "$*" >> engine-args.txt
-echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
-if [[ ! -f .env-orbit ]]; then
-  echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
-  echo "Orbit installer: configuration fields requiring attention: APP_URL." >&2
-  exit 1
-fi
-echo "phase=assets component=assets state=completed reason=assets-staged action=stage elapsed=0s"
+const fakeLongLineRetryEngine = refuseUntilConfigured + `echo "phase=assets component=assets state=completed reason=assets-staged action=stage elapsed=0s"
 echo "phase=configuration component=configuration state=completed reason=configuration-ready action=configure elapsed=0s"
 echo "phase=compose component=compose state=completed reason=compose-valid action=validate elapsed=1s"
 echo "phase=database component=postgres state=starting reason=database-boot action=wait elapsed=1s"
@@ -58,11 +51,9 @@ func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": handsOverTree(fakeLongLineRetryEngine, fakeMachineConfigure),
-	})
+	scriptURL := launcher.ServeScript(t, handsOverTree(fakeLongLineRetryEngine, fakeMachineConfigure))
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	must := func(s string) {

@@ -1,13 +1,13 @@
 package pty
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 )
 
 // fakeEngineScript is a stand-in install.sh that speaks engine event
@@ -42,18 +42,6 @@ echo "Orbit installer: configuration fields requiring attention: APP_URL OIDC_IS
 exit 1
 `
 
-// serveScript stands up a local server the launcher fetches "install.sh"
-// from via ORBIT_LAUNCHER_INSTALL_SCRIPT_URL — the same override orbit's
-// launcher-install-compat gate uses.
-func serveScript(t *testing.T, script string) string {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(script))
-	}))
-	t.Cleanup(server.Close)
-	return server.URL
-}
-
 func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, *exec.Cmd) {
 	t.Helper()
 
@@ -61,10 +49,8 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, 
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
-		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
-		"ORBIT_LAUNCHER_INSTALL_SCRIPT_URL="+scriptURL)
+	// The arrival animation is kept, as startUnderPTYInDir keeps it.
+	cmd.Env = append(launcher.HermeticEnv(launcher.Animation), "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL="+scriptURL)
 	// Same leak guard as startUnderPTYInDir: a t.Fatalf exit must not
 	// leave the spawned binary alive on a dead pty.
 	console.start(t, cmd)
@@ -116,9 +102,9 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	console, cmd := startConsolePTY(t, binPath, dir, serveScript(t, fakeEngineScript))
+	console, cmd := startConsolePTY(t, binPath, dir, launcher.ServeScript(t, fakeEngineScript))
 
 	driveToInstallNow(t, console)
 
@@ -162,9 +148,9 @@ func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	console, cmd := startConsolePTY(t, binPath, dir, serveScript(t, fakeRefusalScript))
+	console, cmd := startConsolePTY(t, binPath, dir, launcher.ServeScript(t, fakeRefusalScript))
 
 	driveToInstallNow(t, console)
 
@@ -176,11 +162,11 @@ func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
 	}
 
 	// Escape returns to the menu (the refusal rolled the target back;
-	// nothing was changed), and Escape again quits cleanly.
+	// nothing was changed), and Ctrl-C quits cleanly.
 	console.send("\x1b")
 	if err := console.expectString("▸ Install"); err != nil {
 		t.Fatalf("expected the splash again after Menu: %v", err)
 	}
-	console.send("\x1b")
+	console.send("\x03")
 	waitForExit(t, cmd)
 }

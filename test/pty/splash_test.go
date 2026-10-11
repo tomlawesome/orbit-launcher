@@ -8,44 +8,16 @@ package pty
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
-// buildBinary compiles cmd/orbit-launcher once per test run and returns
-// its path, so these tests exercise the actual binary a release would
-// ship, not a stand-in.
-func buildBinary(t *testing.T) string {
-	t.Helper()
-
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-
-	binPath := filepath.Join(t.TempDir(), "orbit-launcher")
-	args := []string{"build", "-o", binPath}
-	// scripts/coverage.sh sets this so the binary's own runs count
-	// towards coverage (#169). It cannot be GOCOVERDIR itself: `go test
-	// -cover` points GOCOVERDIR at a directory of its own for each test
-	// process. Every spawn passes os.Environ() on, so setting GOCOVERDIR
-	// here reaches each binary this suite starts.
-	if dir := os.Getenv("ORBIT_LAUNCHER_BINARY_COVERDIR"); dir != "" {
-		args = append(args, "-cover", "-covermode=atomic", "-coverpkg=github.com/tomlawesome/orbit-launcher/...")
-		if err := os.Setenv("GOCOVERDIR", dir); err != nil {
-			t.Fatalf("point the binary's coverage at %s: %v", dir, err)
-		}
-	}
-	cmd := exec.Command("go", append(args, "./cmd/orbit-launcher")...)
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build orbit-launcher: %v\n%s", err, out)
-	}
-	return binPath
-}
+// TestMain lets the harness build the binary once for the whole package
+// and remove it after the last test.
+func TestMain(m *testing.M) { os.Exit(launcher.Run(m)) }
 
 // vtConsole is one orbit-launcher process on a virtual terminal: it runs
 // on a real pty, Charm's x/vt emulator keeps the rendered screen, and every
@@ -129,16 +101,9 @@ func startUnderPTYInDir(t *testing.T, binPath, dir string) (*vtConsole, *exec.Cm
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	// NO_COLOR keeps assertions to plain text: this layer proves
-	// behaviour (does navigation work, does the terminal restore), not
-	// appearance — that's test/visual's job.
-	// These tests assert on rendered output and navigation, not on
-	// whether GitHub happens to be reachable from the test runner — same
-	// reason every other test in this repo mocks its network calls
-	// (see internal/deploy/fetch_test.go, internal/release/update_test.go).
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1",
-		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1", "ORBIT_LAUNCHER_NO_HEALTH_PROBE=1",
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1")
+	// The arrival animation is kept: skipArrival is how these tests get
+	// past it, the way a person does.
+	cmd.Env = launcher.HermeticEnv(launcher.Animation)
 	console.start(t, cmd)
 	return console, cmd
 }
@@ -169,8 +134,9 @@ func waitForExit(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
-	binPath := buildBinary(t)
+// Esc on the menu does nothing and leaving takes the Exit row (#226).
+func TestSplash_RealPTY_RendersAndLeavesByTheExitRowNotEscape(t *testing.T) {
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
 
@@ -182,13 +148,19 @@ func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
 		t.Fatalf("did not see the menu: %v", err)
 	}
 
-	console.send("\x1b") // Escape
+	console.send("\x1b")   // Escape: stays on the menu
+	console.send("\x1b[B") // Down, so the menu is provably still live
+	if err := console.expectString("▸ Update"); err != nil {
+		t.Fatalf("the menu stopped responding after Escape: %v", err)
+	}
+
+	console.send("5") // Exit, the menu's fifth row
 
 	waitForExit(t, cmd)
 }
 
 func TestSplash_RealPTY_ArrowNavigationMovesTheCaret(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
 
@@ -202,7 +174,7 @@ func TestSplash_RealPTY_ArrowNavigationMovesTheCaret(t *testing.T) {
 		t.Fatalf("caret did not move to Update after Down: %v", err)
 	}
 
-	console.send("\x1b") // Escape
+	console.send("\x03") // Ctrl-C
 
 	waitForExit(t, cmd)
 }

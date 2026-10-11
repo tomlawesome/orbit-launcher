@@ -1,12 +1,13 @@
 package pty
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 )
 
 // This file proves the two orbit-develop-era flows end to end — real
@@ -22,20 +23,58 @@ import (
 //   - repair diagnosis (orbit#261 slice 1): run the deployment's own
 //     scripts/repair.sh, parse findings, exit-code outcome.
 
-// fakeConfigAwareEngine refuses without configuration and succeeds
-// with it — how the real engine behaves across the collect-then-retry
-// journey.
-const fakeConfigAwareEngine = `#!/usr/bin/env bash
+// configRefusal is the guidance line of the engine's configuration
+// refusal; handsOverTree hands the configure tree over at it.
+const configRefusal = "  echo \"Orbit installer: configuration fields requiring attention: APP_URL.\" >&2\n"
+
+// refuseUntilConfigured opens every fake engine that refuses without
+// configuration and proceeds with it: it logs its arguments, reports the
+// host phase and, until a .env-orbit exists, refuses as the real engine
+// does -- a failed configuration event, guidance on stderr, exit 1.
+const refuseUntilConfigured = `#!/usr/bin/env bash
 printf '%s\n' "$*" >> engine-args.txt
 echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
 if [[ ! -f .env-orbit ]]; then
   echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
-  echo "Orbit installer: configuration fields requiring attention: APP_URL." >&2
-  exit 1
+` + configRefusal + `  exit 1
 fi
-echo "phase=application component=application state=healthy reason=application-health action=health elapsed=1s"
+`
+
+// fakeConfigAwareEngine refuses without configuration and succeeds
+// with it — how the real engine behaves across the collect-then-retry
+// journey.
+const fakeConfigAwareEngine = refuseUntilConfigured + `echo "phase=application component=application state=healthy reason=application-health action=health elapsed=1s"
 echo "phase=complete component=installer state=completed reason=deployment-ready action=complete elapsed=1s"
 exit 0
+`
+
+// configureInit is --init as orbit's configure.sh speaks it, up to what
+// it writes to .env-orbit: the one place the two machine-configure fakes
+// differ, besides --check.
+const configureInit = `  --init)
+    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || { echo "Orbit configuration: needs a terminal." >&2; exit 1; }
+    echo "prompt field=APP_URL kind=url required=true attempt=1"
+    read -r answer || { echo "prompt-abort field=APP_URL"; exit 1; }
+    echo "prompt-accept field=APP_URL"
+`
+
+// configureFinish closes --init and adds --set-oidc-secret, the same in
+// both machine-configure fakes.
+const configureFinish = `    chmod 600 .env-orbit
+    exit 0
+    ;;
+  --set-oidc-secret)
+    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || exit 1
+    echo "prompt field=OIDC_CLIENT_SECRET kind=secret required=true attempt=1"
+    read -r secret || { echo "prompt-abort field=OIDC_CLIENT_SECRET"; exit 1; }
+    echo "prompt-accept field=OIDC_CLIENT_SECRET"
+    mkdir -p .orbit-secrets && chmod 700 .orbit-secrets
+    printf '%s\n' "$secret" > .orbit-secrets/oidc-client-secret
+    chmod 600 .orbit-secrets/oidc-client-secret
+    exit 0
+    ;;
+esac
+exit 2
 `
 
 // fakeMachineConfigure speaks the machine prompt protocol exactly as
@@ -53,28 +92,8 @@ case "$1" in
     if [[ -f .orbit-secrets/oidc-client-secret ]]; then echo "ready OIDC_CLIENT_SECRET"; else echo "missing OIDC_CLIENT_SECRET"; rc=1; fi
     exit $rc
     ;;
-  --init)
-    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || { echo "Orbit configuration: needs a terminal." >&2; exit 1; }
-    echo "prompt field=APP_URL kind=url required=true attempt=1"
-    read -r answer || { echo "prompt-abort field=APP_URL"; exit 1; }
-    echo "prompt-accept field=APP_URL"
-    printf 'APP_URL=%s\n' "$answer" > .env-orbit
-    chmod 600 .env-orbit
-    exit 0
-    ;;
-  --set-oidc-secret)
-    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || exit 1
-    echo "prompt field=OIDC_CLIENT_SECRET kind=secret required=true attempt=1"
-    read -r secret || { echo "prompt-abort field=OIDC_CLIENT_SECRET"; exit 1; }
-    echo "prompt-accept field=OIDC_CLIENT_SECRET"
-    mkdir -p .orbit-secrets && chmod 700 .orbit-secrets
-    printf '%s\n' "$secret" > .orbit-secrets/oidc-client-secret
-    chmod 600 .orbit-secrets/oidc-client-secret
-    exit 0
-    ;;
-esac
-exit 2
-`
+` + configureInit + `    printf 'APP_URL=%s\n' "$answer" > .env-orbit
+` + configureFinish
 
 // fakeRepairCheckOnly speaks only --check, like a repair.sh from
 // before slice 3 — the launcher's --plan attempt gets the usage error
@@ -104,7 +123,7 @@ exit 3
 // launcher named in ORBIT_LAUNCHER_CONFIG_TREE before exiting. That is
 // the only place the launcher may take configure.sh from (#190).
 func handsOverTree(engine, configure string) string {
-	const refusal = "  echo \"Orbit installer: configuration fields requiring attention: APP_URL.\" >&2\n"
+	const refusal = configRefusal
 	if !strings.Contains(engine, refusal) {
 		panic("handsOverTree: the engine has no configuration refusal to hand the tree over at")
 	}
@@ -119,34 +138,14 @@ func handsOverTree(engine, configure string) string {
 	return strings.Replace(engine, refusal, handover, 1)
 }
 
-// serveOrbitTree stands up a path-aware fake of orbit's raw file tree
-// and returns the install.sh URL for ORBIT_LAUNCHER_INSTALL_SCRIPT_URL.
-// Since #190 only install.sh is ever fetched; serving anything else
-// would test nothing.
-func serveOrbitTree(t *testing.T, files map[string]string) string {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, ok := files[r.URL.Path]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(server.Close)
-	return server.URL + "/scripts/install.sh"
-}
-
 func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	// Parallel: each run waits out the development notice's real
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": handsOverTree(fakeConfigAwareEngine, fakeMachineConfigure),
-	})
+	scriptURL := launcher.ServeScript(t, handsOverTree(fakeConfigAwareEngine, fakeMachineConfigure))
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	driveToInstallNow(t, console)
@@ -248,32 +247,12 @@ case "$1" in
     fi
     exit $rc
     ;;
-  --init)
-    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || { echo "Orbit configuration: needs a terminal." >&2; exit 1; }
-    echo "prompt field=APP_URL kind=url required=true attempt=1"
-    read -r answer || { echo "prompt-abort field=APP_URL"; exit 1; }
-    echo "prompt-accept field=APP_URL"
-    if [[ "${ORBIT_CONFIGURE_AUTH_MODE:-}" == local ]]; then
+` + configureInit + `    if [[ "${ORBIT_CONFIGURE_AUTH_MODE:-}" == local ]]; then
       printf 'APP_URL=%s\nORBIT_AUTH_OIDC=false\n' "$answer" > .env-orbit
     else
       printf 'APP_URL=%s\nORBIT_AUTH_OIDC=true\n' "$answer" > .env-orbit
     fi
-    chmod 600 .env-orbit
-    exit 0
-    ;;
-  --set-oidc-secret)
-    [[ "${ORBIT_CONFIGURE_PROMPTS:-}" == machine ]] || exit 1
-    echo "prompt field=OIDC_CLIENT_SECRET kind=secret required=true attempt=1"
-    read -r secret || { echo "prompt-abort field=OIDC_CLIENT_SECRET"; exit 1; }
-    echo "prompt-accept field=OIDC_CLIENT_SECRET"
-    mkdir -p .orbit-secrets && chmod 700 .orbit-secrets
-    printf '%s\n' "$secret" > .orbit-secrets/oidc-client-secret
-    chmod 600 .orbit-secrets/oidc-client-secret
-    exit 0
-    ;;
-esac
-exit 2
-`
+` + configureFinish
 
 // TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret is issue #154 end to
 // end: the sign-in-mode screen's default (local accounts), a real
@@ -286,11 +265,9 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": handsOverTree(fakeConfigAwareEngine, fakeMachineConfigureModeAware),
-	})
+	scriptURL := launcher.ServeScript(t, handsOverTree(fakeConfigAwareEngine, fakeMachineConfigureModeAware))
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	driveToInstallNow(t, console)
@@ -345,24 +322,17 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 // directory, where install.sh places it from the image.
 func placeRepairScript(t *testing.T, dir, script string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "repair.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testutil.StageTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: script, Mode: 0o700})
 }
 
 func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	placeRepairScript(t, dir, fakeRepairPlan)
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": fakeConfigAwareEngine,
-	})
+	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	must := func(s string) {
@@ -386,21 +356,19 @@ func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
 
 func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
 	// An existing deployment, so the splash offers Repair.
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	placeRepairScript(t, dir, fakeRepairCheckOnly)
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": fakeConfigAwareEngine,
-	})
+	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	must := func(s string) {
@@ -432,12 +400,12 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	// Menu returns to the splash; Escape quits.
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
 
 func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -445,10 +413,7 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 	// No scripts/repair.sh in the deployment — one from before the
 	// repair diagnosis. The source still offers one, where the launcher
 	// used to fetch it from; it must not be taken (#190).
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": fakeConfigAwareEngine,
-		"/scripts/repair.sh":  fakeRepairPlan,
-	})
+	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine, launcher.File{Path: "/scripts/repair.sh", Body: fakeRepairPlan})
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	must := func(s string) {
@@ -471,7 +436,7 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
 
@@ -493,15 +458,13 @@ exit 2
 `
 
 func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	placeRepairScript(t, dir, fakeRepairModal)
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": fakeConfigAwareEngine,
-	})
+	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
 
 	must := func(s string) {
@@ -536,6 +499,6 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	send("\x1b[B")
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
