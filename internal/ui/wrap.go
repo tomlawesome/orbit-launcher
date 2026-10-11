@@ -89,13 +89,16 @@ func commandUnits(words []string) []string {
 // line breaks stay. A line that fits is kept as given; one
 // that does not breaks at spaces, the spaces at a break being the
 // break, while its indent and runs of spaces elsewhere stay. A single
-// word wider than limit stays whole. Empty text is no lines.
+// word wider than limit stays whole. Trailing line breaks are dropped,
+// and empty text is no lines.
 func wrapWords(text string, limit int) []string {
+	// Trailing line breaks are not rows: command output ends in one.
+	text = strings.TrimRight(ansi.Strip(text), "\r\n")
 	if text == "" {
 		return nil
 	}
 	var rows []string
-	for _, line := range strings.Split(ansi.Strip(text), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		rows = append(rows, wrapLine(cleanLine(line), limit)...)
 	}
 	return rows
