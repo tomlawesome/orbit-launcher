@@ -79,8 +79,8 @@ func TestSplashModel_NumberKeyBeyondMenuLengthIsIgnored(t *testing.T) {
 	}
 }
 
-func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
-	for _, k := range []tea.KeyPressMsg{key(tea.KeyEsc), ctrlC()} {
+func TestSplashModel_CtrlCQuitsWithoutChoosing(t *testing.T) {
+	for _, k := range []tea.KeyPressMsg{ctrlC()} {
 		m := settled(NewSplashModel())
 		m.menu.sel = 1
 
@@ -99,16 +99,92 @@ func TestSplashModel_EscapeAndCtrlCQuitWithoutChoosing(t *testing.T) {
 	}
 }
 
-func TestSplashModel_QLowercaseQuitsWithoutChoosing(t *testing.T) {
+// Esc on the lit menu does nothing (#226, answer 3a): backing out stops
+// at the menu, so pressing Esc repeatedly never closes the launcher.
+func TestSplashModel_EscDoesNothingOnTheLitMenu(t *testing.T) {
 	m := settled(NewSplashModel())
-	updated, cmd := m.Update(runeKey('q'))
+	m.menu.sel = 1
+	updated, cmd := m.Update(key(tea.KeyEsc))
 	m = updated.(SplashModel)
 
-	if m.Chosen != "" {
-		t.Errorf("Chosen = %q, want empty", m.Chosen)
+	if m.Chosen != "" || m.quitting || cmd != nil {
+		t.Fatalf("Esc on the menu: Chosen = %q, quitting = %v, cmd = %v; want it to do nothing", m.Chosen, m.quitting, cmd != nil)
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected 'q' to issue tea.Quit")
+	if m.menu.sel != 1 {
+		t.Errorf("Esc moved the selection to %d, want it left on 1", m.menu.sel)
+	}
+	updated, _ = m.Update(key(tea.KeyDown))
+	if got := updated.(SplashModel).menu.sel; got != 2 {
+		t.Errorf("Down after Esc moved to %d, want 2: the menu is not live", got)
+	}
+}
+
+func TestSplashModel_EscDuringTheArrivalSkipsItAndIsSwallowed(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+	if m.introDone {
+		t.Fatal("the arrival should be playing on a fresh animated splash")
+	}
+
+	updated, cmd := m.Update(key(tea.KeyEsc))
+	m = updated.(SplashModel)
+	if isQuit(cmd) || m.quitting || m.Chosen != "" {
+		t.Fatalf("Esc during the arrival quit or chose: quit=%v quitting=%v Chosen=%q", isQuit(cmd), m.quitting, m.Chosen)
+	}
+	if !m.introDone {
+		t.Error("Esc during the arrival must skip it, like any other key")
+	}
+	if !strings.Contains(m.View().Content, "Install") {
+		t.Error("after the skip, the lit menu must be showing")
+	}
+}
+
+// There is no q shortcut (#226): leaving takes the Exit row or Ctrl-C.
+// On the lit menu q is an unbound key.
+func TestSplashModel_QDoesNothingOnTheLitMenu(t *testing.T) {
+	for _, r := range []rune{'q', 'Q'} {
+		m := settled(NewSplashModel())
+		m.menu.sel = 1
+		updated, cmd := m.Update(runeKey(r))
+		m = updated.(SplashModel)
+
+		if m.Chosen != "" {
+			t.Errorf("%q: Chosen = %q, want empty", r, m.Chosen)
+		}
+		if m.quitting {
+			t.Errorf("%q: the menu is quitting", r)
+		}
+		if cmd != nil {
+			t.Errorf("%q: issued a command (quit = %v), want none", r, isQuit(cmd))
+		}
+		if m.menu.sel != 1 {
+			t.Errorf("%q: selection moved to %d, want it left on 1", r, m.menu.sel)
+		}
+	}
+}
+
+func TestSplashModel_QDuringTheArrivalSkipsItAndIsSwallowed(t *testing.T) {
+	m := NewSplashModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	m = updated.(SplashModel)
+	if m.introDone {
+		t.Fatal("the arrival should be playing on a fresh animated splash")
+	}
+
+	updated, cmd := m.Update(runeKey('q'))
+	m = updated.(SplashModel)
+	if isQuit(cmd) || m.quitting || m.Chosen != "" {
+		t.Fatalf("q during the arrival quit or chose: quit=%v quitting=%v Chosen=%q", isQuit(cmd), m.quitting, m.Chosen)
+	}
+	if !m.introDone {
+		t.Error("q during the arrival must skip it, like any other key")
+	}
+	if m.menu.sel != 0 {
+		t.Error("the skipping q must be swallowed")
+	}
+	if !strings.Contains(m.View().Content, "Install") {
+		t.Error("after the skip, the lit menu must be showing")
 	}
 }
 
@@ -227,7 +303,7 @@ func TestSplashModel_ViewIsEmptyAfterQuitting(t *testing.T) {
 	m := NewSplashModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(SplashModel)
-	updated, _ = m.Update(key(tea.KeyEsc))
+	updated, _ = m.Update(ctrlC())
 	m = updated.(SplashModel)
 
 	if view := m.View().Content; view != "" {

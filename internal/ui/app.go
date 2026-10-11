@@ -246,10 +246,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateSuccess:
 		updated, cmd := m.success.Update(msg)
 		m.success = updated.(SuccessModel)
-		if m.success.Chosen == "menu" {
-			return m.refreshSplash()
-		}
-		return m, cmd
+		return m.watchOutcome(m.success.Outcome(), cmd)
 	}
 	return m, nil
 }

@@ -35,8 +35,9 @@ type SuccessModel struct {
 	menu menu // successMenu
 
 	// Chosen is which action the user picked: "terminal" quits, "menu"
-	// returns to the splash (AppModel reads it). "Get into Orbit" stays
-	// on this screen — the URL opens, the screen remains.
+	// returns to the splash (AppModel reads it through Outcome). "Get
+	// into Orbit" stays on this screen — the URL opens, the screen
+	// remains.
 	Chosen string
 
 	// openURL launches the deployment URL in a browser, best effort.
@@ -56,6 +57,16 @@ var successMenu = []string{"Get into Orbit", "Terminal", "Menu"}
 // (handover 06: omitted after flows with no meaningful clock).
 func NewSuccessModel(appURL string, elapsed time.Duration, version string) SuccessModel {
 	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version, menu: newMenu(successMenu...)}
+}
+
+// Outcome surfaces the screen's result to AppModel the way every flow
+// does: the Menu row or Esc (#225) leaves for the menu; Terminal and
+// Ctrl-C quit instead.
+func (m SuccessModel) Outcome() flowOutcome {
+	if m.Chosen == "menu" {
+		return backToMenu
+	}
+	return flowOutcome{}
 }
 
 // Init implements tea.Model.
@@ -108,9 +119,11 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Esc is one step back, and back from a finished flow is the
+	// menu, as after Repair (#225).
 	if msg.Code == tea.KeyEsc {
-		m.Chosen = "terminal"
-		return m, tea.Quit
+		m.Chosen = "menu"
+		return m, nil
 	}
 
 	var chosen string
@@ -127,14 +140,6 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Text is empty for every special key, so it is exactly the old
-	// "runes" case — see SplashModel.handleKey.
-	for _, r := range msg.Text {
-		if r == 'q' {
-			m.Chosen = "terminal"
-			return m, tea.Quit
-		}
-	}
 	return m, nil
 }
 

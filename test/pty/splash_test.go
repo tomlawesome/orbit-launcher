@@ -134,7 +134,8 @@ func waitForExit(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
+// Esc on the menu does nothing and leaving takes the Exit row (#226).
+func TestSplash_RealPTY_RendersAndLeavesByTheExitRowNotEscape(t *testing.T) {
 	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
@@ -147,7 +148,13 @@ func TestSplash_RealPTY_RendersAndQuitsOnEscape(t *testing.T) {
 		t.Fatalf("did not see the menu: %v", err)
 	}
 
-	console.send("\x1b") // Escape
+	console.send("\x1b")   // Escape: stays on the menu
+	console.send("\x1b[B") // Down, so the menu is provably still live
+	if err := console.expectString("▸ Update"); err != nil {
+		t.Fatalf("the menu stopped responding after Escape: %v", err)
+	}
+
+	console.send("5") // Exit, the menu's fifth row
 
 	waitForExit(t, cmd)
 }
@@ -167,7 +174,7 @@ func TestSplash_RealPTY_ArrowNavigationMovesTheCaret(t *testing.T) {
 		t.Fatalf("caret did not move to Update after Down: %v", err)
 	}
 
-	console.send("\x1b") // Escape
+	console.send("\x03") // Ctrl-C
 
 	waitForExit(t, cmd)
 }
