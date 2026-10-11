@@ -79,39 +79,52 @@ func commandUnits(words []string) []string {
 	return units
 }
 
-// wrapWords breaks prose into lines of at most limit cells at spaces, for
-// text whose length is not known when the screen is written — a path or
-// an error from Docker. A single word wider than limit stays whole.
+// wrapWords breaks text into lines of at most limit cells, for text
+// whose length is not known when the screen is written — a path or an
+// error from Docker. Each line of the text is wrapped on its own, so
+// its line breaks stay. A line that fits is kept exactly as given; one
+// that does not breaks at spaces, the spaces at a break being the
+// break, while its indent and runs of spaces elsewhere stay. A single
+// word wider than limit stays whole. Empty text is no lines.
 func wrapWords(text string, limit int) []string {
-	var lines []string
-	line := ""
-	for _, word := range strings.Fields(text) {
-		switch {
-		case line == "":
-			line = word
-		case lipgloss.Width(line)+1+lipgloss.Width(word) > limit:
-			lines = append(lines, line)
-			line = word
-		default:
-			line += " " + word
+	if text == "" {
+		return nil
+	}
+	var rows []string
+	for _, line := range strings.Split(text, "\n") {
+		rows = append(rows, wrapLine(line, limit)...)
+	}
+	return rows
+}
+
+// wrapLine is wrapWords for one line of text.
+func wrapLine(line string, limit int) []string {
+	if lipgloss.Width(line) <= limit {
+		return []string{line}
+	}
+	var rows []string
+	words := strings.Split(line, " ") // a run of spaces is empty words
+	cur := words[0]
+	for _, word := range words[1:] {
+		if word != "" && strings.TrimSpace(cur) != "" && lipgloss.Width(cur)+1+lipgloss.Width(word) > limit {
+			rows = append(rows, strings.TrimRight(cur, " "))
+			cur = word
+			continue
 		}
+		cur += " " + word
 	}
-	if line != "" {
-		lines = append(lines, line)
-	}
-	return lines
+	return append(rows, strings.TrimRight(cur, " "))
 }
 
 // writeWrapped writes text that nobody sized — a path, Docker's own
-// words — in ink, as wrapWords lines of at most limit cells so it is
-// never cut at the screen's edge. Text that fits is written as given,
-// blank or indented, one line.
+// words — in ink, as wrapWords lines, so it is never cut at the
+// screen's edge. Blank text is one blank line.
 func writeWrapped(b *strings.Builder, ink lipgloss.Style, text string, limit int) {
-	if lipgloss.Width(text) <= limit {
-		fmt.Fprintln(b, ink.Render(text))
-		return
+	lines := wrapWords(text, limit)
+	if len(lines) == 0 {
+		lines = []string{""}
 	}
-	for _, line := range wrapWords(text, limit) {
+	for _, line := range lines {
 		fmt.Fprintln(b, ink.Render(line))
 	}
 }
