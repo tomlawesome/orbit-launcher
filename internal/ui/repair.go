@@ -226,6 +226,7 @@ func (m *RepairModel) startExecution() {
 	m.manualNotes = nil
 	m.stream, m.stdin = nil, nil
 	m.rot = promptSession{}
+	m.exitCode = 0
 	m.stoppedIn = repairPreparing
 }
 
@@ -308,8 +309,10 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, readEngineStream(m.send, m.stream, repairStream)
 		}
 		if msg.err != nil {
-			m.runErr = msg.err
-			m.state = repairError
+			m.fail(msg.err)
+			if errors.Is(msg.err, deploy.ErrNoDeployment) {
+				m.state = repairNotFound
+			}
 			return m, nil
 		}
 		m.stream = msg.stream
@@ -418,6 +421,13 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		// dangerous batch refused: the operator said no, or there was
 		// no terminal to ask. Nothing was attempted, so it ends on the
 		// after-picture like any other outcome, not on the error screen.
+		if m.execSummary == nil && s.ExitCode == engine.ExitNotInstalled {
+			// Not an Orbit installation, in every mode: the one
+			// no-deployment screen, as for a diagnosis.
+			m.state = repairNotFound
+			m.menu = menu{}
+			return m, nil
+		}
 		if m.execSummary == nil && s.ExitCode != engine.ExitHealthy && s.ExitCode != engine.ExitDangerousRefused {
 			m.fail(s.Err)
 			return m, nil
@@ -631,7 +641,8 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 // changed, so it gets the after-picture's menu, not the read-only one.
 // A start failure ran nothing and keeps the plain menu.
 func (m RepairModel) stoppedMutation() bool {
-	return m.state == repairError && m.stream != nil &&
+	// A usage error is the script refusing before it did anything.
+	return m.state == repairError && m.stream != nil && m.exitCode != engine.ExitUsage &&
 		(m.stoppedIn == repairExecuting || m.stoppedIn == repairRotating)
 }
 

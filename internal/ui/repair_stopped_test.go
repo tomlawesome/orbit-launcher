@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -212,5 +213,125 @@ func TestRepairModel_FailedCheckKeepsDiagnosisStoppedAndNoDiagnoseAgain(t *testi
 	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if !m.Done || !m.WantsMenu {
 		t.Errorf("Menu row: Done=%v WantsMenu=%v, want both", m.Done, m.WantsMenu)
+	}
+}
+
+// #237 follow-up: the error screen never claims a change that did not
+// happen. Nothing ran when a rotation failed to start, or when the
+// script refused a mutating run up front (exit 2: usage, repair.sh too
+// old for the mode; exit 5: not an Orbit installation).
+
+// assertNothingRanScreen checks an error screen for a run that changed
+// nothing: the title, the error's own words, Menu then Exit, and no
+// claim of a partial change or offer to diagnose again.
+func assertNothingRanScreen(t *testing.T, m RepairModel, title, words string) {
+	t.Helper()
+	if m.state != repairError {
+		t.Fatalf("state = %v, want repairError; screen:\n%s", m.state, screen(m))
+	}
+	s := plain(m)
+	for _, want := range []string{title, words} {
+		if !strings.Contains(s, want) {
+			t.Errorf("screen lacks %q:\n%s", want, screen(m))
+		}
+	}
+	for _, not := range []string{"Diagnosis stopped", "Diagnose again", "backups were taken first", "may have changed the deployment"} {
+		if strings.Contains(s, not) {
+			t.Errorf("a run that changed nothing shows %q:\n%s", not, screen(m))
+		}
+	}
+	raw := screen(m)
+	if !strings.Contains(raw, "▸ Menu") || !strings.Contains(raw, "Exit") {
+		t.Errorf("rows are not Menu, Exit:\n%s", raw)
+	}
+	toMenu, _ := updateAs(t, m, key(tea.KeyEnter))
+	if !toMenu.Done || !toMenu.WantsMenu {
+		t.Errorf("Menu row: Done=%v WantsMenu=%v, want both", toMenu.Done, toMenu.WantsMenu)
+	}
+	down, _ := updateAs(t, m, key(tea.KeyDown))
+	if _, cmd := updateAs(t, down, key(tea.KeyEnter)); !isQuit(cmd) {
+		t.Error("Exit row did not quit")
+	}
+}
+
+func assertNoDeploymentScreen(t *testing.T, m RepairModel) {
+	t.Helper()
+	if m.state != repairNotFound {
+		t.Fatalf("state = %v, want repairNotFound; screen:\n%s", m.state, screen(m))
+	}
+	s := plain(m)
+	if !strings.Contains(s, "No Orbit deployment found") {
+		t.Errorf("screen lacks %q:\n%s", "No Orbit deployment found", screen(m))
+	}
+	for _, not := range []string{"Credential rotation stopped", "Repairs stopped", "Diagnosis stopped", "Diagnose again", "backups were taken first"} {
+		if strings.Contains(s, not) {
+			t.Errorf("no-deployment screen shows %q:\n%s", not, screen(m))
+		}
+	}
+}
+
+// F1: a rotation that fails to start is titled for the rotation, with
+// the error's words and Menu, Exit only.
+func TestRepairModel_RotationThatFailsToStartClaimsNoChange(t *testing.T) {
+	m := sizedRepair(t)
+	m.state = repairRotating // no stream: the script never started
+	m, _ = updateAs(t, m, repairRotateReadyMsg{err: errors.New("fetch repair.sh: connection refused")})
+	assertNothingRanScreen(t, m, "Credential rotation stopped", "fetch repair.sh: connection refused")
+}
+
+// F1: no deployment at the start of a rotation is the shared
+// no-deployment screen, also when the sentinel is wrapped.
+func TestRepairModel_RotationStartedWithNoDeploymentShowsNoDeployment(t *testing.T) {
+	for name, err := range map[string]error{
+		"bare":    deploy.ErrNoDeployment,
+		"wrapped": fmt.Errorf("prepare the rotation: %w", deploy.ErrNoDeployment),
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := sizedRepair(t)
+			m.state = repairRotating
+			m, _ = updateAs(t, m, repairRotateReadyMsg{err: err})
+			assertNoDeploymentScreen(t, m)
+			toMenu, _ := updateAs(t, m, key(tea.KeyEnter))
+			if !toMenu.Done || !toMenu.WantsMenu {
+				t.Errorf("Menu row: Done=%v WantsMenu=%v, want both", toMenu.Done, toMenu.WantsMenu)
+			}
+		})
+	}
+}
+
+// F2: exit 5 from a mutating run means "not an Orbit installation":
+// the shared no-deployment screen, as in every other mode.
+func TestRepairModel_MutatingRunExitNotInstalledShowsNoDeployment(t *testing.T) {
+	for _, tc := range mutationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := stoppedMutation(t, tc.state)
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitNotInstalled, Err: errors.New("exit status 5")})
+			assertNoDeploymentScreen(t, m)
+		})
+	}
+}
+
+// F2: exit 2 from a mutating run means the script did nothing (usage
+// error, repair.sh too old for the mode): titled for what stopped, with
+// the error's words, and no claim of a partial change.
+func TestRepairModel_MutatingRunExitUsageClaimsNoChange(t *testing.T) {
+	for _, tc := range mutationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := stoppedMutation(t, tc.state)
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitUsage, Err: errors.New("repair.sh: unknown option --execute")})
+			assertNothingRanScreen(t, m, tc.title, "repair.sh: unknown option --execute")
+		})
+	}
+}
+
+// Control (passes today): any other failing exit from a started
+// mutating run still says the deployment may have changed.
+func TestRepairModel_MutatingRunOtherExitStillClaimsPartialChange(t *testing.T) {
+	for _, tc := range mutationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := stoppedMutation(t, tc.state)
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4, Err: errors.New("exit status 4")})
+			assertStoppedMutationScreen(t, m, tc.title)
+		})
 	}
 }

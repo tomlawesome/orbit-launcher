@@ -100,7 +100,7 @@ func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 		t.Fatalf("state = %v, want repairError", m.state)
 	}
 	s := screen(m)
-	for _, want := range []string{"Diagnosis stopped", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
+	for _, want := range []string{"Credential rotation stopped", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("error screen lacks %q:\n%s", want, s)
 		}
