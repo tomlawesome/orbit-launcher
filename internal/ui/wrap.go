@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
 
 // proseWidth is how wide the flow screens' hand-broken prose runs (the
@@ -81,8 +83,10 @@ func commandUnits(words []string) []string {
 
 // wrapWords breaks text into lines of at most limit cells, for text
 // whose length is not known when the screen is written — a path or an
-// error from Docker. Each line of the text is wrapped on its own, so
-// its line breaks stay. A line that fits is kept exactly as given; one
+// error from Docker. The text is made safe to draw first: escape
+// sequences go and each line is cleanLine'd, so no control character
+// reaches the screen. Each line is then wrapped on its own, so its
+// line breaks stay. A line that fits is kept as given; one
 // that does not breaks at spaces, the spaces at a break being the
 // break, while its indent and runs of spaces elsewhere stay. A single
 // word wider than limit stays whole. Empty text is no lines.
@@ -91,10 +95,37 @@ func wrapWords(text string, limit int) []string {
 		return nil
 	}
 	var rows []string
-	for _, line := range strings.Split(text, "\n") {
-		rows = append(rows, wrapLine(line, limit)...)
+	for _, line := range strings.Split(ansi.Strip(text), "\n") {
+		rows = append(rows, wrapLine(cleanLine(line), limit)...)
 	}
 	return rows
+}
+
+// cleanLine makes one line of unsized text safe to draw. A carriage
+// return keeps the last non-empty segment after it: what a terminal
+// shows once the progress it overwrote has finished, and a CRLF line
+// end loses nothing. A tab is one space (it measures 0 cells but
+// renders as four), and any other control character is dropped.
+func cleanLine(line string) string {
+	if strings.Contains(line, "\r") {
+		segs := strings.Split(line, "\r")
+		line = ""
+		for i := len(segs) - 1; i >= 0; i-- {
+			if segs[i] != "" {
+				line = segs[i]
+				break
+			}
+		}
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0:
+			return -1
+		}
+		return r
+	}, line)
 }
 
 // wrapLine is wrapWords for one line of text.
