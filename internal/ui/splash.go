@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
@@ -26,7 +27,8 @@ type healthResultMsg struct{ healthy bool }
 // (deployment answers), degraded (deployment exists but is not
 // answering healthily). stateUnknown covers a detected deployment whose
 // probe hasn't resolved (or was disabled) — rendered as the FQDN with no
-// status word, never as a guess.
+// status word, never as a guess. stateUnreadable is a .env-orbit that is
+// there but could not be read (#238): no FQDN to show, and not dormant.
 type deployState int
 
 const (
@@ -34,6 +36,7 @@ const (
 	stateUnknown
 	stateAlive
 	stateDegraded
+	stateUnreadable
 )
 
 // MenuItem is one row of the splash screen's main menu. Gap requests a
@@ -360,7 +363,7 @@ func (m SplashModel) markStyle() lipgloss.Style {
 	switch m.state {
 	case stateAlive:
 		return style.SuccessText
-	case stateDegraded:
+	case stateDegraded, stateUnreadable:
 		return style.DegradedText
 	default:
 		return style.MarkStyle
@@ -427,6 +430,8 @@ func (m SplashModel) centreBlockLines() []string {
 	case stateDegraded:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, style.DegradedText.Render("degraded"))
+	case stateUnreadable:
+		lines = append(lines, style.Tagline.Render("can't read "+deploy.EnvFile))
 	}
 	if m.updateNotice != "" {
 		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))

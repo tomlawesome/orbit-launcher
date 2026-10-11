@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
@@ -76,6 +77,40 @@ func viewNoDeployment(star starfield.Model, width, height int, dir string, body 
 		wrapWords("No Orbit deployment found in "+dir, measure(width, proseWidth))...)
 	for _, line := range body {
 		fmt.Fprintln(&b, style.MutedText.Render(line))
+	}
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, deadEndRows, 0)
+	return skyBlock(star, width, height, b.String())
+}
+
+// viewUnreadableDeployment is the "it is there but I can't read it"
+// screen Update and Remove share (#238), beside viewNoDeployment and with
+// the same dead-end grammar: the failure glyph in front of a title naming
+// the directory (wrapped, since nobody chose its length), the OS's own
+// words in Tagline as the Stand-down screen shows Docker's, one muted
+// line of advice, then the dead end's one row.
+func viewUnreadableDeployment(star starfield.Model, width, height int, dir string, err error) string {
+	var b strings.Builder
+	glyph := style.ErrorText.Render(style.SymbolFailure)
+	// The glyph and its space take two cells off the title's measure.
+	for i, line := range wrapWords("Couldn't read "+deploy.EnvFile+" in "+dir, measure(width, proseWidth)-2) {
+		lead := "  "
+		if i == 0 {
+			lead = glyph + " "
+		}
+		fmt.Fprintln(&b, lead+style.Title.Render(line))
+	}
+	fmt.Fprintln(&b)
+	if err != nil {
+		writeWrapped(&b, style.Tagline, err.Error(), measure(width, errorWidth))
+	}
+	// Two sentences, each wrapped on its own so a narrow terminal never
+	// cuts the second.
+	for _, sentence := range []string{
+		"Orbit here was probably installed by another account.",
+		"Run the launcher as that account, or make the file readable to this one.",
+	} {
+		writeWrapped(&b, style.MutedText, sentence, measure(width, errorWidth))
 	}
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
