@@ -674,7 +674,7 @@ func (m RepairModel) viewRotating() string {
 		return skyBlock(m.star, m.width, m.height, b.String())
 	}
 
-	m.rot.view(&b, "")
+	m.rot.view(&b, "", m.width)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

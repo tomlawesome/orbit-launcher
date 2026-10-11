@@ -628,6 +628,6 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Orbit needs your configuration")
 
-	r.cfg.session.view(&b, r.cfg.origin)
+	r.cfg.session.view(&b, r.cfg.origin, width)
 	return skyBlock(r.console.sky, width, height, b.String())
 }

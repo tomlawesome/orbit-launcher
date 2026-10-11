@@ -4,6 +4,7 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 // inputLine is one line of typed text, and the keys every typing
@@ -69,11 +70,23 @@ func (l inputLine) String() string { return string(l.runes) }
 // empty reports whether nothing is typed.
 func (l inputLine) empty() bool { return len(l.runes) == 0 }
 
-// tail is the last n characters, so a narrow box keeps the cursor end
-// in view.
-func (l inputLine) tail(n int) []rune {
-	if len(l.runes) > n {
-		return l.runes[len(l.runes)-n:]
+// tail is the end of the line that fits in n cells, so a narrow row
+// keeps the cursor end in view (#223). It cuts between grapheme
+// clusters and measures them as lipgloss.Width does, the walk
+// truncateStyled makes from the other end: a wide character takes two
+// cells and is never split.
+func (l inputLine) tail(n int) string {
+	s := string(l.runes)
+	var starts, widths []int
+	for i := 0; i < len(s); {
+		cluster, w := xansi.FirstGraphemeCluster(s[i:], xansi.GraphemeWidth)
+		starts, widths = append(starts, i), append(widths, w)
+		i += len(cluster)
 	}
-	return l.runes
+	from, cells := len(s), 0
+	for k := len(starts) - 1; k >= 0 && cells+widths[k] <= n; k-- {
+		cells += widths[k]
+		from = starts[k]
+	}
+	return s[from:]
 }

@@ -499,10 +499,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	switch {
 	case focused && !n.typed.empty():
 		shown := n.typed.tail(inner - 1) // the tail, so the cursor stays visible
-		for len(shown) > 0 && lipgloss.Width(string(shown)) > inner-1 {
-			shown = shown[1:] // a wide character takes two cells
-		}
-		content = textStyle.Render(string(shown)) + style.AccentText.Render(style.SymbolCursor)
+		content = textStyle.Render(shown) + style.AccentText.Render(style.SymbolCursor)
 	case focused:
 		example := phrase[:min(len(phrase), inner-1)]
 		content = style.AccentText.Render(style.SymbolCursor) + faintStyle.Render(string(example))

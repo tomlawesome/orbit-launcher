@@ -88,8 +88,10 @@ func (s promptSession) paste(text string) promptSession {
 // view writes the session's part of the screen: the waiting words, or
 // the field's label, guidance, input row, rejection and attempt count.
 // origin is the accepted APP_URL, for guidance that names this
-// deployment's callback URL ("" when the flow has none).
-func (s promptSession) view(b *strings.Builder, origin string) {
+// deployment's callback URL ("" when the flow has none). width is the
+// screen's: an answer too long for the input row shows by its end, so
+// the cursor stays in view (#223); 0 (not yet sized) shows it whole.
+func (s promptSession) view(b *strings.Builder, origin string, width int) {
 	p := s.prompt
 	if p == nil {
 		fmt.Fprintln(b, style.MutedText.Render("talking to the engine…"))
@@ -107,12 +109,17 @@ func (s promptSession) view(b *strings.Builder, origin string) {
 	fmt.Fprintln(b)
 
 	// The input row. A secret is never echoed — not even its length.
-	shown := s.input.String()
-	if p.Kind == "secret" {
-		shown = ""
-	}
+	caret := style.MenuCaret.Render(style.SymbolSelected) + " "
 	cursor := style.AccentText.Render(style.SymbolCursor)
-	fmt.Fprintln(b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
+	var shown string
+	switch {
+	case p.Kind == "secret": // shown stays empty
+	case width > 0:
+		shown = s.input.tail(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
+	default:
+		shown = s.input.String()
+	}
+	fmt.Fprintln(b, caret+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
 
 	if s.reason != "" {
 		fmt.Fprintln(b)
