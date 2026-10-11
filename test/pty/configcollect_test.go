@@ -356,7 +356,7 @@ func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
 
@@ -400,7 +400,7 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	// Menu returns to the splash; Escape quits.
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
 
@@ -436,7 +436,7 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }
 
@@ -499,6 +499,6 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	send("\x1b[B")
 	send("\r")
 	must("▸ Update")
-	send("\x1b")
+	send("\x03")
 	waitForExit(t, cmd)
 }

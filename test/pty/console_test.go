@@ -162,11 +162,11 @@ func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
 	}
 
 	// Escape returns to the menu (the refusal rolled the target back;
-	// nothing was changed), and Escape again quits cleanly.
+	// nothing was changed), and Ctrl-C quits cleanly.
 	console.send("\x1b")
 	if err := console.expectString("▸ Install"); err != nil {
 		t.Fatalf("expected the splash again after Menu: %v", err)
 	}
-	console.send("\x1b")
+	console.send("\x03")
 	waitForExit(t, cmd)
 }
