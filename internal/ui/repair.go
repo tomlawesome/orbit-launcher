@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -794,7 +793,7 @@ func executeLine(e engine.ExecuteResult) string {
 	default:
 		glyph = style.Tagline.Render(style.SymbolQueued)
 	}
-	words := lipgloss.NewStyle().Foreground(style.Text).Render(actionWords(e.Action))
+	words := style.Ink.Render(actionWords(e.Action))
 	if e.Result == engine.ResultSkipped {
 		words = style.Tagline.Render(actionWords(e.Action))
 	}
@@ -816,7 +815,7 @@ func (m RepairModel) viewError() string {
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Diagnosis stopped")
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
-		writeWrapped(&b, style.Tagline, m.runErr.Error(), min(m.width-4, errorWidth))
+		writeWrapped(&b, style.Tagline, m.runErr.Error(), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.menu.over(repairMenu).write(&b)
@@ -909,7 +908,7 @@ func planLine(p engine.PlanAction) string {
 	if p.Backup == "required" {
 		context += style.Separator + "backup first"
 	}
-	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(actionWords(p.Action)) +
+	return glyph + " " + style.Ink.Render(actionWords(p.Action)) +
 		style.Tagline.Render(" — "+context)
 }
 
@@ -994,7 +993,7 @@ func findingLine(f engine.Finding) string {
 	case "warn":
 		glyph = style.DegradedText.Render(style.SymbolWarn)
 	}
-	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(targetWords(f.Target)) + style.Tagline.Render(" — "+classWords(f.Class))
+	return glyph + " " + style.Ink.Render(targetWords(f.Target)) + style.Tagline.Render(" — "+classWords(f.Class))
 }
 
 // targetWords maps target classes to the thing a person knows.

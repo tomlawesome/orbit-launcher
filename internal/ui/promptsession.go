@@ -101,7 +101,7 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	}
 
 	label, hint, notes := promptWords(p.Field, origin)
-	fmt.Fprintln(b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
+	fmt.Fprintln(b, style.Ink.Render(label))
 	if hint != "" {
 		fmt.Fprintln(b, style.Tagline.Render(hint))
 	}
@@ -121,7 +121,7 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	default:
 		shown = s.input.String()
 	}
-	fmt.Fprintln(b, caret+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
+	fmt.Fprintln(b, caret+style.Ink.Render(shown)+cursor)
 
 	if s.reason != "" {
 		fmt.Fprintln(b)

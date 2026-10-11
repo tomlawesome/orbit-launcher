@@ -425,7 +425,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	}
 	gutter := strings.Repeat(" ", noticeGutter)
 	blank := pad("", 0)
-	textStyle := lipgloss.NewStyle().Foreground(style.Text)
+	textStyle := style.Ink
 	mutedStyle := style.MutedText
 	faintStyle := style.Tagline
 
@@ -464,13 +464,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		fill := min(max(int(int64(elapsed)*int64(cells)/int64(d)), 0), cells)
 		left := (d - elapsed + time.Second - 1) / time.Second // whole seconds, rounded up
 		clock := formatClock(left * time.Second)
-		bar := ""
-		if fill > 0 {
-			bar += style.AccentText.Render(strings.Repeat("─", fill))
-		}
-		if cells-fill > 0 {
-			bar += lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", cells-fill))
-		}
+		bar := drawBar(fill, cells, style.AccentText)
 		lines = append(lines, pad(gutter+bar+"  "+style.Tagline.Render(clock), noticeGutter+cells+2+lipgloss.Width(clock)))
 	} else {
 		lines = append(lines, blank)

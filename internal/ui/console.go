@@ -312,8 +312,7 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	if c.rollback {
 		barStyle = style.DegradedText
 	}
-	bar := barStyle.Render(strings.Repeat("─", fill)) + lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", boxWidth-fill))
-	lines = append(lines, bar)
+	lines = append(lines, drawBar(fill, boxWidth, barStyle))
 
 	stage := truncateStyled(style.MutedText.Render(c.stageWord()), boxWidth)
 	gap := boxWidth - lipgloss.Width(stage)

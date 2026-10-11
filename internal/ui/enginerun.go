@@ -628,7 +628,7 @@ func (r engineRun) viewFailed(width, height int) string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
 	// Docker's words, at Docker's length: wrapped, never cut at the edge.
-	limit := min(width-4, errorWidth)
+	limit := measure(width, errorWidth)
 	if r.lastFailed != nil {
 		word := r.lastFailed.Phase
 		if idx := phaseIndex(word); idx >= 0 {

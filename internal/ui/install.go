@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -419,7 +418,7 @@ func (m InstallModel) viewStaleVolume() string {
 			// tells them apart.
 			line += style.Separator + "Compose project " + v.Project
 		}
-		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(line))
+		fmt.Fprintln(&b, style.Ink.Render(line))
 	}
 	fmt.Fprintln(&b)
 
@@ -468,7 +467,7 @@ func (m InstallModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("it stops safely and asks first."))
 	fmt.Fprintln(&b)
 	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.Tagline, m.targetDir, min(m.width-4, proseWidth))
+	writeWrapped(&b, style.Tagline, m.targetDir, measure(m.width, proseWidth))
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())

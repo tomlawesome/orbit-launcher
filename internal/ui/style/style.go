@@ -64,6 +64,9 @@ var SpinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 // wordmark.
 var Title = lipgloss.NewStyle().Bold(true).Foreground(Text)
 
+// Ink is plain full-ink text: Title's colour without the bold.
+var Ink = lipgloss.NewStyle().Foreground(Text)
+
 // Tracked letter-spaces word with single spaces: the wordmark's tracking.
 func Tracked(word string) string {
 	tracked := ""

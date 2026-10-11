@@ -73,13 +73,29 @@ func nextFrame(frame int) int { return (frame + 1) % len(style.SpinnerFrames) }
 func viewNoDeployment(star starfield.Model, width, height int, dir string, body ...string) string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		wrapWords("No Orbit deployment found in "+dir, min(width-4, proseWidth))...)
+		wrapWords("No Orbit deployment found in "+dir, measure(width, proseWidth))...)
 	for _, line := range body {
 		fmt.Fprintln(&b, style.MutedText.Render(line))
 	}
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(star, width, height, b.String())
+}
+
+// drawBar draws the thin progress bar every screen shares: fill cells
+// of "─" in fillStyle, then the rest of the cells over the BorderSoft
+// track. fill is clamped to 0..cells. A part with no cells is left out
+// rather than rendered empty, which would still emit its colour codes.
+func drawBar(fill, cells int, fillStyle lipgloss.Style) string {
+	fill = min(max(fill, 0), cells)
+	bar := ""
+	if fill > 0 {
+		bar += fillStyle.Render(strings.Repeat("─", fill))
+	}
+	if cells-fill > 0 {
+		bar += lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", cells-fill))
+	}
+	return bar
 }
 
 // drawBox draws the one rounded box every screen uses (the console's

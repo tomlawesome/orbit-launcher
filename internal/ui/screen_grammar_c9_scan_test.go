@@ -249,7 +249,9 @@ func TestScreenGrammarC9_MeasureSitesCallMeasure(t *testing.T) {
 	_, files := wi9Parse(t)
 	calls := callsIn(files, "measure")
 	for path, want := range map[string]int{
-		"enginerun.go": 1, "install.go": 1, "remove.go": 3, "repair.go": 1,
+		// remove.go's not-found site moved into scene.go's shared
+		// no-deployment screen with #229.
+		"enginerun.go": 1, "install.go": 1, "remove.go": 2, "repair.go": 1, "scene.go": 1,
 	} {
 		if got := calls[path]; got < want {
 			t.Errorf("%s calls measure %d times, want at least %d (one per hand-typed site it had)", path, got, want)

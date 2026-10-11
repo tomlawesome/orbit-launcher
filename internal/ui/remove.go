@@ -287,7 +287,7 @@ func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "This stops Orbit and removes its containers")
 
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("Your mail, documents, and configuration are not deleted"))
 	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))
@@ -308,7 +308,7 @@ func (m RemoveModel) viewDone() string {
 	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
 	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", min(m.width-4, proseWidth))
+	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth))
 	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
@@ -347,7 +347,7 @@ func (m RemoveModel) viewFailed() string {
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), min(m.width-4, errorWidth))
+		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)
