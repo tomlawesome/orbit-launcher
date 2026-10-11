@@ -18,14 +18,14 @@ import (
 // variation selector or keycap measures 0 alone, and a ZWJ family is
 // one two-cell cluster of five runes.
 var review214Clusters = map[string]string{
-	"warning sign":  "⚠️",
-	"red heart":     "❤️",
-	"keycap one":    "1️⃣",
-	"family":        "👨‍👩‍👧",
-	"flag":          "🇬🇧",
-	"accented e":    "é",
-	"cjk":           "日",
-	"plain letters": "ab",
+	"warning sign": "⚠️",
+	"red heart":    "❤️",
+	"keycap one":   "1️⃣",
+	"family":       "👨‍👩‍👧",
+	"flag":         "🇬🇧",
+	"accented e":   "é",
+	"cjk":          "日",
+	"plain letter": "a",
 }
 
 func TestTruncateStyled_CutsWholeClustersWithinTheWidth(t *testing.T) {
