@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -62,8 +64,6 @@ var stateWords = map[string]string{
 	engine.StateFailed:    engine.StateFailed,
 	engine.StateBlocked:   engine.StateBlocked,
 }
-
-var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
 // consoleEntry is one displayed line: a parsed event or a raw
 // (non-event) stdout line shown verbatim.
@@ -153,7 +153,7 @@ func appendEntry(entries []consoleEntry, e consoleEntry) []consoleEntry {
 
 // setSize (re)builds the background sky for the given screen size.
 func (c ConsoleModel) setSize(width, height int) ConsoleModel {
-	c.sky = starfield.New(width, height, 1)
+	c.sky = newSky(width, height)
 	c.skyReady = true
 	return c
 }
@@ -161,7 +161,7 @@ func (c ConsoleModel) setSize(width, height int) ConsoleModel {
 // advance moves the spinner and the sky one frame (called on the
 // shared UI tick).
 func (c ConsoleModel) advance() ConsoleModel {
-	c.spinner = (c.spinner + 1) % len(spinnerFrames)
+	c.spinner = (c.spinner + 1) % len(style.SpinnerFrames)
 	if c.skyReady {
 		c.sky = c.sky.Advance()
 	}
@@ -213,7 +213,7 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 		glyph = style.DegradedText.Render(style.SymbolFailure)
 	case engine.StateWaiting, engine.StateStarting, engine.StateRunning:
 		if latest {
-			glyph = style.WarmText.Render(string(spinnerFrames[c.spinner]))
+			glyph = style.WarmText.Render(string(style.SpinnerFrames[c.spinner]))
 		} else {
 			glyph = style.Tagline.Render(style.SymbolQueued)
 		}
@@ -252,11 +252,7 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 func (c ConsoleModel) view(width, height int) string {
 	lines := c.contentLines(width, height)
 	rows := compositeScene(c.sky, c.skyReady, width, height-1, lines, 1)
-	foot := ""
-	if c.version != "" {
-		foot = footerRow(width, "orbit-launcher "+c.version)
-	}
-	return strings.Join(rows, "\n") + "\n" + foot
+	return strings.Join(rows, "\n") + "\n" + footerRow(width, footVersion(c.version))
 }
 
 // contentLines builds the console's centred content block.
@@ -289,34 +285,18 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	lines = append(lines, c.titleRow(boxWidth))
 	lines = append(lines, strings.Repeat(" ", boxWidth))
 
-	border := lipgloss.NewStyle().Foreground(style.Border)
-	lines = append(lines, border.Render("╭"+strings.Repeat("─", boxWidth-2)+"╮"))
-
 	visible := c.entries
 	if len(visible) > boxInterior {
 		visible = visible[len(visible)-boxInterior:]
 	}
-	pad := boxInterior - len(visible)
-	for i := 0; i < pad; i++ {
-		lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
-	}
+	// Padding rows first, so the log sits at the bottom of the box.
+	rows := make([]string, boxInterior-len(visible), boxInterior)
 	for i, e := range visible {
-		if interior == 0 {
-			// No room inside the frame: the row is its borders, the
-			// same as a padding row, rather than a frame wider than
-			// the box.
-			lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
-			continue
-		}
-		latest := i == len(visible)-1
-		content := truncateStyled(c.entryLine(e, latest), interior)
-		gap := interior - lipgloss.Width(content)
-		if gap < 0 {
-			gap = 0
-		}
-		lines = append(lines, border.Render("│")+" "+content+strings.Repeat(" ", gap+1)+border.Render("│"))
+		// With no room inside the frame (interior 0) drawBox draws the
+		// row as its borders, the same as a padding row.
+		rows = append(rows, truncateStyled(c.entryLine(e, i == len(visible)-1), interior))
 	}
-	lines = append(lines, border.Render("╰"+strings.Repeat("─", boxWidth-2)+"╯"))
+	lines = append(lines, drawBox(lipgloss.NewStyle().Foreground(style.Border), boxWidth, rows)...)
 	lines = append(lines, strings.Repeat(" ", boxWidth))
 
 	// The stage bar: fill is phases reached out of the canonical
@@ -410,32 +390,28 @@ func formatAchieved(d time.Duration) string {
 
 // truncateStyled bounds a styled line to w cells. Styled segments make
 // exact truncation fiddly; entries are built to fit, so this is a
-// guard: over-wide lines fall back to their plain text truncated.
+// guard: over-wide lines fall back to their plain text, cut to the
+// whole grapheme clusters that fit in w cells, measured as
+// lipgloss.Width measures them (a wide character is two cells; an emoji
+// with its variation selector, a keycap or a ZWJ family is one cluster).
+// It walks clusters the way lipgloss.Width does (xansi.Truncate does
+// not: it counts ASCII bytes one by one, so "1" and its keycap mark are
+// measured apart). The cut is one pass, stopping at the first cluster
+// that does not fit: an engine line can be a hundred thousand
+// characters of carriage-return progress (#157).
 func truncateStyled(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	plain := []rune(stripANSI(s))
-	if len(plain) > w {
-		plain = plain[:w]
-	}
-	return string(plain)
-}
-
-func stripANSI(s string) string {
-	var b strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case inEscape:
-			if r == 'm' {
-				inEscape = false
-			}
-		case r == '\x1b':
-			inEscape = true
-		default:
-			b.WriteRune(r)
+	plain := ansi.Strip(s)
+	i, cells := 0, 0
+	for i < len(plain) {
+		cluster, cw := xansi.FirstGraphemeCluster(plain[i:], xansi.GraphemeWidth)
+		if cells+cw > w {
+			break
 		}
+		cells += cw
+		i += len(cluster)
 	}
-	return b.String()
+	return plain[:i]
 }

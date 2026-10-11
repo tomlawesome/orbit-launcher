@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
@@ -46,11 +47,9 @@ func startCIShapedPTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole,
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
 	cmd.Stderr = stderrFile // stdin and stdout stay the pty
-	cmd.Env = append(os.Environ(),
-		"TERM=xterm", "NO_COLOR=1",
-		"ORBIT_LAUNCHER_NO_UPDATE_CHECK=1",
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK=1",
-		"ORBIT_LAUNCHER_NO_ANIMATION=1",
+	// The health probe is kept, as startLive keeps it: its result
+	// landing part-way through the run is one of the three differences.
+	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe),
 		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1",
 		"ORBIT_LAUNCHER_INSTALL_SCRIPT_URL="+scriptURL)
 	// Setctty makes the pty, the child's stdin, its controlling
@@ -64,15 +63,7 @@ func startCIShapedPTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole,
 // retried run reaches the database phase and narrates it the way
 // install.sh does — a steady mix of events and prose, over seconds
 // rather than instantly.
-const fakeDatabasePhaseEngine = `#!/usr/bin/env bash
-printf '%s\n' "$*" >> engine-args.txt
-echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
-if [[ ! -f .env-orbit ]]; then
-  echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
-  echo "Orbit installer: configuration fields requiring attention: APP_URL." >&2
-  exit 1
-fi
-echo "phase=image component=image state=completed reason=image-ready action=pull elapsed=0s"
+const fakeDatabasePhaseEngine = refuseUntilConfigured + `echo "phase=image component=image state=completed reason=image-ready action=pull elapsed=0s"
 echo "phase=assets component=assets state=completed reason=assets-staged action=stage elapsed=0s"
 echo "Orbit configuration is ready. Existing values were preserved."
 echo "phase=configuration component=configuration state=completed reason=configuration-ready action=configure elapsed=1s"
@@ -102,11 +93,9 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	scriptURL := serveOrbitTree(t, map[string]string{
-		"/scripts/install.sh": handsOverTree(fakeDatabasePhaseEngine, fakeMachineConfigure),
-	})
+	scriptURL := launcher.ServeScript(t, handsOverTree(fakeDatabasePhaseEngine, fakeMachineConfigure))
 	console, cmd := startCIShapedPTY(t, binPath, dir, scriptURL)
 
 	must := func(s string) {

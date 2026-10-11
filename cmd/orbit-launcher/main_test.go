@@ -98,34 +98,3 @@ func TestRun_UnrecognisedArgStartsApp(t *testing.T) {
 		t.Error("an argument other than --version must still start the TUI")
 	}
 }
-
-func TestDisplayVersion(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty is dev", "", "dev"},
-		{"literal dev stays dev", "dev", "dev"},
-		{"bare version gets v-prefixed", "1.2.3", "v1.2.3"},
-		{"already v-prefixed is untouched", "v1.2.3", "v1.2.3"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := displayVersion(c.in); got != c.want {
-				t.Errorf("displayVersion(%q) = %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
-
-func TestDisplayVersion_NeverEmpty(t *testing.T) {
-	// The splash corner must always show something; an empty string
-	// there would be silently wrong, not visibly broken, so it is worth
-	// a dedicated assertion.
-	for _, in := range []string{"", "dev", "v0.0.0", "1.0.0"} {
-		if got := displayVersion(in); strings.TrimSpace(got) == "" {
-			t.Errorf("displayVersion(%q) returned a blank string", in)
-		}
-	}
-}

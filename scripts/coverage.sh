@@ -6,9 +6,9 @@
 # test/pty spawns the real binary, so its coverage never reached a plain
 # `go test -coverprofile`: cmd/orbit-launcher read 23.5% when the pty
 # suite exercises nearly all of it. With ORBIT_LAUNCHER_BINARY_COVERDIR
-# set, test/pty builds that binary with -cover (see buildBinary), each
-# run writes its counters there, and `go tool covdata` merges them with
-# the unit tests' own.
+# set, test/pty builds that binary with -cover (see BuildBinary in
+# test/internal/launcher), each run writes its counters there, and `go
+# tool covdata` merges them with the unit tests' own.
 #
 # Atomic mode on both sides: -race needs it, and covdata cannot merge
 # counters recorded in two modes.

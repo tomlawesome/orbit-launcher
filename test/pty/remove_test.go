@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
@@ -11,7 +12,7 @@ func TestApp_RealPTY_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 	// The launcher starts in test/pty, which holds no .env-orbit: there is
 	// no deployment, so Remove stops at its first screen with Back only
 	// (#205, owner 5a), and Esc is one step back, to the menu (owner 4a).
-	binPath := buildBinary(t)
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
 	skipArrival(t, console)
 

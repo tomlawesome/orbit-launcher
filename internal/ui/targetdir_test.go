@@ -21,6 +21,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // #205 (#199 WI-1: EN-1, UI-2, EN-12). AppModel resolves the target
@@ -67,13 +68,8 @@ func shortTempDir(t *testing.T) string {
 // stand-down is a docker call, so an empty record proves none started.
 func fakeDockerOnPath(t *testing.T) string {
 	t.Helper()
-	bin := t.TempDir()
-	record := filepath.Join(bin, "calls.log")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + record + "'\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	record := filepath.Join(t.TempDir(), "calls.log")
+	testutil.FakeExecutable(t, "docker", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+record+"'\nexit 0\n")
 	return record
 }
 
@@ -93,71 +89,22 @@ func dockerCalls(t *testing.T, record string) string {
 // including a wrap onto the next row, is one space.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// settle runs cmd and everything it leads to the way the program would,
-// expanding batches and draining what an engine run pushes into the
-// sink. The sky's ticks are dropped: they only move stars, and a frozen
-// test has no use for an endless chain.
-func settle(t *testing.T, m AppModel, cmd tea.Cmd, pushed *sink) AppModel {
-	t.Helper()
-	queue := []tea.Cmd{cmd}
-	for i := 0; ; i++ {
-		if i > 1000 {
-			t.Fatal("command chain did not settle")
-		}
-		var msg tea.Msg
-		switch {
-		case len(queue) > 0:
-			next := queue[0]
-			queue = queue[1:]
-			if next == nil {
-				continue
-			}
-			msg = next()
-		case pushed != nil:
-			select {
-			case msg = <-pushed.msgs:
-			case <-time.After(2 * time.Second):
-				return m
-			}
-		default:
-			return m
-		}
-		if batch, ok := msg.(tea.BatchMsg); ok {
-			queue = append(queue, batch...)
-			continue
-		}
-		if _, ok := msg.(tickMsg); ok || msg == nil {
-			continue
-		}
-		var more tea.Cmd
-		m, more = appUpdate(t, m, msg)
-		// Nothing follows the stream ending, so waiting for more would
-		// only spend the timeout above.
-		if _, ended := msg.(engineStreamEndedMsg); ended && more == nil && len(queue) == 0 {
-			return m
-		}
-		queue = append(queue, more)
-	}
-}
-
-func appScreen(m AppModel) string { return stripANSI(m.View().Content) }
-
 // openRemove takes the menu to Remove and lets the flow start.
 func openRemove(t *testing.T, m AppModel) AppModel {
 	t.Helper()
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = appUpdate(t, m, key(tea.KeyUp), key(tea.KeyUp)) // Install wraps to Exit, then Remove
-	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
-	return settle(t, m, cmd, nil)
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // Install wraps to Exit, then Remove
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	return drive(t, m, cmd)
 }
 
 // openUpdate takes the menu to Update and lets the flow start.
 func openUpdate(t *testing.T, m AppModel, pushed *sink) AppModel {
 	t.Helper()
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
-	m, _ = appUpdate(t, m, key(tea.KeyDown)) // Install, then Update
-	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
-	return settle(t, m, cmd, pushed)
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
+	m, _ = updateAs(t, m, key(tea.KeyDown)) // Install, then Update
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	return drive(t, m, cmd, pushed)
 }
 
 // boxRows returns the rows drawn inside the screen's box, border,
@@ -255,7 +202,7 @@ func TestAppModel_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 			m, dir := setup(t)
 			m = openRemove(t, m)
 
-			s := appScreen(m)
+			s := screen(m)
 			if want := "No Orbit deployment found in " + dir; !strings.Contains(oneLine(s), want) {
 				t.Fatalf("first Remove screen should say %q:\n%s", want, s)
 			}
@@ -281,12 +228,12 @@ func TestAppModel_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 				after := m
 				for _, k := range c.keys {
 					var cmd tea.Cmd
-					after, cmd = appUpdate(t, after, k)
-					after = settle(t, after, cmd, nil)
-					assertNoRemovalCommand(t, "after a key on the no-deployment screen", appScreen(after))
+					after, cmd = updateAs(t, after, k)
+					after = drive(t, after, cmd)
+					assertNoRemovalCommand(t, "after a key on the no-deployment screen", screen(after))
 				}
 				if c.back {
-					if s := appScreen(after); !strings.Contains(s, "Install") || !strings.Contains(s, "Remove") {
+					if s := screen(after); !strings.Contains(s, "Install") || !strings.Contains(s, "Remove") {
 						t.Errorf("keys %v choose Back, which should return to the menu:\n%s", c.keys, s)
 					}
 				}
@@ -325,15 +272,15 @@ func TestAppModel_RemoveNamesTheDirectoryItFound(t *testing.T) {
 			m, dir := setup(t, dir)
 			m = openRemove(t, m)
 
-			s := appScreen(m)
+			s := screen(m)
 			if !strings.Contains(s, "Stand down Orbit") {
 				t.Fatalf("Remove with a deployment should open on its confirm screen:\n%s", s)
 			}
 			assertNamesOnly(t, "the confirm screen", s, dir)
 
-			m, cmd := appUpdate(t, m, key(tea.KeyEnter)) // Stand down Orbit
-			m = settle(t, m, cmd, nil)
-			s = appScreen(m)
+			m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Stand down Orbit
+			m = drive(t, m, cmd)
+			s = screen(m)
 			if !strings.Contains(s, "stood down") {
 				t.Fatalf("stand-down did not finish:\n%s\ndocker calls:\n%s", s, dockerCalls(t, record))
 			}
@@ -361,17 +308,17 @@ func removeDone(t *testing.T, dir string, width int) (RemoveModel, *bytes.Buffer
 	m.standDown = func(_ context.Context, got string) error { stoodDown = got; return nil }
 	m.lookupInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	m.clipboard = &clip
-	m, _ = removeUpdate(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "Stand down Orbit") {
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
+	if s := screen(m); !strings.Contains(s, "Stand down Orbit") {
 		t.Fatalf("confirm screen:\n%s", s)
 	}
-	assertNamesOnly(t, "the confirm screen", stripANSI(m.View().Content), dir)
-	m, cmd := removeUpdate(t, m, key(tea.KeyEnter))
+	assertNamesOnly(t, "the confirm screen", screen(m), dir)
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("confirm did not start the stand-down")
 	}
-	m, _ = removeUpdate(t, m, cmd())
-	if s := stripANSI(m.View().Content); !strings.Contains(s, "stood down") {
+	m, _ = updateAs(t, m, cmd())
+	if s := screen(m); !strings.Contains(s, "stood down") {
 		t.Fatalf("stood-down screen:\n%s", s)
 	}
 	return m, &clip, &stoodDown
@@ -388,7 +335,7 @@ func TestRemoveModel_BoxAndClipboardAreTheSameWords(t *testing.T) {
 	} {
 		for _, width := range []int{80, 60} {
 			m, clip, stoodDown := removeDone(t, dir, width)
-			s := stripANSI(m.View().Content)
+			s := screen(m)
 			words := removalWords(t, dir)
 			want := strings.Join(words, " ")
 			if want != removalLine(t, dir) {
@@ -413,7 +360,7 @@ func TestRemoveModel_BoxAndClipboardAreTheSameWords(t *testing.T) {
 				t.Errorf("dir %q at %d columns: box holds %d of %d words\n%s", dir, width, i, len(words), s)
 			}
 
-			_, copyCmd := removeUpdate(t, m, key(tea.KeyEnter)) // Copy command is preselected
+			_, copyCmd := updateAs(t, m, key(tea.KeyEnter)) // Copy command is preselected
 			if copyCmd == nil {
 				t.Fatal("Copy command wrote nothing")
 			}
@@ -517,18 +464,18 @@ func TestAppModel_UpdateActsOnTheDirectoryTheAppResolved(t *testing.T) {
 				},
 			}
 			m = openUpdate(t, m, nil)
-			screen := appScreen(m)
-			if !strings.Contains(screen, "Pull the latest Orbit and update this deployment") {
-				t.Fatalf("Update should open on its confirm screen:\n%s", screen)
+			shown := screen(m)
+			if !strings.Contains(shown, "Pull the latest Orbit and update this deployment") {
+				t.Fatalf("Update should open on its confirm screen:\n%s", shown)
 			}
-			assertNamesOnly(t, "Update's confirm screen", screen, dir)
+			assertNamesOnly(t, "Update's confirm screen", shown, dir)
 
-			m, cmd := appUpdate(t, m, key(tea.KeyEnter)) // Update Orbit
-			m = settle(t, m, cmd, s)
+			m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Update Orbit
+			m = drive(t, m, cmd, s)
 			if engineDir != dir {
 				t.Errorf("Update ran the engine in %q, want the directory the app resolved, %q", engineDir, dir)
 			}
-			assertNamesOnly(t, "Update's last screen", appScreen(m), dir)
+			assertNamesOnly(t, "Update's last screen", screen(m), dir)
 		})
 	}
 }
@@ -543,9 +490,9 @@ func TestAppModel_UpdateWithNoDeploymentNamesOnlyTheResolvedDirectory(t *testing
 		t.Fatal(err)
 	}
 	m := openUpdate(t, NewAppModelNoAnimation().WithoutVolumeCheck(), nil)
-	screen := appScreen(m)
-	if !strings.Contains(screen, "No Orbit deployment found") {
-		t.Fatalf("Update with nothing installed should say so:\n%s", screen)
+	shown := screen(m)
+	if !strings.Contains(shown, "No Orbit deployment found") {
+		t.Fatalf("Update with nothing installed should say so:\n%s", shown)
 	}
-	assertNamesOnly(t, "Update's not-found screen", screen, wd)
+	assertNamesOnly(t, "Update's not-found screen", shown, wd)
 }

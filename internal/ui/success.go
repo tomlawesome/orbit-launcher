@@ -32,7 +32,7 @@ type SuccessModel struct {
 	elapsed time.Duration
 	version string
 
-	selected int
+	menu menu // successMenu
 
 	// Chosen is which action the user picked: "terminal" quits, "menu"
 	// returns to the splash (AppModel reads it). "Get into Orbit" stays
@@ -55,7 +55,7 @@ var successMenu = []string{"Get into Orbit", "Terminal", "Menu"}
 // console's real wall-clock duration; zero renders no footer figure
 // (handover 06: omitted after flows with no meaningful clock).
 func NewSuccessModel(appURL string, elapsed time.Duration, version string) SuccessModel {
-	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version}
+	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version, menu: newMenu(successMenu...)}
 }
 
 // Init implements tea.Model.
@@ -71,7 +71,7 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.star = starfield.New(m.width, m.height, 1)
+		m.star = newSky(m.width, m.height)
 		m.starReady = true
 		return m, nil
 
@@ -108,31 +108,23 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		m.Chosen = "terminal"
 		return m, tea.Quit
+	}
 
-	case tea.KeyUp:
-		m.selected = (m.selected - 1 + len(successMenu)) % len(successMenu)
+	var chosen string
+	m.menu, chosen = m.menu.update(msg)
+	switch chosen {
+	case "Get into Orbit":
+		m.openFailed = m.launchURL() != nil
 		return m, nil
-
-	case tea.KeyDown:
-		m.selected = (m.selected + 1) % len(successMenu)
+	case "Terminal":
+		m.Chosen = "terminal"
+		return m, tea.Quit
+	case "Menu":
+		m.Chosen = "menu"
 		return m, nil
-
-	case tea.KeyEnter:
-		switch m.selected {
-		case 0: // Get into Orbit
-			m.openFailed = m.launchURL() != nil
-			return m, nil
-		case 1: // Terminal
-			m.Chosen = "terminal"
-			return m, tea.Quit
-		case 2: // Menu
-			m.Chosen = "menu"
-			return m, nil
-		}
 	}
 
 	// Text is empty for every special key, so it is exactly the old
@@ -179,9 +171,7 @@ func (m SuccessModel) view() string {
 
 	contentLines := m.centreBlockLines()
 	bodyHeight := m.height - 1
-	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
-
-	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffset)
+	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffsetFor(bodyHeight, len(contentLines)))
 
 	achieved := ""
 	if m.elapsed > 0 {
@@ -207,8 +197,8 @@ func (m SuccessModel) centreBlockLines() []string {
 	lines = append(lines, style.SuccessText.Render("alive"))
 	lines = append(lines, "")
 
-	for i, label := range successMenu {
-		lines = append(lines, menuRow(label, i == m.selected))
+	for i, label := range m.menu.items {
+		lines = append(lines, menuRow(label, i == m.menu.sel))
 	}
 	if m.openFailed {
 		lines = append(lines, "")

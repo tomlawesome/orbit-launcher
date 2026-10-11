@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"net/url"
 	"os"
 	"time"
 
@@ -104,8 +103,9 @@ func (m AppModel) WithUpdateCheck(fn func(context.Context) (version string, hasU
 	return m
 }
 
-// WithVersion sets the version string rendered bottom-right on the
-// splash, the mission console and the success screen, e.g. "v0.1.0".
+// WithVersion sets the launcher version printed, as given, in the centred
+// foot of the splash and the mission console, e.g. "v0.1.0". An empty
+// version renders no foot; release.DisplayVersion decides the shape.
 func (m AppModel) WithVersion(v string) AppModel {
 	m.version = v
 	m.splash.version = v
@@ -164,11 +164,11 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	if err != nil || d == nil {
 		return s
 	}
-	s.fqdn = displayHost(d.AppURL)
+	s.fqdn = deploymentIdentity(d)
 	s.appURL = d.AppURL
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
-	s.selected = menuUpdate // a deployment's most likely next act
+	s.menu.sel = menuUpdate // a deployment's most likely next act
 	s.healthProbe = m.healthProbe
 	return s
 }
@@ -203,18 +203,6 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 		cmds = append(cmds, s.probeHealthCmd())
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// displayHost reduces an APP_URL to the bare FQDN the identity block
-// shows — scheme and path are launcher noise at a glance.
-func displayHost(appURL string) string {
-	if u, err := url.Parse(appURL); err == nil && u.Host != "" {
-		return u.Host
-	}
-	if appURL != "" {
-		return appURL
-	}
-	return "deployment detected"
 }
 
 func (m AppModel) resolvedTargetDir() string {
@@ -312,7 +300,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
-		m.repair.prepare = m.flowSeams.prepareRepair
+		m.repair.engineRunSeams = m.flowSeams
 		m.repair.send = m.flowSend
 		m.state = appStateRepair
 		return m, tea.Batch(sizeCmd, m.repair.Init())

@@ -10,7 +10,7 @@
     "",
     "There is deliberately no review date. A date could only be moved by hand, and for an",
     "action that simply has not released it went stale while nothing was wrong. Currency is",
-    "driven by Dependabot opening a bump, and by test/supplychain refusing a bump that leaves",
+    "driven by Renovate opening a bump, and by test/supplychain refusing a bump that leaves",
     "this file behind."
   ],
   "actions": [

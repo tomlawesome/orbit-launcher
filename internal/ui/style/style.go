@@ -30,8 +30,9 @@ var (
 
 	// Planet palette for the splash's free planetary systems: the
 	// binary pair leads gold with an approach-blue partner (starchart);
-	// the pale planet and its ember moon are unchanged from v5.
-	PlanetLead    = lipgloss.Color("#d8b45a")
+	// the pale planet and its ember moon are unchanged from v5. The
+	// lead planet is the accent itself, not a copy of its hex.
+	PlanetLead    = Accent
 	PlanetPartner = lipgloss.Color("#8fb8ff")
 	PlanetPale    = lipgloss.Color("#cbd5e1")
 	PlanetEmber   = lipgloss.Color("#fb7185")
@@ -44,14 +45,23 @@ const (
 	SymbolFailure  = "✗"
 	SymbolQueued   = "·"
 	SymbolMark     = "⟡"
+
+	// SymbolWarn marks a warning-severity repair finding.
+	SymbolWarn = "!"
+	// SymbolCursor is the text-input cursor drawn after typed text.
+	SymbolCursor = "▏"
 )
 
-// Wordmark renders "ORBIT": bold, wide-tracked, matching the mockup's
-// splash-screen wordmark. Letter-spacing isn't a real terminal-cell
-// concept, so tracking is approximated with literal spaces between
-// characters, same technique the mockup's CSS letter-spacing approximates
-// for a monospace grid.
-func Wordmark(word string) string {
+// SpinnerFrames are the in-progress glyph's animation frames, one per
+// UI tick; frame 0 is also the static "working" glyph.
+var SpinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+// Title is the bold full-ink style of every screen title, and of the
+// wordmark.
+var Title = lipgloss.NewStyle().Bold(true).Foreground(Text)
+
+// Tracked letter-spaces word with single spaces: the wordmark's tracking.
+func Tracked(word string) string {
 	tracked := ""
 	for i, r := range word {
 		if i > 0 {
@@ -59,7 +69,16 @@ func Wordmark(word string) string {
 		}
 		tracked += string(r)
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(Text).Render(tracked)
+	return tracked
+}
+
+// Wordmark renders "ORBIT": bold, wide-tracked, matching the mockup's
+// splash-screen wordmark. Letter-spacing isn't a real terminal-cell
+// concept, so tracking is approximated with literal spaces between
+// characters, same technique the mockup's CSS letter-spacing approximates
+// for a monospace grid.
+func Wordmark(word string) string {
+	return Title.Render(Tracked(word))
 }
 
 // MarkStyle renders the ⟡ orbit mark in the accent colour.
@@ -101,3 +120,22 @@ var (
 	PlanetEmberText   = lipgloss.NewStyle().Foreground(PlanetEmber)
 	PlanetTrailText   = lipgloss.NewStyle().Foreground(AccentDim)
 )
+
+// InkRamp is the fade ladder from near-background to full ink — colour
+// steps are the terminal-honest way to fade (glyphs never move; only
+// brightness changes). Index by alpha. The splash's arrival uses it.
+var InkRamp = []lipgloss.Style{
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#232837")),
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#3c4557")),
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7488")),
+	lipgloss.NewStyle().Foreground(lipgloss.Color("#a9b1c1")),
+	Title,
+}
+
+// SweepRamp lifts a wordmark cell toward gold-white as the arrival's
+// sweep highlight passes it.
+var SweepRamp = []lipgloss.Style{
+	Title,
+	lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f2e7c8")),
+	lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffeec4")),
+}

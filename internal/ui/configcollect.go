@@ -99,18 +99,17 @@ type configCollect struct {
 	stream *engine.Stream
 	stdin  io.WriteCloser
 
-	prompt    *engine.Prompt // non-nil while one answer is being typed
-	reason    string         // honest words for the last rejection
-	sawPrompt bool           // protocol capability evidence, per step
-	input     []rune
+	// session is the step's machine-prompt exchange; its sawPrompt is
+	// the protocol capability evidence, per step.
+	session promptSession
 	// origin is the accepted APP_URL answer, kept so a later field's
 	// guidance can name this deployment's real callback URL. Only ever
 	// set from a non-secret field.
 	origin string
 
-	// authModeSel is the highlighted row on the sign-in-mode screen
-	// (issue #154): 0 = Local accounts (the default), 1 = SSO.
-	authModeSel int
+	// signIn is the highlight on the sign-in-mode screen (issue #154),
+	// over configSignInLabels; Local accounts, first, is the default.
+	signIn menu
 	// authMode is the answer, once chosen, threaded into BuildConfigureCommand
 	// for the --init step it gates. Empty until the person chooses.
 	authMode deploy.AuthMode
@@ -221,7 +220,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		if msg.err != nil || len(msg.plan.unfixable) > 0 {
@@ -249,7 +248,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			// sign in. Local accounts is the default; choosing either
 			// row starts --init with that mode (handleConfigSignInModeKey).
 			r.state = runConfigSignInMode
-			r.cfg.authModeSel = 0
+			r.cfg.signIn = menu{}
 			return r, nil
 		}
 		return r.startNextConfigStep()
@@ -261,9 +260,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		r.cfg.stream = msg.stream
 		r.cfg.stdin = msg.stdin
-		r.cfg.sawPrompt = false
-		r.cfg.prompt = nil
-		r.cfg.reason = ""
+		r.cfg.session = promptSession{}
 		return r, readEngineStream(r.send, msg.stream, configStream)
 
 	case configStreamMsg:
@@ -289,7 +286,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.runErr = errEngineStoppedEarly
 		}
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 
 	case configRecheckMsg:
@@ -309,7 +306,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.releaseRunFiles()
 			r.runErr = msg.err
 			r.state = runFailed
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		r.cfg.close()
@@ -363,26 +360,9 @@ func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
 func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.RawLineMsg:
-		if parsed, ok := engine.ParsePromptLine(m.Text); ok {
-			switch p := parsed.(type) {
-			case engine.Prompt:
-				prompt := p
-				r.cfg.prompt = &prompt
-				r.cfg.sawPrompt = true
-				r.cfg.input = nil
-			case engine.PromptReject:
-				r.cfg.reason = rejectionWords(p.Reason)
-				r.cfg.prompt = nil
-			case engine.PromptAccept:
-				r.cfg.reason = ""
-				r.cfg.prompt = nil
-			case engine.PromptAbort:
-				// The engine gives up (third rejection or closed
-				// input) and exits through its refusal path; DoneMsg
-				// routes back to the refusal menu.
-				r.cfg.prompt = nil
-			}
-		}
+		// A prompt-abort exits through the engine's refusal path;
+		// DoneMsg routes back to the refusal menu.
+		r.cfg.session, _ = r.cfg.session.applyLine(m.Text)
 		return r, nil
 
 	case engine.EventMsg:
@@ -390,7 +370,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		return r, nil
 
 	case engine.DoneMsg:
-		sawPrompt := r.cfg.sawPrompt
+		sawPrompt := r.cfg.session.sawPrompt
 		if m.Err == nil {
 			// Step complete; mark it off and continue.
 			r.cfg.stream = nil
@@ -411,7 +391,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		// The engine aborted (rejections exhausted or input closed) —
 		// back to the refusal menu; the person decides what's next.
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	return r, nil
@@ -439,7 +419,7 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
-	r.menuSel = 0
+	r.menu = menu{}
 	return r.start(r.width, r.height)
 }
 
@@ -449,61 +429,39 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 // the refusal menu — the same cancel handleConfigKey gives the rest of
 // this session.
 func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
+	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
-	case tea.KeyUp, tea.KeyDown:
-		r.cfg.authModeSel = 1 - r.cfg.authModeSel
-		return r, nil
-	case tea.KeyEnter:
-		r.cfg.authMode = deploy.AuthModeLocal
-		if r.cfg.authModeSel == 1 {
-			r.cfg.authMode = deploy.AuthModeOIDC
-		}
-		r.state = runConfigCollect
-		return r.startNextConfigStep()
 	}
-	return r, nil
+	var chosen string
+	r.cfg.signIn, chosen = r.cfg.signIn.over(configSignInLabels()).update(msg)
+	if chosen == "" {
+		return r, nil
+	}
+	r.cfg.authMode = deploy.AuthModeLocal
+	if chosen == signInSSO {
+		r.cfg.authMode = deploy.AuthModeOIDC
+	}
+	r.state = runConfigCollect
+	return r.startNextConfigStep()
 }
 
-// handleConfigKey is the typing surface: append, backspace, enter
-// submits the answer line, esc cancels the whole session back to the
-// refusal menu.
+// handleConfigKey is the typing surface (promptSession.key: typing,
+// and Enter submits the answer line); esc cancels the whole session
+// back to the refusal menu.
 func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
-	if r.cfg.prompt == nil {
-		return r, nil
-	}
-	switch msg.Code {
-	case tea.KeySpace:
-		r.cfg.input = append(r.cfg.input, ' ')
-	case tea.KeyBackspace:
-		if len(r.cfg.input) > 0 {
-			r.cfg.input = r.cfg.input[:len(r.cfg.input)-1]
-		}
-	case tea.KeyEnter:
-		if r.cfg.stdin != nil {
-			answer := string(r.cfg.input)
-			fmt.Fprintln(r.cfg.stdin, answer)
-			if r.cfg.prompt.Field == "APP_URL" {
-				r.cfg.origin = answer
-			}
-		}
-		r.cfg.prompt = nil
-		r.cfg.input = nil
-	default:
-		// Text is the printable character the key produced and is empty
-		// for every special key, so this takes typing and ignores the
-		// rest.
-		r.cfg.input = append(r.cfg.input, []rune(msg.Text)...)
+	var field, answer string
+	r.cfg.session, field, answer = r.cfg.session.key(msg, r.cfg.stdin)
+	if field == "APP_URL" && r.cfg.stdin != nil {
+		r.cfg.origin = answer
 	}
 	return r, nil
 }
@@ -596,6 +554,21 @@ func rejectionWords(reason string) string {
 	}
 }
 
+const (
+	signInLocal = "Local accounts"
+	signInSSO   = "Single sign-on (SSO) with an identity provider"
+)
+
+// configSignInLabels are the sign-in-mode screen's rows as the menu
+// knows them: configSignInRows' labels, in order.
+func configSignInLabels() []string {
+	labels := make([]string, len(configSignInRows))
+	for i, row := range configSignInRows {
+		labels[i] = row.label
+	}
+	return labels
+}
+
 // configSignInRows is the sign-in-mode screen's copy, ratified 2026-09-09
 // on issue #154 and reproduced here exactly — not to be reworded without
 // a fresh ratification. Local accounts is first (and the default); both
@@ -604,11 +577,11 @@ var configSignInRows = []struct {
 	label string
 	desc  []string
 }{
-	{"Local accounts", []string{
+	{signInLocal, []string{
 		"People get a password managed by Orbit. Nothing else to set up.",
 		"A provider can be added later with configure.sh.",
 	}},
-	{"Single sign-on (SSO) with an identity provider", []string{
+	{signInSSO, []string{
 		"People sign in through your OIDC provider — Authentik, Keycloak,",
 		"Entra ID and the like. Orbit asks for its address and client",
 		"details next. Local accounts stay available as well.",
@@ -620,10 +593,7 @@ var configSignInRows = []struct {
 // ever runs so the right ORBIT_CONFIGURE_AUTH_MODE can be set on it.
 func (r engineRun) viewConfigSignInMode(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("How will people sign in?"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "How will people sign in?")
 
 	// Unlike menuRow's individually centred labels, the two choices and
 	// their descriptions are one left-aligned block, as ratified: every
@@ -633,7 +603,7 @@ func (r engineRun) viewConfigSignInMode(width, height int) string {
 	var block []string
 	for i, row := range configSignInRows {
 		label := "  " + style.MenuUnselected.Render(row.label)
-		if i == r.cfg.authModeSel {
+		if i == r.cfg.signIn.sel {
 			label = style.MenuCaret.Render(style.SymbolSelected) + " " + style.MenuSelected.Render(row.label)
 		}
 		block = append(block, label)
@@ -656,41 +626,8 @@ func (r engineRun) viewConfigSignInMode(width, height int) string {
 // asked for.
 func (r engineRun) viewConfigCollect(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Orbit needs your configuration")
 
-	p := r.cfg.prompt
-	if p == nil {
-		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return skyBlock(r.console.sky, width, height, b.String())
-	}
-
-	label, hint, notes := promptWords(p.Field, r.cfg.origin)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
-	if hint != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(hint))
-	}
-	for _, note := range notes {
-		fmt.Fprintln(&b, style.MutedText.Render(note))
-	}
-	fmt.Fprintln(&b)
-
-	// The input row. A secret is never echoed — not even its length.
-	shown := string(r.cfg.input)
-	if p.Kind == "secret" {
-		shown = ""
-	}
-	cursor := style.AccentText.Render("▏")
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
-
-	if r.cfg.reason != "" {
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, style.DegradedText.Render(r.cfg.reason))
-	}
-	if p.Attempt > 1 {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
-	}
+	r.cfg.session.view(&b, r.cfg.origin, width)
 	return skyBlock(r.console.sky, width, height, b.String())
 }

@@ -2,44 +2,24 @@ package deploy
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
-)
 
-// noScriptSource points the install.sh override at a server that counts
-// every request, so a test can prove nothing was fetched.
-func noScriptSource(t *testing.T) *atomic.Int32 {
-	t.Helper()
-	var requests atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_, _ = w.Write([]byte("#!/usr/bin/env bash\necho fetched\n"))
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL+"/scripts/install.sh")
-	return &requests
-}
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
+)
 
 // deploymentWithRepair is a deployment directory holding the
 // repair.sh install.sh placed there from the image.
 func deploymentWithRepair(t *testing.T, script string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "repair.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: script, Mode: 0o700})
 	return dir
 }
 
 func TestRepairCommand_RunsTheDeploymentsOwnScript(t *testing.T) {
-	requests := noScriptSource(t)
+	requests := testutil.CountingScriptSource(t)
 	const script = "#!/usr/bin/env bash\necho installed-from-the-image\n"
 	dir := deploymentWithRepair(t, script)
 
@@ -70,7 +50,7 @@ func TestRepairCommand_RunsTheDeploymentsOwnScript(t *testing.T) {
 }
 
 func TestRepairCommand_AbsentScriptIsUnavailable(t *testing.T) {
-	requests := noScriptSource(t)
+	requests := testutil.CountingScriptSource(t)
 	dir := t.TempDir()
 
 	cmd, err := RepairCommand(dir, RepairCheck)

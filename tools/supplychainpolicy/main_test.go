@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/tomlawesome/orbit-launcher/tools/internal/clitest"
 	scp "github.com/tomlawesome/orbit-launcher/tools/supplychainpolicy/policy"
 )
 
@@ -623,4 +624,28 @@ func TestRunHelpExitsZeroAndDescribesTheFlags(t *testing.T) {
 	if code != 0 || stdout != "" || !strings.Contains(stderr, "-write") || !strings.Contains(stderr, "-root") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
+}
+
+// main hands its command line to run and run's exit code to os.Exit
+// (#199 SU-17): the real main, run as the command, exits 0 for -h, 2 for
+// a bad flag and 1 when the check fails.
+func TestMainRunsTheCommand(t *testing.T) {
+	t.Run("help exits 0", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-h")
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "Usage of supplychainpolicy") || !strings.Contains(stderr, "-write") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 0 and the usage naming -write on stderr", code, stdout, stderr)
+		}
+	})
+	t.Run("bad flag exits 2", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-bogus")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "flag provided but not defined: -bogus") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 naming the bad flag on stderr", code, stdout, stderr)
+		}
+	})
+	t.Run("failed check exits 1", func(t *testing.T) {
+		code, stdout, stderr := clitest.Main(t, main, "-root", t.TempDir())
+		if code != 1 || stdout != "" || !strings.HasPrefix(stderr, "supplychainpolicy: ") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want exit 1 and the failure on stderr", code, stdout, stderr)
+		}
+	})
 }

@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -43,6 +44,19 @@ func TestUpdateModel_NoDeploymentReachesNotFoundAndOnlyQuits(t *testing.T) {
 	}
 }
 
+// The no-deployment screen is the flow's first: Esc is back to the main
+// menu (#210, owner 4a); Exit and every other key still quit.
+func TestUpdateModel_EscOnNotFoundGoesBackToTheMenu(t *testing.T) {
+	m, _ := newTestUpdateModel(nil, engineRunSeams{})
+	updated, cmd := m.Update(key(tea.KeyEsc))
+	if cmd != nil {
+		t.Fatal("Esc on the not-found screen should run nothing")
+	}
+	if o := updated.(UpdateModel).Outcome(); !leftForMenu(o) {
+		t.Fatalf("outcome after Esc = %+v, want back to the menu", o)
+	}
+}
+
 func TestUpdateModel_CancelFromConfirmNeverStartsTheEngine(t *testing.T) {
 	engineCalled := false
 	seams := engineRunSeams{
@@ -55,17 +69,21 @@ func TestUpdateModel_CancelFromConfirmNeverStartsTheEngine(t *testing.T) {
 
 	updated, _ := m.Update(key(tea.KeyDown)) // move to Cancel
 	m = updated.(UpdateModel)
-	_, cmd := m.Update(key(tea.KeyEnter))
+	updated, cmd := m.Update(key(tea.KeyEnter))
+	if cmd != nil {
+		cmd()
+	}
 
 	if engineCalled {
 		t.Error("the engine must never start when Cancel is chosen")
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected Cancel to issue tea.Quit")
+	// Cancel is the same act as Esc: back to the main menu (#210).
+	if o := updated.(UpdateModel).Outcome(); !leftForMenu(o) {
+		t.Errorf("outcome after Cancel = %+v, want back to the menu", o)
 	}
 }
 
-func TestUpdateModel_EscapeAtConfirmQuitsWithoutStarting(t *testing.T) {
+func TestUpdateModel_EscapeAtConfirmGoesBackToTheMenuWithoutStarting(t *testing.T) {
 	engineCalled := false
 	seams := engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -75,13 +93,17 @@ func TestUpdateModel_EscapeAtConfirmQuitsWithoutStarting(t *testing.T) {
 	}
 	m, _ := newTestUpdateModel(testDeployment(), seams)
 
-	_, cmd := m.Update(key(tea.KeyEsc))
+	updated, cmd := m.Update(key(tea.KeyEsc))
+	if cmd != nil {
+		cmd()
+	}
 
 	if engineCalled {
 		t.Error("the engine must never start on Escape")
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected Escape to issue tea.Quit")
+	// The flow's first screen: Esc is back to the main menu (#210).
+	if o := updated.(UpdateModel).Outcome(); !leftForMenu(o) {
+		t.Errorf("outcome after Escape = %+v, want back to the menu", o)
 	}
 }
 
@@ -120,7 +142,7 @@ func TestUpdateModel_ConfirmRunsTheEngineWithUpdateAction(t *testing.T) {
 	if m.state != updateStateRunning {
 		t.Fatalf("state = %v, want updateStateRunning", m.state)
 	}
-	m = drive(t, m, cmd, s).(UpdateModel)
+	m = drive(t, m, cmd, s)
 
 	if gotAction != "update" {
 		t.Errorf("engine action = %q, want update", gotAction)
@@ -170,13 +192,13 @@ func TestUpdateModel_EngineFailureReachesFailedState(t *testing.T) {
 func TestUpdateModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
 	m, _ := newTestUpdateModel(testDeployment(), engineRunSeams{})
 
-	before := stripANSI(m.View().Content)
+	before := screen(m)
 	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
 		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
 	}
 
 	updated, _ := m.Update(installedAtMsg{at: time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)})
-	after := stripANSI(updated.(UpdateModel).View().Content)
+	after := ansi.Strip(updated.(UpdateModel).View().Content)
 	if !strings.Contains(after, "mail.example.com · installed 2026-06-14") {
 		t.Fatalf("after the lookup answers, want the date beside the host:\n%s", after)
 	}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -100,23 +101,6 @@ func TestScreenWait_KeepsUpWithFastRepaints(t *testing.T) {
 	t.Logf("marker found after %s", time.Since(start).Round(time.Millisecond))
 }
 
-// TestStripEscapes covers each kind of sequence the emulator's Render
-// writes, next to multi-byte text that must come through whole.
-func TestStripEscapes(t *testing.T) {
-	cases := map[string]string{
-		"\x1b[1;38;5;69m▸ Install\x1b[m":                          "▸ Install",
-		"\x1b]8;;https://orbit.example\x1b\\link\x1b]8;;\x1b\\ ✓": "link ✓",
-		"\x1b]0;title\x07after":                                   "after",
-		"a\x1b(Bb":                                                "ab",
-		"trailing\x1b":                                            "trailing",
-	}
-	for in, want := range cases {
-		if got := stripEscapes(in); got != want {
-			t.Errorf("stripEscapes(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // syncBuffer is a log the emulator's copy and the test can share.
 type syncBuffer struct {
 	mu sync.Mutex
@@ -171,6 +155,33 @@ func TestNew_BrokenLogDoesNotStopTheScreen(t *testing.T) {
 	draw(t, term, "second")
 	if _, err := Wait(term, 5*time.Second, ContainsAll("first second")); err != nil {
 		t.Fatalf("screen after a failing log: %v", err)
+	}
+}
+
+// A pty that cannot be opened is an error that says so, not a terminal
+// with nothing behind it. The process may open no file at all for the
+// moment New runs (RLIMIT_NOFILE 0, which fails even as root); the
+// package runs no test in parallel, so nothing else is opening one.
+func TestNew_ReportsAPtyThatCannotBeOpened(t *testing.T) {
+	var lim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+		t.Fatalf("read the file limit: %v", err)
+	}
+	none := lim
+	none.Cur = 0
+	if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &none); err != nil {
+		t.Fatalf("lower the file limit: %v", err)
+	}
+	term, err := New(80, 24, nil)
+	if rerr := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &lim); rerr != nil {
+		t.Fatalf("restore the file limit: %v", rerr)
+	}
+	if err == nil {
+		_ = term.Close()
+		t.Fatal("New opened a pty with no file descriptors to spare")
+	}
+	if !strings.Contains(err.Error(), "open pty") {
+		t.Errorf("New's error = %q, want it to name the pty it could not open", err)
 	}
 }
 

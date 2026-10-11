@@ -177,7 +177,7 @@ func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
 	case err != nil:
 		return plan, err
 	case !info.IsDir():
-		return plan, fmt.Errorf("%s is not a directory", secretsSrc)
+		return plan, refusal(notADirectory, secretsSrc)
 	}
 
 	plan.secretsDir = filepath.Join(targetDir, SecretsDir)
@@ -187,7 +187,7 @@ func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
 	case err != nil:
 		return plan, err
 	case !info.IsDir():
-		return plan, fmt.Errorf("%s is not a directory", plan.secretsDir)
+		return plan, refusal(notADirectory, plan.secretsDir)
 	default:
 		plan.secretsDirExisted = true
 	}
@@ -212,6 +212,21 @@ func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
 	return plan, nil
 }
 
+// The configuration code's own refusals of a path of the wrong kind.
+const (
+	notARegularFile = "it is not a regular file"
+	notADirectory   = "it is not a directory"
+)
+
+// refusal words a configuration refusal as the trusted-path check does,
+// reason first ("refusing: <reason> — <path>"), so a long path cannot
+// push the reason off a narrow screen. It stays a plain error, not an
+// *UntrustedPathError: the UI routes on that type, and these refusals
+// keep the generic failure path they take today.
+func refusal(reason, path string) error {
+	return errors.New("refusing: " + reason + " — " + path)
+}
+
 // requireRegularSource refuses a source that isn't a regular file, so a
 // symlink is never followed out of the tree.
 func requireRegularSource(path string) error {
@@ -220,7 +235,7 @@ func requireRegularSource(path string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", path)
+		return refusal(notARegularFile, path)
 	}
 	return nil
 }
@@ -236,7 +251,7 @@ func requireReplaceable(path string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", path)
+		return refusal(notARegularFile, path)
 	}
 	return nil
 }
@@ -291,7 +306,7 @@ func copyConfigFile(src, dst string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", src)
+		return refusal(notARegularFile, src)
 	}
 	body, err := os.ReadFile(src)
 	if err != nil {
@@ -369,7 +384,7 @@ func copySecretsDir(src, dst string, trust func(name string) error) error {
 		return err
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", src)
+		return refusal(notADirectory, src)
 	}
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err

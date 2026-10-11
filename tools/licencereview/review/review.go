@@ -24,6 +24,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/tomlawesome/orbit-launcher/tools/internal/linefile"
 )
 
 // Kind is why a file needs a review.
@@ -87,8 +89,26 @@ var generatedHeader = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
 // code.
 var provenance = regexp.MustCompile(`(?i)\b(ported|adapted|taken|copied|extracted|borrowed|translated) from\b|licen[cs]e agreement|unicode\.org/(license|copyright)|\bunder (the )?[\w.-]+ licen[cs]e\b|\blicensed under\b|SPDX-License-Identifier`)
 
-// licenceFile matches the names go-licenses itself treats as licences.
-var licenceFile = regexp.MustCompile(`(?i)^(licen[cs]e|copying|notice|unlicense)(\.|-|_|$)`)
+// licenceName is the licence-file name rule: a licence-style base name,
+// then optionally an upper-case licence tag after '.', '-' or '_'
+// (LICENSE-MIT, LICENSE.APACHE, COPYING.LESSER, LICENSE_APACHE-2.0), then
+// optionally a documentation extension (.txt, .md, .markdown, .rst).
+// The tag is case-sensitive so a lower-case source extension (.go, .c)
+// never reads as one.
+var licenceName = regexp.MustCompile(`^(?i:licen[cs]e|copying|notice|unlicense)([._-][A-Z0-9]+([.-][A-Z0-9]+)*)?(?i:\.(?:txt|md|markdown|rst))?$`)
+
+// LicenceFile reports whether a file called name is a licence file. It is
+// the one rule for both tools (#199 SU-1, #218): the review scan, which
+// reads a nested licence file as marking someone else's code, and the
+// notices builder, which ships every licence file at a module's root.
+// It is a name-only rule, not go-licenses' (which matches any name
+// starting LICENSE, COPYING, README or NOTICE and then classifies the
+// content): it is narrower, rejecting source files such as license.go or
+// COPYING.c, because the notices builder copies licence files verbatim
+// into what the binary ships.
+func LicenceFile(name string) bool {
+	return licenceName.MatchString(name)
+}
 
 // Scan returns everything the non-main packages in pkgs carry that needs
 // a review, sorted, one finding per file. A file that is both generated
@@ -168,7 +188,7 @@ func isVendored(moduleDir, rel string) (bool, error) {
 			return false, err
 		}
 		for _, e := range entries {
-			if !e.IsDir() && licenceFile.MatchString(e.Name()) {
+			if !e.IsDir() && LicenceFile(e.Name()) {
 				return true, nil
 			}
 		}
@@ -255,26 +275,26 @@ func (r Review) covers(f Finding) bool {
 // "<module>@<version> <path> <kind> <licence or finding>", with blank
 // lines and lines starting with # ignored.
 func ParseReviews(text string) ([]Review, error) {
+	lines, err := linefile.Read(strings.NewReader(text))
+	if err != nil {
+		return nil, err
+	}
 	var out []Review
-	for i, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
+	for _, l := range lines {
+		fields := l.Fields
 		if len(fields) != 4 {
-			return nil, fmt.Errorf("line %d: want \"<module>@<version> <path> <kind> <licence>\", got %q", i+1, line)
+			return nil, fmt.Errorf("line %d: want \"<module>@<version> <path> <kind> <licence>\", got %q", l.No, l.Text)
 		}
 		if !strings.Contains(fields[0], "@") {
-			return nil, fmt.Errorf("line %d: %q has no @version; a review names an exact version", i+1, fields[0])
+			return nil, fmt.Errorf("line %d: %q has no @version; a review names an exact version", l.No, fields[0])
 		}
 		kind := Kind(fields[2])
 		switch kind {
 		case Embed, Vendored, Generated, Notice:
 		default:
-			return nil, fmt.Errorf("line %d: unknown kind %q (want embed, vendored, generated or notice)", i+1, fields[2])
+			return nil, fmt.Errorf("line %d: unknown kind %q (want embed, vendored, generated or notice)", l.No, fields[2])
 		}
-		out = append(out, Review{Line: i + 1, Module: fields[0], Path: fields[1], Kind: kind, Licence: fields[3]})
+		out = append(out, Review{Line: l.No, Module: fields[0], Path: fields[1], Kind: kind, Licence: fields[3]})
 	}
 	return out, nil
 }

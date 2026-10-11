@@ -47,6 +47,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/tomlawesome/orbit-launcher/tools/internal/linefile"
 )
 
 // Coverage is one package's statement totals.
@@ -178,30 +180,24 @@ func ParseProfile(r io.Reader) (map[string]Coverage, error) {
 // ParseFloors reads the floors file: blank lines and `#`-prefixed
 // comments are skipped, every other line is `<import path> <percent>`.
 func ParseFloors(r io.Reader) (map[string]Floor, error) {
+	lines, err := linefile.Read(r)
+	if err != nil {
+		return nil, fmt.Errorf("reading floors file: %w", err)
+	}
 	floors := map[string]Floor{}
-	sc := bufio.NewScanner(r)
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
+	for _, l := range lines {
+		fields := l.Fields
 		if len(fields) != 2 {
-			return nil, fmt.Errorf("floors file line %d: expected '<import path> <percent>', got %q", lineNo, line)
+			return nil, fmt.Errorf("floors file line %d: expected '<import path> <percent>', got %q", l.No, l.Text)
 		}
 		pct, err := strconv.ParseFloat(fields[1], 64)
 		if err != nil {
-			return nil, fmt.Errorf("floors file line %d: floor %q for %s is not a number: %w", lineNo, fields[1], fields[0], err)
+			return nil, fmt.Errorf("floors file line %d: floor %q for %s is not a number: %w", l.No, fields[1], fields[0], err)
 		}
 		if prev, dup := floors[fields[0]]; dup {
-			return nil, fmt.Errorf("floors file line %d: %s already has a floor, set on line %d", lineNo, fields[0], prev.Line)
+			return nil, fmt.Errorf("floors file line %d: %s already has a floor, set on line %d", l.No, fields[0], prev.Line)
 		}
-		floors[fields[0]] = Floor{Package: fields[0], Percent: pct, Line: lineNo}
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("reading floors file: %w", err)
+		floors[fields[0]] = Floor{Package: fields[0], Percent: pct, Line: l.No}
 	}
 	if len(floors) == 0 {
 		return nil, fmt.Errorf("floors file has no '<import path> <percent>' lines")

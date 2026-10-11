@@ -26,7 +26,7 @@ import (
 // SchemaVersion is bumped when the file's shape changes. Version 2 dropped
 // reviewedOn/reviewBy: a date recording "when a human last looked" could only
 // be moved by hand, and for an action that simply has not released, it went
-// stale while nothing was wrong. Currency is driven by Dependabot opening a
+// stale while nothing was wrong. Currency is driven by Renovate opening a
 // bump, and by the commit check below refusing a bump that leaves this file
 // behind.
 const SchemaVersion = 2

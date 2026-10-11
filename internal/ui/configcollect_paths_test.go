@@ -14,6 +14,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // Plain model tests for in-console configuration's failure, cancel and
@@ -28,8 +29,6 @@ func collectingRun(t *testing.T, seams engineRunSeams) engineRun {
 	r.state = runConfigCollect
 	return r
 }
-
-func collectScreen(r engineRun) string { return stripANSI(r.view(80, 26)) }
 
 // handoffSeams records whether the terminal handoff was prepared.
 func handoffSeams(prepared *bool) engineRunSeams {
@@ -63,8 +62,8 @@ func TestConfigCollect_StepThatWillNotStartStopsLoudlyInStrictMode(t *testing.T)
 	if cmd != nil || prepared {
 		t.Fatal("strict mode must never prepare the terminal handoff")
 	}
-	if r.state != runFailed || !strings.Contains(collectScreen(r), "in-console configuration required — terminal handoff refused") {
-		t.Fatalf("state = %v, screen:\n%s", r.state, collectScreen(r))
+	if r.state != runFailed || !strings.Contains(runScreen(r), "in-console configuration required — terminal handoff refused") {
+		t.Fatalf("state = %v, screen:\n%s", r.state, runScreen(r))
 	}
 }
 
@@ -88,7 +87,7 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("a failed adoption must not retry the engine")
 	}
-	s := collectScreen(r)
+	s := runScreen(r)
 	if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
 		t.Fatalf("state = %v, screen:\n%s", r.state, s)
 	}
@@ -115,12 +114,12 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
 	r.cfg.stdin = stdin
-	if !strings.Contains(collectScreen(r), "talking to the engine…") {
-		t.Fatalf("before a prompt:\n%s", collectScreen(r))
+	if !strings.Contains(runScreen(r), "talking to the engine…") {
+		t.Fatalf("before a prompt:\n%s", runScreen(r))
 	}
 	// No prompt yet: typing goes nowhere.
 	r, _ = r.update(runeKey('h'))
-	if len(r.cfg.input) != 0 {
+	if !r.cfg.session.input.empty() {
 		t.Fatal("typing before a prompt was captured")
 	}
 
@@ -128,8 +127,8 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	for _, k := range []tea.KeyPressMsg{runeKey('m'), runeKey('y'), key(tea.KeySpace), runeKey('i'), runeKey('x'), key(tea.KeyBackspace), runeKey('d')} {
 		r, _ = r.update(k)
 	}
-	if !strings.Contains(collectScreen(r), "my id▏") {
-		t.Fatalf("the typed answer should read 'my id':\n%s", collectScreen(r))
+	if !strings.Contains(runScreen(r), "my id▏") {
+		t.Fatalf("the typed answer should read 'my id':\n%s", runScreen(r))
 	}
 	r, _ = r.update(key(tea.KeyEnter))
 	if stdin.String() != "my id\n" {
@@ -142,7 +141,7 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	// Backspace on an empty answer is harmless.
 	r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=OIDC_ISSUER kind=url required=true attempt=1"}})
 	r, _ = r.update(key(tea.KeyBackspace))
-	if len(r.cfg.input) != 0 {
+	if !r.cfg.session.input.empty() {
 		t.Fatal("backspace on empty input produced input")
 	}
 }
@@ -161,7 +160,7 @@ func TestConfigCollect_EventLinesKeepTheSessionReading(t *testing.T) {
 func TestConfigSignInMode_UnboundKeyChangesNothing(t *testing.T) {
 	r := signInModeRun()
 	r, cmd := r.handleKey(runeKey('s'))
-	if cmd != nil || r.state != runConfigSignInMode || r.cfg.authModeSel != 0 {
+	if cmd != nil || r.state != runConfigSignInMode || r.cfg.signIn.sel != 0 {
 		t.Fatal("an unbound key acted on the sign-in screen")
 	}
 }
@@ -181,7 +180,7 @@ func TestConfigCollect_RejectionReasonsInWords(t *testing.T) {
 		r.cfg.stream = &engine.Stream{C: make(chan any)}
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt-reject field=APP_URL reason=" + reason}})
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=APP_URL kind=url required=true attempt=2"}})
-		s := collectScreen(r)
+		s := runScreen(r)
 		if !strings.Contains(s, want) || !strings.Contains(s, "attempt 2 of 3") {
 			t.Errorf("reason %q should read %q with the attempt count:\n%s", reason, want, s)
 		}
@@ -200,13 +199,8 @@ func TestPromptWords_SafeBatchConfirmation(t *testing.T) {
 func configTree(t *testing.T, checkReport string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	script := "printf '%s\\n' " + shellQuoteLines(checkReport) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "configure.sh"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testutil.StageTree(t, dir, 0o700, testutil.File{Path: "scripts/configure.sh", Body: script, Mode: 0o700})
 	return dir
 }
 

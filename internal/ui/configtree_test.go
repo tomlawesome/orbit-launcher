@@ -12,6 +12,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // #190: in-console configuration runs configure.sh only from the tree
@@ -23,15 +24,9 @@ import (
 func handedOverTree(t *testing.T, configure string) string {
 	t.Helper()
 	tree := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tree, "scripts"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tree, "scripts", "configure.sh"), []byte(configure), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tree, ".env-orbit.example"), []byte("APP_URL=\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.StageTree(t, tree, 0o700,
+		testutil.File{Path: "scripts/configure.sh", Body: configure, Mode: 0o600},
+		testutil.File{Path: ".env-orbit.example", Body: "APP_URL=\n", Mode: 0o600})
 	return tree
 }
 
@@ -201,7 +196,7 @@ func TestEngineRun_TreeOutlivesACancelledSessionAndGoesWithTheRun(t *testing.T) 
 	if r.state != runConfigPrompt || cleaned != 0 {
 		t.Fatalf("state = %v cleaned = %d; a cancelled session must keep the run's tree", r.state, cleaned)
 	}
-	r.menuSel = 1 // Menu
+	r.menu.sel = 1 // Menu
 	r, _ = r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !r.Done || !r.WantsMenu {
 		t.Fatalf("Done=%v WantsMenu=%v, want back to the menu", r.Done, r.WantsMenu)
