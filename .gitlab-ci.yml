@@ -155,6 +155,16 @@ variables:
 .pull_if_not_present: &pull_if_not_present
   pull_policy: if-not-present
 
+# `DOCS_ONLY` comes from `classify`; `fast` and `deps` run this first. Unset
+# means run: this default is the whole point of the gate. Exiting here ends
+# the job successfully, and every later `script:` entry with it, because the
+# runner executes them all in one shell.
+.docs_only_skip: &docs_only_skip |
+  if [ "${DOCS_ONLY:-false}" = "true" ]; then
+    echo "skipped: every changed path is documentation (#153)"
+    exit 0
+  fi
+
 # The start of every apt install here; each job then installs its own
 # packages.
 .apt_prologue: &apt_prologue |
@@ -258,21 +268,14 @@ fast:
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
-    # `DOCS_ONLY` comes from `classify`. Unset means run: this default is the
-    # whole point of the gate. Exiting here ends the job successfully, and
-    # every later `script:` entry with it, because the runner executes them all
-    # in one shell.
-    #
-    # coverage.out is written even when nothing ran, because the artifact is
-    # declared `when: always` and an empty upload logs an error. `mode: set`
-    # with no lines under it is a valid, honest profile: no statements were
-    # measured.
+    # coverage.out is written before anything can stop the job, because the
+    # artifact is declared `when: always` and an empty upload logs an error.
+    # `mode: set` with no lines under it is a valid, honest profile: no
+    # statements were measured. scripts/coverage.sh overwrites it when the
+    # gate runs.
     - |
-      if [ "${DOCS_ONLY:-false}" = "true" ]; then
-        echo "skipped: every changed path is documentation (#153)"
-        printf 'mode: set\n' > coverage.out
-        exit 0
-      fi
+      printf 'mode: set\n' > coverage.out
+    - *docs_only_skip
     - |
       # The tracked Go files, not `gofmt -l .`: GitLab's cache can only carry
       # paths inside the project directory, so GOMODCACHE lives there and a
@@ -333,12 +336,7 @@ deps:
     - job: classify
       artifacts: true
   script:
-    # As in `fast`: unset means run.
-    - |
-      if [ "${DOCS_ONLY:-false}" = "true" ]; then
-        echo "skipped: every changed path is documentation (#153)"
-        exit 0
-      fi
+    - *docs_only_skip
     - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
     - govulncheck ./...
     - go install "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
