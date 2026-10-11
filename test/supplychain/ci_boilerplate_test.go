@@ -5,7 +5,8 @@
 // change what any job runs or when, so every job keeps its name and its
 // effective rules and script -- compared with the file as it stood at ce4b412,
 // kept in testdata/ and read by ci_miniyaml_test.go with anchors, merge keys,
-// `extends:` and `default:` resolved.
+// `extends:` and `default:` resolved. The only lines that differ are the ones
+// #216 changes on purpose, listed in changedBy216.
 package supplychain
 
 import (
@@ -133,6 +134,7 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 		if name == "fast" {
 			want.Script = fastPlaceholderFirst(t, want.Script)
 		}
+		want.Script = checkedDownloadsAndShellcheck(t, name, want.Script)
 		got, err := newDoc.effectiveJob(name)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -189,6 +191,82 @@ func fastPlaceholderFirst(t *testing.T, script string) string {
 		t.Fatalf("ce4b412's fast script should hold the placeholder once inside one docs-only skip; found %d placeholders and %d skips", moved, placed)
 	}
 	return strings.Join(out, "\n")
+}
+
+// The lines #216 changes on purpose, and nothing else (#199 SU-12, SU-15).
+// Every pinned download used to type its own `curl` and `sha256sum -c`; each
+// now calls scripts/ci/fetch-verified.sh with the same URL, the same digest
+// variable and the same destination. fast's shellcheck step widens from the
+// retired bootstrap script to every script. Each rewrite names its jobs and
+// must find its old lines exactly once in each, so it cannot excuse any
+// other change.
+var changedBy216 = []struct {
+	jobs     []string
+	old, new string
+}{
+	{ // the Go tarball, through the .go_tarball anchor
+		jobs: []string{"visual", "live"},
+		old: `curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
+  "https://go.dev/dl/${tarball}"
+echo "${GO_SHA256}  /tmp/${tarball}" | sha256sum -c -`,
+		new: `bash scripts/ci/fetch-verified.sh "https://go.dev/dl/${tarball}" \
+  "${GO_SHA256}" "/tmp/${tarball}"`,
+	},
+	{
+		jobs: []string{"fast"},
+		old:  `shellcheck scripts/get-orbit-launcher.sh`,
+		new:  `shellcheck scripts/*.sh scripts/ci/*.sh`,
+	},
+	{
+		jobs: []string{"fast"},
+		old: `curl --fail --silent --show-error --location --output /tmp/bats.tar.gz \
+  "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz"
+echo "${BATS_SHA256}  /tmp/bats.tar.gz" | sha256sum -c -`,
+		new: `bash scripts/ci/fetch-verified.sh \
+  "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" \
+  "${BATS_SHA256}" /tmp/bats.tar.gz`,
+	},
+	{
+		jobs: []string{"gitleaks"},
+		old: `curl --fail --silent --show-error --location --output "/tmp/${tarball}" \
+  "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+echo "${GITLEAKS_SHA256}  /tmp/${tarball}" | sha256sum -c -`,
+		new: `bash scripts/ci/fetch-verified.sh \
+  "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}" \
+  "${GITLEAKS_SHA256}" "/tmp/${tarball}"`,
+	},
+	{
+		jobs: []string{"visual"},
+		old: `curl --fail --silent --show-error --location --output /usr/local/bin/ttyd \
+  "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
+echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -`,
+		new: `bash scripts/ci/fetch-verified.sh \
+  "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+  "${TTYD_SHA256}" /usr/local/bin/ttyd`,
+	},
+}
+
+// checkedDownloadsAndShellcheck rewrites one ce4b412 job script the way #216
+// does. Lines are matched whole, and each rewrite for this job must match
+// exactly once.
+func checkedDownloadsAndShellcheck(t *testing.T, job, script string) string {
+	t.Helper()
+	framed := "\n" + script + "\n"
+	for _, r := range changedBy216 {
+		applies := false
+		for _, j := range r.jobs {
+			applies = applies || j == job
+		}
+		if !applies {
+			continue
+		}
+		old := "\n" + r.old + "\n"
+		if n := strings.Count(framed, old); n != 1 {
+			t.Fatalf("ce4b412's %s script should hold these lines once, found %d:\n%s", job, n, r.old)
+		}
+		framed = strings.Replace(framed, old, "\n"+r.new+"\n", 1)
+	}
+	return framed[1 : len(framed)-1]
 }
 
 // anchorsHolding returns the anchors whose resolved value contains needle,
