@@ -1,12 +1,13 @@
 // The GitLab pipeline's repeated boilerplate lives in one place (#217, from
 // #199 WI-13, findings SU-13 and SU-18): the docs-only skip and the apt
-// prologue are YAML anchors, `default:` sets the image pull policy once, and
-// the two live-job scanners share one `liveJobLines` helper. None of it may
-// change what any job runs or when, so every job keeps its name and its
-// effective rules and script -- compared with the file as it stood at ce4b412,
-// kept in testdata/ and read by ci_miniyaml_test.go with anchors, merge keys,
-// `extends:` and `default:` resolved. The only lines that differ are the ones
-// #216 changes on purpose, listed in changedBy216.
+// prologue are YAML anchors, the image pull policy is written once in a
+// hidden template that each job's image merges in with `<<:`, and the two
+// live-job scanners share one `liveJobLines` helper. None of it may change
+// what any job runs or when, so every job keeps its name, its effective
+// script and every other key -- compared with the file as it stood at
+// ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
+// merge keys, `extends:` and `default:` resolved. The only differences are
+// the ones #216 makes on purpose, listed in changedBy216.
 package supplychain
 
 import (
@@ -423,8 +424,20 @@ func TestDocsOnlySkipIsOneAnchor(t *testing.T) {
 			t.Errorf("job %q no longer skips on DOCS_ONLY after anchor expansion", name)
 		}
 	}
-	if !strings.Contains(fast.Script, "coverage.out") {
-		t.Error("job `fast` must still write coverage.out when it skips: the artifact is declared `when: always`")
+	// The placeholder line itself, ahead of the skip: other fast lines name
+	// coverage.out too (the coverage floor reads it), so a mere mention
+	// proves nothing.
+	placeholderAt, skipAt := -1, -1
+	for i, l := range strings.Split(fast.Script, "\n") {
+		switch {
+		case l == fastPlaceholder && placeholderAt < 0:
+			placeholderAt = i
+		case strings.Contains(l, `DOCS_ONLY:-false`) && skipAt < 0:
+			skipAt = i
+		}
+	}
+	if placeholderAt < 0 || placeholderAt > skipAt {
+		t.Errorf("job `fast` must write the empty profile (%s) before the docs-only skip: the artifact is declared `when: always`", fastPlaceholder)
 	}
 }
 
@@ -511,8 +524,10 @@ func TestPullPolicyIsWrittenOnceAndEveryJobKeepsIt(t *testing.T) {
 		}
 	}
 
-	// Every job's effective image -- its own, or `default:`'s whole when it
-	// sets none -- keeps the policy.
+	// Every job's effective image keeps the policy, through the merge anchor
+	// in its own image. A job with no image of its own would run `default:`'s
+	// image whole, so that is where the check looks then -- and `default:`
+	// sets no image here, so such a job fails below.
 	jobs := 0
 	for _, k := range doc.root.keys {
 		switch k {
