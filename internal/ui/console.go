@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -390,21 +391,27 @@ func formatAchieved(d time.Duration) string {
 // truncateStyled bounds a styled line to w cells. Styled segments make
 // exact truncation fiddly; entries are built to fit, so this is a
 // guard: over-wide lines fall back to their plain text, cut to the
-// characters that fit in w cells (a wide character is two).
+// whole grapheme clusters that fit in w cells, measured as
+// lipgloss.Width measures them (a wide character is two cells; an emoji
+// with its variation selector, a keycap or a ZWJ family is one cluster).
+// It walks clusters the way lipgloss.Width does (xansi.Truncate does
+// not: it counts ASCII bytes one by one, so "1" and its keycap mark are
+// measured apart). The cut is one pass, stopping at the first cluster
+// that does not fit: an engine line can be a hundred thousand
+// characters of carriage-return progress (#157).
 func truncateStyled(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	// One pass from the front, stopping at the first character that
-	// would not fit: an engine line can be a hundred thousand characters
-	// of carriage-return progress (#157), so the cut must not re-measure
-	// the whole line per character.
 	plain := ansi.Strip(s)
-	cells := 0
-	for i, r := range plain {
-		if cells += lipgloss.Width(string(r)); cells > w {
-			return plain[:i]
+	i, cells := 0, 0
+	for i < len(plain) {
+		cluster, cw := xansi.FirstGraphemeCluster(plain[i:], xansi.GraphemeWidth)
+		if cells+cw > w {
+			break
 		}
+		cells += cw
+		i += len(cluster)
 	}
-	return plain
+	return plain[:i]
 }
