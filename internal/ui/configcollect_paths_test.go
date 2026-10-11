@@ -12,7 +12,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
@@ -30,8 +29,6 @@ func collectingRun(t *testing.T, seams engineRunSeams) engineRun {
 	r.state = runConfigCollect
 	return r
 }
-
-func collectScreen(r engineRun) string { return ansi.Strip(r.view(80, 26)) }
 
 // handoffSeams records whether the terminal handoff was prepared.
 func handoffSeams(prepared *bool) engineRunSeams {
@@ -65,8 +62,8 @@ func TestConfigCollect_StepThatWillNotStartStopsLoudlyInStrictMode(t *testing.T)
 	if cmd != nil || prepared {
 		t.Fatal("strict mode must never prepare the terminal handoff")
 	}
-	if r.state != runFailed || !strings.Contains(collectScreen(r), "in-console configuration required — terminal handoff refused") {
-		t.Fatalf("state = %v, screen:\n%s", r.state, collectScreen(r))
+	if r.state != runFailed || !strings.Contains(runScreen(r), "in-console configuration required — terminal handoff refused") {
+		t.Fatalf("state = %v, screen:\n%s", r.state, runScreen(r))
 	}
 }
 
@@ -90,7 +87,7 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("a failed adoption must not retry the engine")
 	}
-	s := collectScreen(r)
+	s := runScreen(r)
 	if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
 		t.Fatalf("state = %v, screen:\n%s", r.state, s)
 	}
@@ -117,8 +114,8 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
 	r.cfg.stdin = stdin
-	if !strings.Contains(collectScreen(r), "talking to the engine…") {
-		t.Fatalf("before a prompt:\n%s", collectScreen(r))
+	if !strings.Contains(runScreen(r), "talking to the engine…") {
+		t.Fatalf("before a prompt:\n%s", runScreen(r))
 	}
 	// No prompt yet: typing goes nowhere.
 	r, _ = r.update(runeKey('h'))
@@ -130,8 +127,8 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	for _, k := range []tea.KeyPressMsg{runeKey('m'), runeKey('y'), key(tea.KeySpace), runeKey('i'), runeKey('x'), key(tea.KeyBackspace), runeKey('d')} {
 		r, _ = r.update(k)
 	}
-	if !strings.Contains(collectScreen(r), "my id▏") {
-		t.Fatalf("the typed answer should read 'my id':\n%s", collectScreen(r))
+	if !strings.Contains(runScreen(r), "my id▏") {
+		t.Fatalf("the typed answer should read 'my id':\n%s", runScreen(r))
 	}
 	r, _ = r.update(key(tea.KeyEnter))
 	if stdin.String() != "my id\n" {
@@ -183,7 +180,7 @@ func TestConfigCollect_RejectionReasonsInWords(t *testing.T) {
 		r.cfg.stream = &engine.Stream{C: make(chan any)}
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt-reject field=APP_URL reason=" + reason}})
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=APP_URL kind=url required=true attempt=2"}})
-		s := collectScreen(r)
+		s := runScreen(r)
 		if !strings.Contains(s, want) || !strings.Contains(s, "attempt 2 of 3") {
 			t.Errorf("reason %q should read %q with the attempt count:\n%s", reason, want, s)
 		}

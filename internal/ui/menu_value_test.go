@@ -17,8 +17,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
 
 func parseSnippet(t *testing.T, src string) (*token.FileSet, *ast.File) {
@@ -189,25 +187,24 @@ func TestTwoRowConfirmScreensToggleWithEitherArrow(t *testing.T) {
 		{"Update", confirmUpdate, "▸ Update Orbit", "▸ Cancel"},
 		{"Remove", confirmRemove, "▸ Stand down Orbit", "▸ Cancel"},
 	}
-	view := func(m tea.Model) string { return ansi.Strip(m.View().Content) }
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
 			m := r.model(t)
-			if !strings.Contains(view(m), r.first) {
-				t.Fatalf("first row not selected on arrival:\n%s", view(m))
+			if !strings.Contains(screen(m), r.first) {
+				t.Fatalf("first row not selected on arrival:\n%s", screen(m))
 			}
 			for _, k := range []rune{tea.KeyDown, tea.KeyUp} {
 				moved, _ := leavePress(t, m, key(k))
-				if !strings.Contains(view(moved), r.other) {
-					t.Fatalf("key %v from the first row did not select %q:\n%s", k, r.other, view(moved))
+				if !strings.Contains(screen(moved), r.other) {
+					t.Fatalf("key %v from the first row did not select %q:\n%s", k, r.other, screen(moved))
 				}
 				back, _ := leavePress(t, moved, key(k))
-				if !strings.Contains(view(back), r.first) {
-					t.Fatalf("key %v from the second row did not wrap to %q:\n%s", k, r.first, view(back))
+				if !strings.Contains(screen(back), r.first) {
+					t.Fatalf("key %v from the second row did not wrap to %q:\n%s", k, r.first, screen(back))
 				}
 			}
 			same, cmd := leavePress(t, m, runeKey('x'))
-			if cmd != nil || view(same) != view(m) {
+			if cmd != nil || screen(same) != screen(m) {
 				t.Fatal("an unbound key acted on the confirm screen")
 			}
 		})
@@ -218,19 +215,18 @@ func TestTwoRowConfirmScreensToggleWithEitherArrow(t *testing.T) {
 // its three rows (the count must come from the menu, not a typed 3).
 func TestInstallProfileMenuWrapsOverAllRows(t *testing.T) {
 	m := profileInstall(t)
-	view := func(m tea.Model) string { return ansi.Strip(m.View().Content) }
 	seen := []string{}
 	for _, want := range []string{"▸ AI", "▸ Full", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyDown))
-		if !strings.Contains(view(m), want) {
-			t.Fatalf("Down did not reach %q (visited %v):\n%s", want, seen, view(m))
+		if !strings.Contains(screen(m), want) {
+			t.Fatalf("Down did not reach %q (visited %v):\n%s", want, seen, screen(m))
 		}
 		seen = append(seen, want)
 	}
 	for _, want := range []string{"▸ Full", "▸ AI", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyUp))
-		if !strings.Contains(view(m), want) {
-			t.Fatalf("Up did not reach %q:\n%s", want, view(m))
+		if !strings.Contains(screen(m), want) {
+			t.Fatalf("Up did not reach %q:\n%s", want, screen(m))
 		}
 	}
 }

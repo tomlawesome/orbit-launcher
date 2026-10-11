@@ -24,10 +24,10 @@ func consoleRows(c ConsoleModel, width, height int) []string {
 
 func TestConsole_EachStateHasItsGlyphAndWords(t *testing.T) {
 	c := testConsole()
-	c = c.observeEvent(consoleEvent("pull", "image", "skipped", "image-present", "skip"))
-	c = c.observeEvent(consoleEvent("database", "database", "blocked", "volume-ownership", "stop"))
-	c = c.observeEvent(consoleEvent("database", "migrations", "waiting", "migration", "wait"))
-	c = c.observeEvent(consoleEvent("application", "application", "running", "application-health", "start"))
+	c = c.observeEvent(ev("pull", "image", "skipped", "image-present", "skip").Event)
+	c = c.observeEvent(ev("database", "database", "blocked", "volume-ownership", "stop").Event)
+	c = c.observeEvent(ev("database", "migrations", "waiting", "migration", "wait").Event)
+	c = c.observeEvent(ev("application", "application", "running", "application-health", "start").Event)
 	c = c.observeRaw("legacy prose line")
 	rows := strings.Join(consoleRows(c, 80, 26), "\n")
 	for _, want := range []string{
@@ -46,7 +46,7 @@ func TestConsole_EachStateHasItsGlyphAndWords(t *testing.T) {
 
 func TestConsole_OnlyTheNewestActiveEntrySpins(t *testing.T) {
 	c := testConsole()
-	c = c.observeEvent(consoleEvent("database", "database", "starting", "database-health", "start"))
+	c = c.observeEvent(ev("database", "database", "starting", "database-health", "start").Event)
 	rows := strings.Join(consoleRows(c, 80, 26), "\n")
 	if !strings.Contains(rows, string(style.SpinnerFrames[0])+" database starting") {
 		t.Fatalf("the newest active entry should carry the spinner:\n%s", rows)
@@ -152,8 +152,8 @@ func TestConsole_ShortTerminalStillShowsThreeEntryRows(t *testing.T) {
 
 func TestConsole_RollbackColoursTheBarAndNamesTheStage(t *testing.T) {
 	c := testConsole()
-	c = c.observeEvent(consoleEvent("database", "database", "completed", "database-health", "start"))
-	c = c.observeEvent(consoleEvent("rollback", "installer", "running", "rollback", "rollback"))
+	c = c.observeEvent(ev("database", "database", "completed", "database-health", "start").Event)
+	c = c.observeEvent(ev("rollback", "installer", "running", "rollback", "rollback").Event)
 	rows := consoleRows(c, 80, 26)
 	if got := rows[len(rows)-1]; !strings.HasPrefix(got, c.stageWord()) {
 		t.Fatalf("stage row = %q, want it to lead with %q", got, c.stageWord())

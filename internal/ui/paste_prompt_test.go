@@ -37,16 +37,16 @@ func pasteRigs(t *testing.T, promptLine string) map[string]pasteRig {
 	m := sizedRepair(t)
 	m.state = repairRotating
 	rStdin := &recordingStdin{}
-	m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: rStdin})
+	m, _ = updateAs(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: rStdin})
 	m = repairLines(t, m, promptLine)
 	rotation := pasteRig{
 		typingRig: typingRig{
-			press: func(k tea.KeyPressMsg) { m, _ = repairUpdate(t, m, k) },
-			typed: func() string { return inputRowText(repairScreen(m)) },
+			press: func(k tea.KeyPressMsg) { m, _ = updateAs(t, m, k) },
+			typed: func() string { return inputRowText(screen(m)) },
 			sent:  rStdin.String,
 		},
-		pasteIn: func(s string) { m, _ = repairUpdate(t, m, paste(s)) },
-		screen:  func() string { return repairScreen(m) },
+		pasteIn: func(s string) { m, _ = updateAs(t, m, paste(s)) },
+		screen:  func() string { return screen(m) },
 	}
 
 	r := collectingRun(t, engineRunSeams{})
@@ -57,11 +57,11 @@ func pasteRigs(t *testing.T, promptLine string) map[string]pasteRig {
 	configuration := pasteRig{
 		typingRig: typingRig{
 			press: func(k tea.KeyPressMsg) { r, _ = r.update(k) },
-			typed: func() string { return inputRowText(collectScreen(r)) },
+			typed: func() string { return inputRowText(runScreen(r)) },
 			sent:  cStdin.String,
 		},
 		pasteIn: func(s string) { r, _ = r.update(paste(s)) },
-		screen:  func() string { return collectScreen(r) },
+		screen:  func() string { return runScreen(r) },
 	}
 
 	return map[string]pasteRig{"rotation": rotation, "configuration": configuration}
@@ -218,7 +218,7 @@ func TestPaste_IntoTheInstallNoticeIsIgnored(t *testing.T) {
 	t.Run("a paste adds nothing to what was typed", func(t *testing.T) {
 		m, _ := start(t)
 		m = typeText(t, m, "I")
-		m = update(t, m, paste("'ve read this"))
+		m, _ = updateAs(t, m, paste("'ve read this"))
 		if got := inputRowText(screen(m)); got != "I" {
 			t.Fatalf("the box reads %q after a paste, want %q", got, "I")
 		}
@@ -232,8 +232,8 @@ func TestPaste_IntoTheInstallNoticeIsIgnored(t *testing.T) {
 		// As in TestNotice_EnterChecksThePhrase, a key first puts the
 		// box in focus; the paste then lands on an empty, focused box.
 		m = typeText(t, m, "x")
-		m = update(t, m, key(tea.KeyBackspace))
-		m = update(t, m, paste(noticePhrase))
+		m, _ = updateAs(t, m, key(tea.KeyBackspace))
+		m, _ = updateAs(t, m, paste(noticePhrase))
 		updated, cmd := m.Update(key(tea.KeyEnter))
 		m = updated.(InstallModel)
 		if m.state != installStateNotice {

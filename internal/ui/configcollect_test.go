@@ -228,7 +228,7 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 	// The retry engine run succeeds and lands on the success screen.
 	wait("Get into Orbit", "orbit.example.test")
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
 
 	wait("Get into Orbit")
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 		t.Fatal("the secret step ran even though the re-check said the secret is not in use")
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestAppModel_SecretInputIsNeverEchoed(t *testing.T) {
 		t.Fatal("the secret was echoed to the screen")
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestAppModel_LegacyConfigureFallsBackToHandoff(t *testing.T) {
 		t.Fatal("legacy configure never fell back to the handoff")
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestAppModel_ConfigAbortReturnsToRefusalMenu(t *testing.T) {
 	}
 	wait("Continue — guided configuration")
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestAppModel_EscCancelsConfigCollectToRefusalMenu(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	wait("Continue — guided configuration")
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestAppModel_EscCancelsSignInModeToRefusalMenu(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	wait("Continue — guided configuration")
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 		t.Fatal("unfixable fields never fell back to the handoff")
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestAppModel_StrictModeRefusesTheHandoffFallback(t *testing.T) {
 	default:
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -867,7 +867,7 @@ func TestAppModel_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 		}
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}

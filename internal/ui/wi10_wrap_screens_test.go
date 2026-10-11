@@ -129,7 +129,7 @@ func TestRepairError_DockerErrorsWrapAt80Columns(t *testing.T) {
 	}
 	t.Run("diagnosis could not start", func(t *testing.T) {
 		m := size(sizedRepair(t))
-		m, _ = repairUpdate(t, m, repairReadyMsg{err: errors.New(wi10DockerError)})
+		m, _ = updateAs(t, m, repairReadyMsg{err: errors.New(wi10DockerError)})
 		if m.state != repairError {
 			t.Fatalf("state = %v, want repairError", m.state)
 		}
@@ -138,7 +138,7 @@ func TestRepairError_DockerErrorsWrapAt80Columns(t *testing.T) {
 	t.Run("rotation could not start", func(t *testing.T) {
 		m := size(sizedRepair(t))
 		m.state = repairRotating
-		m, _ = repairUpdate(t, m, repairRotateReadyMsg{err: errors.New(wi10DockerError)})
+		m, _ = updateAs(t, m, repairRotateReadyMsg{err: errors.New(wi10DockerError)})
 		if m.state != repairError {
 			t.Fatalf("state = %v, want repairError", m.state)
 		}

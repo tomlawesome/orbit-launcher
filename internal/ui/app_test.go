@@ -35,7 +35,7 @@ func TestAppModel_SelectingRemoveLaunchesTheRemoveFlow(t *testing.T) {
 		return bytes.Contains(out, []byte("No Orbit deployment found in"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.
 		return bytes.Contains(out, []byte("O R B I T"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}

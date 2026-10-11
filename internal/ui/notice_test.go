@@ -31,8 +31,8 @@ func openNotice(t *testing.T, width, height int, seams engineRunSeams) (InstallM
 	clock := newFakeClock()
 	seams.now = clock.now
 	m, _ := newTestInstallModel(seams)
-	m = update(t, m, tea.WindowSizeMsg{Width: width, Height: height})
-	m = update(t, m, key(tea.KeyEnter)) // Standard -> confirm
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: height})
+	m, _ = updateAs(t, m, key(tea.KeyEnter)) // Standard -> confirm
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(InstallModel)
 	if m.state != installStateNotice {
@@ -41,15 +41,10 @@ func openNotice(t *testing.T, width, height int, seams engineRunSeams) (InstallM
 	return m, clock, cmd
 }
 
-func update(t *testing.T, m InstallModel, msg tea.Msg) InstallModel {
-	t.Helper()
-	updated, _ := m.Update(msg)
-	return updated.(InstallModel)
-}
-
 func typeText(t *testing.T, m InstallModel, s string) InstallModel {
 	t.Helper()
-	return update(t, m, tea.KeyPressMsg{Text: s})
+	m, _ = updateAs(t, m, tea.KeyPressMsg{Text: s})
+	return m
 }
 
 // awakeNotice is an 80×26 notice with both gates passed.
@@ -57,10 +52,9 @@ func awakeNotice(t *testing.T, seams engineRunSeams) InstallModel {
 	t.Helper()
 	m, clock, _ := openNotice(t, 80, 26, seams)
 	clock.advance(noticeDefaultDuration)
-	return update(t, m, key(tea.KeyEnd))
+	m, _ = updateAs(t, m, key(tea.KeyEnd))
+	return m
 }
-
-func screen(m InstallModel) string { return ansi.Strip(m.View().Content) }
 
 // passNotice takes a teatest journey through the development notice.
 // The journey's AppModel sets flowNoticeDuration to a millisecond, so
@@ -104,7 +98,7 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
 	first := m.notice.start
 
-	m = update(t, m, key(tea.KeyEsc))
+	m, _ = updateAs(t, m, key(tea.KeyEsc))
 	if m.state != installStateConfirm || m.confirm.sel != 0 {
 		t.Fatalf("Esc: state = %v, confirm.sel = %d; want confirm with Install now selected", m.state, m.confirm.sel)
 	}
@@ -131,7 +125,7 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 		t.Error("the current visit's tick must re-arm while the countdown runs")
 	}
 
-	m = update(t, m, key(tea.KeyEnter)) // the caret starts on Go back
+	m, _ = updateAs(t, m, key(tea.KeyEnter)) // the caret starts on Go back
 	if m.state != installStateConfirm {
 		t.Errorf("Enter on Go back: state = %v, want installStateConfirm", m.state)
 	}
@@ -217,7 +211,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Fatal("the end is not on screen yet")
 	}
 
-	m = update(t, m, key(tea.KeyEnd))
+	m, _ = updateAs(t, m, key(tea.KeyEnd))
 	if !m.notice.endSeen {
 		t.Fatal("End must show the end and open the scroll gate")
 	}
@@ -226,7 +220,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	if !strings.Contains(screen(m), "0:01") {
 		t.Error("at 69 s the countdown must read 0:01")
 	}
-	m = update(t, m, runeKey('I'))
+	m, _ = updateAs(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusBack || !m.notice.typed.empty() {
 		t.Fatal("letters must be ignored while the countdown runs")
 	}
@@ -237,7 +231,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	if strings.TrimSpace(ansi.Strip(countdown)) != "" {
 		t.Errorf("at 70 s the countdown row must be blank, got %q", ansi.Strip(countdown))
 	}
-	m = update(t, m, runeKey('I'))
+	m, _ = updateAs(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I" {
 		t.Errorf("once awake a letter must focus the box and type: focus %v, typed %q", m.notice.focus, m.notice.typed.String())
 	}
@@ -259,7 +253,7 @@ func TestNotice_ThreeHiddenRowsNeedThreeDowns(t *testing.T) {
 		t.Fatal("three rows hang below at 120×50")
 	}
 	for range 3 {
-		m = update(t, m, key(tea.KeyDown))
+		m, _ = updateAs(t, m, key(tea.KeyDown))
 	}
 	if !m.notice.endSeen {
 		t.Error("three ↓ must show the end")
@@ -281,12 +275,12 @@ func TestNotice_GapIsNeverTheLastRowWhileMoreFollows(t *testing.T) {
 
 func TestNotice_ScrollGateIsSticky(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
-	m = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 53})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 53})
 	if !m.notice.endSeen {
 		t.Fatal("a resize that reveals the end must open the scroll gate")
 	}
-	m = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
-	m = update(t, m, key(tea.KeyHome))
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
+	m, _ = updateAs(t, m, key(tea.KeyHome))
 	if !m.notice.endSeen {
 		t.Fatal("scrolling back up must not close the gate")
 	}
@@ -301,24 +295,24 @@ func TestNotice_ScrollKeysAndWheel(t *testing.T) {
 	if m.View().MouseMode != tea.MouseModeCellMotion {
 		t.Error("the notice turns mouse reporting on so the wheel scrolls")
 	}
-	m = update(t, m, key(tea.KeyPgDown))
+	m, _ = updateAs(t, m, key(tea.KeyPgDown))
 	if m.notice.offset != 11 {
 		t.Errorf("PgDn: offset = %d, want viewport-1 = 11", m.notice.offset)
 	}
-	m = update(t, m, key(tea.KeyPgUp))
-	m = update(t, m, key(tea.KeySpace))
+	m, _ = updateAs(t, m, key(tea.KeyPgUp))
+	m, _ = updateAs(t, m, key(tea.KeySpace))
 	if m.notice.offset != 11 || !m.notice.typed.empty() {
 		t.Errorf("Space while asleep: offset = %d, typed %q; want a page down", m.notice.offset, m.notice.typed.String())
 	}
-	m = update(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m, _ = updateAs(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	if m.notice.offset != 8 {
 		t.Errorf("wheel up: offset = %d, want 8", m.notice.offset)
 	}
-	m = update(t, m, key(tea.KeyHome))
+	m, _ = updateAs(t, m, key(tea.KeyHome))
 	if m.notice.offset != 0 {
 		t.Errorf("Home: offset = %d, want 0", m.notice.offset)
 	}
-	m = update(t, m, key(tea.KeyEsc))
+	m, _ = updateAs(t, m, key(tea.KeyEsc))
 	if m.View().MouseMode != tea.MouseModeNone {
 		t.Error("mouse reporting is for the notice only")
 	}
@@ -330,15 +324,15 @@ func TestNotice_TypingFocusesTheBox(t *testing.T) {
 	if m.notice.focus != noticeFocusField || !strings.Contains(screen(m), "I've re▏") {
 		t.Fatalf("typing must focus the box and show the text with the cursor:\n%s", screen(m))
 	}
-	m = update(t, m, key(tea.KeyBackspace))
+	m, _ = updateAs(t, m, key(tea.KeyBackspace))
 	if m.notice.typed.String() != "I've r" {
 		t.Errorf("Backspace: typed = %q, want %q", m.notice.typed.String(), "I've r")
 	}
-	m = update(t, m, key(tea.KeyDown))
+	m, _ = updateAs(t, m, key(tea.KeyDown))
 	if m.notice.focus != noticeFocusBack || !strings.Contains(screen(m), "▸ Go back") {
 		t.Error("↓ from the box must move the caret to Go back")
 	}
-	m = update(t, m, key(tea.KeyUp))
+	m, _ = updateAs(t, m, key(tea.KeyUp))
 	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I've r" {
 		t.Error("↑ from Go back must return to the box, keeping the text")
 	}
@@ -355,26 +349,26 @@ func TestNotice_EnterChecksThePhrase(t *testing.T) {
 
 	// An empty, focused box: Enter does nothing.
 	m = typeText(t, m, "x")
-	m = update(t, m, key(tea.KeyBackspace))
-	m = update(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, key(tea.KeyBackspace))
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if m.state != installStateNotice || m.notice.refused {
 		t.Fatal("Enter on an empty box must change nothing")
 	}
 
 	m = typeText(t, m, "I read this and I understand")
-	m = update(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if !strings.Contains(screen(m), noticeRefusal) || m.notice.typed.String() != "I read this and I understand" {
 		t.Fatal("a wrong phrase must be refused and kept for fixing")
 	}
-	m = update(t, m, key(tea.KeyBackspace))
+	m, _ = updateAs(t, m, key(tea.KeyBackspace))
 	if strings.Contains(screen(m), noticeRefusal) {
 		t.Error("the next key must clear the refusal")
 	}
 
-	m = update(t, m, key(tea.KeyEsc))
-	m = update(t, m, key(tea.KeyEnter)) // fresh notice
+	m, _ = updateAs(t, m, key(tea.KeyEsc))
+	m, _ = updateAs(t, m, key(tea.KeyEnter)) // fresh notice
 	m.seams.now = func() time.Time { return m.notice.start.Add(noticeDefaultDuration) }
-	m = update(t, m, key(tea.KeyEnd))
+	m, _ = updateAs(t, m, key(tea.KeyEnd))
 	m = typeText(t, m, "I have read this and I understand")
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(InstallModel)
@@ -416,7 +410,7 @@ func TestNotice_ExtremeSizesDoNotPanic(t *testing.T) {
 		_ = m.View()
 		clock.advance(noticeDefaultDuration)
 		for _, k := range []tea.KeyPressMsg{key(tea.KeyEnd), key(tea.KeyPgUp), key(tea.KeyDown)} {
-			m = update(t, m, k)
+			m, _ = updateAs(t, m, k)
 		}
 		m = typeText(t, m, strings.Repeat("long text ", 10))
 		_ = m.View()

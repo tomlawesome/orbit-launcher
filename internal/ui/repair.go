@@ -83,9 +83,9 @@ type RepairModel struct {
 	// stream reader; set by AppModel from the program's sender.
 	send func(tea.Msg)
 
-	// Test seams; nil gets the real implementations.
-	prepare       prepareRepairFunc
-	prepareRotate prepareRotateFunc
+	// Test seams (prepareRepair, prepareRotate); nil gets the real
+	// implementations.
+	engineRunSeams
 }
 
 type repairState int
@@ -170,7 +170,7 @@ func (m RepairModel) Init() tea.Cmd {
 
 // startRun launches one read-only repair invocation in the given mode.
 func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
-	prepare := m.prepare
+	prepare := m.prepareRepair
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}

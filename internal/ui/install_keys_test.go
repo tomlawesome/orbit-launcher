@@ -12,28 +12,17 @@ import (
 // Key handling on the Install flow's screens before the engine runs:
 // every screen's way back, its way out, and what an unbound key does.
 
-func installUpdate(t *testing.T, m InstallModel, msgs ...tea.Msg) (InstallModel, tea.Cmd) {
-	t.Helper()
-	var cmd tea.Cmd
-	for _, msg := range msgs {
-		var updated tea.Model
-		updated, cmd = m.Update(msg)
-		m = updated.(InstallModel)
-	}
-	return m, cmd
-}
-
 func TestInstallModel_ProfileArrowsWrapAndShowTheSelection(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, _ = installUpdate(t, m, key(tea.KeyUp))
+	m, _ = updateAs(t, m, key(tea.KeyUp))
 	if m.profile.sel != 2 || !strings.Contains(screen(m), "▸ Full") {
 		t.Fatalf("Up from Standard should wrap to Full (sel=%d):\n%s", m.profile.sel, screen(m))
 	}
-	m, _ = installUpdate(t, m, key(tea.KeyDown))
+	m, _ = updateAs(t, m, key(tea.KeyDown))
 	if m.profile.sel != 0 || !strings.Contains(screen(m), "▸ Standard") {
 		t.Fatalf("Down from Full should wrap to Standard (sel=%d)", m.profile.sel)
 	}
-	m, cmd := installUpdate(t, m, runeKey('j'))
+	m, cmd := updateAs(t, m, runeKey('j'))
 	if cmd != nil || m.profile.sel != 0 || m.state != installStateProfile {
 		t.Fatal("an unbound key moved the profile screen")
 	}
@@ -43,7 +32,7 @@ func TestInstallModel_ProfileArrowsWrapAndShowTheSelection(t *testing.T) {
 // decision 4a), and starts nothing.
 func TestInstallModel_EscOnTheProfileScreenGoesBackToTheMenu(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, cmd := installUpdate(t, m, key(tea.KeyEsc))
+	m, cmd := updateAs(t, m, key(tea.KeyEsc))
 	if cmd != nil {
 		t.Fatal("Esc on the first screen of the flow should run nothing")
 	}
@@ -57,8 +46,8 @@ func TestInstallModel_EscOnTheProfileScreenGoesBackToTheMenu(t *testing.T) {
 
 func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, _ = installUpdate(t, m, key(tea.KeyEnter)) // confirm
-	if _, cmd := installUpdate(t, m, ctrlC()); !isQuit(cmd) {
+	m, _ = updateAs(t, m, key(tea.KeyEnter)) // confirm
+	if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
 		t.Fatal("Ctrl+C on the confirm screen did not quit")
 	}
 }
@@ -66,18 +55,18 @@ func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 	for _, back := range []tea.KeyPressMsg{key(tea.KeyEnter), key(tea.KeyEsc)} {
 		m, _ := newTestInstallModel(engineRunSeams{})
-		m, _ = installUpdate(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // AI
+		m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // AI
 		s := screen(m)
 		for _, want := range []string{"This profile isn't available yet", "local-model configuration", "▸ Back"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("unavailable screen lacks %q:\n%s", want, s)
 			}
 		}
-		m, cmd := installUpdate(t, m, runeKey('x'))
+		m, cmd := updateAs(t, m, runeKey('x'))
 		if cmd != nil || m.state != installStateUnavailableProfile {
 			t.Fatal("an unbound key left the unavailable screen")
 		}
-		m, _ = installUpdate(t, m, back)
+		m, _ = updateAs(t, m, back)
 		if m.state != installStateProfile {
 			t.Fatalf("%v should return to the profile choice, state = %v", back, m.state)
 		}
@@ -86,23 +75,23 @@ func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 
 func TestInstallModel_ConfirmBackRowReturnsToProfile(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, _ = installUpdate(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if s := screen(m); !strings.Contains(s, "Ready to install") || !strings.Contains(s, "/opt/orbit") {
 		t.Fatalf("confirm screen:\n%s", s)
 	}
-	m, _ = installUpdate(t, m, key(tea.KeyDown))
+	m, _ = updateAs(t, m, key(tea.KeyDown))
 	if !strings.Contains(screen(m), "▸ Back") {
 		t.Fatalf("Down should select Back:\n%s", screen(m))
 	}
-	m, _ = installUpdate(t, m, key(tea.KeyUp), key(tea.KeyUp)) // toggles: Install now, Back
+	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // toggles: Install now, Back
 	if m.confirm.sel != 1 {
 		t.Fatalf("Up toggles between the two rows, sel = %d", m.confirm.sel)
 	}
-	m, cmd := installUpdate(t, m, runeKey('y'))
+	m, cmd := updateAs(t, m, runeKey('y'))
 	if cmd != nil || m.state != installStateConfirm {
 		t.Fatal("an unbound key acted on the confirm screen")
 	}
-	m, cmd = installUpdate(t, m, key(tea.KeyEnter))
+	m, cmd = updateAs(t, m, key(tea.KeyEnter))
 	if cmd != nil || m.state != installStateProfile {
 		t.Fatalf("Back should return to the profile screen without starting anything, state = %v", m.state)
 	}
@@ -114,7 +103,7 @@ func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *t
 	stale := func(t *testing.T) InstallModel {
 		m := NewInstallModel("/opt/orbit", "v0.1.0")
 		m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
-		m, _ = installUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, m.Init()())
+		m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, m.Init()())
 		if m.state != installStateStaleVolume {
 			t.Fatalf("state = %v, want the pre-flight screen", m.state)
 		}
@@ -123,27 +112,27 @@ func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *t
 
 	t.Run("Back", func(t *testing.T) {
 		m := stale(t)
-		m, _ = installUpdate(t, m, key(tea.KeyDown))
+		m, _ = updateAs(t, m, key(tea.KeyDown))
 		if !strings.Contains(screen(m), "▸ Back") {
 			t.Fatalf("Down should select Back:\n%s", screen(m))
 		}
-		m, _ = installUpdate(t, m, key(tea.KeyUp), key(tea.KeyUp))
+		m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp))
 		if m.volume.sel != 1 {
 			t.Fatalf("Up toggles the two rows, sel = %d", m.volume.sel)
 		}
-		m, cmd := installUpdate(t, m, key(tea.KeyEnter))
+		m, cmd := updateAs(t, m, key(tea.KeyEnter))
 		if cmd != nil || m.state == installStateRunning || !leftForMenu(m.Outcome()) {
 			t.Fatalf("Back on the pre-flight screen should go back to the menu, starting nothing (cmd=%v state=%v outcome=%+v)", cmd != nil, m.state, m.Outcome())
 		}
 	})
 	t.Run("Esc", func(t *testing.T) {
-		m, cmd := installUpdate(t, stale(t), key(tea.KeyEsc))
+		m, cmd := updateAs(t, stale(t), key(tea.KeyEsc))
 		if cmd != nil || m.state == installStateRunning || !leftForMenu(m.Outcome()) {
 			t.Fatalf("Esc on the pre-flight screen should go back to the menu, starting nothing (cmd=%v state=%v outcome=%+v)", cmd != nil, m.state, m.Outcome())
 		}
 	})
 	t.Run("unbound key", func(t *testing.T) {
-		m, cmd := installUpdate(t, stale(t), runeKey('d'))
+		m, cmd := updateAs(t, stale(t), runeKey('d'))
 		if cmd != nil || m.state != installStateStaleVolume || m.volume.sel != 0 {
 			t.Fatal("an unbound key acted on the pre-flight screen")
 		}
@@ -152,7 +141,7 @@ func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *t
 
 func TestInstallModel_WheelOnlyScrollsTheNotice(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, cmd := installUpdate(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m, cmd := updateAs(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if cmd != nil || m.state != installStateProfile {
 		t.Fatal("the wheel acted outside the notice")
 	}
@@ -169,7 +158,7 @@ func TestInstallModel_UnsizedViewIsBlank(t *testing.T) {
 
 func TestInstallModel_WheelDownScrollsTheNoticeOnward(t *testing.T) {
 	m, _, _ := openNotice(t, 80, 26, engineRunSeams{})
-	m, cmd := installUpdate(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m, cmd := updateAs(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if cmd != nil {
 		t.Fatal("scrolling must not start anything")
 	}

@@ -300,7 +300,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
-		m.repair.prepare = m.flowSeams.prepareRepair
+		m.repair.engineRunSeams = m.flowSeams
 		m.repair.send = m.flowSend
 		m.state = appStateRepair
 		return m, tea.Batch(sizeCmd, m.repair.Init())

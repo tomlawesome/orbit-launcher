@@ -82,7 +82,10 @@ type InstallModel struct {
 	seams engineRunSeams
 }
 
-// engineRunSeams bundles the overridable dependencies tests inject.
+// engineRunSeams bundles the overridable dependencies tests inject; nil
+// fields get the real implementations. It is the one list of seams:
+// engineRun and RepairModel embed it, Install and Update hold it and
+// hand it to their run, and AppModel passes it down whole.
 type engineRunSeams struct {
 	prepareEngine  prepareEngineFunc
 	prepareInstall prepareInstallFunc
@@ -94,6 +97,7 @@ type engineRunSeams struct {
 	adoptConfig    adoptConfigFunc
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
+	prepareRotate  prepareRotateFunc
 }
 
 // withSend gives the run its way back into the event loop.
@@ -103,15 +107,7 @@ func (r engineRun) withSend(send func(tea.Msg)) engineRun {
 }
 
 func (r engineRun) withSeams(s engineRunSeams) engineRun {
-	r.prepareEngine = s.prepareEngine
-	r.prepareInstall = s.prepareInstall
-	r.runHandoff = s.runHandoff
-	r.detect = s.detect
-	r.now = s.now
-	r.prepareConfig = s.prepareConfig
-	r.startConfig = s.startConfig
-	r.adoptConfig = s.adoptConfig
-	r.recheckConfig = s.recheckConfig
+	r.engineRunSeams = s
 	return r
 }
 

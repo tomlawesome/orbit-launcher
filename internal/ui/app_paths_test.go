@@ -11,51 +11,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 // AppModel's options and routing edges, driven by plain Update calls.
-
-func appUpdate(t *testing.T, m AppModel, msgs ...tea.Msg) (AppModel, tea.Cmd) {
-	t.Helper()
-	var cmd tea.Cmd
-	for _, msg := range msgs {
-		var updated tea.Model
-		updated, cmd = m.Update(msg)
-		m = updated.(AppModel)
-	}
-	return m, cmd
-}
-
-// appDrive runs cmd and every command its messages produce, the way
-// the program would, expanding batches; it stops when nothing is left.
-func appDrive(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
-	t.Helper()
-	queue := []tea.Cmd{cmd}
-	for i := 0; len(queue) > 0; i++ {
-		if i > 1000 {
-			t.Fatal("command chain did not settle")
-		}
-		next := queue[0]
-		queue = queue[1:]
-		if next == nil {
-			continue
-		}
-		msg := next()
-		if batch, ok := msg.(tea.BatchMsg); ok {
-			queue = append(queue, batch...)
-			continue
-		}
-		if msg == nil {
-			continue
-		}
-		var more tea.Cmd
-		m, more = appUpdate(t, m, msg)
-		queue = append(queue, more)
-	}
-	return m
-}
 
 // appDrainStream feeds what an engine stream reader pushes through
 // queue back into the model, as the program would, until the reader
@@ -65,7 +24,7 @@ func appDrainStream(t *testing.T, m AppModel, queue *sink) AppModel {
 	for {
 		select {
 		case msg := <-queue.msgs:
-			m = appDrive(t, m, func() tea.Msg { return msg })
+			m = drive(t, m, func() tea.Msg { return msg })
 			if _, ended := msg.(repairStreamEndedMsg); ended {
 				return m
 			}
@@ -124,9 +83,9 @@ func TestAppModel_NoAnimationStartsNoTickChain(t *testing.T) {
 func TestAppModel_ExitOnTheMenuQuits(t *testing.T) {
 	m := NewAppModelNoAnimation()
 	m.targetDir = t.TempDir()
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = appUpdate(t, m, key(tea.KeyUp)) // Install wraps to Exit
-	_, cmd := appUpdate(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = updateAs(t, m, key(tea.KeyUp)) // Install wraps to Exit
+	_, cmd := updateAs(t, m, key(tea.KeyEnter))
 	if !isQuit(cmd) {
 		t.Fatal("Exit on the main menu did not quit")
 	}
@@ -135,14 +94,14 @@ func TestAppModel_ExitOnTheMenuQuits(t *testing.T) {
 func TestAppModel_WithoutVolumeCheckNeverInterruptsInstall(t *testing.T) {
 	m := NewAppModelNoAnimation().WithoutVolumeCheck()
 	m.targetDir = t.TempDir()
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, cmd := appUpdate(t, m, key(tea.KeyEnter)) // Install
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install
 	if m.state != appStateInstall {
 		t.Fatalf("state = %v, want the install flow", m.state)
 	}
 	// Run the flow's start commands (size, pre-flight) as the program would.
-	m = appDrive(t, m, cmd)
-	if m.install.state != installStateProfile || !strings.Contains(ansi.Strip(m.View().Content), "Choose a deployment profile") {
+	m = drive(t, m, cmd)
+	if m.install.state != installStateProfile || !strings.Contains(screen(m), "Choose a deployment profile") {
 		t.Fatalf("the install flow was interrupted: state = %v", m.install.state)
 	}
 }
@@ -165,9 +124,9 @@ func TestAppModel_RemoveAndUpdateStartTheInstallDateLookup(t *testing.T) {
 				m = m.WithoutVolumeCheck()
 			}
 			m.targetDir = dir
-			m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-			m, _ = appUpdate(t, m, keys...)
-			_, cmd := appUpdate(t, m, key(tea.KeyEnter))
+			m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+			m, _ = updateAs(t, m, keys...)
+			_, cmd := updateAs(t, m, key(tea.KeyEnter))
 
 			var got *installedAtMsg
 			for _, msg := range appMessages(t, cmd) {
@@ -191,7 +150,7 @@ func TestAppModel_WithSenderIsTheFlowsWayIntoTheEventLoop(t *testing.T) {
 	got := make(chan tea.Msg, 1)
 	m := NewAppModelNoAnimation().WithSender(func(msg tea.Msg) { got <- msg }).WithoutVolumeCheck()
 	m.targetDir = t.TempDir()
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, key(tea.KeyEnter))
 	if m.install.send == nil {
 		t.Fatal("the install flow was given no sender")
 	}
@@ -244,28 +203,28 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	m.flowSeams = engineRunSeams{prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=1 skipped=0'; exit 0`)}
 	queue := newSink()
 	m = m.WithSender(queue.Send)
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// Repair, then its Menu row.
-	m, _ = appUpdate(t, m, key(tea.KeyDown)) // Update is preselected; Repair is next
-	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
-	m = appDrive(t, m, cmd)
+	m, _ = updateAs(t, m, key(tea.KeyDown)) // Update is preselected; Repair is next
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	m = drive(t, m, cmd)
 	m = appDrainStream(t, m, queue)
-	if !strings.Contains(ansi.Strip(m.View().Content), "Diagnosis clear") {
-		t.Fatalf("repair did not finish:\n%s", ansi.Strip(m.View().Content))
+	if !strings.Contains(screen(m), "Diagnosis clear") {
+		t.Fatalf("repair did not finish:\n%s", screen(m))
 	}
-	m, cmd = appUpdate(t, m, key(tea.KeyEnter))
+	m, cmd = updateAs(t, m, key(tea.KeyEnter))
 	if m.state != appStateSplash {
 		t.Fatalf("state = %v, want the menu", m.state)
 	}
 	if !m.splash.noAnimation {
 		t.Fatal("a frozen launcher came back to an animated menu")
 	}
-	m = appDrive(t, m, cmd)
+	m = drive(t, m, cmd)
 	if probes != 1 || checks != 1 {
 		t.Fatalf("return to menu ran %d probes and %d update checks, want one of each", probes, checks)
 	}
-	s := ansi.Strip(m.View().Content)
+	s := screen(m)
 	if !strings.Contains(s, "mail.example.test") || !strings.Contains(s, "v9.9.10") {
 		t.Fatalf("the refreshed menu should greet the deployment and the update:\n%s", s)
 	}
@@ -274,7 +233,7 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 func TestAppModel_UnknownStateDrawsNothingAndIgnoresInput(t *testing.T) {
 	m := NewAppModel()
 	m.state = appState(99)
-	m, cmd := appUpdate(t, m, key(tea.KeyEnter))
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	if cmd != nil || m.View().Content != "" {
 		t.Fatal("an unknown state acted or drew")
 	}

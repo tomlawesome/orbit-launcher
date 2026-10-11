@@ -16,7 +16,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -54,7 +53,7 @@ func staleInstall(t *testing.T) tea.Model {
 	t.Helper()
 	m := NewInstallModel("/opt/orbit", "v0.1.0")
 	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
-	updated, _ := installUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, m.Init()())
+	updated, _ := updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, m.Init()())
 	if !strings.Contains(screen(updated), "already has an Orbit database") {
 		t.Fatalf("not on the pre-flight screen:\n%s", screen(updated))
 	}
@@ -232,9 +231,9 @@ func TestLeaveFlow_CtrlCQuitsFromEveryScreen(t *testing.T) {
 		m := newTestRemoveModel(func(context.Context, string) error { return nil })
 		m2, cmd := leavePress(t, m, key(tea.KeyEnter))
 		m3, _ := leavePress(t, m2, cmd())
-		if !strings.Contains(ansi.Strip(m3.View().Content), "irreversible") &&
-			!strings.Contains(ansi.Strip(m3.View().Content), "rm ") {
-			t.Fatalf("not on the removal-command screen:\n%s", ansi.Strip(m3.View().Content))
+		if !strings.Contains(screen(m3), "irreversible") &&
+			!strings.Contains(screen(m3), "rm ") {
+			t.Fatalf("not on the removal-command screen:\n%s", screen(m3))
 		}
 		return m3
 	}
@@ -290,8 +289,8 @@ func leaveApp(t *testing.T) AppModel {
 	m := NewAppModelNoAnimation().WithoutVolumeCheck()
 	m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	m.targetDir = dir
-	m, _ = appUpdate(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "O R B I T") {
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	if s := screen(m); !strings.Contains(s, "O R B I T") {
 		t.Fatalf("not on the menu:\n%s", s)
 	}
 	return m
@@ -312,24 +311,24 @@ func TestLeaveFlow_AppReturnsToTheMenuFromEachFlow(t *testing.T) {
 	for _, f := range flows {
 		t.Run(f.name, func(t *testing.T) {
 			m := leaveApp(t)
-			m, _ = appUpdate(t, m, f.keys...)
-			m, cmd := appUpdate(t, m, key(tea.KeyEnter))
-			m = appDrive(t, m, cmd)
-			if s := ansi.Strip(m.View().Content); m.state == appStateSplash || !strings.Contains(s, f.want) {
+			m, _ = updateAs(t, m, f.keys...)
+			m, cmd := updateAs(t, m, key(tea.KeyEnter))
+			m = drive(t, m, cmd)
+			if s := screen(m); m.state == appStateSplash || !strings.Contains(s, f.want) {
 				t.Fatalf("not on the %s first screen (state %v):\n%s", f.name, m.state, s)
 			}
 
-			m, cmd = appUpdate(t, m, key(tea.KeyEsc))
+			m, cmd = updateAs(t, m, key(tea.KeyEsc))
 			if isQuit(cmd) {
 				t.Fatalf("Esc on the %s first screen quit the launcher", f.name)
 			}
 			// The returning splash is sized by the command that comes
 			// back with it, as the program would run it.
-			m = appDrive(t, m, cmd)
+			m = drive(t, m, cmd)
 			if m.state != appStateSplash {
 				t.Fatalf("Esc on the %s first screen left state = %v, want the menu", f.name, m.state)
 			}
-			if s := ansi.Strip(m.View().Content); !strings.Contains(s, "O R B I T") {
+			if s := screen(m); !strings.Contains(s, "O R B I T") {
 				t.Fatalf("the menu is not showing after Esc:\n%s", s)
 			}
 		})
@@ -348,13 +347,13 @@ func TestLeaveFlow_AppCtrlCQuitsFromEachFlow(t *testing.T) {
 	for _, f := range flows {
 		t.Run(f.name, func(t *testing.T) {
 			m := leaveApp(t)
-			m, _ = appUpdate(t, m, f.keys...)
-			m, cmd := appUpdate(t, m, key(tea.KeyEnter))
-			m = appDrive(t, m, cmd)
+			m, _ = updateAs(t, m, f.keys...)
+			m, cmd := updateAs(t, m, key(tea.KeyEnter))
+			m = drive(t, m, cmd)
 			if m.state == appStateSplash {
 				t.Fatalf("%s did not open", f.name)
 			}
-			if _, cmd := appUpdate(t, m, ctrlC()); !isQuit(cmd) {
+			if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
 				t.Fatalf("Ctrl+C in the %s flow did not quit", f.name)
 			}
 		})

@@ -32,19 +32,19 @@ func longRigs(t *testing.T, promptLine string, width int) map[string]longRig {
 	t.Helper()
 
 	m := sizedRepair(t)
-	m, _ = repairUpdate(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
 	m.state = repairRotating
 	rStdin := &recordingStdin{}
-	m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: rStdin})
+	m, _ = updateAs(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: rStdin})
 	m = repairLines(t, m, promptLine)
 	rotation := pasteRig{
 		typingRig: typingRig{
-			press: func(k tea.KeyPressMsg) { m, _ = repairUpdate(t, m, k) },
-			typed: func() string { return inputRowText(repairScreen(m)) },
+			press: func(k tea.KeyPressMsg) { m, _ = updateAs(t, m, k) },
+			typed: func() string { return inputRowText(screen(m)) },
 			sent:  rStdin.String,
 		},
-		pasteIn: func(s string) { m, _ = repairUpdate(t, m, paste(s)) },
-		screen:  func() string { return repairScreen(m) },
+		pasteIn: func(s string) { m, _ = updateAs(t, m, paste(s)) },
+		screen:  func() string { return screen(m) },
 	}
 
 	r := collectingRun(t, engineRunSeams{})

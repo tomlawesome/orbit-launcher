@@ -145,7 +145,7 @@ func TestRemoveModel_DoneScreenCopyThenExit(t *testing.T) {
 	if !m.copied {
 		t.Error("expected copied to be true after selecting Copy command")
 	}
-	if s := ansi.Strip(m.View().Content); !strings.Contains(s, "▸ Copy command · copied") {
+	if s := screen(m); !strings.Contains(s, "▸ Copy command · copied") {
 		t.Errorf("the copy row should say it has copied, still selected:\n%s", s)
 	}
 	// The row's label changed on screen, not in the menu: Enter copies
@@ -223,7 +223,7 @@ func TestRemoveModel_NeverInvokesStandDownAutomatically(t *testing.T) {
 func TestRemoveModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
 	m := newTestRemoveModel(func(context.Context, string) error { return nil })
 
-	before := ansi.Strip(m.View().Content)
+	before := screen(m)
 	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
 		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
 	}

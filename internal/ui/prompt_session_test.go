@@ -37,8 +37,8 @@ func rotationDriver(t *testing.T) promptDriver {
 	m.state = repairRotating
 	return promptDriver{
 		line:   func(l string) { m = repairLines(t, m, l) },
-		press:  func(k tea.KeyPressMsg) { m, _ = repairUpdate(t, m, k) },
-		screen: func() string { return repairScreen(m) },
+		press:  func(k tea.KeyPressMsg) { m, _ = updateAs(t, m, k) },
+		screen: func() string { return screen(m) },
 	}
 }
 
@@ -49,7 +49,7 @@ func configDriver(t *testing.T) promptDriver {
 	return promptDriver{
 		line:   func(l string) { r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: l}}) },
 		press:  func(k tea.KeyPressMsg) { r, _ = r.update(k) },
-		screen: func() string { return collectScreen(r) },
+		screen: func() string { return runScreen(r) },
 	}
 }
 

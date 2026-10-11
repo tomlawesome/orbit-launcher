@@ -185,15 +185,7 @@ type engineRun struct {
 	send func(tea.Msg)
 
 	// Test seams; nil gets the real implementations.
-	prepareEngine  prepareEngineFunc
-	prepareInstall prepareInstallFunc
-	runHandoff     runHandoffFunc
-	detect         detectFunc
-	now            nowFunc
-	prepareConfig  prepareConfigFunc
-	startConfig    startConfigFunc
-	adoptConfig    adoptConfigFunc
-	recheckConfig  recheckConfigFunc
+	engineRunSeams
 }
 
 func newEngineRun(action, targetDir, title, version string) engineRun {

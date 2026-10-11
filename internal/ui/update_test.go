@@ -142,7 +142,7 @@ func TestUpdateModel_ConfirmRunsTheEngineWithUpdateAction(t *testing.T) {
 	if m.state != updateStateRunning {
 		t.Fatalf("state = %v, want updateStateRunning", m.state)
 	}
-	m = drive(t, m, cmd, s).(UpdateModel)
+	m = drive(t, m, cmd, s)
 
 	if gotAction != "update" {
 		t.Errorf("engine action = %q, want update", gotAction)
@@ -192,7 +192,7 @@ func TestUpdateModel_EngineFailureReachesFailedState(t *testing.T) {
 func TestUpdateModel_ConfirmLeavesTheDateOutUntilDockerSaysIt(t *testing.T) {
 	m, _ := newTestUpdateModel(testDeployment(), engineRunSeams{})
 
-	before := ansi.Strip(m.View().Content)
+	before := screen(m)
 	if !strings.Contains(before, "mail.example.com") || strings.Contains(before, "installed") {
 		t.Fatalf("before the lookup answers, want the host and no date:\n%s", before)
 	}

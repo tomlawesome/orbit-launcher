@@ -34,28 +34,20 @@ func sizedRepair(t *testing.T) RepairModel {
 	return updated.(RepairModel)
 }
 
-func repairUpdate(t *testing.T, m RepairModel, msg tea.Msg) (RepairModel, tea.Cmd) {
-	t.Helper()
-	updated, cmd := m.Update(msg)
-	return updated.(RepairModel), cmd
-}
-
 // repairLines feeds stdout lines from the repair run, as the stream
 // would deliver them.
 func repairLines(t *testing.T, m RepairModel, lines ...string) RepairModel {
 	t.Helper()
 	for _, line := range lines {
-		m, _ = repairUpdate(t, m, repairStreamMsg{msg: engine.RawLineMsg{Text: line}})
+		m, _ = updateAs(t, m, repairStreamMsg{msg: engine.RawLineMsg{Text: line}})
 	}
 	return m
 }
 
 func repairDone(t *testing.T, m RepairModel, done engine.DoneMsg) (RepairModel, tea.Cmd) {
 	t.Helper()
-	return repairUpdate(t, m, repairStreamMsg{msg: done})
+	return updateAs(t, m, repairStreamMsg{msg: done})
 }
-
-func repairScreen(m RepairModel) string { return ansi.Strip(m.View().Content) }
 
 // recordingStdin stands in for the rotation session's stdin pipe.
 type recordingStdin struct {
@@ -100,14 +92,14 @@ func awaitEnd(t *testing.T, s *engine.Stream) engine.DoneMsg {
 func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairRotating
-	m, cmd := repairUpdate(t, m, repairRotateReadyMsg{err: errors.New("fetch repair.sh: connection refused")})
+	m, cmd := updateAs(t, m, repairRotateReadyMsg{err: errors.New("fetch repair.sh: connection refused")})
 	if cmd != nil {
 		t.Fatal("a failed start must not keep pumping a stream that does not exist")
 	}
 	if m.state != repairError {
 		t.Fatalf("state = %v, want repairError", m.state)
 	}
-	s := repairScreen(m)
+	s := screen(m)
 	for _, want := range []string{"Diagnosis couldn't run", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("error screen lacks %q:\n%s", want, s)
@@ -115,7 +107,7 @@ func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 	}
 
 	// The error screen's Menu row goes back to the main menu.
-	m, _ = repairUpdate(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if !m.Done || !m.WantsMenu {
 		t.Fatalf("Menu on the error screen: Done=%v WantsMenu=%v, want both", m.Done, m.WantsMenu)
 	}
@@ -123,9 +115,9 @@ func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 
 func TestRepairModel_ErrorScreenExitQuits(t *testing.T) {
 	m := sizedRepair(t)
-	m, _ = repairUpdate(t, m, repairReadyMsg{err: errors.New("target directory: no such file")})
-	m, _ = repairUpdate(t, m, key(tea.KeyDown))
-	_, cmd := repairUpdate(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, repairReadyMsg{err: errors.New("target directory: no such file")})
+	m, _ = updateAs(t, m, key(tea.KeyDown))
+	_, cmd := updateAs(t, m, key(tea.KeyEnter))
 	if !isQuit(cmd) {
 		t.Fatal("Exit on the error screen did not quit")
 	}
@@ -138,7 +130,7 @@ func TestRepairModel_DiagnosisCrashIsAnErrorNotAVerdict(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("an unexpected exit must not start another run")
 	}
-	s := repairScreen(m)
+	s := screen(m)
 	if !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "exit status 1") {
 		t.Fatalf("exit 1 should be reported as a failed run with its error:\n%s", s)
 	}
@@ -156,20 +148,20 @@ func TestRepairModel_UsageErrorFromCheckModeIsAnError(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("a --check usage error must not retry")
 	}
-	if m.state != repairError || !strings.Contains(repairScreen(m), "exit status 2") {
-		t.Fatalf("state = %v, screen:\n%s", m.state, repairScreen(m))
+	if m.state != repairError || !strings.Contains(screen(m), "exit status 2") {
+		t.Fatalf("state = %v, screen:\n%s", m.state, screen(m))
 	}
 }
 
 func TestRepairModel_EscWhileReadingKillsTheRunAndReturnsToMenu(t *testing.T) {
 	m := sizedRepair(t)
-	if !strings.Contains(repairScreen(m), "reading the deployment — nothing will be changed") {
-		t.Fatalf("preparing screen:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "reading the deployment — nothing will be changed") {
+		t.Fatalf("preparing screen:\n%s", screen(m))
 	}
 	s := sleepingStream(t)
-	m, _ = repairUpdate(t, m, repairReadyMsg{stream: s})
+	m, _ = updateAs(t, m, repairReadyMsg{stream: s})
 
-	m, _ = repairUpdate(t, m, key(tea.KeyEsc))
+	m, _ = updateAs(t, m, key(tea.KeyEsc))
 	if !m.Done || !m.WantsMenu {
 		t.Fatalf("Esc while reading: Done=%v WantsMenu=%v, want both", m.Done, m.WantsMenu)
 	}
@@ -181,14 +173,14 @@ func TestRepairModel_EscWhileReadingKillsTheRunAndReturnsToMenu(t *testing.T) {
 func TestRepairModel_EscWhileExecutingDoesNotAbandonTheRepair(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairExecuting
-	if !strings.Contains(repairScreen(m), "running the safe repairs") {
-		t.Fatalf("executing screen:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "running the safe repairs") {
+		t.Fatalf("executing screen:\n%s", screen(m))
 	}
 	s := sleepingStream(t)
-	m, _ = repairUpdate(t, m, repairReadyMsg{stream: s})
+	m, _ = updateAs(t, m, repairReadyMsg{stream: s})
 
 	for _, k := range []tea.KeyPressMsg{key(tea.KeyEsc), key(tea.KeyEnter), runeKey('q')} {
-		m, _ = repairUpdate(t, m, k)
+		m, _ = updateAs(t, m, k)
 	}
 	if m.Done || m.state != repairExecuting {
 		t.Fatalf("keys during a mutation changed the flow: Done=%v state=%v", m.Done, m.state)
@@ -203,8 +195,8 @@ func TestRepairModel_EscWhileExecutingDoesNotAbandonTheRepair(t *testing.T) {
 func TestRepairModel_CtrlCKillsTheRunAndQuits(t *testing.T) {
 	m := sizedRepair(t)
 	s := sleepingStream(t)
-	m, _ = repairUpdate(t, m, repairReadyMsg{stream: s})
-	_, cmd := repairUpdate(t, m, ctrlC())
+	m, _ = updateAs(t, m, repairReadyMsg{stream: s})
+	_, cmd := updateAs(t, m, ctrlC())
 	if !isQuit(cmd) {
 		t.Fatal("Ctrl+C did not quit")
 	}
@@ -219,20 +211,20 @@ func TestRepairModel_CtrlCKillsTheRunAndQuits(t *testing.T) {
 func TestRepairModel_CtrlCWhilePreparingCancelsAndQuitsOnceTheRunReportsBack(t *testing.T) {
 	m := sizedRepair(t)
 	var captured context.Context
-	m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+	m.prepareRepair = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 		captured = ctx
 		return nil, errors.New("not now")
 	}
 	ready := m.Init()()
 
-	m, cmd := repairUpdate(t, m, ctrlC())
+	m, cmd := updateAs(t, m, ctrlC())
 	if cmd != nil {
 		t.Fatal("Ctrl+C while preparing quit before the preparation reported back")
 	}
 	if !errors.Is(captured.Err(), context.Canceled) {
 		t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", captured.Err())
 	}
-	if _, cmd = repairUpdate(t, m, ready); !isQuit(cmd) {
+	if _, cmd = updateAs(t, m, ready); !isQuit(cmd) {
 		t.Fatal("the flow did not quit once the cancelled preparation reported back")
 	}
 }
@@ -243,11 +235,11 @@ func TestRepairModel_CtrlCWhileReadingKillsTheDiagnosisThatStartedAnyway(t *test
 	m := sizedRepair(t)
 	s := sleepingStream(t)
 
-	m, cmd := repairUpdate(t, m, ctrlC())
+	m, cmd := updateAs(t, m, ctrlC())
 	if cmd != nil {
 		t.Fatal("Ctrl+C before the run existed quit before it reported back")
 	}
-	if _, cmd = repairUpdate(t, m, repairReadyMsg{stream: s}); !isQuit(cmd) {
+	if _, cmd = updateAs(t, m, repairReadyMsg{stream: s}); !isQuit(cmd) {
 		t.Fatal("the flow did not quit once the diagnosis arrived")
 	}
 	if d := awaitEnd(t, s); d.ExitCode == 0 {
@@ -277,7 +269,7 @@ func TestRepairModel_CtrlCBeforeAMutationStartsCancelsAndQuits(t *testing.T) {
 			if tc.openInput {
 				stdin = input
 			}
-			m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+			m.prepareRepair = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 				captured = ctx
 				return nil, context.Canceled
 			}
@@ -292,14 +284,14 @@ func TestRepairModel_CtrlCBeforeAMutationStartsCancelsAndQuits(t *testing.T) {
 				ready = m.startRun(deploy.RepairExecuteSafe)()
 			}
 
-			m, cmd := repairUpdate(t, m, ctrlC())
+			m, cmd := updateAs(t, m, ctrlC())
 			if cmd != nil {
 				t.Fatal("Ctrl+C before the run existed quit before it reported back")
 			}
 			if !errors.Is(captured.Err(), context.Canceled) {
 				t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", captured.Err())
 			}
-			if _, cmd = repairUpdate(t, m, ready); !isQuit(cmd) {
+			if _, cmd = updateAs(t, m, ready); !isQuit(cmd) {
 				t.Fatal("the flow did not quit once the cancelled preparation reported back")
 			}
 			if tc.openInput && !input.closed {
@@ -353,7 +345,7 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 			m.state = tc.state
 			s, stdin := sleepingStream(t), &recordingStdin{}
 
-			m, cmd := repairUpdate(t, m, ctrlC())
+			m, cmd := updateAs(t, m, ctrlC())
 			if cmd != nil {
 				t.Fatal("Ctrl+C before the run existed quit before it reported back")
 			}
@@ -361,7 +353,7 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 				t.Fatalf("Ctrl+C did not cancel the preparation: ctx err = %v", m.ctx.Err())
 			}
 
-			m, cmd = repairUpdate(t, m, tc.ready(s, stdin))
+			m, cmd = updateAs(t, m, tc.ready(s, stdin))
 			if m.stream != s {
 				t.Fatal("the flow did not take over the run that started")
 			}
@@ -371,7 +363,7 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 			if tc.state == repairRotating && !stdin.closed {
 				t.Fatal("the rotation's input was left open")
 			}
-			if sc := repairScreen(m); !strings.Contains(sc, tc.screen) {
+			if sc := screen(m); !strings.Contains(sc, tc.screen) {
 				t.Fatalf("screen lacks %q:\n%s", tc.screen, sc)
 			}
 			assertKeptRunning(t, cmd, pushed)
@@ -384,8 +376,8 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 func TestRepairModel_DiagnoseAgainWorksAfterARunWasKeptPastCtrlC(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairExecuting
-	m, _ = repairUpdate(t, m, ctrlC())
-	m, _ = repairUpdate(t, m, repairReadyMsg{stream: sleepingStream(t)})
+	m, _ = updateAs(t, m, ctrlC())
+	m, _ = updateAs(t, m, repairReadyMsg{stream: sleepingStream(t)})
 	m = repairLines(t, m, "execution result=complete done=1 failed=0", "diagnosis result=healthy checked=15 skipped=0")
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
 	if m.state != repairExecuted {
@@ -393,11 +385,11 @@ func TestRepairModel_DiagnoseAgainWorksAfterARunWasKeptPastCtrlC(t *testing.T) {
 	}
 
 	var captured context.Context
-	m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+	m.prepareRepair = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 		captured = ctx
 		return nil, errors.New("stop here")
 	}
-	_, cmd := repairUpdate(t, m, key(tea.KeyEnter)) // "Diagnose again" is first
+	_, cmd := updateAs(t, m, key(tea.KeyEnter)) // "Diagnose again" is first
 	if cmd == nil {
 		t.Fatal("Diagnose again started nothing")
 	}
@@ -413,7 +405,7 @@ func TestRepairModel_CtrlCElsewhereKillsAnyRunAndQuits(t *testing.T) {
 	for _, state := range []repairState{repairDiagnosis, repairUnavailable, repairError, repairExecuted} {
 		m := sizedRepair(t)
 		m.state = state
-		if _, cmd := repairUpdate(t, m, ctrlC()); !isQuit(cmd) {
+		if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
 			t.Fatalf("state %v: Ctrl+C did not quit", state)
 		}
 	}
@@ -421,7 +413,7 @@ func TestRepairModel_CtrlCElsewhereKillsAnyRunAndQuits(t *testing.T) {
 	m.state = repairDiagnosis
 	s := sleepingStream(t)
 	m.stream = s
-	if _, cmd := repairUpdate(t, m, ctrlC()); !isQuit(cmd) {
+	if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
 		t.Fatal("Ctrl+C with a run did not quit")
 	}
 	if d := awaitEnd(t, s); d.ExitCode == 0 {
@@ -436,8 +428,8 @@ func TestRepairModel_FailedExecutionWithoutSummaryIsAnError(t *testing.T) {
 	if m.state != repairError {
 		t.Fatalf("state = %v, want repairError", m.state)
 	}
-	if !strings.Contains(repairScreen(m), "exit status 1") {
-		t.Fatalf("error screen:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "exit status 1") {
+		t.Fatalf("error screen:\n%s", screen(m))
 	}
 }
 
@@ -457,7 +449,7 @@ func TestRepairModel_RefusedDangerousBatchSaysNothingWasRotated(t *testing.T) {
 			if m.state != repairExecuted {
 				t.Fatalf("exit 6 is an outcome, not an error: state = %v", m.state)
 			}
-			s := repairScreen(m)
+			s := screen(m)
 			if !strings.Contains(s, "credentials left as they were — nothing was rotated") {
 				t.Fatalf("refusal not stated:\n%s", s)
 			}
@@ -489,7 +481,7 @@ func TestRepairModel_ExecutionOutcomeTitles(t *testing.T) {
 			m.state = repairExecuting
 			m = repairLines(t, m, "execution result="+result+" done=0 failed=0")
 			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
-			s := repairScreen(m)
+			s := screen(m)
 			if !strings.Contains(s, title) {
 				t.Fatalf("execution result=%s should be titled %q:\n%s", result, title, s)
 			}
@@ -504,8 +496,8 @@ func TestRepairModel_ExecutionWithoutSummaryButCleanExitEndsOnAfterPicture(t *te
 	m := sizedRepair(t)
 	m.state = repairExecuting
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
-	if m.state != repairExecuted || !strings.Contains(repairScreen(m), "Repair run ended") {
-		t.Fatalf("state = %v, screen:\n%s", m.state, repairScreen(m))
+	if m.state != repairExecuted || !strings.Contains(screen(m), "Repair run ended") {
+		t.Fatalf("state = %v, screen:\n%s", m.state, screen(m))
 	}
 }
 
@@ -522,7 +514,7 @@ func TestRepairModel_PartialRepairListsEachStepAndWhatStillStands(t *testing.T) 
 		"diagnosis result=failed checked=15 skipped=0",
 	)
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4, Err: errors.New("exit status 4")})
-	s := repairScreen(m)
+	s := screen(m)
 	for _, want := range []string{
 		"Some repairs failed",
 		"✓ restore safe permissions — permissions aren't restricted to the owner",
@@ -549,7 +541,7 @@ func TestRepairModel_PartialRepairListsEachStepAndWhatStillStands(t *testing.T) 
 func TestRepairModel_DiagnoseAgainStartsAFreshPlanRun(t *testing.T) {
 	m := sizedRepair(t)
 	var modes []deploy.RepairMode
-	m.prepare = func(_ context.Context, _ string, mode deploy.RepairMode) (*engine.Stream, error) {
+	m.prepareRepair = func(_ context.Context, _ string, mode deploy.RepairMode) (*engine.Stream, error) {
 		modes = append(modes, mode)
 		return nil, errors.New("stop here")
 	}
@@ -559,15 +551,15 @@ func TestRepairModel_DiagnoseAgainStartsAFreshPlanRun(t *testing.T) {
 	m = repairLines(t, m, "execution result=complete done=1 failed=0", "diagnosis result=healthy checked=15 skipped=0")
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
 
-	m, cmd := repairUpdate(t, m, key(tea.KeyEnter)) // "Diagnose again" is first
+	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // "Diagnose again" is first
 	if m.state != repairPreparing {
 		t.Fatalf("state = %v, want repairPreparing", m.state)
 	}
 	if m.planActions != nil || m.diagnosis != nil || m.execSummary != nil {
 		t.Fatal("the old run's evidence must not carry into the fresh diagnosis")
 	}
-	if !strings.Contains(repairScreen(m), "reading the deployment") {
-		t.Fatalf("screen:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "reading the deployment") {
+		t.Fatalf("screen:\n%s", screen(m))
 	}
 	if cmd == nil {
 		t.Fatal("Diagnose again started nothing")
@@ -583,29 +575,29 @@ func TestRepairModel_AfterPictureMenuAndExitRows(t *testing.T) {
 	m.state = repairExecuting
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
 
-	toMenu, _ := repairUpdate(t, m, key(tea.KeyDown))
-	toMenu, _ = repairUpdate(t, toMenu, key(tea.KeyEnter))
+	toMenu, _ := updateAs(t, m, key(tea.KeyDown))
+	toMenu, _ = updateAs(t, toMenu, key(tea.KeyEnter))
 	if !toMenu.Done || !toMenu.WantsMenu {
 		t.Fatalf("Menu row: Done=%v WantsMenu=%v", toMenu.Done, toMenu.WantsMenu)
 	}
 
 	// Up from the first row wraps to the last, Exit.
-	wrapped, _ := repairUpdate(t, m, key(tea.KeyUp))
-	if !strings.Contains(repairScreen(wrapped), "▸ Exit") {
-		t.Fatalf("Up from the top did not wrap to Exit:\n%s", repairScreen(wrapped))
+	wrapped, _ := updateAs(t, m, key(tea.KeyUp))
+	if !strings.Contains(screen(wrapped), "▸ Exit") {
+		t.Fatalf("Up from the top did not wrap to Exit:\n%s", screen(wrapped))
 	}
-	_, cmd := repairUpdate(t, wrapped, key(tea.KeyEnter))
+	_, cmd := updateAs(t, wrapped, key(tea.KeyEnter))
 	if !isQuit(cmd) {
 		t.Fatal("Exit row did not quit")
 	}
 
 	// Esc anywhere on a menu screen goes back to the main menu; an
 	// unbound key does nothing at all.
-	ignored, cmd := repairUpdate(t, m, runeKey('x'))
+	ignored, cmd := updateAs(t, m, runeKey('x'))
 	if cmd != nil || ignored.Done || ignored.menu.sel != 0 {
 		t.Fatalf("an unbound key changed the screen: cmd=%v Done=%v sel=%d", cmd != nil, ignored.Done, ignored.menu.sel)
 	}
-	esc, _ := repairUpdate(t, m, key(tea.KeyEsc))
+	esc, _ := updateAs(t, m, key(tea.KeyEsc))
 	if !esc.Done || !esc.WantsMenu {
 		t.Fatal("Esc did not return to the main menu")
 	}
@@ -614,26 +606,26 @@ func TestRepairModel_AfterPictureMenuAndExitRows(t *testing.T) {
 func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairRotating
-	if !strings.Contains(repairScreen(m), "talking to the engine…") {
-		t.Fatalf("before the first prompt:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "talking to the engine…") {
+		t.Fatalf("before the first prompt:\n%s", screen(m))
 	}
 
 	// Keys before any prompt has arrived go nowhere.
-	m, _ = repairUpdate(t, m, runeKey('r'))
+	m, _ = updateAs(t, m, runeKey('r'))
 	if !m.rot.input.empty() {
 		t.Fatalf("typing before a prompt was captured: %q", m.rot.input.String())
 	}
 
 	stdin := &recordingStdin{}
-	m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: stdin})
+	m, _ = updateAs(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: stdin})
 	m = repairLines(t, m, "prompt field=action-word kind=typed-word required=true attempt=1")
 	for _, k := range []tea.KeyPressMsg{runeKey('r'), runeKey('o'), runeKey('x'), key(tea.KeyBackspace), key(tea.KeySpace), key(tea.KeyBackspace), runeKey('t')} {
-		m, _ = repairUpdate(t, m, k)
+		m, _ = updateAs(t, m, k)
 	}
-	if !strings.Contains(repairScreen(m), "rot▏") {
-		t.Fatalf("the typed word should read rot after the edits:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "rot▏") {
+		t.Fatalf("the typed word should read rot after the edits:\n%s", screen(m))
 	}
-	m, _ = repairUpdate(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if stdin.String() != "rot\n" {
 		t.Fatalf("stdin got %q, want the edited word and a newline", stdin.String())
 	}
@@ -644,26 +636,26 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 		"prompt-reject field=action-word reason=empty",
 		"prompt field=action-word kind=typed-word required=true attempt=2",
 	)
-	s := repairScreen(m)
+	s := screen(m)
 	if !strings.Contains(s, "cannot be empty") || !strings.Contains(s, "attempt 2 of 3") {
 		t.Fatalf("rejection or attempt not shown:\n%s", s)
 	}
 
 	// Backspace on an empty answer is harmless.
-	m, _ = repairUpdate(t, m, key(tea.KeyBackspace))
+	m, _ = updateAs(t, m, key(tea.KeyBackspace))
 	if !m.rot.input.empty() {
 		t.Fatal("backspace on empty input produced input")
 	}
 
 	// An abort clears the prompt; the screen waits on the engine again.
 	m = repairLines(t, m, "prompt-abort field=action-word")
-	if !strings.Contains(repairScreen(m), "talking to the engine…") {
-		t.Fatalf("after abort:\n%s", repairScreen(m))
+	if !strings.Contains(screen(m), "talking to the engine…") {
+		t.Fatalf("after abort:\n%s", screen(m))
 	}
 
 	// Esc closes stdin — the engine's documented abort — and waits for
 	// the engine to exit rather than leaving the session behind.
-	m, _ = repairUpdate(t, m, key(tea.KeyEsc))
+	m, _ = updateAs(t, m, key(tea.KeyEsc))
 	if !stdin.closed {
 		t.Fatal("Esc did not close the session's stdin")
 	}
@@ -672,7 +664,7 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 	}
 
 	// A second Esc with input already closed does nothing.
-	m, cmd := repairUpdate(t, m, key(tea.KeyEsc))
+	m, cmd := updateAs(t, m, key(tea.KeyEsc))
 	if cmd != nil || m.state != repairRotating {
 		t.Fatalf("a second Esc changed the flow: cmd=%v state=%v", cmd != nil, m.state)
 	}
@@ -686,7 +678,7 @@ func TestRepairModel_RotationReasonClearsOnAccept(t *testing.T) {
 		"prompt-accept field=checkpoint-passphrase",
 		"prompt field=checkpoint-passphrase-confirm kind=secret required=true attempt=1",
 	)
-	s := repairScreen(m)
+	s := screen(m)
 	if strings.Contains(s, "too large") {
 		t.Fatalf("a rejection survived the accept that followed it:\n%s", s)
 	}
@@ -698,9 +690,9 @@ func TestRepairModel_RotationReasonClearsOnAccept(t *testing.T) {
 func TestRepairModel_StreamMessagesAfterAbandonAreIgnored(t *testing.T) {
 	m := sizedRepair(t)
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 0})
-	before := repairScreen(m)
-	m, cmd := repairUpdate(t, m, repairStreamMsg{msg: engine.RawLineMsg{Text: "finding class=secret-missing target=session-secret severity=fail"}})
-	if cmd != nil || repairScreen(m) != before {
+	before := screen(m)
+	m, cmd := updateAs(t, m, repairStreamMsg{msg: engine.RawLineMsg{Text: "finding class=secret-missing target=session-secret severity=fail"}})
+	if cmd != nil || screen(m) != before {
 		t.Fatal("a late line from a finished run changed the screen or kept pumping")
 	}
 }
@@ -710,15 +702,15 @@ func TestRepairModel_EventsAndUnknownMessagesDoNotDisturbTheRun(t *testing.T) {
 	m.stream = &engine.Stream{C: make(chan any)}
 	// The shared reader keeps reading whatever the handler returns
 	// (#206), so what an event line must not do is end or fail the run.
-	m, cmd := repairUpdate(t, m, repairStreamMsg{msg: engine.EventMsg{Event: engine.Event{Phase: "host"}}})
+	m, cmd := updateAs(t, m, repairStreamMsg{msg: engine.EventMsg{Event: engine.Event{Phase: "host"}}})
 	if cmd != nil || m.state != repairPreparing || m.runErr != nil {
 		t.Fatal("an event line disturbed the run")
 	}
-	m, cmd = repairUpdate(t, m, repairStreamMsg{msg: 42})
+	m, cmd = updateAs(t, m, repairStreamMsg{msg: 42})
 	if cmd != nil {
 		t.Fatal("an unknown stream message should be dropped, not pumped on")
 	}
-	m, cmd = repairUpdate(t, m, struct{}{})
+	m, cmd = updateAs(t, m, struct{}{})
 	if cmd != nil || m.state != repairPreparing {
 		t.Fatal("an unrelated message changed the flow")
 	}
@@ -732,7 +724,7 @@ func TestRepairModel_UnsizedViewIsBlank(t *testing.T) {
 
 func TestRepairModel_TickAdvancesAndRearms(t *testing.T) {
 	m := sizedRepair(t)
-	if _, cmd := repairUpdate(t, m, tickMsg{}); cmd == nil {
+	if _, cmd := updateAs(t, m, tickMsg{}); cmd == nil {
 		t.Fatal("a tick must re-arm the one tick chain")
 	}
 }
@@ -757,7 +749,7 @@ func TestRepairModel_PlanSummaryWordsUnderThePlan(t *testing.T) {
 			m := sizedRepair(t)
 			m = repairLines(t, m, tc.lines...)
 			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
-			s := repairScreen(m)
+			s := screen(m)
 			if !strings.Contains(s, tc.want) {
 				t.Fatalf("plan summary should read %q:\n%s", tc.want, s)
 			}
@@ -775,7 +767,7 @@ func TestRepairModel_UnsummarisedPlanNeedsAttention(t *testing.T) {
 		"plan result=ready actions=1 manual=0",
 	)
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
-	s := repairScreen(m)
+	s := screen(m)
 	if !strings.Contains(s, "Needs your attention") || !strings.Contains(s, "re-run guided configuration — required fields aren't ready") {
 		t.Fatalf("screen:\n%s", s)
 	}
@@ -888,9 +880,9 @@ func TestRepairModel_CtrlCWhileExecutingDoesNotKillTheRepair(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairExecuting
 	s := sleepingStream(t)
-	m, _ = repairUpdate(t, m, repairReadyMsg{stream: s})
+	m, _ = updateAs(t, m, repairReadyMsg{stream: s})
 
-	m, cmd := repairUpdate(t, m, ctrlC())
+	m, cmd := updateAs(t, m, ctrlC())
 	if isQuit(cmd) {
 		t.Fatal("Ctrl+C during a mutation quit the launcher")
 	}
@@ -907,7 +899,7 @@ func TestRepairModel_CtrlCWhileExecutingDoesNotKillTheRepair(t *testing.T) {
 func TestRepairModel_ExecutingScreenSaysItCannotBeStopped(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairExecuting
-	if s := repairScreen(m); !strings.Contains(s, "can't be stopped from here") {
+	if s := screen(m); !strings.Contains(s, "can't be stopped from here") {
 		t.Fatalf("executing screen does not say it cannot be stopped:\n%s", s)
 	}
 }
@@ -925,10 +917,10 @@ func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.
 			m.state = repairRotating
 			s := sleepingStream(t)
 			stdin := &recordingStdin{}
-			m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: s, stdin: stdin})
+			m, _ = updateAs(t, m, repairRotateReadyMsg{stream: s, stdin: stdin})
 			m = repairLines(t, m, "prompt field=action-word kind=typed-word required=true attempt=1")
 
-			m, cmd := repairUpdate(t, m, tc.k)
+			m, cmd := updateAs(t, m, tc.k)
 			if !stdin.closed {
 				t.Fatal("the key did not close the session's input")
 			}
@@ -938,7 +930,7 @@ func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.
 			if m.state != repairRotating {
 				t.Fatalf("state = %v, want repairRotating until the engine exits", m.state)
 			}
-			if sc := repairScreen(m); !strings.Contains(sc, "stopping — waiting for the engine") {
+			if sc := screen(m); !strings.Contains(sc, "stopping — waiting for the engine") {
 				t.Fatalf("screen does not say it is waiting for the engine:\n%s", sc)
 			}
 			select {
@@ -954,7 +946,7 @@ func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.
 			if m.state != repairExecuted {
 				t.Fatalf("state = %v, want repairExecuted", m.state)
 			}
-			if sc := repairScreen(m); !strings.Contains(sc, "credentials left as they were — nothing was rotated") {
+			if sc := screen(m); !strings.Contains(sc, "credentials left as they were — nothing was rotated") {
 				t.Fatalf("after-picture does not say nothing was rotated:\n%s", sc)
 			}
 		})
@@ -969,7 +961,7 @@ func TestRepairModel_RefusedSafeRunSaysWhy(t *testing.T) {
 	if m.state != repairExecuted {
 		t.Fatalf("exit 6 is an outcome, not an error: state = %v", m.state)
 	}
-	s := repairScreen(m)
+	s := screen(m)
 	for _, want := range []string{"Repair refused", "too old to repair here", "then diagnose again"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("refused run lacks %q:\n%s", want, s)
@@ -997,7 +989,7 @@ func TestRepairModel_RefusedRunForAnotherReasonNamesIt(t *testing.T) {
 			m.state = repairExecuting
 			m = repairLines(t, m, tc.line)
 			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 6, Err: errors.New("exit status 6")})
-			s := repairScreen(m)
+			s := screen(m)
 			for _, want := range []string{"Repair refused", tc.want} {
 				if !strings.Contains(s, want) {
 					t.Errorf("refused run lacks %q:\n%s", want, s)
@@ -1021,7 +1013,7 @@ func TestRepairModel_UnsummarisedManualOnlyPlanDoesNotPointAtTheMenu(t *testing.
 	m := sizedRepair(t)
 	m = repairLines(t, m, "plan action=manual resolves=volume-retained-without-credentials mutation=none backup=not-required")
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
-	s := repairScreen(m)
+	s := screen(m)
 	if !strings.Contains(s, "nothing has run yet") {
 		t.Fatalf("plan summary should read \"nothing has run yet\":\n%s", s)
 	}
@@ -1072,9 +1064,9 @@ func TestDefaultPrepareRepair_AbsentScriptIsUnavailable(t *testing.T) {
 	requests := countingScriptSource(t)
 	m := sizedRepair(t)
 	msg := m.Init()()
-	m, _ = repairUpdate(t, m, msg)
-	if m.state != repairUnavailable || !strings.Contains(repairScreen(m), "Diagnosis needs a newer Orbit") {
-		t.Fatalf("state = %v, screen:\n%s", m.state, repairScreen(m))
+	m, _ = updateAs(t, m, msg)
+	if m.state != repairUnavailable || !strings.Contains(screen(m), "Diagnosis needs a newer Orbit") {
+		t.Fatalf("state = %v, screen:\n%s", m.state, screen(m))
 	}
 	if n := requests.Load(); n != 0 {
 		t.Errorf("an absent repair.sh made %d HTTP requests; there is no fallback fetch", n)
@@ -1189,7 +1181,7 @@ func TestDefaultPrepareRepair_UntrustedScriptIsRefused(t *testing.T) {
 	m := NewRepairModel(dir, "v0.6.0")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = updated.(RepairModel)
-	m, _ = repairUpdate(t, m, m.Init()())
+	m, _ = updateAs(t, m, m.Init()())
 	if m.state != repairError {
 		t.Fatalf("state = %v, want the failure screen", m.state)
 	}
@@ -1197,7 +1189,7 @@ func TestDefaultPrepareRepair_UntrustedScriptIsRefused(t *testing.T) {
 	if !errors.As(m.runErr, &untrusted) || untrusted.Path != script {
 		t.Fatalf("runErr = %v, want a refusal naming %s", m.runErr, script)
 	}
-	if s := repairScreen(m); !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "writable by everyone") {
+	if s := screen(m); !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "writable by everyone") {
 		t.Fatalf("screen:\n%s", s)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {

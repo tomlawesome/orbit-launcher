@@ -9,14 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// A key press is a code plus the modifiers held with it, and Text is the
-// printable character it produced — empty for special keys like Enter.
-func key(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
-func runeKey(r rune) tea.KeyPressMsg {
-	return tea.KeyPressMsg{Code: r, Text: string(r)}
-}
-func ctrlC() tea.KeyPressMsg { return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl} }
-
 // settled skips the arrival, as any keypress would — behaviour and view
 // tests exercise the lit room unless they are about the arrival itself.
 func settled(m SplashModel) SplashModel { m.introDone = true; return m }

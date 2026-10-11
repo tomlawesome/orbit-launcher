@@ -116,7 +116,7 @@ func TestRepairError_MultiLineDockerErrorKeepsItsBreak(t *testing.T) {
 	m := sizedRepair(t)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: wi10Cols, Height: 40})
 	m = updated.(RepairModel)
-	m, _ = repairUpdate(t, m, repairReadyMsg{err: errors.New("Error response from daemon:\n" + wi10DockerError)})
+	m, _ = updateAs(t, m, repairReadyMsg{err: errors.New("Error response from daemon:\n" + wi10DockerError)})
 	screen := wi10Plain(m.View().Content)
 	// The row holding the first line holds none of the second (the sky
 	// may put a star on it, so the row is not compared whole).

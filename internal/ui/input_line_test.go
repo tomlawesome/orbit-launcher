@@ -66,7 +66,7 @@ func inputRowText(screen string) string {
 func noticeRig(t *testing.T) typingRig {
 	m := awakeNotice(t, engineRunSeams{})
 	return typingRig{
-		press: func(k tea.KeyPressMsg) { m = update(t, m, k) },
+		press: func(k tea.KeyPressMsg) { m, _ = updateAs(t, m, k) },
 		typed: func() string { return inputRowText(screen(m)) },
 		sent:  func() string { return "" },
 	}
@@ -78,11 +78,11 @@ func rotationRig(t *testing.T) (typingRig, *recordingStdin) {
 	m := sizedRepair(t)
 	m.state = repairRotating
 	stdin := &recordingStdin{}
-	m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: stdin})
+	m, _ = updateAs(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: stdin})
 	m = repairLines(t, m, "prompt field=action-word kind=typed-word required=true attempt=1")
 	return typingRig{
-		press: func(k tea.KeyPressMsg) { m, _ = repairUpdate(t, m, k) },
-		typed: func() string { return inputRowText(repairScreen(m)) },
+		press: func(k tea.KeyPressMsg) { m, _ = updateAs(t, m, k) },
+		typed: func() string { return inputRowText(screen(m)) },
 		sent:  stdin.String,
 	}, stdin
 }
@@ -98,7 +98,7 @@ func configRig(t *testing.T) (rig typingRig, stdin *recordingStdin, stream *engi
 	r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=OIDC_CLIENT_ID kind=text required=true attempt=1"}})
 	return typingRig{
 		press: func(k tea.KeyPressMsg) { r, _ = r.update(k) },
-		typed: func() string { return inputRowText(collectScreen(r)) },
+		typed: func() string { return inputRowText(runScreen(r)) },
 		sent:  stdin.String,
 	}, stdin, stream
 }
@@ -289,7 +289,7 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 	t.Run("notice goes back to confirm", func(t *testing.T) {
 		m := awakeNotice(t, engineRunSeams{})
 		m = typeText(t, m, "I've")
-		m = update(t, m, key(tea.KeyEsc))
+		m, _ = updateAs(t, m, key(tea.KeyEsc))
 		if m.state != installStateConfirm {
 			t.Fatalf("state = %v, want installStateConfirm", m.state)
 		}
@@ -299,10 +299,10 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 		m := sizedRepair(t)
 		m.state = repairRotating
 		stdin := &recordingStdin{}
-		m, _ = repairUpdate(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: stdin})
+		m, _ = updateAs(t, m, repairRotateReadyMsg{stream: &engine.Stream{C: make(chan any)}, stdin: stdin})
 		m = repairLines(t, m, "prompt field=action-word kind=typed-word required=true attempt=1")
-		m, _ = repairUpdate(t, m, runeKey('a'))
-		m, cmd := repairUpdate(t, m, key(tea.KeyEsc))
+		m, _ = updateAs(t, m, runeKey('a'))
+		m, cmd := updateAs(t, m, key(tea.KeyEsc))
 		if !stdin.closed {
 			t.Fatal("Esc did not close the session's stdin")
 		}

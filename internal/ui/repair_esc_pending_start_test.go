@@ -20,7 +20,7 @@ func pendingStartRepair(t *testing.T) (RepairModel, func() context.Context) {
 	t.Helper()
 	m := sizedRepair(t)
 	var captured context.Context
-	m.prepare = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
+	m.prepareRepair = func(ctx context.Context, _ string, _ deploy.RepairMode) (*engine.Stream, error) {
 		captured = ctx
 		return nil, errors.New("not now")
 	}
@@ -41,7 +41,7 @@ func TestRepairModel_EscWhileStartIsPendingCancelsTheStart(t *testing.T) {
 		t.Fatalf("the start's context was cancelled before Esc: %v", err)
 	}
 
-	repairUpdate(t, m, key(tea.KeyEsc))
+	updateAs(t, m, key(tea.KeyEsc))
 
 	if !errors.Is(startCtx().Err(), context.Canceled) {
 		t.Fatalf("Esc during the start did not cancel it: ctx err = %v", startCtx().Err())
