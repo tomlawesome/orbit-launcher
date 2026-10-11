@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 
@@ -131,38 +132,47 @@ func cleanLine(line string) string {
 	}, line)
 }
 
-// wrapLine is wrapWords for one line of text, in one pass: the row's
-// width is kept as a running count (a space never joins a grapheme
-// cluster, so widths add), and a run of spaces is held as a count and
-// written only when a word follows it on the same row. An indent stays
-// while it and the first word fit.
+// wrapLine is wrapWords for one line of text, in one pass. It breaks
+// at any run of Unicode spaces (unicode.IsSpace, as strings.Fields
+// does: a no-break or ideographic space too); the run is the break,
+// and elsewhere it is kept as written. The row's width is a running
+// count (a space never joins a grapheme cluster, so widths add), and a
+// run is written only when a word follows it on the same row. An
+// indent stays while it and the first word fit.
 func wrapLine(line string, limit int) []string {
 	if lipgloss.Width(line) <= limit {
 		return []string{line}
 	}
 	var rows []string
 	var row strings.Builder
-	rowW, spaces, hasWord := 0, 0, false
-	for i, word := range strings.Split(line, " ") { // a run of spaces is empty words
-		if i > 0 {
-			spaces++
+	rowW, hasWord := 0, false
+	for rest := line; rest != ""; {
+		end := strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsSpace(r) })
+		if end < 0 {
+			break // trailing spaces
 		}
-		if word == "" {
-			continue
+		gap := rest[:end]
+		rest = rest[end:]
+		end = strings.IndexFunc(rest, unicode.IsSpace)
+		if end < 0 {
+			end = len(rest)
 		}
-		w := lipgloss.Width(word)
+		word := rest[:end]
+		rest = rest[end:]
+
+		gapW, w := lipgloss.Width(gap), lipgloss.Width(word)
 		switch {
-		case hasWord && rowW+spaces+w > limit: // the spaces are the break
+		case hasWord && rowW+gapW+w > limit: // the gap is the break
 			rows = append(rows, row.String())
 			row.Reset()
-			rowW, spaces = 0, 0
-		case !hasWord && spaces+w > limit: // an indent that does not fit goes
-			spaces = 0
+			rowW, gap, gapW = 0, "", 0
+		case !hasWord && gapW+w > limit: // an indent that does not fit goes
+			gap, gapW = "", 0
 		}
-		row.WriteString(strings.Repeat(" ", spaces))
+		row.WriteString(gap)
 		row.WriteString(word)
-		rowW += spaces + w
-		spaces, hasWord = 0, true
+		rowW += gapW + w
+		hasWord = true
 	}
 	return append(rows, row.String())
 }
