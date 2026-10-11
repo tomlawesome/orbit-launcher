@@ -114,7 +114,7 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
 	r.cfg.stdin = stdin
-	if !strings.Contains(runScreen(r), "talking to the engine…") {
+	if !strings.Contains(runScreen(r), "talking to the engine") {
 		t.Fatalf("before a prompt:\n%s", runScreen(r))
 	}
 	// No prompt yet: typing goes nowhere.

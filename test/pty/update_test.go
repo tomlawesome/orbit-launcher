@@ -24,7 +24,7 @@ func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 		t.Fatalf("caret did not reach Update: %v", err)
 	}
 	console.send("\r") // Enter
-	if err := console.expectString("No Orbit deployment found here"); err != nil {
+	if err := console.expectString("No Orbit deployment found in"); err != nil {
 		t.Fatalf("did not reach the Update not-found screen: %v", err)
 	}
 

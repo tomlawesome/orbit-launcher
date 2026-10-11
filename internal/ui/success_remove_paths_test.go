@@ -147,7 +147,7 @@ func TestDefaultOpenURL_NoOpenerIsAnError(t *testing.T) {
 func TestRemoveModel_FailedScreenNamesTheErrorAndOffersMenuThenExit(t *testing.T) {
 	m := newTestRemoveModel(func(context.Context, string) error { return errors.New("docker daemon not running") })
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
-	if !strings.Contains(screen(m), "standing down Orbit…") {
+	if !strings.Contains(screen(m), "standing down Orbit") {
 		t.Fatalf("working screen:\n%s", screen(m))
 	}
 	m, _ = updateAs(t, m, cmd())

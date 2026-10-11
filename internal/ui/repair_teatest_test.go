@@ -125,7 +125,7 @@ exit 5`)
 	tm := newRepairTestModel(t, m, 80, 24)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("No Orbit installation here"))
+		return bytes.Contains(out, []byte("No Orbit deployment found in"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})

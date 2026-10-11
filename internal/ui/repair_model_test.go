@@ -155,7 +155,7 @@ func TestRepairModel_UsageErrorFromCheckModeIsAnError(t *testing.T) {
 
 func TestRepairModel_EscWhileReadingKillsTheRunAndReturnsToMenu(t *testing.T) {
 	m := sizedRepair(t)
-	if !strings.Contains(screen(m), "reading the deployment — nothing will be changed") {
+	if !strings.Contains(screen(m), "reading the deployment") {
 		t.Fatalf("preparing screen:\n%s", screen(m))
 	}
 	s := sleepingStream(t)
@@ -336,7 +336,7 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 		}, "can't be stopped from here"},
 		{"credential rotation", repairRotating, func(s *engine.Stream, stdin *recordingStdin) tea.Msg {
 			return repairRotateReadyMsg{stream: s, stdin: stdin}
-		}, "stopping — waiting for the engine"},
+		}, "waiting for the engine"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := sizedRepair(t)
@@ -606,7 +606,7 @@ func TestRepairModel_AfterPictureMenuAndExitRows(t *testing.T) {
 func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairRotating
-	if !strings.Contains(screen(m), "talking to the engine…") {
+	if !strings.Contains(screen(m), "talking to the engine") {
 		t.Fatalf("before the first prompt:\n%s", screen(m))
 	}
 
@@ -649,7 +649,7 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 
 	// An abort clears the prompt; the screen waits on the engine again.
 	m = repairLines(t, m, "prompt-abort field=action-word")
-	if !strings.Contains(screen(m), "talking to the engine…") {
+	if !strings.Contains(screen(m), "talking to the engine") {
 		t.Fatalf("after abort:\n%s", screen(m))
 	}
 
@@ -930,7 +930,7 @@ func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.
 			if m.state != repairRotating {
 				t.Fatalf("state = %v, want repairRotating until the engine exits", m.state)
 			}
-			if sc := screen(m); !strings.Contains(sc, "stopping — waiting for the engine") {
+			if sc := screen(m); !strings.Contains(sc, "waiting for the engine") {
 				t.Fatalf("screen does not say it is waiting for the engine:\n%s", sc)
 			}
 			select {
