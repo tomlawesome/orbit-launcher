@@ -531,7 +531,7 @@ keep working. Two things follow from that:
   exact copy it already fetched and verified against Orbit's signed
   manifest (ADR-0031), so the launcher doesn't re-fetch something
   already checked. `install.sh` is the only script the launcher ever
-  downloads (#190): the configure tree reaches it through
+  downloads (#190): the configuration tree reaches it through
   `ORBIT_LAUNCHER_CONFIG_TREE`, a fresh private (0700) empty directory
   `BuildInstallCommand` creates for every run and removes with the
   run's cleanup — on its configuration refusal `install.sh` copies
@@ -623,7 +623,7 @@ which the model swallows.
 
 **In-console configuration + repair diagnosis (orbit#297 machine
 prompts, orbit#261 slice 1).** When the engine's configuration refusal
-lands, the flow opens the configure tree the engine handed over in
+lands, the flow opens the configuration tree the engine handed over in
 `ORBIT_LAUNCHER_CONFIG_TREE` (configure.sh + siblings +
 .env-orbit.example, copied by install.sh from its image-verified assets,
 ai/orbit#1225; never downloaded, #190), seeds it with the target's
