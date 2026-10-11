@@ -137,6 +137,18 @@ func TestDerivedActionsDeduplicatesSubpathsAndSorts(t *testing.T) {
 	}
 }
 
+// writeGitlabPin gives a fixture repository the .gitlab-ci.yml half of the
+// gitleaks pin, quoted as the real file quotes it. GitleaksPin reads both
+// hosts since #216 (SU-8), so a fixture with only secret-scan.yml is a
+// repository whose GitLab pin has vanished.
+func writeGitlabPin(t *testing.T, root, version, sum string) {
+	t.Helper()
+	body := "variables:\n  GITLEAKS_VERSION: \"" + version + "\"\n  GITLEAKS_SHA256: " + sum + "\n"
+	if err := os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGitleaksPinReadsTheEnvBlock(t *testing.T) {
 	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 	root := writeWorkflows(t, map[string]string{"secret-scan.yml": `
@@ -144,6 +156,7 @@ func TestGitleaksPinReadsTheEnvBlock(t *testing.T) {
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: ` + digest + `
 `})
+	writeGitlabPin(t, root, "8.30.1", digest)
 	version, sha, err := GitleaksPin(root)
 	if err != nil {
 		t.Fatal(err)
@@ -507,6 +520,7 @@ func goodRepo(t *testing.T) (string, Policy) {
 			"      - uses: actions/setup-go@" + setupGoSHA + " # v7.0.0\n",
 		"secret-scan.yml": "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + gitleaksDigest + "\n",
 	})
+	writeGitlabPin(t, root, "8.30.1", gitleaksDigest)
 	pol := goodPolicy()
 	pol.Tools = []Tool{{Name: "gitleaks", Version: "8.30.1", SHA256: gitleaksDigest, License: "MIT", UpdateOwner: "x"}}
 	writePolicy(t, root, pol)
