@@ -28,7 +28,22 @@ func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 		t.Fatalf("did not reach the Update not-found screen: %v", err)
 	}
 
-	console.send("\r") // any key quits
+	// The dead end is a one-row menu: Menu goes back to the main menu, and
+	// no other key quits (#228).
+	if err := console.expectString("▸ Menu"); err != nil {
+		t.Fatalf("the not-found screen did not offer Menu: %v", err)
+	}
+	console.send("x")
+	console.send("5")
+	console.send("\x1b[B") // Down
+	if err := console.expectString("▸ Menu"); err != nil {
+		t.Fatalf("a stray key changed the not-found screen: %v", err)
+	}
+	console.send("\r") // Enter on Menu
+	if err := console.expectWithin(10*time.Second, vtscreen.ContainsAll("Install", "Update", "Repair")); err != nil {
+		t.Fatalf("Menu did not return to the main menu (a stray key may have quit): %v", err)
+	}
+	console.send("\x03") // Ctrl-C quits from anywhere
 
 	waitForExit(t, cmd)
 }

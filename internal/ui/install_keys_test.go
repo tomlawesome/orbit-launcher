@@ -73,17 +73,17 @@ func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 	}
 }
 
-func TestInstallModel_ConfirmBackRowReturnsToProfile(t *testing.T) {
+func TestInstallModel_ConfirmCancelRowReturnsToProfile(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
 	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if s := screen(m); !strings.Contains(s, "Ready to install") || !strings.Contains(s, "/opt/orbit") {
 		t.Fatalf("confirm screen:\n%s", s)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyDown))
-	if !strings.Contains(screen(m), "▸ Back") {
-		t.Fatalf("Down should select Back:\n%s", screen(m))
+	if !strings.Contains(screen(m), "▸ Cancel") {
+		t.Fatalf("Down should select Cancel:\n%s", screen(m))
 	}
-	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // toggles: Install now, Back
+	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // toggles: Install now, Cancel
 	if m.confirm.sel != 1 {
 		t.Fatalf("Up toggles between the two rows, sel = %d", m.confirm.sel)
 	}
@@ -93,13 +93,13 @@ func TestInstallModel_ConfirmBackRowReturnsToProfile(t *testing.T) {
 	}
 	m, cmd = updateAs(t, m, key(tea.KeyEnter))
 	if cmd != nil || m.state != installStateProfile {
-		t.Fatalf("Back should return to the profile screen without starting anything, state = %v", m.state)
+		t.Fatalf("Cancel should return to the profile screen without starting anything, state = %v", m.state)
 	}
 }
 
-// The pre-flight takes the first screen's place, so Back and Esc there
+// The pre-flight takes the first screen's place, so Cancel and Esc there
 // are back to the main menu (#210), and neither installs.
-func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *testing.T) {
+func TestInstallModel_StaleVolumeCancelAndEscGoBackToTheMenuWithoutInstalling(t *testing.T) {
 	stale := func(t *testing.T) InstallModel {
 		m := NewInstallModel("/opt/orbit", "v0.1.0")
 		m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
@@ -110,11 +110,11 @@ func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *t
 		return m
 	}
 
-	t.Run("Back", func(t *testing.T) {
+	t.Run("Cancel", func(t *testing.T) {
 		m := stale(t)
 		m, _ = updateAs(t, m, key(tea.KeyDown))
-		if !strings.Contains(screen(m), "▸ Back") {
-			t.Fatalf("Down should select Back:\n%s", screen(m))
+		if !strings.Contains(screen(m), "▸ Cancel") {
+			t.Fatalf("Down should select Cancel:\n%s", screen(m))
 		}
 		m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp))
 		if m.volume.sel != 1 {
@@ -122,7 +122,7 @@ func TestInstallModel_StaleVolumeBackAndEscGoBackToTheMenuWithoutInstalling(t *t
 		}
 		m, cmd := updateAs(t, m, key(tea.KeyEnter))
 		if cmd != nil || m.state == installStateRunning || !leftForMenu(m.Outcome()) {
-			t.Fatalf("Back on the pre-flight screen should go back to the menu, starting nothing (cmd=%v state=%v outcome=%+v)", cmd != nil, m.state, m.Outcome())
+			t.Fatalf("Cancel on the pre-flight screen should go back to the menu, starting nothing (cmd=%v state=%v outcome=%+v)", cmd != nil, m.state, m.Outcome())
 		}
 	})
 	t.Run("Esc", func(t *testing.T) {

@@ -177,7 +177,7 @@ func assertNoRemovalCommand(t *testing.T, what, screen string) {
 
 // Owner decision on #205 (answer 5a): with no deployment found, Remove
 // stops at its first screen with "No Orbit deployment found in <dir>"
-// and offers Back only. Nothing is stood down and no removal command is
+// and offers Menu only (#228). Nothing is stood down and no removal command is
 // ever shown, because there is no directory the launcher found.
 func TestAppModel_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 	setups := map[string]func(t *testing.T) (AppModel, string){
@@ -207,18 +207,18 @@ func TestAppModel_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 				t.Fatalf("first Remove screen should say %q:\n%s", want, s)
 			}
 			assertNoRemovalCommand(t, "the no-deployment screen", s)
-			if strings.Contains(s, "Cancel") {
-				t.Errorf("the no-deployment screen offers Cancel; want Back only:\n%s", s)
+			if strings.Contains(s, "Cancel") || strings.Contains(s, "Back") {
+				t.Errorf("the no-deployment screen offers Cancel or Back; want Menu only:\n%s", s)
 			}
-			if !strings.Contains(s, "▸ Back") || strings.Count(s, "▸") != 1 {
-				t.Errorf("the no-deployment screen should offer Back and nothing else:\n%s", s)
+			if !strings.Contains(s, "▸ Menu") || strings.Count(s, "▸") != 1 {
+				t.Errorf("the no-deployment screen should offer Menu and nothing else:\n%s", s)
 			}
 
 			// Whatever is pressed, nothing is stood down and no command
-			// appears; choosing Back returns to the menu.
+			// appears; choosing Menu returns to the menu.
 			for _, c := range []struct {
 				keys []tea.Msg
-				back bool // the keys choose Back
+				back bool // the keys choose Menu
 			}{
 				{[]tea.Msg{key(tea.KeyEnter)}, true},
 				{[]tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}, true},
@@ -234,7 +234,7 @@ func TestAppModel_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 				}
 				if c.back {
 					if s := screen(after); !strings.Contains(s, "Install") || !strings.Contains(s, "Remove") {
-						t.Errorf("keys %v choose Back, which should return to the menu:\n%s", c.keys, s)
+						t.Errorf("keys %v choose Menu, which should return to the menu:\n%s", c.keys, s)
 					}
 				}
 			}

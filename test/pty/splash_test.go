@@ -134,7 +134,8 @@ func waitForExit(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// Esc on the menu does nothing and leaving takes the Exit row (#226).
+// Esc on the menu does nothing; a digit only moves the caret; leaving takes
+// Enter on the Exit row (#226, #228).
 func TestSplash_RealPTY_RendersAndLeavesByTheExitRowNotEscape(t *testing.T) {
 	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
@@ -154,7 +155,22 @@ func TestSplash_RealPTY_RendersAndLeavesByTheExitRowNotEscape(t *testing.T) {
 		t.Fatalf("the menu stopped responding after Escape: %v", err)
 	}
 
-	console.send("5") // Exit, the menu's fifth row
+	// A digit only moves the caret (#228): 5 is the Exit row, and the
+	// launcher must still be running with the caret on it. Up proves the
+	// menu is live; Enter on Exit then leaves.
+	console.send("5")
+	if err := console.expectString("▸ Exit"); err != nil {
+		t.Fatalf("5 did not move the caret to Exit: %v", err)
+	}
+	console.send("\x1b[A") // Up
+	if err := console.expectString("▸ Remove"); err != nil {
+		t.Fatalf("the launcher stopped responding after 5 (it must not quit): %v", err)
+	}
+	console.send("5")
+	if err := console.expectString("▸ Exit"); err != nil {
+		t.Fatalf("5 did not move the caret back to Exit: %v", err)
+	}
+	console.send("\r") // Enter on Exit
 
 	waitForExit(t, cmd)
 }

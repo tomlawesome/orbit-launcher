@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +144,7 @@ func TestDefaultOpenURL_NoOpenerIsAnError(t *testing.T) {
 	}
 }
 
-func TestRemoveModel_FailedScreenNamesTheErrorAndOnlyExits(t *testing.T) {
+func TestRemoveModel_FailedScreenNamesTheErrorAndOffersMenuThenExit(t *testing.T) {
 	m := newTestRemoveModel(func(context.Context, string) error { return errors.New("docker daemon not running") })
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	if !strings.Contains(screen(m), "standing down Orbit…") {
@@ -151,20 +152,27 @@ func TestRemoveModel_FailedScreenNamesTheErrorAndOnlyExits(t *testing.T) {
 	}
 	m, _ = updateAs(t, m, cmd())
 	s := screen(m)
-	for _, want := range []string{"Could not stand down Orbit", "docker daemon not running", "▸ Exit"} {
+	for _, want := range []string{"Could not stand down Orbit", "docker daemon not running", "▸ Menu"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("failed screen lacks %q:\n%s", want, s)
 		}
 	}
+	if got := screenLabels(s); !slices.Equal(got, []string{"Menu", "Exit"}) {
+		t.Errorf("failed screen rows = %q, want Menu then Exit (#228)", got)
+	}
 	if strings.Contains(s, "Copy command") {
 		t.Errorf("a failed stand-down must not offer the removal command:\n%s", s)
 	}
-	// Arrows have nowhere to go; Enter quits and Esc goes back to the menu (#225).
-	m, cmd = updateAs(t, m, key(tea.KeyDown))
-	if cmd != nil || m.done.sel != 0 {
-		t.Fatal("arrows moved a one-row menu")
+	// Menu is the default row: Enter goes back to the menu, nothing quits.
+	if m, cmd := updateAs(t, m, key(tea.KeyEnter)); m.Outcome() != backToMenu || isQuit(cmd) {
+		t.Fatal("Menu on the failed screen did not go back to the menu")
 	}
-	if _, cmd := updateAs(t, m, key(tea.KeyEnter)); !isQuit(cmd) {
+	// Exit is the row below it.
+	down, cmd := updateAs(t, m, key(tea.KeyDown))
+	if cmd != nil || !strings.Contains(screen(down), "▸ Exit") {
+		t.Fatal("Down did not move to the Exit row")
+	}
+	if _, cmd := updateAs(t, down, key(tea.KeyEnter)); !isQuit(cmd) {
 		t.Fatal("Exit on the failed screen did not quit")
 	}
 	if m, cmd := updateAs(t, m, key(tea.KeyEsc)); m.Outcome() != backToMenu || isQuit(cmd) {

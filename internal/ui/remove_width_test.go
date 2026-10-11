@@ -85,6 +85,7 @@ func removeDoneScreen(t *testing.T, cols, rows int, targetDir string) string {
 		return strings.Contains(screen, "stood down")
 	}, teatest.WithDuration(2*time.Second))
 
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})  // Menu
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})  // Exit
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // quit
 	if err := tm.Quit(); err != nil {

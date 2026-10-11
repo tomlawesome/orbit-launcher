@@ -66,7 +66,14 @@ func TestAppModel_SelectingUpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 		return bytes.Contains(out, []byte("No Orbit deployment found here"))
 	}, teatest.WithDuration(2*time.Second))
 
+	// The dead end's one row is Menu (#228): Enter goes back to the main
+	// menu rather than quitting, and Ctrl-C then quits.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("O R B I T"))
+	}, teatest.WithDuration(2*time.Second))
+
+	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
 	}
