@@ -626,8 +626,10 @@ func (r engineRun) viewConfigSignInMode(width, height int) string {
 // asked for.
 func (r engineRun) viewConfigCollect(width, height int) string {
 	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Orbit needs your configuration")
+	// Amber, as on the stop before it: the person is still inside that
+	// stop (#229).
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
 
-	r.cfg.session.view(&b, r.cfg.origin, width)
+	r.cfg.session.view(&b, r.cfg.origin, width, r.console.spinner)
 	return skyBlock(r.console.sky, width, height, b.String())
 }

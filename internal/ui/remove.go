@@ -50,6 +50,9 @@ type RemoveModel struct {
 	standDownErr  error
 	copied        bool
 
+	// frame is the working line's spinner frame, advanced on every tick.
+	frame int
+
 	// left is going back to the main menu: Esc, Cancel or Menu on the
 	// flow's first screen, with nothing stood down (#210), or Esc or Menu
 	// on the removed and failed screens after the stand-down (#225).
@@ -130,6 +133,7 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.star = m.star.Advance()
+		m.frame = nextFrame(m.frame)
 		return m, tick()
 
 	case installedAtMsg:
@@ -274,15 +278,9 @@ func (m RemoveModel) view() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m RemoveModel) viewNotFound() string {
-	var b strings.Builder
-	// The path is the one word here whose length nobody chose.
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		wrapWords("No Orbit deployment found in "+m.targetDir, min(m.width-4, proseWidth))...)
-	fmt.Fprintln(&b, style.MutedText.Render("Remove acts only on a deployment the launcher has found."))
-	fmt.Fprintln(&b, style.MutedText.Render("Start it in the directory that holds "+deploy.EnvFile+"."))
-	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+		"Remove acts only on a deployment the launcher has found.",
+		"Start it in the directory that holds "+deploy.EnvFile+".")
 }
 
 func (m RemoveModel) viewConfirm() string {
@@ -300,13 +298,12 @@ func (m RemoveModel) viewConfirm() string {
 }
 
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("standing down Orbit…")+
-		"\n"+style.Tagline.Render(cannotStopLine))
+	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", cannotStopLine))
 }
 
 func (m RemoveModel) viewDone() string {
 	var b strings.Builder
-	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolSuccess), "Orbit has been stood down")
+	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolMark), "Orbit has been stood down")
 
 	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))

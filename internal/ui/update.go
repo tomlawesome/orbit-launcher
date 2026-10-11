@@ -188,13 +188,9 @@ func (m UpdateModel) view() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m UpdateModel) viewNotFound() string {
-	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "No Orbit deployment found here")
-	fmt.Fprintln(&b, style.MutedText.Render("There's nothing to update in this directory —"))
-	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
-	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+		"There's nothing to update in this directory —",
+		"Install is the way to get into Orbit first.")
 }
 
 func (m UpdateModel) viewConfirm() string {

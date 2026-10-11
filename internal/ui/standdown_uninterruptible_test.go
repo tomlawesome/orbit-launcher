@@ -104,7 +104,7 @@ func TestStandDown_WorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
 	lines := strings.Split(screen(m), "\n")
 	working, second := -1, -1
 	for i, l := range lines {
-		if working < 0 && strings.Contains(l, "standing down Orbit…") {
+		if working < 0 && strings.Contains(l, "standing down Orbit") {
 			working = i
 		}
 		if strings.Contains(l, cannotStop) {
@@ -124,7 +124,7 @@ func TestStandDown_WorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
 func TestStandDown_ScreenStillSaysItAfterTheKeys(t *testing.T) {
 	m, _ := removeStandingDown(t, standDownOK)
 	m, _ = updateAs(t, m, ctrlC(), key(tea.KeyEsc))
-	if s := screen(m); !strings.Contains(s, "standing down Orbit…") || !strings.Contains(s, cannotStop) {
+	if s := screen(m); !strings.Contains(s, "standing down Orbit") || !strings.Contains(s, cannotStop) {
 		t.Fatalf("after Ctrl-C and Esc the working screen reads:\n%s", s)
 	}
 }
@@ -273,7 +273,7 @@ func TestStandDown_AppIgnoresCtrlCAndEscWhileItRuns(t *testing.T) {
 func TestStandDown_AppWorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
 	m, _ := appStandingDown(t, standDownOK)
 	m, _ = updateAs(t, m, ctrlC())
-	if s := screen(m); !strings.Contains(s, "standing down Orbit…") || !strings.Contains(s, cannotStop) {
+	if s := screen(m); !strings.Contains(s, "standing down Orbit") || !strings.Contains(s, cannotStop) {
 		t.Fatalf("working screen through the app:\n%s", s)
 	}
 }
