@@ -635,6 +635,11 @@ func (m RepairModel) stopRotation() (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (m RepairModel) View() tea.View { return tea.NewView(m.view()) }
 
+// cannotStopLine is the second line of a working screen whose step
+// changes the machine and so ignores Ctrl-C and Esc while it runs:
+// Repair's, and Remove's stand-down (#227).
+const cannotStopLine = "can't be stopped from here — stopping halfway is the one unsafe step"
+
 // view renders the screen's content.
 func (m RepairModel) view() string {
 	if m.width == 0 {
@@ -645,7 +650,7 @@ func (m RepairModel) view() string {
 		return skyBlock(m.star, m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
 	case repairExecuting:
 		return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first")+
-			"\n"+style.Tagline.Render("can't be stopped from here — stopping halfway is the one unsafe step"))
+			"\n"+style.Tagline.Render(cannotStopLine))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:

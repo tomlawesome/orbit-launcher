@@ -98,7 +98,7 @@ var (
 
 // Outcome surfaces the flow result to AppModel: leaving, on the first
 // screen or after the stand-down, returns to the menu; the Exit row and
-// Ctrl-C quit instead.
+// Ctrl-C quit instead (Ctrl-C and Esc do nothing while the stand-down runs).
 func (m RemoveModel) Outcome() flowOutcome {
 	if m.left {
 		return backToMenu
@@ -154,6 +154,12 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// While the stand-down runs nothing leaves the screen: Ctrl-C would
+	// quit and leave `docker compose down` running unseen, so it and
+	// Esc do nothing, as in Repair (#227). The result brings keys back.
+	if m.state == removeStateStandingDown {
+		return m, nil
+	}
 	if isCtrlC(msg) {
 		m.state = removeStateCancelled
 		return m, tea.Quit
@@ -294,7 +300,8 @@ func (m RemoveModel) viewConfirm() string {
 }
 
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("standing down Orbit…"))
+	return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("standing down Orbit…")+
+		"\n"+style.Tagline.Render(cannotStopLine))
 }
 
 func (m RemoveModel) viewDone() string {
