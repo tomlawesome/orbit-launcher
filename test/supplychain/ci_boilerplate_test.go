@@ -7,7 +7,8 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216 makes on purpose, listed in changedBy216.
+// the ones #216 and #198 make on purpose, listed in changedBy216 and
+// changedBy198.
 package supplychain
 
 import (
@@ -157,7 +158,7 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 			wantKeys[k] = jobKeyDump(k, v)
 		}
 		wantKeys["script"] = want.Script
-		applyChangedBy216(t, name, wantKeys)
+		applyChangedOnPurpose(t, name, wantKeys)
 		gotKeys := map[string]string{"script": got.Script}
 		for k, v := range got.Keys {
 			gotKeys[k] = jobKeyDump(k, v)
@@ -341,12 +342,91 @@ echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -`,
 	},
 }
 
-// applyChangedBy216 rewrites one ce4b412 job's keys the way #216 does. Each
-// rewrite for this job must match exactly once; a key it names that the job
-// lacks is a failure too, so no entry can go unused.
-func applyChangedBy216(t *testing.T, job string, keys map[string]string) {
+// What #198 changes on purpose: the live job fetches and verifies an earlier
+// preview release for the update leg's first install, straight after it
+// verifies the current one. Same form and the same exactly-once rule as
+// changedBy216.
+var changedBy198 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old:  `  echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"`,
+		new: `  echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
+  # The update leg's first install (#198): an earlier preview release,
+  # so the update goes from one signed image to another. Its manifest
+  # and signature are read by job ID, since a branch only ever names
+  # its latest pipeline; the IDs come from whoever starts the pipeline
+  # (ORBIT_FIRST_RECORD_IMAGE_JOB, ORBIT_FIRST_SIGN_EVIDENCE_JOB),
+  # because this job's token cannot list ai/orbit's pipelines.
+  # Verified exactly as above. Its install.sh comes from the commit the
+  # manifest names and must match the sha256 the manifest records for
+  # it, so script and image stay one generation. Unset, the leg skips.
+  first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+  first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+  if [ -z "$first_record" ] && [ -z "$first_sign" ]; then
+    echo "no ORBIT_FIRST_RECORD_IMAGE_JOB / ORBIT_FIRST_SIGN_EVIDENCE_JOB: the update leg (#198) skips"
+  else
+    for job_id in "$first_record" "$first_sign"; do
+      case "$job_id" in
+        ''|*[!0-9]*) echo "ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB must both be ai/orbit job IDs (#198)"; exit 1 ;;
+      esac
+    done
+    first_dir=.live/orbit/release/first
+    mkdir -p "$first_dir"
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \
+      || { echo "could not read the earlier release manifest from ai/orbit job ${first_record} (#198)"; exit 1; }
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \
+      || { echo "could not read the earlier release signature from ai/orbit job ${first_sign} (#198)"; exit 1; }
+    jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "ai/orbit job ${first_record} did not return a JSON release manifest (#198)"; exit 1; }
+    [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "ai/orbit job ${first_sign} returned an empty signature (#198)"; exit 1; }
+    COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+      bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+      || { echo "the earlier release manifest from ai/orbit jobs ${first_record}/${first_sign} failed verification; nothing is installed from it (#198)"; exit 1; }
+    jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+      || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+    first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+    [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+      || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+    first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+    current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+    if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+      echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+      exit 1
+    fi
+    first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+    case "$first_commit" in
+      *[!0-9a-f]*) first_commit="" ;;
+    esac
+    [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/install.sh" \
+      "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+      || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+    [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+      || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+    export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+    export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+    echo "the update leg (#198) installs ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"
+  fi`,
+	},
+}
+
+// applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216 and then
+// #198 do. Each rewrite for this job must match exactly once; a key it names
+// that the job lacks is a failure too, so no entry can go unused.
+func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	t.Helper()
-	for _, r := range changedBy216 {
+	for _, r := range append(changedBy216[:len(changedBy216):len(changedBy216)], changedBy198...) {
 		applies := false
 		for _, j := range r.jobs {
 			applies = applies || j == job
