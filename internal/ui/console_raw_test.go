@@ -67,6 +67,14 @@ func TestConsoleRaw_ViewHasNoCarriageReturnOrCursorEscape(t *testing.T) {
 	if left := ansi.Strip(view); strings.Contains(left, "\x1b") {
 		t.Errorf("an escape byte is left in the view after styling is removed: %q", left)
 	}
+	// Dropping the "\r" or the escape byte alone leaves printable debris:
+	// the earlier redraws, or the escape's tail ("[2K", "[1G").
+	plain := ansi.Strip(view)
+	for _, junk := range []string{"waiting (1)", "waiting (2)", "[2K", "[1G"} {
+		if strings.Contains(plain, junk) {
+			t.Errorf("the view still holds %q, debris of a redraw or an escape:\n%s", junk, plain)
+		}
+	}
 }
 
 func TestConsoleRaw_ViewKeepsTheWordsOfTheLine(t *testing.T) {

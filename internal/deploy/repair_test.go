@@ -111,6 +111,19 @@ func TestRepairCommand_EmptyDirectoryIsNoDeployment(t *testing.T) {
 	}
 }
 
+// #237: a target directory that does not exist is "no deployment", the
+// same as an empty one.
+func TestRepairCommand_MissingTargetDirectoryIsNoDeployment(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	cmd, err := RepairCommand(dir, RepairCheck)
+	if !errors.Is(err, ErrNoDeployment) {
+		t.Fatalf("err = %v, want ErrNoDeployment", err)
+	}
+	if cmd != nil {
+		t.Error("a missing directory returned a command")
+	}
+}
+
 // The deployment is what the env file says it is: without one, a
 // scripts/repair.sh lying around does not make a deployment.
 func TestRepairCommand_ScriptWithoutEnvFileIsNoDeployment(t *testing.T) {

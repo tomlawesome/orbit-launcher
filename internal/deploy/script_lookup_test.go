@@ -247,7 +247,10 @@ func TestScriptLookup_AbsentScriptWritesNothing(t *testing.T) {
 		}
 		var names []string
 		for _, e := range entries {
-			if e.Name() != EnvFile { // the repair lookup's own fixture: it needs a deployment to look in (#237)
+			// Only the repair lookup's own fixture is allowed: it needs a
+			// deployment to look in (#237). A configure lookup that wrote
+			// .env-orbit would be a fault.
+			if !(l.script == "repair.sh" && e.Name() == EnvFile) {
 				names = append(names, e.Name())
 			}
 		}

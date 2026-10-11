@@ -39,12 +39,19 @@ func unreadableEnvDir(t *testing.T) string {
 
 func assertUnreadableScreen(t *testing.T, s, dir string) {
 	t.Helper()
+	if !strings.Contains(oneLine(s), "permission denied") {
+		t.Errorf("screen should carry the OS's words (permission denied):\n%s", s)
+	}
+	assertCouldntReadScreen(t, s, dir)
+}
+
+// assertCouldntReadScreen checks everything about the unreadable screen
+// that does not depend on which OS error caused it.
+func assertCouldntReadScreen(t *testing.T, s, dir string) {
+	t.Helper()
 	flat := oneLine(s)
 	if want := "Couldn't read .env-orbit in " + dir; !strings.Contains(flat, want) {
 		t.Errorf("screen should say %q:\n%s", want, s)
-	}
-	if !strings.Contains(flat, "permission denied") {
-		t.Errorf("screen should carry the OS's words (permission denied):\n%s", s)
 	}
 	if strings.Contains(flat, "No Orbit deployment found") {
 		t.Errorf("an unreadable .env-orbit is not a missing deployment:\n%s", s)
@@ -163,4 +170,70 @@ func TestAppModel_SplashOnAnUnreadableEnvPreselectsUpdateAndEnterExplains(t *tes
 		t.Fatalf("Enter went to state %v, want the update flow", m.state)
 	}
 	assertUnreadableScreen(t, screen(m), dir)
+}
+
+// Root-proof variants (#238). CI runs as root, which reads any file mode,
+// so the mode-0000 tests above skip there. A .env-orbit that is a
+// directory makes deploy.Detect fail for every user: opening it works,
+// reading it does not ("is a directory"). These never skip.
+
+func directoryEnvDir(t *testing.T) string {
+	t.Helper()
+	dir := shortTempDir(t)
+	if err := os.Mkdir(filepath.Join(dir, deploy.EnvFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := deploy.Detect(dir); err == nil || d != nil {
+		t.Fatalf("fixture: Detect = %v, %v; want an error and no deployment", d, err)
+	}
+	return dir
+}
+
+func TestAppModel_RemoveOnADirectoryEnvSaysItCouldNotReadIt(t *testing.T) {
+	dir := directoryEnvDir(t)
+	m := NewAppModelNoAnimation().WithoutVolumeCheck()
+	m.targetDir = dir
+	m = openRemove(t, m)
+
+	if m.state != appStateRemove {
+		t.Fatalf("state = %v, want the remove flow", m.state)
+	}
+	if m.remove.detectErr == nil {
+		t.Error("RemoveModel.detectErr is nil; the app dropped deploy.Detect's error")
+	}
+	assertCouldntReadScreen(t, screen(m), dir)
+}
+
+func TestAppModel_UpdateOnADirectoryEnvSaysItCouldNotReadIt(t *testing.T) {
+	dir := directoryEnvDir(t)
+	m := NewAppModelNoAnimation().WithoutVolumeCheck()
+	m.targetDir = dir
+	m = openUpdate(t, m, nil)
+
+	if m.state != appStateUpdate {
+		t.Fatalf("state = %v, want the update flow", m.state)
+	}
+	if m.update.detectErr == nil {
+		t.Error("UpdateModel.detectErr is nil; the app dropped deploy.Detect's error")
+	}
+	assertCouldntReadScreen(t, screen(m), dir)
+}
+
+func TestAppModel_SplashOnADirectoryEnvSaysItCannotReadItAndPreselectsUpdate(t *testing.T) {
+	dir := directoryEnvDir(t)
+	m := NewAppModelNoAnimation().WithoutVolumeCheck()
+	m.targetDir = dir
+	m = m.WithDeploymentStatus(nil)
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
+
+	s := screen(m)
+	if strings.Contains(s, "dormant") {
+		t.Errorf("the splash calls a deployment it cannot read dormant:\n%s", s)
+	}
+	if !strings.Contains(s, "can't read .env-orbit") {
+		t.Errorf("the splash should say \"can't read .env-orbit\":\n%s", s)
+	}
+	if m.splash.menu.sel != menuUpdate {
+		t.Errorf("selected = %d, want Update (%d) preselected", m.splash.menu.sel, menuUpdate)
+	}
 }
