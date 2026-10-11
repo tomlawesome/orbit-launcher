@@ -50,8 +50,9 @@ type RemoveModel struct {
 	standDownErr  error
 	copied        bool
 
-	// left is Esc, Cancel or Back on the flow's first screen: back to the
-	// main menu with nothing stood down (#210).
+	// left is going back to the main menu: Esc, Cancel or Back on the
+	// flow's first screen, with nothing stood down (#210), or Esc on the
+	// removed and failed screens after the stand-down (#225).
 	left bool
 
 	// targetDir is where AppModel looked; the no-deployment screen names
@@ -94,8 +95,9 @@ var (
 	removeDoneRows    = []string{removeCopy, "Exit"}
 )
 
-// Outcome surfaces the flow result to AppModel: leaving on the first
-// screen returns to the menu; every later screen ends in a quit.
+// Outcome surfaces the flow result to AppModel: leaving, on the first
+// screen or after the stand-down, returns to the menu; the Exit row and
+// Ctrl-C quit instead.
 func (m RemoveModel) Outcome() flowOutcome {
 	if m.left {
 		return backToMenu
@@ -190,12 +192,13 @@ func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
-// handleDoneKey drives the two screens after the stand-down. Nothing
-// here goes back: the stand-down has happened, so Esc quits, as Exit
-// does.
+// handleDoneKey drives the two screens after the stand-down. Esc goes
+// back to the main menu, as it does after Repair (#225); the Exit row
+// quits.
 func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		return m, tea.Quit
+		m.left = true
+		return m, nil
 	}
 	if m.state == removeStateFailed {
 		// Exit is the only row.

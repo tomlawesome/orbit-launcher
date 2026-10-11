@@ -16,11 +16,15 @@ import (
 // the Remove flow.
 
 func TestSuccessModel_EveryWayOutLeavesForTheTerminal(t *testing.T) {
-	for name, k := range map[string]tea.KeyPressMsg{"Esc": key(tea.KeyEsc), "Ctrl+C": ctrlC(), "q": runeKey('q')} {
+	// Esc is one step back, to the menu (#225); every other way out quits.
+	for name, k := range map[string]tea.KeyPressMsg{"Ctrl+C": ctrlC(), "q": runeKey('q')} {
 		m, cmd := updateAs(t, newTestSuccessModel(), k)
 		if m.Chosen != "terminal" || !isQuit(cmd) {
 			t.Errorf("%s: Chosen = %q, quit = %v; want terminal and quit", name, m.Chosen, isQuit(cmd))
 		}
+	}
+	if m, _ := updateAs(t, newTestSuccessModel(), key(tea.KeyEsc)); m.Outcome() != backToMenu || m.Chosen == "terminal" {
+		t.Errorf("Esc: Chosen = %q; want back to the menu", m.Chosen)
 	}
 	m, cmd := updateAs(t, newTestSuccessModel(), runeKey('x'))
 	if m.Chosen != "" || cmd != nil {
@@ -150,7 +154,7 @@ func TestRemoveModel_FailedScreenNamesTheErrorAndOnlyExits(t *testing.T) {
 	if strings.Contains(s, "Copy command") {
 		t.Errorf("a failed stand-down must not offer the removal command:\n%s", s)
 	}
-	// Arrows have nowhere to go; Enter and Esc both leave.
+	// Arrows have nowhere to go; Enter quits and Esc goes back to the menu (#225).
 	m, cmd = updateAs(t, m, key(tea.KeyDown))
 	if cmd != nil || m.done.sel != 0 {
 		t.Fatal("arrows moved a one-row menu")
@@ -158,8 +162,8 @@ func TestRemoveModel_FailedScreenNamesTheErrorAndOnlyExits(t *testing.T) {
 	if _, cmd := updateAs(t, m, key(tea.KeyEnter)); !isQuit(cmd) {
 		t.Fatal("Exit on the failed screen did not quit")
 	}
-	if _, cmd := updateAs(t, m, key(tea.KeyEsc)); !isQuit(cmd) {
-		t.Fatal("Esc on the failed screen did not quit")
+	if m, cmd := updateAs(t, m, key(tea.KeyEsc)); m.Outcome() != backToMenu || isQuit(cmd) {
+		t.Fatal("Esc on the failed screen did not go back to the menu")
 	}
 	if _, cmd := updateAs(t, m, runeKey('z')); cmd != nil {
 		t.Fatal("an unbound key acted on the failed screen")
