@@ -390,7 +390,7 @@ func (m RepairModel) handleStreamEnded(msg repairStreamEndedMsg) (tea.Model, tea
 	default:
 		return m, nil
 	}
-	logDiag("repair stream: closed while the run was still streaming")
+	logDiag("repair stream: closed before the run finished")
 	m.runErr = msg.reason
 	if m.runErr == nil {
 		m.runErr = errEngineStoppedEarly

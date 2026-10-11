@@ -76,7 +76,7 @@ type File struct {
 
 // StageTree makes dir/scripts with scriptsMode and writes files into dir,
 // either at its top or in scripts/: a deployment as install.sh leaves it,
-// or the configure tree it hands over. Every mode is set exactly, with
+// or the configuration tree it hands over. Every mode is set exactly, with
 // Chmod, so a test gets the modes it names whatever the umask.
 func StageTree(t testing.TB, dir string, scriptsMode os.FileMode, files ...File) {
 	t.Helper()

@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"fmt"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -149,7 +149,7 @@ func (m SuccessModel) launchURL() error {
 		open = defaultOpenURL
 	}
 	if m.appURL == "" {
-		return fmt.Errorf("no deployment URL")
+		return errors.New("no deployment URL")
 	}
 	return open(m.appURL)
 }
@@ -162,7 +162,7 @@ func defaultOpenURL(url string) error {
 			return exec.Command(opener, url).Start()
 		}
 	}
-	return fmt.Errorf("no opener available")
+	return errors.New("no opener available")
 }
 
 // View implements tea.Model.

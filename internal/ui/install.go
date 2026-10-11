@@ -335,7 +335,7 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
-	m.run = newEngineRun("install", m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
+	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
 	return m, cmd

@@ -34,42 +34,42 @@ import (
 // --init and --set-oidc-secret, and install.sh persists ORBIT_IMAGE
 // itself from the image it resolves).
 
-// ErrNoConfigTree means install.sh handed over no configure tree — an
+// ErrNoConfigTree means install.sh handed over no configuration tree — an
 // install.sh from before ai/orbit#1225, or a refusal it didn't copy the
 // tree for. There is nothing verified to run in-console, so the caller
 // falls back to the terminal handoff, which runs the verified install.sh
 // and so the image's own configure.sh.
 var ErrNoConfigTree = errors.New("install.sh handed over no configuration tree")
 
-// configureScript is configure.sh's name in a configure tree's scripts
+// configureScript is configure.sh's name in a configuration tree's scripts
 // directory.
 const configureScript = "configure.sh"
 
-// OpenConfigTree starts a configuration session in the configure tree
+// OpenConfigTree starts a configuration session in the configuration tree
 // install.sh handed over (see BuildInstallCommand). The returned
 // endSession clears what a session leaves in the tree — the collected
 // .env-orbit and .orbit-secrets, which hold a secret once
 // --set-oidc-secret has run — and keeps the verified scripts, so a
 // second attempt in the same run starts clean. The tree itself belongs
 // to the run, whose cleanup removes it.
-func OpenConfigTree(treeDir string) (endSession func(), err error) {
-	if treeDir == "" {
+func OpenConfigTree(configTree string) (endSession func(), err error) {
+	if configTree == "" {
 		return nil, ErrNoConfigTree
 	}
-	if err := requireScript(treeDir, configureScript, ErrNoConfigTree); err != nil {
+	if err := requireScript(configTree, configureScript, ErrNoConfigTree); err != nil {
 		return nil, err
 	}
 	return func() {
-		os.Remove(filepath.Join(treeDir, EnvFile))
-		os.RemoveAll(filepath.Join(treeDir, SecretsDir))
+		os.Remove(filepath.Join(configTree, EnvFile))
+		os.RemoveAll(filepath.Join(configTree, SecretsDir))
 	}, nil
 }
 
-// ImportTargetConfig seeds the configure tree with the target's existing
+// ImportTargetConfig seeds the configuration tree with the target's existing
 // configuration, so a reconfiguration preserves everything the person
 // isn't being asked about. A target with no configuration (fresh
 // install) imports nothing.
-func ImportTargetConfig(treeDir, targetDir string) error {
+func ImportTargetConfig(configTree, targetDir string) error {
 	// Nothing is read or tidied in a directory the launcher does not
 	// trust (#191). A target that doesn't exist yet has nothing to
 	// import.
@@ -87,10 +87,10 @@ func ImportTargetConfig(treeDir, targetDir string) error {
 	if err := requireTrustedIfPresent(targetDir, EnvFile); err != nil {
 		return err
 	}
-	if err := copyConfigFile(filepath.Join(targetDir, EnvFile), filepath.Join(treeDir, EnvFile)); err != nil {
+	if err := copyConfigFile(filepath.Join(targetDir, EnvFile), filepath.Join(configTree, EnvFile)); err != nil {
 		return err
 	}
-	return copySecretsDir(filepath.Join(targetDir, SecretsDir), filepath.Join(treeDir, SecretsDir), func(name string) error {
+	return copySecretsDir(filepath.Join(targetDir, SecretsDir), filepath.Join(configTree, SecretsDir), func(name string) error {
 		return RequireTrustedPath(targetDir, filepath.Join(SecretsDir, name))
 	})
 }
@@ -102,11 +102,11 @@ func ImportTargetConfig(treeDir, targetDir string) error {
 // are written, so a failure while saving (disk full, permissions)
 // leaves the existing configuration untouched. Target secrets the
 // session didn't produce are left in place.
-func AdoptConfig(treeDir, targetDir string) error {
+func AdoptConfig(configTree, targetDir string) error {
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("prepare target: %w", err)
 	}
-	envSrc := filepath.Join(treeDir, EnvFile)
+	envSrc := filepath.Join(configTree, EnvFile)
 	if _, err := os.Stat(envSrc); err != nil {
 		return fmt.Errorf("configuration session left no %s: %w", EnvFile, err)
 	}
@@ -117,7 +117,7 @@ func AdoptConfig(treeDir, targetDir string) error {
 	}
 	removeStaleTemps(targetDir)
 
-	plan, err := planAdoption(treeDir, targetDir)
+	plan, err := planAdoption(configTree, targetDir)
 	if err != nil {
 		return err
 	}
@@ -157,9 +157,9 @@ type fileCopy struct{ src, dst string }
 
 // planAdoption lists the files to carry and refuses, before anything is
 // written, any destination that isn't free or a regular file to replace.
-func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
+func planAdoption(configTree, targetDir string) (adoptionPlan, error) {
 	var plan adoptionPlan
-	envSrc := filepath.Join(treeDir, EnvFile)
+	envSrc := filepath.Join(configTree, EnvFile)
 	if err := requireRegularSource(envSrc); err != nil {
 		return plan, err
 	}
@@ -168,7 +168,7 @@ func planAdoption(treeDir, targetDir string) (adoptionPlan, error) {
 		return plan, err
 	}
 
-	secretsSrc := filepath.Join(treeDir, SecretsDir)
+	secretsSrc := filepath.Join(configTree, SecretsDir)
 	info, err := os.Lstat(secretsSrc)
 	switch {
 	case os.IsNotExist(err):
@@ -438,7 +438,7 @@ const (
 )
 
 // BuildConfigureCommand builds one machine-prompt configure run in the
-// configure tree. Setsid is load-bearing exactly as it is for the engine
+// configuration tree. Setsid is load-bearing exactly as it is for the engine
 // run: a legacy configure.sh (orbit main) ignores
 // ORBIT_CONFIGURE_PROMPTS and would otherwise open /dev/tty and prompt
 // straight through the alt screen; detached, it fails fast with no
@@ -451,8 +451,8 @@ const (
 // itself when local accounts were chosen. --set-oidc-secret needs no
 // mode — it only ever runs because the previous --init already decided
 // OIDC is on.
-func BuildConfigureCommand(treeDir string, step ConfigStep, mode AuthMode) *exec.Cmd {
-	cmd := detachedCommand(context.Background(), treeDir, "bash", filepath.Join(scriptsDir, configureScript), string(step))
+func BuildConfigureCommand(configTree string, step ConfigStep, mode AuthMode) *exec.Cmd {
+	cmd := detachedCommand(context.Background(), configTree, "bash", filepath.Join(scriptsDir, configureScript), string(step))
 	env := append(os.Environ(), "ORBIT_CONFIGURE_PROMPTS=machine")
 	if step == ConfigStepInit && mode != "" {
 		env = append(env, "ORBIT_CONFIGURE_AUTH_MODE="+string(mode))
@@ -508,15 +508,15 @@ func (c ConfigCheck) Unfixable() []string {
 	return out
 }
 
-// RunConfigCheck runs configure.sh --check in the configure tree and
+// RunConfigCheck runs configure.sh --check in the configuration tree and
 // parses its readiness report. A non-zero exit with a parseable report
 // is the normal "something's missing" answer, not an error; an error
 // means the check itself couldn't run (structural failure, legacy
 // script misbehaviour). Cancelling ctx stops the check and everything
 // it started, and returns without waiting on a pipe a child still holds
 // (detachedCommand).
-func RunConfigCheck(ctx context.Context, treeDir string) (ConfigCheck, error) {
-	out, runErr := detachedCommand(ctx, treeDir, "bash", filepath.Join(scriptsDir, configureScript), "--check").Output()
+func RunConfigCheck(ctx context.Context, configTree string) (ConfigCheck, error) {
+	out, runErr := detachedCommand(ctx, configTree, "bash", filepath.Join(scriptsDir, configureScript), "--check").Output()
 
 	var check ConfigCheck
 	sawReport := false
@@ -537,7 +537,7 @@ func RunConfigCheck(ctx context.Context, treeDir string) (ConfigCheck, error) {
 		if runErr != nil {
 			return ConfigCheck{}, fmt.Errorf("configuration check failed: %w", runErr)
 		}
-		return ConfigCheck{}, fmt.Errorf("configuration check produced no readiness report")
+		return ConfigCheck{}, errors.New("configuration check produced no readiness report")
 	}
 	return check, nil
 }

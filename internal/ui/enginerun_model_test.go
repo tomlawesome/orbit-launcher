@@ -21,7 +21,7 @@ import (
 
 func startedRun(t *testing.T, action string, seams engineRunSeams) engineRun {
 	t.Helper()
-	r := newEngineRun(action, t.TempDir(), "Install — Standard", "v9.9.9").withSeams(seams)
+	r := newEngineRun(deploy.Action(action), t.TempDir(), "Install — Standard", "v9.9.9").withSeams(seams)
 	r, _ = r.start(80, 26)
 	return r
 }

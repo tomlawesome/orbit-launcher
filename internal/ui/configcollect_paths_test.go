@@ -214,7 +214,7 @@ func shellQuoteLines(report string) string {
 
 func TestConfigCollect_InitCompletionRechecksWithTheRealCheck(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{}) // no recheck seam
-	r.cfg.plan = configPlan{treeDir: configTree(t, "ready APP_URL\nmissing OIDC_CLIENT_SECRET"), needInit: true}
+	r.cfg.plan = configPlan{configTree: configTree(t, "ready APP_URL\nmissing OIDC_CLIENT_SECRET"), needInit: true}
 	r.cfg.step = deploy.ConfigStepInit
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
 	r, cmd := r.update(configStreamMsg{msg: engine.DoneMsg{}})
@@ -242,7 +242,7 @@ func TestConfigCollect_NothingOwedAdoptsIntoTheTargetAndRetries(t *testing.T) {
 			return nil, nil, errors.New("stop after the retry starts")
 		},
 	})
-	r, cmd := r.update(configPlanMsg{plan: configPlan{treeDir: tree, cleanup: func() {}}})
+	r, cmd := r.update(configPlanMsg{plan: configPlan{configTree: tree, cleanup: func() {}}})
 	adopted, ok := cmd().(configAdoptedMsg)
 	if !ok || adopted.err != nil {
 		t.Fatalf("adopt: %#v", adopted)

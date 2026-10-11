@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -66,10 +65,9 @@ func UnownedDatabaseVolumes(ctx context.Context, targetDir string) []DatabaseVol
 
 	ctx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "volume", "ls",
+	cmd := dockerCommand(ctx, "volume", "ls",
 		"--filter", "name="+orbitDatabaseVolumePattern,
 		"--format", `{{.Name}}	{{.Label "com.docker.compose.project"}}`)
-	cmd.WaitDelay = pipeWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

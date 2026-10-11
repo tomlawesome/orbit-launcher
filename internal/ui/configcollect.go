@@ -17,7 +17,7 @@ import (
 
 // In-console guided configuration, driven by orbit's machine prompt
 // protocol (docs/engine-events.md "Machine prompts (v0)", orbit#297).
-// On the engine's configuration refusal the launcher opens the configure
+// On the engine's configuration refusal the launcher opens the configuration
 // tree the engine handed over (ORBIT_LAUNCHER_CONFIG_TREE, ai/orbit#1225;
 // see deploy.BuildInstallCommand), seeds it from the target, and runs
 // configure.sh's own guided flow with machine prompts — every answer
@@ -28,12 +28,12 @@ import (
 // prompt line), gets the same terminal handoff as before — capability
 // detected by behaviour, never by version sniffing.
 
-// configPlan is the prepared session: the configure tree plus what
+// configPlan is the prepared session: the configuration tree plus what
 // configure.sh --check says still needs collecting. cleanup ends the
 // session (clearing what it collected); the tree itself is the engine
 // run's, released with the run's files.
 type configPlan struct {
-	treeDir    string
+	configTree string
 	cleanup    func()
 	needInit   bool
 	needSecret bool
@@ -87,9 +87,9 @@ type configRecheckMsg struct {
 // Seams so flow tests drive the whole session with fakes.
 type (
 	prepareConfigFunc func(ctx context.Context, targetDir, configTree string) configPlanMsg
-	startConfigFunc   func(treeDir string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error)
-	adoptConfigFunc   func(treeDir, targetDir string) error
-	recheckConfigFunc func(ctx context.Context, treeDir string) (deploy.ConfigCheck, error)
+	startConfigFunc   func(configTree string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error)
+	adoptConfigFunc   func(configTree, targetDir string) error
+	recheckConfigFunc func(ctx context.Context, configTree string) (deploy.ConfigCheck, error)
 )
 
 // configCollect is the live session state.
@@ -131,7 +131,7 @@ func (c *configCollect) close() {
 	}
 }
 
-// defaultPrepareConfig opens the configure tree the engine handed over
+// defaultPrepareConfig opens the configuration tree the engine handed over
 // and plans the session there. No tree (an install.sh without
 // ai/orbit#1225) is an error, which routes to the terminal handoff.
 func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) configPlanMsg {
@@ -139,18 +139,17 @@ func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) con
 	if err != nil {
 		return configPlanMsg{err: err}
 	}
-	treeDir := configTree
-	if err := deploy.ImportTargetConfig(treeDir, targetDir); err != nil {
+	if err := deploy.ImportTargetConfig(configTree, targetDir); err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
 	}
-	check, err := deploy.RunConfigCheck(ctx, treeDir)
+	check, err := deploy.RunConfigCheck(ctx, configTree)
 	if err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
 	}
 	return configPlanMsg{plan: configPlan{
-		treeDir:    treeDir,
+		configTree: configTree,
 		cleanup:    cleanup,
 		needInit:   check.NeedsInit(),
 		needSecret: check.NeedsSecret(),
@@ -158,8 +157,8 @@ func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) con
 	}}
 }
 
-func defaultStartConfig(treeDir string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
-	return engine.StartInteractive(deploy.BuildConfigureCommand(treeDir, step, mode))
+func defaultStartConfig(configTree string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+	return engine.StartInteractive(deploy.BuildConfigureCommand(configTree, step, mode))
 }
 
 // beginConfigCollect starts the in-console path: prepare the session in
@@ -276,7 +275,7 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 		// stopped without saying how the step went, so the install
 		// stops here, visibly, rather than waiting on a prompt that
 		// will never come.
-		logDiag("configuration stream: closed while the step was still running")
+		logDiag("configuration stream: closed before the step finished")
 		r.cfg.close()
 		r.releaseRunFiles()
 		r.lastFailed = nil
@@ -332,9 +331,9 @@ func (r engineRun) startNextConfigStep() (engineRun, tea.Cmd) {
 	if start == nil {
 		start = defaultStartConfig
 	}
-	treeDir, mode := r.cfg.plan.treeDir, r.cfg.authMode
+	configTree, mode := r.cfg.plan.configTree, r.cfg.authMode
 	return r, func() tea.Msg {
-		stream, stdin, err := start(treeDir, step, mode)
+		stream, stdin, err := start(configTree, step, mode)
 		return configStepMsg{stream: stream, stdin: stdin, err: err}
 	}
 }
@@ -350,9 +349,9 @@ func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
 	if recheck == nil {
 		recheck = deploy.RunConfigCheck
 	}
-	treeDir := r.cfg.plan.treeDir
+	configTree := r.cfg.plan.configTree
 	return r, func() tea.Msg {
-		check, err := recheck(context.Background(), treeDir)
+		check, err := recheck(context.Background(), configTree)
 		return configRecheckMsg{check: check, err: err}
 	}
 }
@@ -404,16 +403,16 @@ func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 	if adopt == nil {
 		adopt = deploy.AdoptConfig
 	}
-	treeDir, targetDir := r.cfg.plan.treeDir, r.targetDir
+	configTree, targetDir := r.cfg.plan.configTree, r.targetDir
 	return r, func() tea.Msg {
-		return configAdoptedMsg{err: adopt(treeDir, targetDir)}
+		return configAdoptedMsg{err: adopt(configTree, targetDir)}
 	}
 }
 
 // retryEngine starts a fresh engine run against the now-provisioned
 // target: fresh console, fresh clock, fresh outcome evidence.
 func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
-	// The retry is a new engine run with its own configure tree.
+	// The retry is a new engine run with its own configuration tree.
 	r.releaseRunFiles()
 	r.configRefused = false
 	r.lastFailed = nil

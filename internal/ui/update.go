@@ -156,7 +156,7 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.deployment != nil {
 			title = "Update — " + deploymentIdentity(m.deployment)
 		}
-		m.run = newEngineRun("update", m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
+		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd

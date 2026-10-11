@@ -87,7 +87,7 @@ exit 0`
 func planned(needInit, needSecret bool) prepareConfigFunc {
 	return func(context.Context, string, string) configPlanMsg {
 		return configPlanMsg{plan: configPlan{
-			treeDir:    "/nonexistent-tree-for-tests",
+			configTree: "/nonexistent-tree-for-tests",
 			cleanup:    func() {},
 			needInit:   needInit,
 			needSecret: needSecret,
@@ -525,10 +525,10 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 		prepareEngine: engineTwice(),
 		prepareConfig: func(context.Context, string, string) configPlanMsg {
 			return configPlanMsg{plan: configPlan{
-				treeDir:   "/nonexistent",
-				cleanup:   func() {},
-				needInit:  true,
-				unfixable: []string{"SOME_FUTURE_FIELD"},
+				configTree: "/nonexistent",
+				cleanup:    func() {},
+				needInit:   true,
+				unfixable:  []string{"SOME_FUTURE_FIELD"},
 			}}
 		},
 		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
@@ -772,7 +772,7 @@ func TestConfigSignInMode_EnterStartsInitWithChosenMode(t *testing.T) {
 		r := signInModeRun()
 		r.startConfig = start
 		r.cfg.signIn.sel = tc.sel
-		r.cfg.plan = configPlan{needInit: true, treeDir: "/nonexistent"}
+		r.cfg.plan = configPlan{needInit: true, configTree: "/nonexistent"}
 
 		r, cmd := r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 		if r.state != runConfigCollect {

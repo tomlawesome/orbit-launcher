@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -29,9 +28,8 @@ func InstalledAt(ctx context.Context, d *Deployment) time.Time {
 	ctx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
 	defer cancel()
 	volume := d.Project + "_" + orbitDatabaseVolumePattern
-	cmd := exec.CommandContext(ctx, "docker", "volume", "inspect",
+	cmd := dockerCommand(ctx, "volume", "inspect",
 		"--format", "{{.CreatedAt}}", volume)
-	cmd.WaitDelay = pipeWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return time.Time{}

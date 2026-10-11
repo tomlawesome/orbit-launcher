@@ -26,13 +26,24 @@ const pipeWaitDelay = 2 * time.Second
 // streamed run is stopped by engine.Stream.Kill, which kills the same
 // group.
 //
-// Docker queries and the terminal handoff (BuildInstallCommand) do not
-// come through here: they stay attached to the launcher's session.
+// Docker queries (dockerCommand) and the terminal handoff
+// (BuildInstallCommand) do not come through here: they stay attached to
+// the launcher's session.
 func detachedCommand(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return killGroup(cmd) }
+	cmd.WaitDelay = pipeWaitDelay
+	return cmd
+}
+
+// dockerCommand builds every Docker query and stand-down: docker args...
+// attached to the launcher's session (no Setsid), with pipeWaitDelay
+// bounding the wait for pipes a survivor still holds (#207). Callers
+// bring their own deadline in ctx.
+func dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.WaitDelay = pipeWaitDelay
 	return cmd
 }

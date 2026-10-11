@@ -35,7 +35,7 @@ const maxInstallScriptBytes = 1 << 20 // 1 MiB
 const scriptFetchTimeout = 30 * time.Second
 
 // scriptFetchClient is the client install.sh's fetch goes through — the
-// only script the launcher ever downloads (repair.sh and the configure
+// only script the launcher ever downloads (repair.sh and the configuration
 // tree come from the deployment and from install.sh's handover, #190).
 // http.DefaultClient has no timeout at all.
 var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
@@ -124,10 +124,10 @@ func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("read install.sh: %w", err)
 	}
 	if len(body) > maxInstallScriptBytes {
-		return nil, fmt.Errorf("install.sh is larger than the %d byte limit; refusing to run an unexpectedly large script", maxInstallScriptBytes)
+		return nil, fmt.Errorf("install.sh is larger than the %d byte limit — refusing to run an unexpectedly large script", maxInstallScriptBytes)
 	}
 	if !bytes.HasPrefix(body, []byte("#!")) {
-		return nil, fmt.Errorf("fetched content does not look like a script (no shebang) — refusing to run it")
+		return nil, errors.New("fetched content does not look like a script (no shebang) — refusing to run it")
 	}
 
 	return body, nil

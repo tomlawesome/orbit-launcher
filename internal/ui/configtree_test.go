@@ -41,8 +41,8 @@ func TestDefaultPrepareConfig_RunsInTheHandedOverTreeAndReportsWhatIsOwed(t *tes
 	if msg.err != nil {
 		t.Fatalf("prepare: %v", msg.err)
 	}
-	if msg.plan.treeDir != tree {
-		t.Fatalf("treeDir = %q, want the handed-over tree %q", msg.plan.treeDir, tree)
+	if msg.plan.configTree != tree {
+		t.Fatalf("configTree = %q, want the handed-over tree %q", msg.plan.configTree, tree)
 	}
 	if n := requests.Load(); n != 0 {
 		t.Errorf("preparing configuration made %d HTTP requests; it must fetch nothing", n)

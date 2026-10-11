@@ -4,7 +4,7 @@ package deploy
 // name it reads, typed once. A switch set to anything non-empty is on.
 const (
 	// ConfigTreeEnv names the private directory install.sh copies its
-	// verified configure tree into when it refuses for missing
+	// verified configuration tree into when it refuses for missing
 	// configuration (ai/orbit#1225). The launcher runs configure.sh from
 	// there and nowhere else (#190).
 	ConfigTreeEnv = "ORBIT_LAUNCHER_CONFIG_TREE"
