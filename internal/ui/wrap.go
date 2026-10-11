@@ -131,23 +131,40 @@ func cleanLine(line string) string {
 	}, line)
 }
 
-// wrapLine is wrapWords for one line of text.
+// wrapLine is wrapWords for one line of text, in one pass: the row's
+// width is kept as a running count (a space never joins a grapheme
+// cluster, so widths add), and a run of spaces is held as a count and
+// written only when a word follows it on the same row. An indent stays
+// while it and the first word fit.
 func wrapLine(line string, limit int) []string {
 	if lipgloss.Width(line) <= limit {
 		return []string{line}
 	}
 	var rows []string
-	words := strings.Split(line, " ") // a run of spaces is empty words
-	cur := words[0]
-	for _, word := range words[1:] {
-		if word != "" && strings.TrimSpace(cur) != "" && lipgloss.Width(cur)+1+lipgloss.Width(word) > limit {
-			rows = append(rows, strings.TrimRight(cur, " "))
-			cur = word
+	var row strings.Builder
+	rowW, spaces, hasWord := 0, 0, false
+	for i, word := range strings.Split(line, " ") { // a run of spaces is empty words
+		if i > 0 {
+			spaces++
+		}
+		if word == "" {
 			continue
 		}
-		cur += " " + word
+		w := lipgloss.Width(word)
+		switch {
+		case hasWord && rowW+spaces+w > limit: // the spaces are the break
+			rows = append(rows, row.String())
+			row.Reset()
+			rowW, spaces = 0, 0
+		case !hasWord && spaces+w > limit: // an indent that does not fit goes
+			spaces = 0
+		}
+		row.WriteString(strings.Repeat(" ", spaces))
+		row.WriteString(word)
+		rowW += spaces + w
+		spaces, hasWord = 0, true
 	}
-	return append(rows, strings.TrimRight(cur, " "))
+	return append(rows, row.String())
 }
 
 // writeWrapped writes text that nobody sized — a path, Docker's own
