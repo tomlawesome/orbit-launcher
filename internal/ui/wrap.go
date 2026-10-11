@@ -102,6 +102,14 @@ func wrapWords(text string, limit int) []string {
 	for _, line := range strings.Split(text, "\n") {
 		rows = append(rows, wrapLine(cleanLine(line), limit)...)
 	}
+	// Trailing rows that clean to nothing (a NUL, a tab, spaces) are
+	// not rows either; a blank row inside the text stays.
+	for len(rows) > 0 && strings.TrimSpace(rows[len(rows)-1]) == "" {
+		rows = rows[:len(rows)-1]
+	}
+	if len(rows) == 0 {
+		return nil
+	}
 	return rows
 }
 
