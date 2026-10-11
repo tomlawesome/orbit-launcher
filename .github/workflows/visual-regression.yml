@@ -36,6 +36,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Inside `container:` the workspace belongs to the host's runner user
+      # while the steps run as root, so git refuses the repository as
+      # "dubious ownership". actions/checkout marks it safe only for its own
+      # step; without this, test/visual's `go build ./cmd/orbit-launcher`
+      # can fail with "error obtaining VCS status: exit status 128"
+      # (reproduced with GIT_TEST_ASSUME_DIFFERENT_OWNER=1). Unproven on
+      # GitHub until this workflow runs on the mirror again (#224).
+      - name: Trust the checked-out workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
