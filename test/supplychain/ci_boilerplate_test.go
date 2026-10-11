@@ -271,10 +271,14 @@ func TestAptPrologueIsOneAnchor(t *testing.T) {
 	}
 }
 
-// `pull_policy: if-not-present` was written out in ten jobs (SU-13). It is set
-// once under `default:` (or in an anchor that `default:` pulls in); no job
-// spells it out.
-func TestPullPolicyIsSetOnceInDefault(t *testing.T) {
+// `pull_policy: if-not-present` was written out in every job's image (SU-13).
+// It is written once now, in a hidden template's anchor that each job merges
+// into its own image. Not in `default:`: every job here names its own image,
+// and GitLab does not merge `default: image:` into a job's `image:` --
+// "Default configuration does not merge with job configuration. If the job
+// already has a keyword defined, the job keyword takes precedence and the
+// default configuration is not used." (docs.gitlab.com/ci/yaml/#default).
+func TestPullPolicyIsWrittenOnceAndEveryJobKeepsIt(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
 	doc := loadCI(t, ci)
 
@@ -282,26 +286,61 @@ func TestPullPolicyIsSetOnceInDefault(t *testing.T) {
 		t.Errorf("`pull_policy:` is written on %d lines of .gitlab-ci.yml; want exactly 1 (SU-13, #217)", n)
 	}
 
-	def, ok := doc.root.vals["default"]
-	if !ok {
-		t.Fatal("no `default:` block")
+	// The one line sits in a hidden template, under an anchor.
+	var holders []string
+	for name, a := range doc.anchors {
+		if pp, ok := a.node.find("pull_policy"); ok && pp.str == "if-not-present" {
+			holders = append(holders, name)
+		}
 	}
-	pp, ok := def.find("pull_policy")
-	if !ok {
-		t.Fatal("`default:` does not set pull_policy (SU-13, #217)")
+	if len(holders) != 1 {
+		t.Fatalf("anchors holding `pull_policy: if-not-present`: %v; want exactly one (SU-13, #217)", holders)
 	}
-	if pp.str != "if-not-present" {
-		t.Errorf("`default:` sets pull_policy to %q, want if-not-present", pp.str)
-	}
-
-	// Outside `default:`, only a hidden template may carry the one line.
 	for _, k := range doc.root.keys {
-		if k == "default" || strings.HasPrefix(k, ".") {
+		if strings.HasPrefix(k, ".") {
 			continue
 		}
-		if _, repeats := doc.root.vals[k].find("pull_policy"); repeats {
-			t.Errorf("job %q spells out pull_policy by hand: it comes from `default:` (SU-13, #217)", k)
+		if _, ok := doc.root.vals[k].find("pull_policy"); ok && !doc.anchors[holders[0]].usedBy[k] {
+			t.Errorf("%q carries a pull_policy that is not the anchor's (SU-13, #217)", k)
 		}
+	}
+
+	// Every job's effective image -- its own, or `default:`'s whole when it
+	// sets none -- keeps the policy.
+	jobs := 0
+	for _, k := range doc.root.keys {
+		switch k {
+		case "stages", "workflow", "default", "variables":
+			continue
+		}
+		if strings.HasPrefix(k, ".") || doc.root.vals[k].kind != 'm' {
+			continue
+		}
+		jobs++
+		merged, err := doc.extendsMerge(doc.root.vals[k], 0)
+		if err != nil {
+			t.Fatalf("%s: %v", k, err)
+		}
+		img, set := merged.vals["image"]
+		if !set {
+			if def, ok := doc.root.vals["default"]; ok {
+				img, set = def.vals["image"]
+			}
+		}
+		if !set {
+			t.Errorf("job %q has no image, so no pull policy (SU-13, #217)", k)
+			continue
+		}
+		if img.kind != 'm' {
+			t.Errorf("job %q's image is a bare name with no pull policy (SU-13, #217)", k)
+			continue
+		}
+		if pp, ok := img.vals["pull_policy"]; !ok || pp.str != "if-not-present" {
+			t.Errorf("job %q's effective image does not pull if-not-present (SU-13, #217)", k)
+		}
+	}
+	if jobs < 9 {
+		t.Fatalf("checked only %d jobs: the reader is not finding them", jobs)
 	}
 }
 
