@@ -114,8 +114,13 @@ func TestRemoveFailure_OutputEndingInANewlineAddsNoBlankRow(t *testing.T) {
 	if at < 0 || at+2 >= len(rows) {
 		t.Fatalf("error row not found:\n%s", wi10Compact(strings.Join(rows, "\n")))
 	}
-	if strings.TrimSpace(strings.Trim(rows[at+1], "·.✦●")) != "" || !strings.Contains(rows[at+2], "Exit") {
-		t.Errorf("want one blank row between the error and Exit, got %q then %q", rows[at+1], rows[at+2])
+	if strings.TrimSpace(strings.Map(func(r rune) rune {
+		if strings.ContainsRune("·.✦●", r) {
+			return -1
+		}
+		return r
+	}, rows[at+1])) != "" || !strings.Contains(rows[at+2], "Menu") {
+		t.Errorf("want one blank row between the error and the menu, got %q then %q", rows[at+1], rows[at+2])
 	}
 }
 

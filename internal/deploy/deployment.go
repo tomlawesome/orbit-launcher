@@ -25,7 +25,7 @@ const (
 	SecretsDir = ".orbit-secrets"
 )
 
-// scriptsDir is where a deployment, and a configure tree shaped like
+// scriptsDir is where a deployment, and a configuration tree shaped like
 // one, keep orbit's scripts.
 const scriptsDir = "scripts"
 

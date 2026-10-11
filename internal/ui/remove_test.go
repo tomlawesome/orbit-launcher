@@ -160,7 +160,9 @@ func TestRemoveModel_DoneScreenCopyThenExit(t *testing.T) {
 		t.Errorf("expected the copy command to return a nil message, got %#v", msg)
 	}
 
-	// Move to Exit and confirm it quits.
+	// Menu is the row below Copy command (#228); Exit is the one under it.
+	updated, _ = m.Update(key(tea.KeyDown))
+	m = updated.(RemoveModel)
 	updated, _ = m.Update(key(tea.KeyDown))
 	m = updated.(RemoveModel)
 	_, quitCmd := m.Update(key(tea.KeyEnter))

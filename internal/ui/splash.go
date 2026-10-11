@@ -336,15 +336,16 @@ func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// A digit moves the caret to its row and nothing else; Enter acts,
+	// as on every other menu, so a stray 5 never closes the launcher
+	// (#228 C1).
 	for _, r := range msg.Text {
 		if r >= '1' && r <= '9' {
 			idx := int(r - '1')
 			if idx < len(MainMenu) {
 				m.userNavigated = true
 				m.menu.sel = idx
-				m.Chosen = m.menu.selected()
-				m.quitting = true
-				return m, tea.Quit
+				return m, nil
 			}
 		}
 	}
@@ -375,7 +376,7 @@ func (m SplashModel) footText() string {
 		return ""
 	}
 	if m.orbitVersion != "" {
-		text += " · orbit " + m.orbitVersion
+		text += style.Separator + "orbit " + m.orbitVersion
 	}
 	return text
 }

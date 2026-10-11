@@ -77,10 +77,11 @@ func installSuccessScreen(t *testing.T) tea.Model {
 
 func finishedScreens() []finishedScreen {
 	return []finishedScreen{
-		// Copy command is the default row; Exit is the one below it.
-		{"Remove removed", removedScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
-		// Exit is the only row.
-		{"Remove failed", removeFailedScreen, []tea.Msg{key(tea.KeyEnter)}},
+		// Copy command is the default row; Exit is two below it, under
+		// Menu (#228).
+		{"Remove removed", removedScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyEnter)}},
+		// Menu is the default row; Exit is the one below it (#228).
+		{"Remove failed", removeFailedScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 		// Get into Orbit, then Terminal.
 		{"Install success", installSuccessScreen, []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 	}
@@ -254,8 +255,8 @@ func appOnInstallSuccess(t *testing.T) AppModel {
 
 func appFinishedScreens() []appFinished {
 	return []appFinished{
-		{name: "Remove removed", app: appOnRemoved, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
-		{name: "Remove failed", app: appOnRemoveFailed, exitKeys: []tea.Msg{key(tea.KeyEnter)}},
+		{name: "Remove removed", app: appOnRemoved, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyEnter)}},
+		{name: "Remove failed", app: appOnRemoveFailed, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 		{name: "Install success", app: appOnInstallSuccess, exitKeys: []tea.Msg{key(tea.KeyDown), key(tea.KeyEnter)}},
 	}
 }
@@ -358,7 +359,7 @@ func TestEscAfterFlow_AppExitRowAndCtrlCStillQuitAndQDoesNothing(t *testing.T) {
 func TestEscAfterFlow_RepairPostRunScreensStillGoBackToTheMenu(t *testing.T) {
 	t.Run("error screen", func(t *testing.T) {
 		m, _ := updateAs(t, sizedRepair(t), repairReadyMsg{err: errors.New("target directory: no such file")})
-		if !strings.Contains(screen(m), "Diagnosis couldn't run") {
+		if !strings.Contains(screen(m), "Diagnosis stopped") {
 			t.Fatalf("not on the error screen:\n%s", screen(m))
 		}
 		if leftForMenu(m.Outcome()) {

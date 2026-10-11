@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -37,8 +36,8 @@ type UpdateModel struct {
 	state         updateState
 	confirm       menu // updateConfirmRows
 
-	// left is Esc or Cancel on the flow's first screen: back to the main
-	// menu with nothing started (#210).
+	// left is Esc, Cancel or Menu on the flow's first screen: back to the
+	// main menu with nothing started (#210).
 	left bool
 
 	// installedAt and lookupInstalledAt: see RemoveModel.
@@ -67,6 +66,10 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 }
 
 var updateConfirmRows = []string{"Update Orbit", "Cancel"}
+
+// deadEndRows are a dead end's one row, Update's and Remove's not-found
+// screens: back to the main menu (#228).
+var deadEndRows = []string{"Menu"}
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
 // the person left on the first screen, otherwise the engine run's.
@@ -127,13 +130,12 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch m.state {
 	case updateStateNotFound:
-		// The flow's first screen: Esc is back to the menu; Exit, and
-		// any other key, quits as it always has.
-		if msg.Code == tea.KeyEsc {
+		// The dead end: its one row and Esc both go back to the menu,
+		// and no other key does anything (#228).
+		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
-			return m, nil
 		}
-		return m, tea.Quit
+		return m, nil
 	case updateStateConfirm:
 		return m.handleConfirmKey(msg)
 	}
@@ -141,22 +143,19 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.left = true
-		return m, nil
-	}
 	var chosen string
-	m.confirm, chosen = m.confirm.update(msg)
-	switch chosen {
-	case "Cancel":
+	var back bool
+	m.confirm, chosen, back = m.confirm.onScreen(msg)
+	switch {
+	case back, chosen == "Cancel":
 		m.left = true
-	case "Update Orbit":
+	case chosen == "Update Orbit":
 		m.state = updateStateRunning
 		title := "Update"
 		if m.deployment != nil {
 			title = "Update — " + deploymentIdentity(m.deployment)
 		}
-		m.run = newEngineRun("update", m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
+		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd
@@ -188,20 +187,16 @@ func (m UpdateModel) view() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m UpdateModel) viewNotFound() string {
-	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "No Orbit deployment found here")
-	fmt.Fprintln(&b, style.MutedText.Render("There's nothing to update in this directory —"))
-	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
-	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Exit"}, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+		"There's nothing to update in this directory —",
+		"Install is the way to get into Orbit first.")
 }
 
 func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Pull the latest Orbit and update this deployment")
 
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
 	if image := m.deploymentImage(); image != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(image))
 	}

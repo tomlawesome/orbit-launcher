@@ -30,6 +30,7 @@ func TestRemoveModel_TeaTest_FullFlowToDone(t *testing.T) {
 		return bytes.Contains(out, []byte("stood down"))
 	}, teatest.WithDuration(2*time.Second))
 
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})  // Menu
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})  // Exit
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // quit
 

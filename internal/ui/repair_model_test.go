@@ -100,7 +100,7 @@ func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 		t.Fatalf("state = %v, want repairError", m.state)
 	}
 	s := screen(m)
-	for _, want := range []string{"Diagnosis couldn't run", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
+	for _, want := range []string{"Diagnosis stopped", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("error screen lacks %q:\n%s", want, s)
 		}
@@ -131,7 +131,7 @@ func TestRepairModel_DiagnosisCrashIsAnErrorNotAVerdict(t *testing.T) {
 		t.Fatal("an unexpected exit must not start another run")
 	}
 	s := screen(m)
-	if !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "exit status 1") {
+	if !strings.Contains(s, "Diagnosis stopped") || !strings.Contains(s, "exit status 1") {
 		t.Fatalf("exit 1 should be reported as a failed run with its error:\n%s", s)
 	}
 	if strings.Contains(s, "Diagnosis clear") || strings.Contains(s, "Problems found") {
@@ -155,7 +155,7 @@ func TestRepairModel_UsageErrorFromCheckModeIsAnError(t *testing.T) {
 
 func TestRepairModel_EscWhileReadingKillsTheRunAndReturnsToMenu(t *testing.T) {
 	m := sizedRepair(t)
-	if !strings.Contains(screen(m), "reading the deployment — nothing will be changed") {
+	if !strings.Contains(screen(m), "reading the deployment") {
 		t.Fatalf("preparing screen:\n%s", screen(m))
 	}
 	s := sleepingStream(t)
@@ -336,7 +336,7 @@ func TestRepairModel_CtrlCWhileARepairIsStartingKeepsTheRunThatStartedAnyway(t *
 		}, "can't be stopped from here"},
 		{"credential rotation", repairRotating, func(s *engine.Stream, stdin *recordingStdin) tea.Msg {
 			return repairRotateReadyMsg{stream: s, stdin: stdin}
-		}, "stopping — waiting for the engine"},
+		}, "waiting for the engine"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := sizedRepair(t)
@@ -606,7 +606,7 @@ func TestRepairModel_AfterPictureMenuAndExitRows(t *testing.T) {
 func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairRotating
-	if !strings.Contains(screen(m), "talking to the engine…") {
+	if !strings.Contains(screen(m), "talking to the engine") {
 		t.Fatalf("before the first prompt:\n%s", screen(m))
 	}
 
@@ -637,7 +637,7 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 		"prompt field=action-word kind=typed-word required=true attempt=2",
 	)
 	s := screen(m)
-	if !strings.Contains(s, "cannot be empty") || !strings.Contains(s, "attempt 2 of 3") {
+	if !strings.Contains(s, "can't be empty") || !strings.Contains(s, "attempt 2 of 3") {
 		t.Fatalf("rejection or attempt not shown:\n%s", s)
 	}
 
@@ -649,7 +649,7 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 
 	// An abort clears the prompt; the screen waits on the engine again.
 	m = repairLines(t, m, "prompt-abort field=action-word")
-	if !strings.Contains(screen(m), "talking to the engine…") {
+	if !strings.Contains(screen(m), "talking to the engine") {
 		t.Fatalf("after abort:\n%s", screen(m))
 	}
 
@@ -778,7 +778,7 @@ func TestRepairModel_UnsummarisedPlanNeedsAttention(t *testing.T) {
 // enum that slipped back to its raw form would be noticed only by them.
 func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 	targets := map[string]string{
-		"directory":          "target directory",
+		"directory":          "deployment directory",
 		"env-file":           ".env-orbit",
 		"compose-file":       "docker-compose.yml",
 		"compose":            "compose configuration",
@@ -802,7 +802,7 @@ func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 	}
 
 	classes := map[string]string{
-		"not-orbit-directory":                 "no recognizable Orbit installation",
+		"not-orbit-directory":                 "no recognisable Orbit installation",
 		"managed-file-missing":                "missing",
 		"managed-file-symlink":                "is a symlink, refusing to trust it",
 		"managed-file-permissions":            "permissions aren't restricted to the owner",
@@ -930,7 +930,7 @@ func TestRepairModel_EscWhileRotatingClosesInputAndWaitsForTheEngine(t *testing.
 			if m.state != repairRotating {
 				t.Fatalf("state = %v, want repairRotating until the engine exits", m.state)
 			}
-			if sc := screen(m); !strings.Contains(sc, "stopping — waiting for the engine") {
+			if sc := screen(m); !strings.Contains(sc, "waiting for the engine") {
 				t.Fatalf("screen does not say it is waiting for the engine:\n%s", sc)
 			}
 			select {
@@ -1189,7 +1189,7 @@ func TestDefaultPrepareRepair_UntrustedScriptIsRefused(t *testing.T) {
 	if !errors.As(m.runErr, &untrusted) || untrusted.Path != script {
 		t.Fatalf("runErr = %v, want a refusal naming %s", m.runErr, script)
 	}
-	if s := screen(m); !strings.Contains(s, "Diagnosis couldn't run") || !strings.Contains(s, "writable by everyone") {
+	if s := screen(m); !strings.Contains(s, "Diagnosis stopped") || !strings.Contains(s, "writable by everyone") {
 		t.Fatalf("screen:\n%s", s)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {

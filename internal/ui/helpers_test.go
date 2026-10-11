@@ -6,6 +6,7 @@ package ui
 // engine run pushes into.
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -117,4 +118,57 @@ func runScreen(r engineRun) string { return ansi.Strip(r.view(80, 26)) }
 // the stream delivers; .Event is the bare event.
 func ev(phase, component, state, reason, action string) engine.EventMsg {
 	return engine.EventMsg{Event: engine.Event{Phase: phase, Component: component, State: state, Reason: reason, Action: action}}
+}
+
+// rowLabels are every label a menu row carries on the screens the menu
+// grammar tests read (#228); screenLabels picks these out of a screen.
+var rowLabels = map[string]bool{
+	"Install": true, "Update": true, "Repair": true, "Remove": true,
+	"Install now": true, "Update Orbit": true, "Stand down Orbit": true,
+	"Continue anyway": true, "Open the guided installer": true,
+	"Get into Orbit": true, "Copy command": true, "Copy command · copied": true,
+	"Cancel": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
+}
+
+// screenRow is one screen line with the starfield, the caret and the
+// padding taken off its ends — the row's label when the line is a row.
+func screenRow(line string) string {
+	return strings.Trim(line, " ▸.·✦●⟡")
+}
+
+// screenLabels are the menu rows on a stripped screen, top to bottom,
+// by label alone (the caret and the sky are not part of a row).
+func screenLabels(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if row := screenRow(line); rowLabels[row] {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// caretLabel is the label of the row the caret is on in a stripped
+// screen, "" when no row carries one.
+func caretLabel(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "▸") && rowLabels[screenRow(line)] {
+			return screenRow(line)
+		}
+	}
+	return ""
+}
+
+// moveCaretTo presses Down until the caret is on label, and fails if it
+// never gets there within a lap of the rows.
+func moveCaretTo[M tea.Model](t *testing.T, m M, label string) M {
+	t.Helper()
+	for i := 0; i <= len(screenLabels(screen(m))); i++ {
+		if caretLabel(screen(m)) == label {
+			return m
+		}
+		m, _ = updateAs(t, m, key(tea.KeyDown))
+	}
+	t.Fatalf("the caret never reached %q; rows %q:\n%s", label, screenLabels(screen(m)), screen(m))
+	return m
 }

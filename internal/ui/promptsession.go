@@ -91,15 +91,17 @@ func (s promptSession) paste(text string) promptSession {
 // deployment's callback URL ("" when the flow has none). width is the
 // screen's: an answer too long for the input row shows by its end, so
 // the cursor stays in view (#223); 0 (not yet sized) shows it whole.
-func (s promptSession) view(b *strings.Builder, origin string, width int) {
+// frame is the flow's spinner frame, for the working line shown while
+// no prompt is open.
+func (s promptSession) view(b *strings.Builder, origin string, width, frame int) {
 	p := s.prompt
 	if p == nil {
-		fmt.Fprintln(b, style.MutedText.Render("talking to the engine…"))
+		fmt.Fprintln(b, workingLine(frame, "talking to the engine", ""))
 		return
 	}
 
 	label, hint, notes := promptWords(p.Field, origin)
-	fmt.Fprintln(b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
+	fmt.Fprintln(b, style.Ink.Render(label))
 	if hint != "" {
 		fmt.Fprintln(b, style.Tagline.Render(hint))
 	}
@@ -119,7 +121,7 @@ func (s promptSession) view(b *strings.Builder, origin string, width int) {
 	default:
 		shown = s.input.String()
 	}
-	fmt.Fprintln(b, caret+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
+	fmt.Fprintln(b, caret+style.Ink.Render(shown)+cursor)
 
 	if s.reason != "" {
 		fmt.Fprintln(b)

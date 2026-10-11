@@ -21,21 +21,21 @@ import (
 	"io"
 	"os"
 
-	toolcli "github.com/tomlawesome/orbit-launcher/tools/internal/cli"
+	"github.com/tomlawesome/orbit-launcher/tools/internal/cli"
 	"github.com/tomlawesome/orbit-launcher/tools/licencereview/review"
 )
 
 func main() {
-	os.Exit(cli(os.Args, os.Stdout, os.Stderr, review.Shipped))
+	os.Exit(command(os.Args, os.Stdout, os.Stderr, review.Shipped))
 }
 
-// cli is the whole command bar os.Exit, so its tests need no subprocess.
+// command is the whole command bar os.Exit, so its tests need no subprocess.
 // What ships is a parameter, review.Shipped from main, so a test can hand
 // it fixed packages rather than run go list over this module, whose
 // findings change with every dependency bump. args is os.Args; the flags
-// and exit codes are toolcli.Run's.
-func cli(args []string, stdout, stderr io.Writer, shipped func() ([]review.Package, error)) int {
-	return toolcli.Run("licencereview", args[1:], stderr, func(fs *flag.FlagSet) func() error {
+// and exit codes are cli.Run's.
+func command(args []string, stdout, stderr io.Writer, shipped func() ([]review.Package, error)) int {
+	return cli.Run("licencereview", args[1:], stderr, func(fs *flag.FlagSet) func() error {
 		reviewPath := fs.String("review", ".github/licence-review.txt", "the recorded reviews")
 		list := fs.Bool("list", false, "print every finding, reviewed or not, and exit 0")
 		return func() error { return run(*reviewPath, *list, stdout, shipped) }

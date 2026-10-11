@@ -5,6 +5,10 @@ package style
 
 import "charm.land/lipgloss/v2"
 
+// Separator is the one middle-dot separator between facts on a line:
+// one space each side, written here once (#230).
+const Separator = " · "
+
 // Palette — the starchart identity, aligned with orbit's own web
 // direction (orbit issue #307): gold is the accent, approach-blue its
 // companion. See design/mockups-v6-starchart.html for the swatches
@@ -59,6 +63,9 @@ var SpinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 // Title is the bold full-ink style of every screen title, and of the
 // wordmark.
 var Title = lipgloss.NewStyle().Bold(true).Foreground(Text)
+
+// Ink is plain full-ink text: Title's colour without the bold.
+var Ink = lipgloss.NewStyle().Foreground(Text)
 
 // Tracked letter-spaces word with single spaces: the wordmark's tracking.
 func Tracked(word string) string {

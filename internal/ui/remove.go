@@ -46,13 +46,16 @@ type RemoveModel struct {
 	deployment    *deploy.Deployment
 	state         removeState
 	confirm       menu // removeConfirmRows
-	done          menu // removeDoneRows
+	after         menu // removeDoneRows or removeFailedRows, once the stand-down answers
 	standDownErr  error
 	copied        bool
 
-	// left is going back to the main menu: Esc, Cancel or Back on the
-	// flow's first screen, with nothing stood down (#210), or Esc on the
-	// removed and failed screens after the stand-down (#225).
+	// frame is the working line's spinner frame, advanced on every tick.
+	frame int
+
+	// left is going back to the main menu: Esc, Cancel or Menu on the
+	// flow's first screen, with nothing stood down (#210), or Esc or Menu
+	// on the removed and failed screens after the stand-down (#225).
 	left bool
 
 	// targetDir is where AppModel looked; the no-deployment screen names
@@ -81,7 +84,7 @@ type RemoveModel struct {
 // nil deployment means nothing was found, and the flow says so and
 // offers only the way back.
 func NewRemoveModel(d *deploy.Deployment) RemoveModel {
-	m := RemoveModel{deployment: d, confirm: newMenu(removeConfirmRows...), done: newMenu(removeDoneRows...)}
+	m := RemoveModel{deployment: d, confirm: newMenu(removeConfirmRows...)}
 	if d == nil {
 		m.state = removeStateNotFound
 	}
@@ -92,12 +95,13 @@ const removeCopy = "Copy command"
 
 var (
 	removeConfirmRows = []string{"Stand down Orbit", "Cancel"}
-	removeDoneRows    = []string{removeCopy, "Exit"}
+	removeDoneRows    = []string{removeCopy, "Menu", "Exit"}
+	removeFailedRows  = []string{"Menu", "Exit"}
 )
 
 // Outcome surfaces the flow result to AppModel: leaving, on the first
 // screen or after the stand-down, returns to the menu; the Exit row and
-// Ctrl-C quit instead.
+// Ctrl-C quit instead (Ctrl-C and Esc do nothing while the stand-down runs).
 func (m RemoveModel) Outcome() flowOutcome {
 	if m.left {
 		return backToMenu
@@ -129,6 +133,7 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.star = m.star.Advance()
+		m.frame = nextFrame(m.frame)
 		return m, tick()
 
 	case installedAtMsg:
@@ -139,8 +144,10 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.standDownErr = msg.err
 			m.state = removeStateFailed
+			m.after = newMenu(removeFailedRows...)
 		} else {
 			m.state = removeStateDone
+			m.after = newMenu(removeDoneRows...)
 		}
 		return m, nil
 
@@ -151,6 +158,12 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// While the stand-down runs nothing leaves the screen: Ctrl-C would
+	// quit and leave `docker compose down` running unseen, so it and
+	// Esc do nothing, as in Repair (#227). The result brings keys back.
+	if m.state == removeStateStandingDown {
+		return m, nil
+	}
 	if isCtrlC(msg) {
 		m.state = removeStateCancelled
 		return m, tea.Quit
@@ -158,8 +171,9 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch m.state {
 	case removeStateNotFound:
-		// Back is the only choice, and Esc is one step back (#205, 4a).
-		if msg.Code == tea.KeyEnter || msg.Code == tea.KeyEsc {
+		// The dead end: its one row and Esc both go back to the menu
+		// (#205, 4a; #228).
+		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
 		}
 		return m, nil
@@ -172,16 +186,13 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.left = true
-		return m, nil
-	}
 	var chosen string
-	m.confirm, chosen = m.confirm.update(msg)
-	switch chosen {
-	case "Cancel":
+	var back bool
+	m.confirm, chosen, back = m.confirm.onScreen(msg)
+	switch {
+	case back, chosen == "Cancel":
 		m.left = true
-	case "Stand down Orbit":
+	case chosen == "Stand down Orbit":
 		m.state = removeStateStandingDown
 		targetDir := m.deployment.TargetDir
 		standDown := m.standDownFunc()
@@ -192,32 +203,25 @@ func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
-// handleDoneKey drives the two screens after the stand-down. Esc goes
-// back to the main menu, as it does after Repair (#225); the Exit row
-// quits.
+// handleDoneKey drives the two screens after the stand-down. Esc and
+// the Menu row go back to the main menu, as after Repair (#225, #228);
+// the Exit row quits.
 func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
+	var chosen string
+	var back bool
+	m.after, chosen, back = m.after.onScreen(msg)
+	switch {
+	case back, chosen == "Menu":
 		m.left = true
 		return m, nil
-	}
-	if m.state == removeStateFailed {
-		// Exit is the only row.
-		if msg.Code == tea.KeyEnter {
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-	var chosen string
-	m.done, chosen = m.done.update(msg)
-	switch chosen {
-	case removeCopy:
+	case chosen == removeCopy:
 		words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
 		if err != nil {
 			return m, nil
 		}
 		m.copied = true
 		return m, copyToClipboard(m.clipboardWriter(), strings.Join(words, " "))
-	case "Exit":
+	case chosen == "Exit":
 		return m, tea.Quit
 	}
 	return m, nil
@@ -274,22 +278,16 @@ func (m RemoveModel) view() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m RemoveModel) viewNotFound() string {
-	var b strings.Builder
-	// The path is the one word here whose length nobody chose.
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		wrapWords("No Orbit deployment found in "+m.targetDir, min(m.width-4, proseWidth))...)
-	fmt.Fprintln(&b, style.MutedText.Render("Remove acts only on a deployment the launcher has found."))
-	fmt.Fprintln(&b, style.MutedText.Render("Start it in the directory that holds "+deploy.EnvFile+"."))
-	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Back"}, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+		"Remove acts only on a deployment the launcher has found.",
+		"Start it in the directory that holds "+deploy.EnvFile+".")
 }
 
 func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "This stops Orbit and removes its containers")
 
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identityLine(m.deployment, m.installedAt)))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("Your mail, documents, and configuration are not deleted"))
 	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))
@@ -300,17 +298,17 @@ func (m RemoveModel) viewConfirm() string {
 }
 
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, style.WarmText.Render(string(style.SpinnerFrames[0]))+" "+style.MutedText.Render("standing down Orbit…"))
+	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", cannotStopLine))
 }
 
 func (m RemoveModel) viewDone() string {
 	var b strings.Builder
-	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolSuccess), "Orbit has been stood down")
+	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolMark), "Orbit has been stood down")
 
 	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
 	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", min(m.width-4, proseWidth))
+	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth))
 	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
@@ -335,9 +333,9 @@ func (m RemoveModel) viewDone() string {
 
 	// The copy row says so once it has copied; the menu's own label,
 	// which Enter answers with, stays the same.
-	done := m.done
+	done := m.after
 	if m.copied {
-		done = done.over([]string{removeCopy + " · copied", "Exit"})
+		done = done.over(append([]string{removeCopy + style.Separator + "copied"}, removeDoneRows[1:]...))
 	}
 	done.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -345,13 +343,13 @@ func (m RemoveModel) viewDone() string {
 
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
-	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Could not stand down Orbit")
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Stand-down stopped")
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), min(m.width-4, errorWidth))
+		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
-	writeStackedMenu(&b, []string{"Exit"}, 0)
+	m.after.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }

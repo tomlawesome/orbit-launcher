@@ -121,13 +121,12 @@ func TestLeaveFlow_EscOnTheFirstScreenGoesBackToTheMenu(t *testing.T) {
 	}
 }
 
-// The "Cancel" row on Update/Remove and the "Back" row on Install's
-// pre-flight are the same act as Esc (UI-1: one leave-flow outcome).
-// Assumption flagged in the report: the issue lists Esc / Cancel / Back
-// as one act, and the owner's answer names Esc only.
-func TestLeaveFlow_CancelAndBackRowsAreTheSameActAsEsc(t *testing.T) {
+// The "Cancel" row on Update, Remove and Install's pre-flight is the same
+// act as Esc (UI-1: one leave-flow outcome; #228: Cancel declines a
+// question and goes where Esc goes).
+func TestLeaveFlow_CancelRowsAreTheSameActAsEsc(t *testing.T) {
 	rows := []leaveCase{
-		{"Install pre-flight Back row", staleInstall},
+		{"Install pre-flight Cancel row", staleInstall},
 		{"Update Cancel row", confirmUpdate},
 		{"Remove Cancel row", confirmRemove},
 	}

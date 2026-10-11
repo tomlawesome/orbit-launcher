@@ -48,20 +48,83 @@ func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
 	}
 }
 
-func TestSplashModel_NumberKeyJumpsAndChooses(t *testing.T) {
-	m := settled(NewSplashModel())
+// A digit moves the caret to its row and nothing else; Enter acts, as on
+// every other menu (#228 C1). A stray digit must never close the
+// launcher (#226).
+func TestSplashModel_NumberKeyMovesTheCaretOnly(t *testing.T) {
+	for i, item := range MainMenu {
+		digit := rune('1' + i)
+		t.Run(item.Label, func(t *testing.T) {
+			m, _ := updateAs(t, settled(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26})
+			m, cmd := updateAs(t, m, runeKey(digit))
 
-	updated, cmd := m.Update(runeKey('4')) // 1-indexed: Remove
-	m = updated.(SplashModel)
+			if m.menu.sel != i {
+				t.Errorf("selected = %d, want %d (%s)", m.menu.sel, i, item.Label)
+			}
+			if m.Chosen != "" {
+				t.Errorf("Chosen = %q after a digit, want empty: Enter acts, not the digit", m.Chosen)
+			}
+			if m.quitting {
+				t.Error("a digit marked the splash as quitting")
+			}
+			if cmd != nil {
+				t.Errorf("a digit issued a command (quit = %v), want none", isQuit(cmd))
+			}
+			if !m.userNavigated {
+				t.Error("a digit is navigation: the health probe must stop moving the caret")
+			}
+			if !strings.Contains(screen(m), "▸ "+item.Label) {
+				t.Errorf("the caret is not drawn on %s:\n%s", item.Label, screen(m))
+			}
+		})
+	}
+}
 
+// After a digit, Enter acts on the row the caret is on.
+func TestSplashModel_EnterAfterANumberKeyActs(t *testing.T) {
+	for i, item := range MainMenu[:len(MainMenu)-1] { // Exit is below
+		t.Run(item.Label, func(t *testing.T) {
+			m, _ := updateAs(t, settled(NewSplashModel()), runeKey(rune('1'+i)))
+			m, cmd := updateAs(t, m, key(tea.KeyEnter))
+			if m.Chosen != item.Label {
+				t.Errorf("Chosen = %q, want %q", m.Chosen, item.Label)
+			}
+			if !isQuit(cmd) {
+				t.Error("Enter on a chosen row should issue tea.Quit (the app reads Chosen)")
+			}
+		})
+	}
+	t.Run("Exit", func(t *testing.T) {
+		m, _ := updateAs(t, settled(NewSplashModel()), runeKey(rune('0'+len(MainMenu))))
+		if m, cmd := updateAs(t, m, key(tea.KeyEnter)); !isQuit(cmd) || m.Chosen == "Install" {
+			t.Errorf("Enter on Exit: quit = %v, Chosen = %q; want a quit", isQuit(cmd), m.Chosen)
+		}
+	})
+}
+
+// The health probe must not fight a caret the digit placed.
+func TestSplashModel_DegradedNeverMovesTheCaretAfterANumberKey(t *testing.T) {
+	m, _ := updateAs(t, seedDeployment(NewSplashModel()), runeKey('4'))
+	m, _ = updateAs(t, m, healthResultMsg{healthy: false})
 	if m.menu.sel != 3 {
-		t.Errorf("selected = %d, want 3 (Remove)", m.menu.sel)
+		t.Errorf("selected = %d, want 3 — the probe moved the caret a digit had placed", m.menu.sel)
 	}
-	if m.Chosen != "Remove" {
-		t.Errorf("Chosen = %q, want %q", m.Chosen, "Remove")
+}
+
+// During the arrival any key skips it and is swallowed: a digit does not
+// leave, and does not move the caret either.
+func TestSplashModel_NumberKeyDuringTheArrivalSkipsItAndIsSwallowed(t *testing.T) {
+	m := NewSplashModel()
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, cmd := updateAs(t, m, runeKey('5'))
+	if isQuit(cmd) || m.Chosen != "" || m.quitting {
+		t.Fatalf("a digit during the arrival left (quit = %v, Chosen = %q)", isQuit(cmd), m.Chosen)
 	}
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected a number key to issue tea.Quit")
+	if !m.introDone {
+		t.Error("the digit did not skip the arrival")
+	}
+	if m.menu.sel != 0 {
+		t.Errorf("selected = %d: the skipping key must be swallowed, not move the caret", m.menu.sel)
 	}
 }
 

@@ -31,7 +31,7 @@ func main() {
 // application works than an in-process unit test would be.
 func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr io.Writer) int) int {
 	if len(args) > 0 && args[0] == "--version" {
-		fmt.Fprintf(stdout, "orbit-launcher %s (%s)\n", release.Version, release.Revision)
+		fmt.Fprintf(stdout, "orbit-launcher %s (%s)\n", release.DisplayVersion(release.Version), release.Revision)
 		return 0
 	}
 	// The licence notices every copy of the binary owes its dependencies

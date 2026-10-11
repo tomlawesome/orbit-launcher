@@ -50,6 +50,54 @@ func writeInlineHeader(b *strings.Builder, glyph, title string) {
 	fmt.Fprintln(b)
 }
 
+// workingLine is the one way a screen says something is running (#229):
+// the spinner glyph at frame in WarmText, a space, and a lowercase
+// phrase with no ellipsis; hint, when not "", is a second line in
+// Tagline. The caller advances frame on the shared tick (nextFrame), so
+// the glyph moves the way the console's does and never reads as a hang.
+func workingLine(frame int, text, hint string) string {
+	line := style.WarmText.Render(string(style.SpinnerFrames[frame%len(style.SpinnerFrames)])) + " " + style.MutedText.Render(text)
+	if hint != "" {
+		line += "\n" + style.Tagline.Render(hint)
+	}
+	return line
+}
+
+// nextFrame is the spinner frame after frame, round the ring.
+func nextFrame(frame int) int { return (frame + 1) % len(style.SpinnerFrames) }
+
+// viewNoDeployment is the one "nothing here" screen Update, Remove and
+// Repair share (#229): block header, gold mark, the title naming the
+// directory that was looked at (wrapped, since nobody chose its length),
+// the flow's own body lines, then the dead end's one row (#228).
+func viewNoDeployment(star starfield.Model, width, height int, dir string, body ...string) string {
+	var b strings.Builder
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
+		wrapWords("No Orbit deployment found in "+dir, measure(width, proseWidth))...)
+	for _, line := range body {
+		fmt.Fprintln(&b, style.MutedText.Render(line))
+	}
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, deadEndRows, 0)
+	return skyBlock(star, width, height, b.String())
+}
+
+// drawBar draws the thin progress bar every screen shares: fill cells
+// of "─" in fillStyle, then the rest of the cells over the BorderSoft
+// track. fill is clamped to 0..cells. A part with no cells is left out
+// rather than rendered empty, which would still emit its colour codes.
+func drawBar(fill, cells int, fillStyle lipgloss.Style) string {
+	fill = min(max(fill, 0), cells)
+	bar := ""
+	if fill > 0 {
+		bar += fillStyle.Render(strings.Repeat("─", fill))
+	}
+	if cells-fill > 0 {
+		bar += lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", cells-fill))
+	}
+	return bar
+}
+
 // drawBox draws the one rounded box every screen uses (the console's
 // event log, the notice's typing field, the removal command), width
 // cells wide with one row per entry of rows, its frame in border:

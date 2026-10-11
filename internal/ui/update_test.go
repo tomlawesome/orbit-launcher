@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,19 +34,27 @@ func testDeployment() *deploy.Deployment {
 	}
 }
 
-func TestUpdateModel_NoDeploymentReachesNotFoundAndOnlyQuits(t *testing.T) {
+// The no-deployment screen is a one-row menu: Menu goes back to the main
+// menu, and no other key quits (#228 C2; #226).
+func TestUpdateModel_NoDeploymentReachesNotFoundAndOffersMenuOnly(t *testing.T) {
 	m, _ := newTestUpdateModel(nil, engineRunSeams{})
 	if m.state != updateStateNotFound {
 		t.Fatalf("state = %v, want updateStateNotFound", m.state)
 	}
-	_, cmd := m.Update(key(tea.KeyEnter))
-	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("expected any key on the not-found screen to quit")
+	if got := screenLabels(screen(m)); !slices.Equal(got, []string{"Menu"}) {
+		t.Fatalf("not-found rows = %q, want just Menu", got)
+	}
+	m2, cmd := m.Update(key(tea.KeyEnter))
+	if isQuit(cmd) {
+		t.Fatal("Enter on the not-found screen quit; its one row is Menu")
+	}
+	if o := m2.(UpdateModel).Outcome(); !leftForMenu(o) {
+		t.Fatalf("outcome after Enter = %+v, want back to the menu", o)
 	}
 }
 
 // The no-deployment screen is the flow's first: Esc is back to the main
-// menu (#210, owner 4a); Exit and every other key still quit.
+// menu (#210, owner 4a); no other key quits (#228).
 func TestUpdateModel_EscOnNotFoundGoesBackToTheMenu(t *testing.T) {
 	m, _ := newTestUpdateModel(nil, engineRunSeams{})
 	updated, cmd := m.Update(key(tea.KeyEsc))

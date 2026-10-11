@@ -6,53 +6,72 @@
 //	go run ./tools/coveragefloor coverage.out
 //	go run ./tools/coveragefloor coverage.out path/to/other-floors.txt
 //
-// Exit code 0: every measured package is at or above its floor, and every
-// floor names a package the profile still has. Exit code 1: the ratchet
-// failed (a regression or a stale floor) -- see stderr for which. Exit
-// code 2: the profile or the floors file could not be read or parsed --
-// this command fails closed rather than passing on bad input.
+// Exit codes are the shared skeleton's (tools/internal/cli): 0 when every
+// measured package is at or above its floor and every floor names a
+// package the profile still has, and for -h; 1 when the ratchet failed (a
+// regression or a stale floor -- see stderr for which) or an input could
+// not be read or parsed, so the command fails closed rather than passing
+// on bad input; 2 for a bad flag or the wrong number of arguments.
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/tomlawesome/orbit-launcher/tools/coveragefloor/floor"
+	"github.com/tomlawesome/orbit-launcher/tools/internal/cli"
 )
 
 const defaultFloorsPath = ".github/coverage-floors.txt"
 
 func main() {
-	os.Exit(cli(os.Args, os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// cli is main bar os.Exit -- the argument check and the default floors
-// path -- so the usage error and the default are tested like the rest.
-func cli(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 2 || len(args) > 3 {
-		fmt.Fprintln(stderr, "usage: coveragefloor <coverage.out> [floors-file]")
+// run is main with its arguments and outputs passed in. The positional
+// arguments -- the profile and an optional floors file -- are read after
+// the flags are parsed; any other count prints the usage and exits 2,
+// which cli.Run reserves for flags, so it is mapped here.
+func run(args []string, stdout, stderr io.Writer) int {
+	usageError := false
+	code := cli.Run("coveragefloor", args, stderr, func(fs *flag.FlagSet) func() error {
+		fs.Usage = func() {
+			fmt.Fprintln(fs.Output(), "usage: coveragefloor [flags] <coverage.out> [floors-file]")
+			fs.PrintDefaults()
+		}
+		return func() error {
+			if fs.NArg() < 1 || fs.NArg() > 2 {
+				usageError = true
+				fs.Usage()
+				return nil
+			}
+			floorsPath := defaultFloorsPath
+			if fs.NArg() == 2 {
+				floorsPath = fs.Arg(1)
+			}
+			return check(fs.Arg(0), floorsPath, stdout)
+		}
+	})
+	if usageError {
 		return 2
 	}
-	floorsPath := defaultFloorsPath
-	if len(args) == 3 {
-		floorsPath = args[2]
-	}
-	return run(args[1], floorsPath, stdout, stderr)
+	return code
 }
 
-// run is the whole command, with its inputs and outputs as parameters so
-// it can be exercised in tests without a subprocess.
-func run(profilePath, floorsPath string, stdout, stderr io.Writer) int {
+// check is the ratchet: it reads the profile and the floors, prints each
+// package against its floor, and returns an error if either input cannot
+// be used or the ratchet failed.
+func check(profilePath, floorsPath string, stdout io.Writer) error {
 	measured, err := readProfile(profilePath)
 	if err != nil {
-		fmt.Fprintln(stderr, "coveragefloor:", err)
-		return 2
+		return err
 	}
 	floors, err := readFloors(floorsPath)
 	if err != nil {
-		fmt.Fprintln(stderr, "coveragefloor:", err)
-		return 2
+		return err
 	}
 
 	results, problems := floor.Check(measured, floors)
@@ -65,14 +84,14 @@ func run(profilePath, floorsPath string, stdout, stderr io.Writer) int {
 	}
 
 	if len(problems) > 0 {
-		fmt.Fprintln(stderr, "coveragefloor: coverage ratchet failed:")
+		msg := "coverage ratchet failed:"
 		for _, p := range problems {
-			fmt.Fprintln(stderr, "  -", p)
+			msg += "\n  - " + p
 		}
-		return 1
+		return errors.New(msg)
 	}
 	fmt.Fprintf(stdout, "coveragefloor: %d package(s) checked against %s, all at or above their floor\n", len(floors), floorsPath)
-	return 0
+	return nil
 }
 
 func readProfile(path string) (map[string]floor.Coverage, error) {

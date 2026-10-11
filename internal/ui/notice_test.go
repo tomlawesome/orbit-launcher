@@ -125,9 +125,9 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 		t.Error("the current visit's tick must re-arm while the countdown runs")
 	}
 
-	m, _ = updateAs(t, m, key(tea.KeyEnter)) // the caret starts on Go back
+	m, _ = updateAs(t, m, key(tea.KeyEnter)) // the caret starts on Back
 	if m.state != installStateConfirm {
-		t.Errorf("Enter on Go back: state = %v, want installStateConfirm", m.state)
+		t.Errorf("Enter on Back: state = %v, want installStateConfirm", m.state)
 	}
 }
 
@@ -192,7 +192,7 @@ func TestNotice_WrapsTheApprovedCopy(t *testing.T) {
 func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
 	view := screen(m)
-	for _, want := range []string{noticeTitle, "Project state: alpha", "1:10", "Go back", "To install, type  " + noticePhrase} {
+	for _, want := range []string{noticeTitle, "Project state: alpha", "1:10", "Back", "To install, type  " + noticePhrase} {
 		if !strings.Contains(view, want) {
 			t.Errorf("first view lacks %q", want)
 		}
@@ -329,12 +329,12 @@ func TestNotice_TypingFocusesTheBox(t *testing.T) {
 		t.Errorf("Backspace: typed = %q, want %q", m.notice.typed.String(), "I've r")
 	}
 	m, _ = updateAs(t, m, key(tea.KeyDown))
-	if m.notice.focus != noticeFocusBack || !strings.Contains(screen(m), "▸ Go back") {
-		t.Error("↓ from the box must move the caret to Go back")
+	if m.notice.focus != noticeFocusBack || !strings.Contains(screen(m), "▸ Back") {
+		t.Error("↓ from the box must move the caret to Back")
 	}
 	m, _ = updateAs(t, m, key(tea.KeyUp))
 	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I've r" {
-		t.Error("↑ from Go back must return to the box, keeping the text")
+		t.Error("↑ from Back must return to the box, keeping the text")
 	}
 }
 

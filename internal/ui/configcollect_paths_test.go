@@ -88,7 +88,7 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 		t.Fatal("a failed adoption must not retry the engine")
 	}
 	s := runScreen(r)
-	if r.state != runFailed || !strings.Contains(s, "Installation stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
+	if r.state != runFailed || !strings.Contains(s, "Install stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
 		t.Fatalf("state = %v, screen:\n%s", r.state, s)
 	}
 }
@@ -114,7 +114,7 @@ func TestConfigCollect_TypingEditsTheAnswerAndSubmitsIt(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
 	r.cfg.stdin = stdin
-	if !strings.Contains(runScreen(r), "talking to the engine…") {
+	if !strings.Contains(runScreen(r), "talking to the engine") {
 		t.Fatalf("before a prompt:\n%s", runScreen(r))
 	}
 	// No prompt yet: typing goes nowhere.
@@ -167,7 +167,7 @@ func TestConfigSignInMode_UnboundKeyChangesNothing(t *testing.T) {
 
 func TestConfigCollect_RejectionReasonsInWords(t *testing.T) {
 	reasons := map[string]string{
-		"empty":              "cannot be empty",
+		"empty":              "can't be empty",
 		"invalid-characters": "contains whitespace or control characters",
 		"not-https":          "must start with https://",
 		"not-absolute-url":   "isn't a plain https:// address",
@@ -214,7 +214,7 @@ func shellQuoteLines(report string) string {
 
 func TestConfigCollect_InitCompletionRechecksWithTheRealCheck(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{}) // no recheck seam
-	r.cfg.plan = configPlan{treeDir: configTree(t, "ready APP_URL\nmissing OIDC_CLIENT_SECRET"), needInit: true}
+	r.cfg.plan = configPlan{configTree: configTree(t, "ready APP_URL\nmissing OIDC_CLIENT_SECRET"), needInit: true}
 	r.cfg.step = deploy.ConfigStepInit
 	r.cfg.stream = &engine.Stream{C: make(chan any)}
 	r, cmd := r.update(configStreamMsg{msg: engine.DoneMsg{}})
@@ -242,7 +242,7 @@ func TestConfigCollect_NothingOwedAdoptsIntoTheTargetAndRetries(t *testing.T) {
 			return nil, nil, errors.New("stop after the retry starts")
 		},
 	})
-	r, cmd := r.update(configPlanMsg{plan: configPlan{treeDir: tree, cleanup: func() {}}})
+	r, cmd := r.update(configPlanMsg{plan: configPlan{configTree: tree, cleanup: func() {}}})
 	adopted, ok := cmd().(configAdoptedMsg)
 	if !ok || adopted.err != nil {
 		t.Fatalf("adopt: %#v", adopted)

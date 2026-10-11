@@ -51,7 +51,7 @@ example.com/m@v1.0.0 tab.go generated MIT
 func licencereview(t *testing.T, lister func() ([]review.Package, error), args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = cli(append([]string{"licencereview"}, args...), &out, &errOut, lister)
+	code = command(append([]string{"licencereview"}, args...), &out, &errOut, lister)
 	return code, out.String(), errOut.String()
 }
 

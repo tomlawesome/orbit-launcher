@@ -111,8 +111,8 @@ func TestPromptSession_BothFlowsDrawTheSamePrompt(t *testing.T) {
 	steps := []step{
 		{
 			name:  "waiting for the first prompt",
-			start: "talking to the engine…",
-			want:  []string{"talking to the engine…"},
+			start: "talking to the engine",
+			want:  []string{"talking to the engine"},
 		},
 		{
 			name:  "a first prompt with a hint",
@@ -144,7 +144,7 @@ func TestPromptSession_BothFlowsDrawTheSamePrompt(t *testing.T) {
 				"prompt field=APP_URL kind=url required=true attempt=3",
 			},
 			start: "Public Orbit origin",
-			want:  []string{"cannot be empty", "attempt 3 of 3"},
+			want:  []string{"can't be empty", "attempt 3 of 3"},
 		},
 		{
 			name: "an accept clears the reason",
@@ -171,8 +171,8 @@ func TestPromptSession_BothFlowsDrawTheSamePrompt(t *testing.T) {
 				"prompt field=APP_URL kind=url required=true attempt=3",
 				"prompt-abort field=APP_URL",
 			},
-			start: "talking to the engine…",
-			want:  []string{"talking to the engine…"},
+			start: "talking to the engine",
+			want:  []string{"talking to the engine"},
 			never: []string{"Public Orbit origin"},
 		},
 	}

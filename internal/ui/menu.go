@@ -13,8 +13,9 @@ import (
 // row added, removed or hidden on one screen cannot send Enter to the
 // wrong act.
 //
-// Esc is not the menu's. What it means belongs to each screen (#210:
+// Where Esc lands is not the menu's: it belongs to each screen (#210:
 // one step back, which at a flow's first screen is the main menu).
+// onScreen only reports it, so every screen reads its keys one way.
 //
 // A screen whose rows never change keeps a menu built with its rows. A
 // model whose screens show different rows under one cursor (the engine
@@ -58,6 +59,18 @@ func (m menu) update(msg tea.KeyPressMsg) (menu, string) {
 		return m, m.selected()
 	}
 	return m, ""
+}
+
+// onScreen is the one key grammar of a screen with rows (#228): Up and
+// Down move, Enter answers with the selected row, Esc reports back (one
+// step back; where that lands is the screen's), and every other key does
+// nothing. Ctrl-C is the caller's, checked first.
+func (m menu) onScreen(msg tea.KeyPressMsg) (next menu, chosen string, back bool) {
+	if msg.Code == tea.KeyEsc {
+		return m, "", true
+	}
+	m, chosen = m.update(msg)
+	return m, chosen, false
 }
 
 // write renders the menu in the centred stacked grammar.

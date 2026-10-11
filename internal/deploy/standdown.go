@@ -54,10 +54,8 @@ func StandDown(ctx context.Context, targetDir string) error {
 // against a real deployment) are directly, cheaply testable.
 func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 	envFile := filepath.Join(targetDir, EnvFile)
-	cmd := exec.CommandContext(ctx, "docker", "compose",
+	return dockerCommand(ctx, "compose",
 		"--project-directory", targetDir, "--env-file", envFile, "down")
-	cmd.WaitDelay = pipeWaitDelay
-	return cmd
 }
 
 // ErrNoTargetDir is returned for a stop or removal asked of no

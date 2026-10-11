@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"fmt"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -121,13 +121,13 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Esc is one step back, and back from a finished flow is the
 	// menu, as after Repair (#225).
-	if msg.Code == tea.KeyEsc {
+	var chosen string
+	var back bool
+	m.menu, chosen, back = m.menu.onScreen(msg)
+	if back {
 		m.Chosen = "menu"
 		return m, nil
 	}
-
-	var chosen string
-	m.menu, chosen = m.menu.update(msg)
 	switch chosen {
 	case "Get into Orbit":
 		m.openFailed = m.launchURL() != nil
@@ -149,7 +149,7 @@ func (m SuccessModel) launchURL() error {
 		open = defaultOpenURL
 	}
 	if m.appURL == "" {
-		return fmt.Errorf("no deployment URL")
+		return errors.New("no deployment URL")
 	}
 	return open(m.appURL)
 }
@@ -162,7 +162,7 @@ func defaultOpenURL(url string) error {
 			return exec.Command(opener, url).Start()
 		}
 	}
-	return fmt.Errorf("no opener available")
+	return errors.New("no opener available")
 }
 
 // View implements tea.Model.

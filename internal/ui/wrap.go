@@ -20,6 +20,13 @@ const (
 	errorWidth = 72
 )
 
+// measure is the wrap width of a screen's prose: the terminal's width
+// less the two-cell margin each side, capped at limit (proseWidth or
+// errorWidth).
+func measure(width, limit int) int {
+	return min(width-4, limit)
+}
+
 // wrapShellCommand lays a shell command, given as its already-quoted
 // words, out on lines of at most limit cells that a shell reads back as
 // those words joined by spaces: every line that continues ends in " \",

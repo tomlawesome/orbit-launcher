@@ -140,7 +140,7 @@ func TestRepair_DiagnosisStreamClosingEarlyFailsVisibly(t *testing.T) {
 	if strings.Contains(s, "reading the deployment") {
 		t.Fatalf("the diagnosis stopped and Repair is still waiting on it — silence, not a failure:\n%s", s)
 	}
-	for _, want := range []string{"Diagnosis couldn't run", stoppedWithoutReporting, "Menu", "Exit"} {
+	for _, want := range []string{"Diagnosis stopped", stoppedWithoutReporting, "Menu", "Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the failure screen lacks %q:\n%s", want, s)
 		}
@@ -200,7 +200,7 @@ func TestRepair_TheSupersededRunsStreamEndingDoesNotFailTheNewRun(t *testing.T) 
 	if !strings.Contains(s, "Diagnosis clear") {
 		t.Fatalf("the --check rerun's verdict did not stand:\n%s", s)
 	}
-	for _, unwanted := range []string{"Diagnosis couldn't run", stoppedWithoutReporting} {
+	for _, unwanted := range []string{"Diagnosis stopped", stoppedWithoutReporting} {
 		if strings.Contains(s, unwanted) {
 			t.Fatalf("the rejected --plan run's stream ending failed the --check run that replaced it (%q):\n%s", unwanted, s)
 		}
@@ -257,7 +257,7 @@ func TestConfig_StreamClosingEarlyFailsVisibly(t *testing.T) {
 	if strings.Contains(s, "Public Orbit origin") || strings.Contains(s, "talking to the engine") {
 		t.Fatalf("the configuration step stopped and the session is still waiting on it — silence, not a failure:\n%s", s)
 	}
-	for _, want := range []string{"Installation stopped", stoppedWithoutReporting} {
+	for _, want := range []string{"Install stopped", stoppedWithoutReporting} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the failure screen lacks %q:\n%s", want, s)
 		}
@@ -294,7 +294,7 @@ func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 	if !strings.Contains(s, "Continue — guided configuration") {
 		t.Fatalf("Esc should leave the operator on the refusal menu:\n%s", s)
 	}
-	for _, unwanted := range []string{"Installation stopped", stoppedWithoutReporting} {
+	for _, unwanted := range []string{"Install stopped", stoppedWithoutReporting} {
 		if strings.Contains(s, unwanted) {
 			t.Fatalf("the cancelled session's late stream ending changed the screen (%q):\n%s", unwanted, s)
 		}

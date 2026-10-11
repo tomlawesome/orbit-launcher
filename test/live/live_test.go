@@ -269,7 +269,7 @@ func (s *liveSession) runStarted() {
 	s.t.Helper()
 	const what = "expected the mission console"
 	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
-		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Installation stopped")); err != nil {
+		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Install stopped")); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
@@ -286,22 +286,24 @@ func (s *liveSession) chooseSSO() {
 	s.send("\r")
 }
 
-// choose selects a top-level menu row by its digit shortcut rather than by
-// counting arrow presses from an assumed caret position (issue #122).
+// choose selects a top-level menu row by its digit rather than by counting
+// arrow presses from an assumed caret position (issue #122). A digit only
+// moves the caret to its row (#228), so Enter then acts on it.
 //
 // Relative navigation races the splash's async health probe: a failed
 // probe marks the deployment degraded and moves the caret to Repair
 // (splash.go:308-319), so two Downs intended as Update->Repair->Remove
 // instead walk Repair->Remove->Exit and the Enter quits the launcher.
 // That is the intermittent "freezes after one settled frame" of #100.
-// splash.go:368-380 maps "1"-"9" straight to a menu index, so this picks
-// the intended row whenever the probe lands, leaving the probe itself
+// A digit maps "1"-"9" straight to a menu index, so this picks the
+// intended row whenever the probe lands, leaving the probe itself
 // enabled and its degraded-state behaviour exercised.
 func (s *liveSession) choose(label string) {
 	s.t.Helper()
 	for i, item := range ui.MainMenu {
 		if item.Label == label {
 			s.send(strconv.Itoa(i + 1))
+			s.send("\r")
 			return
 		}
 	}
@@ -741,7 +743,7 @@ const signInModeMarker = "[local/oidc]"
 
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	const stopScreen = "Installation stopped"
+	const stopScreen = "Install stopped"
 	// Each look is at one 120x40 screen, so it costs the same however
 	// much the install has printed. The stream matcher that once fell so
 	// far behind the launcher's repaints that a finished install looked
@@ -957,7 +959,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		// reports nothing and lands on the failure screen. Both
 		// screens' default option leads to the guided configuration.
 		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-			vtscreen.ContainsAny("Orbit needs your configuration", "Installation stopped"))
+			vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
 		sendLine("") // Continue — guided configuration / Open the guided installer
 		session.chooseSSO()
 
@@ -1045,7 +1047,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		session.must(fqdn)
 		session.send("\r") // Stand down Orbit selected by default
 		session.must("Orbit has been stood down")
-		session.send("\r") // Exit
+		session.send("\x1b[B\x1b[B\r") // Copy command, Menu, Exit (#228)
 
 		// Asserted against the project this deployment really uses, by
 		// the label Compose stamps on every container it creates. A
@@ -1143,7 +1145,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path up to here.
 	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-		vtscreen.ContainsAny("Orbit needs your configuration", "Installation stopped"))
+		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
 	sendLine("")
 	session.chooseSSO()
 
@@ -1162,7 +1164,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// proceeds into compose and dies on the held port. The launcher's own
 	// failure screen — not a hang, not a fake success — is the contract,
 	// with its stacked menu present.
-	acceptMenusUntil(t, session, "Installation stopped")
+	acceptMenusUntil(t, session, "Install stopped")
 	session.must("Menu")
 
 	// Exit via the failure menu (guided installer, Menu, Exit).
