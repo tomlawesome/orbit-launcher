@@ -60,7 +60,7 @@ func NewSuccessModel(appURL string, elapsed time.Duration, version string) Succe
 }
 
 // Outcome surfaces the screen's result to AppModel the way every flow
-// does: the Menu row or Esc (#225) leaves for the menu; Terminal, q and
+// does: the Menu row or Esc (#225) leaves for the menu; Terminal and
 // Ctrl-C quit instead.
 func (m SuccessModel) Outcome() flowOutcome {
 	if m.Chosen == "menu" {
@@ -140,14 +140,6 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Text is empty for every special key, so it is exactly the old
-	// "runes" case — see SplashModel.handleKey.
-	for _, r := range msg.Text {
-		if r == 'q' {
-			m.Chosen = "terminal"
-			return m, tea.Quit
-		}
-	}
 	return m, nil
 }
 

@@ -304,17 +304,12 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if isCtrlC(msg) || msg.Code == tea.KeyEsc {
+	// Leaving takes the Exit row or Ctrl-C: there is no q shortcut, and
+	// Esc backs out only as far as this menu, so a hurried key never
+	// closes the launcher (#226).
+	if isCtrlC(msg) {
 		m.quitting = true
 		return m, tea.Quit
-	}
-	// Text is the printable character the key produced, and is empty for
-	// every special key — so it is exactly the old "runes" case.
-	for _, r := range msg.Text {
-		if r == 'q' {
-			m.quitting = true
-			return m, tea.Quit
-		}
 	}
 
 	// Any other key during the arrival skips straight to the lit room —
@@ -322,6 +317,9 @@ func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// hurried Enter doesn't also select a menu item.
 	if !m.introDone {
 		m.introDone = true
+		return m, nil
+	}
+	if msg.Code == tea.KeyEsc {
 		return m, nil
 	}
 
