@@ -144,7 +144,7 @@ func TestPromptSession_BothFlowsDrawTheSamePrompt(t *testing.T) {
 				"prompt field=APP_URL kind=url required=true attempt=3",
 			},
 			start: "Public Orbit origin",
-			want:  []string{"cannot be empty", "attempt 3 of 3"},
+			want:  []string{"can't be empty", "attempt 3 of 3"},
 		},
 		{
 			name: "an accept clears the reason",

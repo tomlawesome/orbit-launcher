@@ -637,7 +637,7 @@ func TestRepairModel_RotationPromptEditingAndRejection(t *testing.T) {
 		"prompt field=action-word kind=typed-word required=true attempt=2",
 	)
 	s := screen(m)
-	if !strings.Contains(s, "cannot be empty") || !strings.Contains(s, "attempt 2 of 3") {
+	if !strings.Contains(s, "can't be empty") || !strings.Contains(s, "attempt 2 of 3") {
 		t.Fatalf("rejection or attempt not shown:\n%s", s)
 	}
 

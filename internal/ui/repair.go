@@ -738,7 +738,7 @@ func (m RepairModel) viewExecuted() string {
 		fmt.Fprintln(&b)
 	}
 	if m.execSummary != nil && (m.execSummary.Done > 0 || m.execSummary.Failed > 0) {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done · %d failed", m.execSummary.Done, m.execSummary.Failed)))
+		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done%s%d failed", m.execSummary.Done, style.Separator, m.execSummary.Failed)))
 	}
 	if m.execSummary != nil && m.execSummary.Result == engine.ResultRefused {
 		// The whole run was refused before any batch ran; the reason
@@ -813,7 +813,7 @@ func (m RepairModel) viewUnavailable() string {
 
 func (m RepairModel) viewError() string {
 	var b strings.Builder
-	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Diagnosis couldn't run")
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Diagnosis stopped")
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
 		writeWrapped(&b, style.Tagline, m.runErr.Error(), min(m.width-4, errorWidth))
@@ -857,7 +857,7 @@ func (m RepairModel) viewDiagnosis() string {
 	}
 
 	if m.diagnosis != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked · %d skipped", m.diagnosis.Checked, m.diagnosis.Skipped)))
+		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
 	}
 
 	m.writePlan(&b, result)
@@ -907,7 +907,7 @@ func planLine(p engine.PlanAction) string {
 	}
 	context := classWords(p.Resolves)
 	if p.Backup == "required" {
-		context += " · backup first"
+		context += style.Separator + "backup first"
 	}
 	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(actionWords(p.Action)) +
 		style.Tagline.Render(" — "+context)
@@ -1001,7 +1001,7 @@ func findingLine(f engine.Finding) string {
 func targetWords(target string) string {
 	switch target {
 	case "directory":
-		return "target directory"
+		return "deployment directory"
 	case "env-file":
 		return deploy.EnvFile
 	case "compose-file":
@@ -1033,7 +1033,7 @@ func targetWords(target string) string {
 func classWords(class string) string {
 	switch class {
 	case "not-orbit-directory":
-		return "no recognizable Orbit installation"
+		return "no recognisable Orbit installation"
 	case "managed-file-missing":
 		return "missing"
 	case "managed-file-symlink":

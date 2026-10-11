@@ -107,7 +107,7 @@ type engineStreamEndedMsg struct{ reason error }
 // errNoEngineSender is what a run reports when it was built without a
 // way to deliver engine output. It names the launcher, not the engine:
 // the engine did nothing wrong.
-var errNoEngineSender = errors.New("the launcher could not read the engine's output")
+var errNoEngineSender = errors.New("the launcher couldn't read the engine's output")
 
 // errEngineStoppedEarly is the one reason every flow gives for a stream
 // that closed before its DoneMsg.
@@ -635,7 +635,7 @@ func (r engineRun) viewFailed(width, height int) string {
 			word = consolePhases[idx].word
 		}
 		// The phase word leads in the error colour; the rest wraps.
-		lines := wrapWords(word+" — "+r.lastFailed.Reason+" · next: "+r.lastFailed.Action, limit)
+		lines := wrapWords(word+" — "+r.lastFailed.Reason+style.Separator+"next: "+r.lastFailed.Action, limit)
 		for i, line := range lines {
 			if rest, ok := strings.CutPrefix(line, word); i == 0 && ok {
 				line = style.ErrorText.Render(word) + style.Tagline.Render(rest)
@@ -668,7 +668,7 @@ func flowStoppedTitle(action string) string {
 	if action == "update" {
 		return "Update stopped"
 	}
-	return "Installation stopped"
+	return "Install stopped"
 }
 
 func tailLines(lines []string, n int) []string {

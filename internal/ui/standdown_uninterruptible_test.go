@@ -229,7 +229,7 @@ func TestStandDown_TheTimeLimitStillEndsOnTheFailedScreen(t *testing.T) {
 				t.Fatalf("state = %v, want removeStateFailed:\n%s", m.state, screen(m))
 			}
 			s := screen(m)
-			if !strings.Contains(s, "Could not stand down Orbit") || !strings.Contains(s, "did not finish within 5m0s") {
+			if !strings.Contains(s, "Stand-down stopped") || !strings.Contains(s, "did not finish within 5m0s") {
 				t.Errorf("failed screen:\n%s", s)
 			}
 			if strings.Contains(s, cannotStop) {

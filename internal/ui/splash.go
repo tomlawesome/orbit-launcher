@@ -376,7 +376,7 @@ func (m SplashModel) footText() string {
 		return ""
 	}
 	if m.orbitVersion != "" {
-		text += " · orbit " + m.orbitVersion
+		text += style.Separator + "orbit " + m.orbitVersion
 	}
 	return text
 }

@@ -124,12 +124,12 @@ func NewInstallModel(targetDir, version string) InstallModel {
 
 // The profile screen's rows. Only Standard is wired; AI and Full lead to
 // the honest dead end.
-const installStandard = "Standard  ·  mail, documents, calendar"
+const installStandard = "Standard" + style.Separator + "mail, documents, calendar"
 
 var installProfiles = []string{
 	installStandard,
-	"AI  ·  adds a local model for search & suggestions",
-	"Full  ·  AI features plus every optional service",
+	"AI" + style.Separator + "adds a local model for search & suggestions",
+	"Full" + style.Separator + "AI features plus every optional service",
 }
 
 var (
@@ -417,7 +417,7 @@ func (m InstallModel) viewStaleVolume() string {
 			// read as if it identified one install when it never
 			// could. The directory sentence below is what actually
 			// tells them apart.
-			line += "  ·  Compose project " + v.Project
+			line += style.Separator + "Compose project " + v.Project
 		}
 		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(line))
 	}
@@ -425,7 +425,7 @@ func (m InstallModel) viewStaleVolume() string {
 
 	fmt.Fprintln(&b, style.MutedText.Render("It was left by an earlier install in another directory, and"))
 	fmt.Fprintln(&b, style.MutedText.Render("this one has none of the credentials that would prove it owns"))
-	fmt.Fprintln(&b, style.MutedText.Render("that database. Orbit will not start over a database it cannot"))
+	fmt.Fprintln(&b, style.MutedText.Render("that database. Orbit won't start over a database it can't"))
 	fmt.Fprintln(&b, style.MutedText.Render("prove belongs to it, so the installer will stop rather than"))
 	fmt.Fprintln(&b, style.MutedText.Render("risk the data inside it."))
 	fmt.Fprintln(&b)

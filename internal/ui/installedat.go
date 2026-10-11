@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // installedAtMsg carries the deployment's install date back from Docker;
@@ -53,7 +54,7 @@ func deploymentIdentity(d *deploy.Deployment) string {
 func identityLine(d *deploy.Deployment, installedAt time.Time) string {
 	identity := deploymentIdentity(d)
 	if d != nil && !installedAt.IsZero() {
-		identity += " · installed " + installedAt.Format("2006-01-02")
+		identity += style.Separator + "installed " + installedAt.Format("2006-01-02")
 	}
 	return identity
 }

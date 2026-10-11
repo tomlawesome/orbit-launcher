@@ -335,7 +335,7 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 // the title repeats a choice the user made a moment ago — so it goes
 // first. Cuts are plain, as truncateStyled's are.
 func (c ConsoleModel) titleRow(boxWidth int) string {
-	const mark, sep, minTitle = "ORBIT", " · ", 4
+	const mark, sep, minTitle = "ORBIT", style.Separator, 4
 	clock := formatClock(c.elapsed())
 	clockWidth := lipgloss.Width(clock)
 	room := boxWidth - clockWidth - 1 // the left side, keeping a 1-cell gap

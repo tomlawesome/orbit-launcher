@@ -335,7 +335,7 @@ func (m RemoveModel) viewDone() string {
 	// which Enter answers with, stays the same.
 	done := m.after
 	if m.copied {
-		done = done.over(append([]string{removeCopy + " · copied"}, removeDoneRows[1:]...))
+		done = done.over(append([]string{removeCopy + style.Separator + "copied"}, removeDoneRows[1:]...))
 	}
 	done.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -343,7 +343,7 @@ func (m RemoveModel) viewDone() string {
 
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
-	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Could not stand down Orbit")
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Stand-down stopped")
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.

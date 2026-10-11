@@ -183,7 +183,7 @@ func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 // belongs in a log CI keeps as an artifact (see logDiag).
 const (
 	fallbackNoTree       = "the engine handed over no configuration tree"
-	fallbackUnfixable    = "the configuration needs fields this console cannot ask for"
+	fallbackUnfixable    = "the configuration needs fields this console can't ask for"
 	fallbackStepFailed   = "the configuration step would not start"
 	fallbackLegacyEngine = "the engine never spoke the machine prompt protocol"
 )
@@ -538,7 +538,7 @@ func callbackNote(origin string) []string {
 func rejectionWords(reason string) string {
 	switch reason {
 	case "empty":
-		return "cannot be empty"
+		return "can't be empty"
 	case "invalid-characters":
 		return "contains whitespace or control characters"
 	case "not-https":
