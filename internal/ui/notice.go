@@ -33,7 +33,7 @@ const (
 	noticeMeasure    = proseWidth // prose wrap width, in cells
 	noticeGutter     = 2          // cells either side of the measure
 	noticeHeaderRows = 6          // blank, mark, blank, title, state, blank
-	noticePinnedRows = 8          // countdown, prompt, box ×3, feedback, Go back, blank
+	noticePinnedRows = 8          // countdown, prompt, box ×3, feedback, Back, blank
 	noticeWheelRows  = 3
 
 	noticeTitle       = "A note before you install"
@@ -42,7 +42,7 @@ const (
 	noticePhrase      = "I've read this and I understand"
 	noticePromptLabel = "To install, type  "
 	noticeRefusal     = "Please type the phrase as shown above"
-	noticeGoBack      = "Go back"
+	noticeBackRow     = "Back"
 )
 
 // noticeParagraphs is the approved copy, verbatim (owner, #175).
@@ -107,7 +107,7 @@ const (
 
 // noticeTickMsg redraws the countdown. It carries the start of the
 // notice that armed it, so a chain left over from an earlier visit
-// (Go back, then Install now again) is recognised and dropped.
+// (Back, then Install now again) is recognised and dropped.
 type noticeTickMsg struct{ start time.Time }
 
 func noticeTick(start time.Time) tea.Cmd {
@@ -485,7 +485,7 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		noticeGutter+lipgloss.Width(noticePromptLabel)+lipgloss.Width(noticePhrase)))
 
 	// The box, two cells in from the block's edge so the caret at the
-	// edge shares Go back's column.
+	// edge shares Back's column.
 	boxW := n.measure - 2
 	inner := boxW - 4
 	border := lipgloss.NewStyle().Foreground(style.Border)
@@ -525,11 +525,11 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		lines = append(lines, blank)
 	}
 
-	// Go back.
+	// Back.
 	if focused {
-		lines = append(lines, pad(boxIndent+mutedStyle.Render(noticeGoBack), 2*noticeGutter+lipgloss.Width(noticeGoBack)))
+		lines = append(lines, pad(boxIndent+mutedStyle.Render(noticeBackRow), 2*noticeGutter+lipgloss.Width(noticeBackRow)))
 	} else {
-		lines = append(lines, pad(gutter+style.MenuCaret.Render(style.SymbolSelected)+" "+textStyle.Render(noticeGoBack), 2*noticeGutter+lipgloss.Width(noticeGoBack)))
+		lines = append(lines, pad(gutter+style.MenuCaret.Render(style.SymbolSelected)+" "+textStyle.Render(noticeBackRow), 2*noticeGutter+lipgloss.Width(noticeBackRow)))
 	}
 	lines = append(lines, blank)
 

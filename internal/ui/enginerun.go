@@ -566,14 +566,15 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 // handleMenuKey drives a post-run screen's menu over items: Esc is back
 // to the main menu, and Enter hands choose the selected row's label.
 func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose func(string) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
+	var chosen string
+	var back bool
+	r.menu, chosen, back = r.menu.over(items).onScreen(msg)
+	if back {
 		r.releaseRunFiles()
 		r.Done = true
 		r.WantsMenu = true
 		return r, nil
 	}
-	var chosen string
-	r.menu, chosen = r.menu.over(items).update(msg)
 	if chosen == "" {
 		return r, nil
 	}

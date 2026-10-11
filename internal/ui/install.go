@@ -50,7 +50,7 @@ type InstallModel struct {
 	confirm menu // installConfirmRows
 	volume  menu // installVolumeRows
 
-	// left is Esc or Back on the flow's first screen: back to the main
+	// left is Esc or Cancel on the flow's first screen: back to the main
 	// menu with nothing started (#210).
 	left bool
 
@@ -133,8 +133,12 @@ var installProfiles = []string{
 }
 
 var (
-	installConfirmRows = []string{"Install now", "Back"}
-	installVolumeRows  = []string{"Continue anyway", "Back"}
+	installConfirmRows = []string{"Install now", "Cancel"}
+	installVolumeRows  = []string{"Continue anyway", "Cancel"}
+
+	// installUnavailableRows: the dead end's one row, back to the
+	// profile choice that led in.
+	installUnavailableRows = []string{"Back"}
 )
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
@@ -190,7 +194,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// The notice's countdown redraws on its own one-second chain. A
-	// tick from an earlier visit (Go back, then Install now again)
+	// tick from an earlier visit (Back, then Install now again)
 	// carries that visit's start and is dropped, so two chains never
 	// run; the chain ends when the countdown does.
 	if t, ok := msg.(noticeTickMsg); ok {
@@ -246,7 +250,7 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case installStateUnavailableProfile:
 		// The only way out of the honest dead end is back to the
 		// choice that led in.
-		if msg.Code == tea.KeyEnter || msg.Code == tea.KeyEsc {
+		if _, chosen, back := newMenu(installUnavailableRows...).onScreen(msg); back || chosen == "Back" {
 			m.state = installStateProfile
 		}
 		return m, nil
@@ -263,34 +267,30 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // is about to refuse, and a detection mistake here must never be able to
 // stand between someone and an install.
 //
-// It takes the first screen's place when it fires, so Esc and Back are
+// It takes the first screen's place when it fires, so Esc and Cancel are
 // the same act here as on the profile screen: back to the main menu.
 func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.left = true
-		return m, nil
-	}
 	var chosen string
-	m.volume, chosen = m.volume.update(msg)
-	switch chosen {
-	case "Continue anyway":
+	var back bool
+	m.volume, chosen, back = m.volume.onScreen(msg)
+	switch {
+	case chosen == "Continue anyway":
 		m.state = installStateProfile
-	case "Back":
+	case back, chosen == "Cancel":
 		m.left = true
 	}
 	return m, nil
 }
 
 func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.left = true
-		return m, nil
-	}
 	var chosen string
-	m.profile, chosen = m.profile.update(msg)
-	switch chosen {
-	case "": // a move, or a key the menu does not use
-	case installStandard:
+	var back bool
+	m.profile, chosen, back = m.profile.onScreen(msg)
+	switch {
+	case back:
+		m.left = true
+	case chosen == "": // a move, or a key the menu does not use
+	case chosen == installStandard:
 		m.state = installStateConfirm
 		m.confirm = newMenu(installConfirmRows...)
 	default:
@@ -300,16 +300,13 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 }
 
 func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.state = installStateProfile
-		return m, nil
-	}
 	var chosen string
-	m.confirm, chosen = m.confirm.update(msg)
-	switch chosen {
-	case "Back":
+	var back bool
+	m.confirm, chosen, back = m.confirm.onScreen(msg)
+	switch {
+	case back, chosen == "Cancel":
 		m.state = installStateProfile
-	case "Install now":
+	case chosen == "Install now":
 		// Install now opens the development notice (#175), fresh every
 		// time: going back and coming again restarts the countdown and
 		// closes the scroll gate.
@@ -320,7 +317,7 @@ func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-// handleNoticeKey wires the notice: Esc or Go back returns to the
+// handleNoticeKey wires the notice: Esc or Back returns to the
 // confirm screen, a correct phrase starts the run, nothing else leaves.
 func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var out noticeOutcome
@@ -453,7 +450,7 @@ func (m InstallModel) viewUnavailableProfile() string {
 	fmt.Fprintln(&b, style.MutedText.Render("AI and Full need local-model configuration that"))
 	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Back"}, 0)
+	writeStackedMenu(&b, installUnavailableRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

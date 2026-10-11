@@ -37,8 +37,8 @@ type UpdateModel struct {
 	state         updateState
 	confirm       menu // updateConfirmRows
 
-	// left is Esc or Cancel on the flow's first screen: back to the main
-	// menu with nothing started (#210).
+	// left is Esc, Cancel or Menu on the flow's first screen: back to the
+	// main menu with nothing started (#210).
 	left bool
 
 	// installedAt and lookupInstalledAt: see RemoveModel.
@@ -67,6 +67,10 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 }
 
 var updateConfirmRows = []string{"Update Orbit", "Cancel"}
+
+// deadEndRows are a dead end's one row, Update's and Remove's not-found
+// screens: back to the main menu (#228).
+var deadEndRows = []string{"Menu"}
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
 // the person left on the first screen, otherwise the engine run's.
@@ -127,13 +131,12 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch m.state {
 	case updateStateNotFound:
-		// The flow's first screen: Esc is back to the menu; Exit, and
-		// any other key, quits as it always has.
-		if msg.Code == tea.KeyEsc {
+		// The dead end: its one row and Esc both go back to the menu,
+		// and no other key does anything (#228).
+		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
-			return m, nil
 		}
-		return m, tea.Quit
+		return m, nil
 	case updateStateConfirm:
 		return m.handleConfirmKey(msg)
 	}
@@ -141,16 +144,13 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.left = true
-		return m, nil
-	}
 	var chosen string
-	m.confirm, chosen = m.confirm.update(msg)
-	switch chosen {
-	case "Cancel":
+	var back bool
+	m.confirm, chosen, back = m.confirm.onScreen(msg)
+	switch {
+	case back, chosen == "Cancel":
 		m.left = true
-	case "Update Orbit":
+	case chosen == "Update Orbit":
 		m.state = updateStateRunning
 		title := "Update"
 		if m.deployment != nil {
@@ -193,7 +193,7 @@ func (m UpdateModel) viewNotFound() string {
 	fmt.Fprintln(&b, style.MutedText.Render("There's nothing to update in this directory —"))
 	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Exit"}, 0)
+	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

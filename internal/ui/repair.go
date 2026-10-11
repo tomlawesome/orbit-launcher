@@ -591,13 +591,14 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // menu, and Enter hands choose the selected row's label (menu.go), so
 // contextual menus can't drift out of sync with selection indexes.
 func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func(string) (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
+	var chosen string
+	var back bool
+	m.menu, chosen, back = m.menu.over(items).onScreen(msg)
+	if back {
 		m.Done = true
 		m.WantsMenu = true
 		return m, nil
 	}
-	var chosen string
-	m.menu, chosen = m.menu.over(items).update(msg)
 	if chosen == "" {
 		return m, nil
 	}

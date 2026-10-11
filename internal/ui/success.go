@@ -121,13 +121,13 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Esc is one step back, and back from a finished flow is the
 	// menu, as after Repair (#225).
-	if msg.Code == tea.KeyEsc {
+	var chosen string
+	var back bool
+	m.menu, chosen, back = m.menu.onScreen(msg)
+	if back {
 		m.Chosen = "menu"
 		return m, nil
 	}
-
-	var chosen string
-	m.menu, chosen = m.menu.update(msg)
 	switch chosen {
 	case "Get into Orbit":
 		m.openFailed = m.launchURL() != nil
