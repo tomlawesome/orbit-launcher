@@ -147,6 +147,20 @@ variables:
   tags:
     - orbit-launcher-build
 
+# Every job names its own image, and GitLab never merges `default: image:`
+# into a job's own `image:` -- the job's replaces it whole
+# (docs.gitlab.com/ci/yaml/#default) -- so the pull policy cannot live in
+# `default:`. It is written once here instead and merged into each job's
+# image with `<<: *pull_if_not_present`.
+.pull_if_not_present: &pull_if_not_present
+  pull_policy: if-not-present
+
+# The start of every apt install here; each job then installs its own
+# packages.
+.apt_prologue: &apt_prologue |
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+
 # The daemon inside the job's own container, copied from ai/orbit's
 # `.docker_in_job`. The dind *service* pattern cannot be used here: install.sh
 # publishes Orbit on the loopback address and the live test health-checks
@@ -206,15 +220,14 @@ classify:
   stage: classify
   tags: [light]
   image:
+    <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-    pull_policy: if-not-present
   timeout: 5m
   variables:
     # The base commit has to be in the checkout for the diff to read at all.
     GIT_DEPTH: 0
   before_script:
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends git
   script:
     - |
@@ -234,16 +247,15 @@ classify:
 fast:
   stage: fast
   image:
+    <<: *pull_if_not_present
     name: $GO_IMAGE
-    pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
   needs:
     - job: classify
       artifacts: true
   before_script:
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
     # `DOCS_ONLY` comes from `classify`. Unset means run: this default is the
@@ -313,8 +325,8 @@ deps:
   # move it back to big (owner decision, ai/agent-infra#3, 2026-09-05).
   tags: [light]
   image:
+    <<: *pull_if_not_present
     name: $GO_IMAGE
-    pull_policy: if-not-present
   extends: .go_cache
   timeout: 10m
   needs:
@@ -356,14 +368,13 @@ gitleaks:
   needs: []
   tags: [light]
   image:
+    <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-    pull_policy: if-not-present
   timeout: 10m
   variables:
     GIT_DEPTH: 0
   before_script:
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git
   script:
     - |
@@ -390,8 +401,8 @@ gitleaks:
 visual:
   stage: acceptance
   image:
+    <<: *pull_if_not_present
     name: $PLAYWRIGHT_IMAGE
-    pull_policy: if-not-present
   extends: .go_cache
   timeout: 15m
   needs: []
@@ -441,8 +452,8 @@ visual:
 live:
   stage: acceptance
   image:
+    <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-    pull_policy: if-not-present
   extends:
     - .privileged_runner
     - .go_cache
@@ -491,8 +502,7 @@ live:
         echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
         exit 0
       fi
-    - export DEBIAN_FRONTEND=noninteractive
-    - apt-get update -qq
+    - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
     - *go_tarball
     - *docker_in_job
@@ -679,8 +689,8 @@ renovate:
   # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
   # gigabytes of pull on a shared runner every week.
   image:
+    <<: *pull_if_not_present
     name: renovate/renovate:44.133.0@sha256:05c512c35c764ef6a179e69c3b30567eca254d67f13a0143479fe3c84852c67a
-    pull_policy: if-not-present
   timeout: 1h
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
   # and runs `go mod tidy` inside the job, which can pass the light lane's
@@ -739,8 +749,8 @@ renovate:
 release:version:
   stage: release
   image:
+    <<: *pull_if_not_present
     name: $GO_IMAGE
-    pull_policy: if-not-present
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
@@ -771,8 +781,8 @@ release:gitlab:
   # this job creates the tag. release-cli is published only on GitLab's own
   # registry, so it cannot come through a Docker Hub proxy.
   image:
+    <<: *pull_if_not_present
     name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
-    pull_policy: if-not-present
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
