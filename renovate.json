@@ -3,7 +3,7 @@
   "extends": ["config:recommended"],
   "description": [
     "Renovate for the GitLab lane on gitlab.tomlawson.io (ai/orbit-launcher), taking over from the retired .github/dependabot.yml (#140 step 4). Same cadence and the same grouping the Dependabot file had, so nothing about what gets watched changes with the host.",
-    "GitHub Actions is watched from here too, matching the actions entry the retired .github/dependabot.yml carried, plus the .gitlab-ci.yml job images and the pipeline's own digest pins, which Dependabot never watched because .gitlab-ci.yml did not exist when it was written.",
+    "GitHub Actions is watched from here too, matching the actions entry the retired .github/dependabot.yml carried (including the image in a workflow's `container:` key), plus the .gitlab-ci.yml job images and the pipeline's own digest pins, which Dependabot never watched because .gitlab-ci.yml did not exist when it was written.",
     "This file is read two ways: as the repository config Renovate finds on the repository's default branch, and as the global config the renovate job in .gitlab-ci.yml points RENOVATE_CONFIG_FILE at. On GitLab the default branch is `dev`, which carries this file, and the weekly schedule runs on `dev` too, so both readings resolve to this same copy and the repository one merges over the global one -- see the job's comment.",
     "The dependency dashboard is off (owner, 2026-09-10). It is a bot-written issue with no acceptance criteria that never reaches a done state, so it cannot sit in a milestone that reports as finished, and it is stale between runs. Turning it off changes nothing about what Renovate watches or raises: the merge requests still arrive. ai/orbit turned it off on 2026-09-08 and ai/mikroview on 2026-09-10, for the same reason; this matches them.",
     "npm is enabled only for test/visual/package.json's @playwright/test (#179): that is the only package.json in the repo, so this does not widen what gets watched beyond it. ignorePaths is config:recommended's list minus `**/test/**`, which hid that file from Renovate altogether (found by a dry-run rehearsal, 2026-10-05). Before this, Renovate could move PLAYWRIGHT_IMAGE without ever touching the lockfile, which is what #161 found broken; test/supplychain/pins_test.go now also checks the two agree."
@@ -67,8 +67,8 @@
       "groupName": "gitlab-ci image minor and patch"
     },
     {
-      "description": "PLAYWRIGHT_IMAGE and @playwright/test must move together or the gate breaks the way #161 found it: the image is chosen so no browser download happens in the `visual` job, which only holds while the image and the lockfile name the same Playwright release. test/supplychain/pins_test.go (#179) now checks the two agree; this makes Renovate propose them as one merge request instead of two. Listed after the image group above so this grouping wins for these two packages.",
-      "matchManagers": ["custom.regex", "npm"],
+      "description": "PLAYWRIGHT_IMAGE and @playwright/test must move together or the gate breaks the way #161 found it: the image is chosen so no browser download happens in the `visual` job, which only holds while the image and the lockfile name the same Playwright release. test/supplychain/pins_test.go (#179) now checks the two agree; this makes Renovate propose them as one merge request instead of two. github-actions is listed because GitHub's visual job types the same image into its `container:` key, and test/supplychain fails unless both copies move in the one merge request. Listed after the image group and the github-actions group above so this grouping wins for these packages.",
+      "matchManagers": ["custom.regex", "npm", "github-actions"],
       "matchPackageNames": ["mcr.microsoft.com/playwright", "@playwright/test"],
       "groupName": "playwright"
     },

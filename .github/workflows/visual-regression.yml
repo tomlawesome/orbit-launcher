@@ -22,7 +22,7 @@ jobs:
     # same system fonts, so a screenshot difference means the same thing on
     # both hosts. Typed in, because a job's `container:` cannot read `env`;
     # copied from .gitlab-ci.yml's PLAYWRIGHT_IMAGE, and test/supplychain
-    # fails when the two differ.
+    # fails when the two differ. Renovate's playwright group moves both.
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
 
