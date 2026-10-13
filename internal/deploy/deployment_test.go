@@ -207,3 +207,30 @@ func TestDetect_OverlongLineIsAnErrorNotAPartialDeployment(t *testing.T) {
 		t.Errorf("Detect = %+v, want nil alongside the error", d)
 	}
 }
+
+// Control for #238 (passes today): Detect already reports a .env-orbit it
+// cannot read as an error with no deployment. The fix is that the callers
+// stop dropping it.
+func TestDetect_UnreadableEnvIsAnErrorAndNoDeployment(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-0000 file; the unreadable case cannot be built")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, EnvFile)
+	if err := os.WriteFile(path, []byte("APP_URL=https://mail.example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	d, err := Detect(dir)
+	if err == nil {
+		t.Fatal("Detect on an unreadable .env-orbit returned no error")
+	}
+	if d != nil {
+		t.Errorf("Detect = %+v, want nil deployment alongside the error", d)
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("error = %q, want the OS's words (permission denied)", err)
+	}
+}

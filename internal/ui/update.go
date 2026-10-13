@@ -33,6 +33,7 @@ type UpdateModel struct {
 	targetDir     string
 	version       string
 	deployment    *deploy.Deployment
+	detectErr     error // deploy.Detect's error for targetDir; see RemoveModel
 	state         updateState
 	confirm       menu // updateConfirmRows
 
@@ -187,6 +188,9 @@ func (m UpdateModel) view() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m UpdateModel) viewNotFound() string {
+	if m.detectErr != nil {
+		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.detectErr)
+	}
 	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
 		"There's nothing to update in this directory —",
 		"Install is the way to get into Orbit first.")

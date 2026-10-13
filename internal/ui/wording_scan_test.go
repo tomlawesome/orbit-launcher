@@ -254,6 +254,20 @@ func TestWording_FailureTitlesAreFlowWordStopped(t *testing.T) {
 			m, _ := updateAs(t, sizedRepair(t), repairReadyMsg{err: errors.New("fetch repair.sh: connection refused")})
 			return screen(m)
 		}(), "Diagnosis stopped", []string{"Diagnosis couldn't run", "Could not"}},
+		{"repairs", func() string {
+			m := sizedRepair(t)
+			m.state = repairExecuting
+			m.stream = sleepingStream(t)
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4, Err: errors.New("exit status 4")})
+			return screen(m)
+		}(), "Repairs stopped", []string{"Diagnosis stopped"}},
+		{"credential rotation", func() string {
+			m := sizedRepair(t)
+			m.state = repairRotating
+			m.stream = sleepingStream(t)
+			m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4, Err: errors.New("exit status 4")})
+			return screen(m)
+		}(), "Credential rotation stopped", []string{"Diagnosis stopped"}},
 	}
 	for _, c := range cases {
 		if !titleOn(c.screen, c.title) {

@@ -161,7 +161,16 @@ func (m AppModel) WithAltScreen() AppModel {
 // applyDeployment populates s's identity block from a fresh detection.
 func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	d, err := deploy.Detect(m.resolvedTargetDir())
-	if err != nil || d == nil {
+	if err != nil {
+		// The file is there but unreadable: no identity and nothing to
+		// probe, and Update preselected so the first Enter lands on the
+		// screen that explains rather than an Install that would be
+		// refused (#238).
+		s.state = stateUnreadable
+		s.menu.sel = menuUpdate
+		return s
+	}
+	if d == nil {
 		return s
 	}
 	s.fqdn = deploymentIdentity(d)
@@ -284,12 +293,13 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// deploy.Detect's error return only ever reflects a real I/O
 		// failure reading an existing .env-orbit, never "not installed"
 		// (that's a nil Deployment, nil error). Either way nothing usable
-		// was found, so Remove stops at the start and names where it
-		// looked.
+		// was found, so Remove stops at the start; it names where it
+		// looked, or says the file could not be read (#238).
 		dir := m.resolvedTargetDir()
-		deployment, _ := deploy.Detect(dir)
+		deployment, err := deploy.Detect(dir)
 		m.remove = NewRemoveModel(deployment)
 		m.remove.targetDir = dir
+		m.remove.detectErr = err
 		m.remove.lookupInstalledAt = m.flowInstalledAt
 		m.state = appStateRemove
 		// Init looks up the install date — read-only, so like Install's
@@ -314,8 +324,9 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sizeCmd, m.install.Init())
 	case "Update":
 		dir := m.resolvedTargetDir()
-		deployment, _ := deploy.Detect(dir)
+		deployment, err := deploy.Detect(dir)
 		m.update = NewUpdateModel(deployment, dir, m.version)
+		m.update.detectErr = err
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
 		m.update.lookupInstalledAt = m.flowInstalledAt

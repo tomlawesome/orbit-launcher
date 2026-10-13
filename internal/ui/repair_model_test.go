@@ -100,7 +100,7 @@ func TestRepairModel_RotationThatCannotStartShowsTheReason(t *testing.T) {
 		t.Fatalf("state = %v, want repairError", m.state)
 	}
 	s := screen(m)
-	for _, want := range []string{"Diagnosis stopped", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
+	for _, want := range []string{"Credential rotation stopped", "fetch repair.sh: connection refused", "▸ Menu", "Exit"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("error screen lacks %q:\n%s", want, s)
 		}
@@ -1027,6 +1027,7 @@ func TestRepairModel_UnsummarisedManualOnlyPlanDoesNotPointAtTheMenu(t *testing.
 // that counts requests, so a test can prove nothing was fetched (#190).
 func deploymentRepair(t *testing.T, dir, script string) (requests *atomic.Int32) {
 	t.Helper()
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile)) // the env file is what makes it a deployment (#237)
 	testutil.StageTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: script, Mode: 0o700})
 	return countingScriptSource(t)
 }
@@ -1063,6 +1064,9 @@ func TestDefaultPrepareRepair_RunsTheDeploymentsOwnScriptInTheRequestedMode(t *t
 func TestDefaultPrepareRepair_AbsentScriptIsUnavailable(t *testing.T) {
 	requests := countingScriptSource(t)
 	m := sizedRepair(t)
+	// A deployment, but one without repair.sh; a bare directory is a
+	// different screen (#237).
+	testutil.WriteEnvOrbit(t, filepath.Join(m.targetDir, deploy.EnvFile))
 	msg := m.Init()()
 	m, _ = updateAs(t, m, msg)
 	if m.state != repairUnavailable || !strings.Contains(screen(m), "Diagnosis needs a newer Orbit") {
@@ -1076,9 +1080,95 @@ func TestDefaultPrepareRepair_AbsentScriptIsUnavailable(t *testing.T) {
 	}
 }
 
+// #237: Repair pointed at a directory with no Orbit deployment in it
+// reaches the shared no-deployment screen, not "needs a newer Orbit".
+func TestRepairModel_EmptyDirectoryReachesTheNoDeploymentScreen(t *testing.T) {
+	requests := countingScriptSource(t)
+	dir := t.TempDir()
+	m := NewRepairModel(dir, "v0.6.0") // no seam: the real default
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	m = updated.(RepairModel)
+
+	msg := m.Init()()
+	ready, ok := msg.(repairReadyMsg)
+	if !ok {
+		t.Fatalf("Init produced %#v, want a repairReadyMsg", msg)
+	}
+	if !errors.Is(ready.err, deploy.ErrNoDeployment) || errors.Is(ready.err, deploy.ErrRepairUnavailable) {
+		t.Fatalf("err = %v, want deploy.ErrNoDeployment and not ErrRepairUnavailable", ready.err)
+	}
+	m, _ = updateAs(t, m, msg)
+	s := screen(m)
+	if m.state != repairNotFound {
+		t.Fatalf("state = %v, want repairNotFound; screen:\n%s", m.state, s)
+	}
+	// The shared title wraps a long temp path onto its own line, with
+	// sky between the lines, so the words and the path are found apart.
+	if !strings.Contains(s, "No Orbit deployment found in") || !strings.Contains(s, dir) {
+		t.Errorf("screen lacks %q:\n%s", "No Orbit deployment found in "+dir, s)
+	}
+	if strings.Contains(s, "needs a newer Orbit") {
+		t.Errorf("an empty directory sent the person to upgrade something that is not there:\n%s", s)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("an empty directory made %d HTTP requests", n)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "scripts")); !os.IsNotExist(err) {
+		t.Error("nothing may be written into a directory with no deployment")
+	}
+
+	// The shared screen's keys: Menu goes back to the main menu.
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
+	if !m.Done || !m.WantsMenu {
+		t.Errorf("Menu on the no-deployment screen: Done=%v WantsMenu=%v, want both", m.Done, m.WantsMenu)
+	}
+}
+
+// Control: a deployment (its env file is there) without repair.sh is
+// still the older-Orbit case.
+func TestRepairModel_DeploymentWithoutTheScriptStillNeedsANewerOrbit(t *testing.T) {
+	countingScriptSource(t)
+	m := sizedRepair(t)
+	testutil.WriteEnvOrbit(t, filepath.Join(m.targetDir, deploy.EnvFile))
+	msg := m.Init()()
+	if ready, ok := msg.(repairReadyMsg); !ok || !errors.Is(ready.err, deploy.ErrRepairUnavailable) || errors.Is(ready.err, deploy.ErrNoDeployment) {
+		t.Fatalf("Init produced %#v, want a repairReadyMsg with ErrRepairUnavailable", msg)
+	}
+	m, _ = updateAs(t, m, msg)
+	if m.state != repairUnavailable || !strings.Contains(screen(m), "Diagnosis needs a newer Orbit") {
+		t.Fatalf("state = %v, screen:\n%s", m.state, screen(m))
+	}
+	if strings.Contains(screen(m), "No Orbit deployment found") {
+		t.Errorf("a deployment was reported as missing:\n%s", screen(m))
+	}
+}
+
+// Every way a repair starts goes through the same lookup, so a
+// rotation in an empty directory says the same thing.
+func TestDefaultPrepare_EmptyDirectoryIsNoDeployment(t *testing.T) {
+	countingScriptSource(t)
+	dir := t.TempDir()
+	if stream, err := defaultPrepareRepair(context.Background(), dir, deploy.RepairPlan); !errors.Is(err, deploy.ErrNoDeployment) {
+		if stream != nil {
+			t.Cleanup(stream.Kill)
+		}
+		t.Errorf("defaultPrepareRepair: err = %v, want deploy.ErrNoDeployment", err)
+	}
+	m := NewRepairModel(dir, "v0.6.0")
+	if r := m.startRotate()().(repairRotateReadyMsg); !errors.Is(r.err, deploy.ErrNoDeployment) {
+		t.Errorf("startRotate: err = %v, want deploy.ErrNoDeployment", r.err)
+	}
+}
+
 func TestDefaultPrepareRepair_MissingTargetIsUnavailable(t *testing.T) {
 	countingScriptSource(t)
-	m := NewRepairModel(filepath.Join(t.TempDir(), "gone"), "v0.6.0")
+	// A deployment with an env file and no scripts/ directory at all.
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := os.Mkdir(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteEnvOrbit(t, filepath.Join(gone, deploy.EnvFile))
+	m := NewRepairModel(gone, "v0.6.0")
 	ready := m.Init()().(repairReadyMsg)
 	if !errors.Is(ready.err, deploy.ErrRepairUnavailable) {
 		t.Fatalf("err = %v, want ErrRepairUnavailable", ready.err)
@@ -1109,7 +1199,9 @@ func TestDefaultPrepareRotate_RunsTheDangerousModeWithMachinePrompts(t *testing.
 
 func TestDefaultPrepareRotate_AbsentScriptIsUnavailable(t *testing.T) {
 	requests := countingScriptSource(t)
-	if r := NewRepairModel(t.TempDir(), "v").startRotate()().(repairRotateReadyMsg); !errors.Is(r.err, deploy.ErrRepairUnavailable) {
+	dir := t.TempDir()
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
+	if r := NewRepairModel(dir, "v").startRotate()().(repairRotateReadyMsg); !errors.Is(r.err, deploy.ErrRepairUnavailable) {
 		t.Fatalf("err = %v, want ErrRepairUnavailable", r.err)
 	}
 	if n := requests.Load(); n != 0 {

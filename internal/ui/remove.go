@@ -62,6 +62,11 @@ type RemoveModel struct {
 	// it. With a deployment, every command uses deployment.TargetDir.
 	targetDir string
 
+	// detectErr is deploy.Detect's error for targetDir: a .env-orbit that
+	// exists but could not be read. The not-found state then says so
+	// instead of "No Orbit deployment found" (#238).
+	detectErr error
+
 	// standDown is overridable in tests so they don't need a real Docker
 	// daemon — production code always leaves this nil and gets
 	// deploy.StandDown.
@@ -278,6 +283,9 @@ func (m RemoveModel) view() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m RemoveModel) viewNotFound() string {
+	if m.detectErr != nil {
+		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.detectErr)
+	}
 	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
 		"Remove acts only on a deployment the launcher has found.",
 		"Start it in the directory that holds "+deploy.EnvFile+".")

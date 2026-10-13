@@ -10,9 +10,11 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -62,6 +64,13 @@ func c9Screens(t *testing.T) map[string]string {
 		nf := c9Size(t, NewRemoveModel(nil), w)
 		nf.targetDir = c9LongDir
 		out["remove_notfound_"+tag] = nf.View().Content
+
+		// the same dead end for a .env-orbit that is there but unreadable
+		// (#238), on a fixed fake path so the golden is stable.
+		ur := c9Size(t, NewRemoveModel(nil), w)
+		ur.targetDir = c9LongDir
+		ur.detectErr = &fs.PathError{Op: "open", Path: c9LongDir + "/" + deploy.EnvFile, Err: syscall.EACCES}
+		out["remove_unreadable_"+tag] = ur.View().Content
 
 		rm := c9Size(t, NewRemoveModel(deployment), w)
 		rm.installedAt = installedAt

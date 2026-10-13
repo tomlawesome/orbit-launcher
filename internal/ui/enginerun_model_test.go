@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -265,16 +266,19 @@ func TestEngineRun_KeysWhileTheEngineRunsDoNothing(t *testing.T) {
 	}
 }
 
-func TestEngineRun_CtrlCKillsTheEngine(t *testing.T) {
+// Ctrl+C is a graceful stop since #240 (see enginerun_stop_test.go for
+// the rollback and the forced paths): the engine is asked to stop, and
+// the run quits once it has.
+func TestEngineRun_CtrlCStopsTheEngineAndQuits(t *testing.T) {
 	r := startedRun(t, "install", engineRunSeams{})
-	s := sleepingStream(t)
+	s := stoppableStream(t, "sleep 60 & until read -r c 2>/dev/null </proc/$!/comm && [ \"$c\" = sleep ]; do :; done; echo started; wait")
 	r, _ = runUpdate(t, r, engineReadyMsg{stream: s, cleanup: func() error { return nil }})
-	_, cmd := runUpdate(t, r, ctrlC())
-	if !isQuit(cmd) {
-		t.Fatal("Ctrl+C did not quit")
+	r, cmd := runUpdate(t, r, ctrlC())
+	if _, _, quit := settleStop(t, r, cmd); !quit {
+		t.Fatal("Ctrl+C did not lead to a quit")
 	}
-	if d := awaitEnd(t, s); d.ExitCode == 0 {
-		t.Fatalf("Ctrl+C left the engine running: %+v", d)
+	if !closed(s.Done(), 3*time.Second) {
+		t.Fatal("Ctrl+C left the engine running")
 	}
 }
 

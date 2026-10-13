@@ -45,13 +45,18 @@ type DoneMsg struct {
 type Stream struct {
 	C chan any
 
-	cmd  *exec.Cmd
-	once sync.Once
+	cmd *exec.Cmd
+	// Terminate and Kill are each idempotent, and separately so: a Kill
+	// after a Terminate (the grace ran out) must still send SIGKILL.
+	termOnce sync.Once
+	killOnce sync.Once
 
 	// mu guards reaped: once cmd.Wait has returned, the PID no longer
 	// names the engine and must not be signalled.
 	mu     sync.Mutex
 	reaped bool
+	// done is closed when reaped is set.
+	done chan struct{}
 }
 
 // Start launches cmd with stdout piped (which is what makes the engine
@@ -95,7 +100,7 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 		return nil, nil, err
 	}
 
-	s := &Stream{C: make(chan any, 64), cmd: cmd}
+	s := &Stream{C: make(chan any, 64), cmd: cmd, done: make(chan struct{})}
 
 	// stderr is drained concurrently into a tail ring so a chatty
 	// stderr can never deadlock the process against a full pipe.
@@ -129,6 +134,7 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 		s.mu.Lock()
 		s.reaped = true
 		s.mu.Unlock()
+		close(s.done)
 		done := DoneMsg{Err: err, StderrTail: tail}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -192,23 +198,40 @@ func trimLineEnd(line []byte) string {
 	return strings.TrimRight(string(line), "\r\n")
 }
 
-// Kill terminates the engine's whole process group — the engine runs
-// as a session leader (Setsid), so its own children (docker, curl) go
-// with it. Idempotent. Once the process has been reaped Kill sends
-// nothing at all: by then its PID, and the process group it named, may
-// belong to an unrelated process.
+// Done is closed once the engine process has exited and been reaped.
+func (s *Stream) Done() <-chan struct{} { return s.done }
+
+// Terminate asks the engine's whole process group to stop (SIGTERM) and
+// leaves it to exit by itself, so install.sh's EXIT trap can roll the
+// run back; pair it with a bounded wait on Done and then Kill (#240).
+// The engine runs as a session leader (Setsid), so its own children
+// (docker, curl) get the signal too. Idempotent. Once the process has
+// been reaped Terminate sends nothing at all: by then its PID, and the
+// process group it named, may belong to an unrelated process.
+func (s *Stream) Terminate() {
+	s.termOnce.Do(func() { s.signal(syscall.SIGTERM, false) })
+}
+
+// Kill ends the engine at once (SIGKILL) — the whole process group,
+// and the process itself in case it is not a group leader. Idempotent,
+// and sends nothing once the process has been reaped (see Terminate).
 func (s *Stream) Kill() {
-	s.once.Do(func() {
-		if s.cmd != nil && s.cmd.Process != nil {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			if s.reaped {
-				return
-			}
-			// Negative pid addresses the process group the engine
-			// leads. Best effort: the process may already be gone.
-			_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGTERM)
-			_ = s.cmd.Process.Kill()
-		}
-	})
+	s.killOnce.Do(func() { s.signal(syscall.SIGKILL, true) })
+}
+
+func (s *Stream) signal(sig syscall.Signal, alsoProcess bool) {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reaped {
+		return
+	}
+	// Negative pid addresses the process group the engine leads.
+	// Best effort: the process may already be gone.
+	_ = syscall.Kill(-s.cmd.Process.Pid, sig)
+	if alsoProcess {
+		_ = s.cmd.Process.Kill()
+	}
 }

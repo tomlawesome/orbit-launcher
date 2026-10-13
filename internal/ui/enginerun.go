@@ -48,7 +48,16 @@ const (
 	runHandoffRunning
 	runFailed
 	runSucceeded
+	// runStopping is Ctrl-C mid-run: the engine has been asked to stop
+	// and the launcher waits, bounded by stopGrace, for its own rollback.
+	runStopping
 )
+
+// stopGrace is how long a Ctrl-C mid-run waits for the installer to undo
+// what it started before killing it. Its cleanup is a docker rm, a file
+// rollback and an rm -rf — seconds; the bound is for a wedged daemon.
+// A variable so tests can shorten it.
+var stopGrace = 15 * time.Second
 
 // Seam types: the overridable dependencies an engine run needs, so
 // flow tests never touch the network or a real terminal.
@@ -95,6 +104,10 @@ type engineReadyMsg struct {
 	cleanup    func() error
 	err        error
 }
+
+// engineStoppedMsg ends the wait after Ctrl-C: the engine has exited
+// (forced false) or the grace ran out with it still running (forced).
+type engineStoppedMsg struct{ forced bool }
 
 // engineStreamMsg wraps one message from the engine stream's channel.
 type engineStreamMsg struct{ msg any }
@@ -337,7 +350,18 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
+		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+			// The installer finished its own stop. Whatever it exited
+			// with, the operator asked for this: not a failure.
+			return r.quitNow(false)
+		}
 		return r.handleStream(msg.msg)
+
+	case engineStoppedMsg:
+		if r.state != runStopping {
+			return r, nil
+		}
+		return r.quitNow(msg.forced)
 
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)
@@ -515,12 +539,12 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 			}
 			return r, nil
 		}
-		if r.stream != nil {
-			r.stream.Kill()
+		if r.state == runStreaming && r.stream != nil {
+			return r.beginStop()
 		}
-		r.cfg.close()
-		r.releaseRunFiles()
-		return r, tea.Quit
+		// Anything else, including a second Ctrl-C while stopping, is
+		// the usual force.
+		return r.quitNow(true)
 	}
 
 	switch r.state {
@@ -563,6 +587,37 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
+// beginStop is Ctrl-C mid-run: SIGTERM so install.sh's EXIT trap can
+// roll the run back, then a wait on the engine's exit bounded by
+// stopGrace (the pattern of docker stop and systemd's TimeoutStopSec).
+// Nothing here cancels a context the engine was built on: its
+// detachedCommand cancel would SIGKILL the group before the trap ran,
+// and BuildEngineCommand builds it on context.Background().
+func (r engineRun) beginStop() (engineRun, tea.Cmd) {
+	stream, grace := r.stream, stopGrace
+	stream.Terminate()
+	r.state = runStopping
+	return r, func() tea.Msg {
+		select {
+		case <-stream.Done():
+			return engineStoppedMsg{}
+		case <-time.After(grace):
+			return engineStoppedMsg{forced: true}
+		}
+	}
+}
+
+// quitNow ends the run and the launcher, killing the engine first if
+// force is set (it is a no-op once the engine has been reaped).
+func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
+	if r.stream != nil && force {
+		r.stream.Kill()
+	}
+	r.cfg.close()
+	r.releaseRunFiles()
+	return r, tea.Quit
+}
+
 // handleMenuKey drives a post-run screen's menu over items: Esc is back
 // to the main menu, and Enter hands choose the selected row's label.
 func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose func(string) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
@@ -598,6 +653,9 @@ func (r engineRun) view(width, height int) string {
 	switch r.state {
 	case runPreparing, runStreaming:
 		return r.console.view(width, height)
+	case runStopping:
+		return skyBlock(r.console.sky, width, height,
+			workingLine(r.console.spinner, "stopping the "+string(r.action), "the installer is undoing what it started — a few seconds"))
 	case runConfigPrompt:
 		return r.viewConfigPrompt(width, height)
 	case runConfigSignInMode:
