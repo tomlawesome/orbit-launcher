@@ -186,6 +186,103 @@ func TestPlaywrightPinsAgree(t *testing.T) {
 		imageVersion, pkgVersion, lockVersion)
 }
 
+// TestRenovateGroupsPlaywrightAcrossHosts is the check #243 asks for: the
+// Playwright image appears on both hosts -- PLAYWRIGHT_IMAGE in
+// .gitlab-ci.yml and the visual-regression workflow's container image -- and
+// @playwright/test in test/visual. Renovate must move all three in one merge
+// request, through the rule whose groupName is "playwright". That rule has to
+// name every manager that finds one of them, and sit below any broader rule
+// that also matches the workflow's image, because Renovate applies packageRules
+// in order and the later one wins.
+func TestRenovateGroupsPlaywrightAcrossHosts(t *testing.T) {
+	const image = "mcr.microsoft.com/playwright"
+	const pkg = "@playwright/test"
+
+	var cfg struct {
+		EnabledManagers []string `json:"enabledManagers"`
+		PackageRules    []struct {
+			MatchManagers     []string `json:"matchManagers"`
+			MatchPackageNames []string `json:"matchPackageNames"`
+			GroupName         string   `json:"groupName"`
+		} `json:"packageRules"`
+	}
+	if err := json.Unmarshal([]byte(readRepoFile(t, "renovate.json")), &cfg); err != nil {
+		t.Fatalf("parsing renovate.json: %v", err)
+	}
+
+	contains := func(list []string, want string) bool {
+		for _, v := range list {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !contains(cfg.EnabledManagers, "github-actions") {
+		t.Errorf("renovate.json's enabledManagers does not list github-actions, so Renovate " +
+			"never sees the visual-regression workflow's Playwright image. Add \"github-actions\" to enabledManagers.")
+	}
+
+	group := -1
+	for i, r := range cfg.PackageRules {
+		if r.GroupName != "playwright" {
+			continue
+		}
+		if group != -1 {
+			t.Fatalf("renovate.json has more than one packageRule with groupName \"playwright\" "+
+				"(rules %d and %d). Keep exactly one, so the image and @playwright/test share one merge request.",
+				group, i)
+		}
+		group = i
+	}
+	if group == -1 {
+		t.Fatalf("renovate.json has no packageRule with groupName \"playwright\". Add one that " +
+			"groups the Playwright image and @playwright/test into one merge request.")
+	}
+	rule := cfg.PackageRules[group]
+
+	want := map[string]bool{"custom.regex": true, "npm": true, "github-actions": true}
+	got := map[string]bool{}
+	for _, m := range rule.MatchManagers {
+		got[m] = true
+	}
+	for m := range want {
+		if !got[m] {
+			t.Errorf("the \"playwright\" packageRule's matchManagers is %v but must be exactly "+
+				"custom.regex, npm and github-actions: %q is missing. Without it Renovate moves that "+
+				"copy of the Playwright pin in a separate merge request. Add it to matchManagers.",
+				rule.MatchManagers, m)
+		}
+	}
+	for m := range got {
+		if !want[m] {
+			t.Errorf("the \"playwright\" packageRule's matchManagers lists %q, which finds no "+
+				"Playwright pin. Remove it so the group matches exactly custom.regex, npm and github-actions.", m)
+		}
+	}
+	for _, name := range []string{image, pkg} {
+		if !contains(rule.MatchPackageNames, name) {
+			t.Errorf("the \"playwright\" packageRule's matchPackageNames %v does not include %q. "+
+				"Add it so that package joins the group.", rule.MatchPackageNames, name)
+		}
+	}
+
+	// Later rules override earlier ones, so a github-actions rule that also
+	// matches the image and comes after the playwright rule takes it back out
+	// of the group.
+	for i, r := range cfg.PackageRules {
+		if i == group || i < group || !contains(r.MatchManagers, "github-actions") {
+			continue
+		}
+		if len(r.MatchPackageNames) == 0 || contains(r.MatchPackageNames, image) {
+			t.Errorf("packageRule %d (groupName %q) matches the GitHub workflow's Playwright image "+
+				"but comes after the \"playwright\" rule (rule %d), so it overrides the group. "+
+				"Move the \"playwright\" rule below it.", i, r.GroupName, group)
+		}
+	}
+}
+
 func TestGoImageVersionParsing(t *testing.T) {
 	cases := []struct {
 		name    string
