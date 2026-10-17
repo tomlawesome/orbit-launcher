@@ -336,7 +336,7 @@ func TestEngineRun_AnEngineDoneWhileStoppingQuitsInsteadOfShowingAFailure(t *tes
 // the launcher gave up on it (grace ran out, or a second Ctrl-C) leaves
 // the folder and the containers half restored. The launcher says so
 // after the screen closes, through flowOutcome.ExitNote (and
-// AppModel.ExitNote). A clean stop passes on the installer's own words.
+// AppModel.ExitNote). A clean stop says nothing.
 
 // stillUndoing is the launcher's fixed phrase in that note (owner
 // decision 20a, 2026-10-17).
@@ -412,7 +412,7 @@ func TestEngineRun_ASecondCtrlCWhileStoppingLeavesTheExitNote(t *testing.T) {
 	}
 }
 
-func TestEngineRun_ACleanStopKeepsTheInstallersOwnWordsAsTheExitNote(t *testing.T) {
+func TestEngineRun_ACleanStopLeavesNoExitNote(t *testing.T) {
 	stderr := []string{
 		"Orbit installer: The install stopped before it finished; rolling it back.",
 		"Orbit installer: This install was rolled back: the folder is as it was before, and the containers and volumes it created are removed.",
@@ -436,11 +436,72 @@ func TestEngineRun_ACleanStopKeepsTheInstallersOwnWordsAsTheExitNote(t *testing.
 		t.Fatalf("a clean stop ended on the failure screen:\n%s", runScreen(r))
 	}
 	note := outcomeOf(r).ExitNote
-	if want := strings.Join(stderr, "\n"); note != want {
-		t.Errorf("exit note = %q, want the installer's own two lines %q", note, want)
+	if note != "" {
+		t.Errorf("a clean stop left an exit note; nothing the installer wrote may be printed after exit: %q", note)
 	}
 	if strings.Contains(note, stillUndoing) {
 		t.Errorf("a clean stop is described as one that outlived its grace: %q", note)
+	}
+}
+
+// The real ordering: the stream closes Done() before it delivers the
+// DoneMsg, so the stop wait reports engineStoppedMsg{} first and the
+// run quits before any DoneMsg is handled.
+func TestEngineRun_ACleanStoppedMsgBeforeTheDoneMsgLeavesNoExitNote(t *testing.T) {
+	s := stoppableStream(t, rollbackScript(filepath.Join(t.TempDir(), "rolled-back")))
+	cleaned := 0
+	r := streamingRunOn(t, "install", s, &cleaned)
+	r, _ = runUpdate(t, r, ctrlC())
+	if r.state != runStopping {
+		t.Fatalf("state after Ctrl+C = %v, want runStopping", r.state)
+	}
+	if !closed(s.Done(), 5*time.Second) {
+		t.Fatal("the installer did not exit after the Ctrl+C; the test premise is broken")
+	}
+
+	r, cmd := runUpdate(t, r, engineStoppedMsg{})
+
+	if !isQuit(cmd) {
+		t.Fatal("engineStoppedMsg did not lead to tea.Quit")
+	}
+	if note := outcomeOf(r).ExitNote; note != "" {
+		t.Errorf("a clean stop left an exit note: %q", note)
+	}
+
+	r, cmd = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{
+		Err: errors.New("signal: terminated"), ExitCode: -1, StderrTail: []string{"rolled back"},
+	}})
+
+	if !isQuit(cmd) {
+		t.Error("a late DoneMsg after the stop no longer leads to tea.Quit")
+	}
+	if note := outcomeOf(r).ExitNote; note != "" {
+		t.Errorf("a late DoneMsg invented an exit note: %q", note)
+	}
+}
+
+// A second Ctrl-C can be handled after the installer has exited by
+// itself but before the queued quit: state is still runStopping, yet no
+// kill lands, so the stop was clean.
+func TestEngineRun_ASecondCtrlCAfterTheInstallerHasAlreadyGoneLeavesNoExitNote(t *testing.T) {
+	s := stoppableStream(t, rollbackScript(filepath.Join(t.TempDir(), "rolled-back")))
+	cleaned := 0
+	r := streamingRunOn(t, "install", s, &cleaned)
+	r, _ = runUpdate(t, r, ctrlC())
+	if r.state != runStopping {
+		t.Fatalf("state after the first Ctrl+C = %v, want runStopping", r.state)
+	}
+	if !closed(s.Done(), 5*time.Second) {
+		t.Fatal("the installer did not exit after the first Ctrl+C; the test premise is broken")
+	}
+
+	r, cmd := runUpdate(t, r, ctrlC())
+
+	if !isQuit(cmd) {
+		t.Fatal("the second Ctrl+C did not quit")
+	}
+	if note := outcomeOf(r).ExitNote; note != "" {
+		t.Errorf("a second Ctrl-C found the installer already gone, but the stop was reported as forced: %q", note)
 	}
 }
 

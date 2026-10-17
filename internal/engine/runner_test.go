@@ -181,3 +181,44 @@ func TestStream_KillAfterExitSignalsNothing(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// Kill reports whether its signal reached a process that had not yet
+// been reaped, so a caller can tell a kill that ended the engine from
+// one that found it already gone.
+func TestStream_KillReportsWhetherItSignalledALiveProcess(t *testing.T) {
+	t.Run("a live engine", func(t *testing.T) {
+		s := startScript(t, `
+echo "phase=application component=application state=starting reason=application-health action=start elapsed=1s"
+sleep 60
+`)
+		select {
+		case <-s.C:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no first event")
+		}
+		if !s.Kill() {
+			t.Error("the first Kill on a running engine reported that it signalled nothing")
+		}
+		collect(t, s)
+		select {
+		case <-s.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("the engine was not reaped after Kill")
+		}
+		if s.Kill() {
+			t.Error("a second Kill on the same stream reported a signal")
+		}
+	})
+	t.Run("an engine that has already exited", func(t *testing.T) {
+		s := startScript(t, "true")
+		collect(t, s)
+		select {
+		case <-s.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("the engine was not reaped")
+		}
+		if s.Kill() {
+			t.Error("Kill after the engine was reaped reported a signal")
+		}
+	})
+}
