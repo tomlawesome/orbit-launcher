@@ -516,6 +516,119 @@ func TestOwnerRuleGuardsEveryEntryPoint(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(target, ".env-orbit")); string(got) != "APP_URL=x\n" {
 		t.Errorf("another user's configuration was replaced: %q", got)
 	}
+	if err := StandDown(t.Context(), trustedDeployment(t)); !errors.As(err, &untrusted) {
+		t.Errorf("StandDown: err = %v, want the owner refusal", err)
+	}
+}
+
+// Stand-down applies the #191 trusted-path rule to the deployment
+// directory and its .env-orbit before it runs anything: a refusal means
+// docker was never started.
+func TestStandDown_RefusesAnUntrustedDeployment(t *testing.T) {
+	// dockerNeverRan fails unless the fake docker's call log is absent or empty.
+	dockerNeverRan := func(t *testing.T, callLog string) {
+		t.Helper()
+		got, err := os.ReadFile(callLog)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Errorf("docker ran despite the refusal: %q", got)
+		}
+	}
+	refused := func(t *testing.T, err error, path string) *UntrustedPathError {
+		t.Helper()
+		var untrusted *UntrustedPathError
+		if !errors.As(err, &untrusted) {
+			t.Fatalf("err = %v, want a *UntrustedPathError", err)
+		}
+		if untrusted.Path != path {
+			t.Errorf("refusal names %q, want %q", untrusted.Path, path)
+		}
+		return untrusted
+	}
+
+	t.Run("world-writable deployment directory", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		chmod(t, dir, 0o777)
+		callLog := fakeDockerLogging(t)
+		err := StandDown(t.Context(), dir)
+		refused(t, err, dir)
+		dockerNeverRan(t, callLog)
+	})
+	t.Run("world-writable .env-orbit", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		env := filepath.Join(dir, EnvFile)
+		chmod(t, env, 0o666)
+		callLog := fakeDockerLogging(t)
+		err := StandDown(t.Context(), dir)
+		refused(t, err, env)
+		dockerNeverRan(t, callLog)
+	})
+	t.Run(".env-orbit is a symbolic link", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		env := filepath.Join(dir, EnvFile)
+		real := filepath.Join(t.TempDir(), "elsewhere-env")
+		testutil.WriteEnvOrbit(t, real)
+		if err := os.Remove(env); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(real, env); err != nil {
+			t.Fatal(err)
+		}
+		callLog := fakeDockerLogging(t)
+		err := StandDown(t.Context(), dir)
+		var untrusted *UntrustedPathError
+		if !errors.As(err, &untrusted) {
+			t.Fatalf("err = %v, want a *UntrustedPathError", err)
+		}
+		dockerNeverRan(t, callLog)
+	})
+	t.Run("deployment directory owned by another user", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		asLauncherUser(t, os.Geteuid()+1)
+		callLog := fakeDockerLogging(t)
+		err := StandDown(t.Context(), dir)
+		refused(t, err, dir)
+		if !strings.Contains(err.Error(), "not by the user running the launcher") {
+			t.Errorf("err = %v, want the owner refusal", err)
+		}
+		dockerNeverRan(t, callLog)
+	})
+	t.Run("root may stand down a deployment another user owns", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		asLauncherUser(t, 0)
+		callLog := fakeDockerLogging(t)
+		if err := StandDown(t.Context(), dir); err != nil {
+			t.Fatalf("root was refused a consistently owned deployment: %v", err)
+		}
+		assertOneComposeDown(t, callLog, dir)
+	})
+}
+
+// The refusal must not fire on a good deployment.
+func TestStandDown_RunsATrustedDeployment(t *testing.T) {
+	dir := trustedDeployment(t)
+	callLog := fakeDockerLogging(t)
+	if err := StandDown(t.Context(), dir); err != nil {
+		t.Fatalf("a trusted deployment was refused: %v", err)
+	}
+	assertOneComposeDown(t, callLog, dir)
+}
+
+// assertOneComposeDown checks the fake docker was called exactly once,
+// with the stand-down arguments for dir.
+func assertOneComposeDown(t *testing.T, callLog, dir string) {
+	t.Helper()
+	got, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatalf("docker was never called: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	want := "compose --project-directory " + dir + " --env-file " + dir + "/.env-orbit down"
+	if len(lines) != 1 || !strings.Contains(lines[0], want) {
+		t.Errorf("docker calls = %q, want one line containing %q", lines, want)
+	}
 }
 
 func TestRequireTrustedPath_MissingDirIsNotExist(t *testing.T) {

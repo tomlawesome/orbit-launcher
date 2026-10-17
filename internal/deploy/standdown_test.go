@@ -66,7 +66,7 @@ func TestStandDownCommand_EndsWithDown(t *testing.T) {
 func TestStandDown_FailureCarriesDockersOutput(t *testing.T) {
 	fakeDockerPrinting(t, "no such service: orbit\n", 1)
 
-	err := StandDown(t.Context(), t.TempDir())
+	err := StandDown(t.Context(), trustedDeployment(t))
 	if err == nil {
 		t.Fatal("expected an error when docker compose down fails")
 	}
