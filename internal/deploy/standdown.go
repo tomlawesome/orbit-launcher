@@ -34,8 +34,18 @@ var standDownTimeout = 5 * time.Minute
 // never have caught.
 //
 // It gives up after standDownTimeout, or sooner if ctx ends, and the
-// error names the limit that applied.
+// error names the limit that applied. It refuses a directory the
+// launcher could not have written (RequireTrustedPath) before Docker
+// runs.
 func StandDown(ctx context.Context, targetDir string) error {
+	// Compose reads the project name and the compose file from
+	// targetDir, so it runs only from a path nobody else could have
+	// written (#191) — the same rule Repair and the configuration
+	// import already apply. A refusal reaches the failed screen as
+	// its own words.
+	if err := RequireTrustedPath(targetDir, EnvFile); err != nil {
+		return err
+	}
 	limit := limitApplied(ctx, standDownTimeout)
 	ctx, cancel := context.WithTimeout(ctx, standDownTimeout)
 	defer cancel()

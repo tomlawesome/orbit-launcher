@@ -516,6 +516,7 @@ func TestOwnerRuleGuardsEveryEntryPoint(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(target, ".env-orbit")); string(got) != "APP_URL=x\n" {
 		t.Errorf("another user's configuration was replaced: %q", got)
 	}
+	fakeDockerLogging(t) // a regressed guard must never reach the real docker
 	if err := StandDown(t.Context(), trustedDeployment(t)); !errors.As(err, &untrusted) {
 		t.Errorf("StandDown: err = %v, want the owner refusal", err)
 	}
