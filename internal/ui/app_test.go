@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -328,3 +329,61 @@ func (s *deferredSender) Send(msg tea.Msg) {
 // every other dependency in this file is already faked for the same
 // reason.
 func noStaleVolumes(context.Context, string) []deploy.DatabaseVolume { return nil }
+
+// Security audit: a Ctrl-C stop of the Install flow whose installer
+// outlives the grace is carried up to the app, which keeps the note for
+// the process to print once the screen has closed (AppModel.ExitNote).
+func TestAppModel_InstallStopForcedAfterTheGraceKeepsTheExitNote(t *testing.T) {
+	shortenStopGrace(t, 200*time.Millisecond)
+	s := stoppableStream(t, stubbornScript)
+	cleaned := 0
+	run := streamingRunOn(t, "install", s, &cleaned)
+
+	inst := NewInstallModel(t.TempDir(), "v9.9.9")
+	inst.state = installStateRunning
+	inst.run = run
+	app := NewAppModel()
+	app.state = appStateInstall
+	app.install = inst
+
+	if note := app.ExitNote(); note != "" {
+		t.Fatalf("a launcher that has stopped nothing has an exit note: %q", note)
+	}
+
+	model, cmd := app.Update(ctrlC())
+	app = model.(AppModel)
+	if cmd == nil {
+		t.Fatal("Ctrl+C mid-install armed nothing")
+	}
+	if isQuit(cmd) {
+		t.Fatal("Ctrl+C mid-install quit at once instead of letting the installer undo its work")
+	}
+
+	out := make(chan tea.Msg, 256)
+	runCmdInto(cmd, out)
+	var stopped *engineStoppedMsg
+	deadline := time.After(5 * time.Second)
+	for stopped == nil {
+		select {
+		case msg := <-out:
+			if m, ok := msg.(engineStoppedMsg); ok {
+				stopped = &m
+			}
+		case <-deadline:
+			t.Fatal("no engineStoppedMsg after the grace ran out")
+		}
+	}
+	if !stopped.forced {
+		t.Fatal("the stop was reported as clean, but the installer never exited by itself")
+	}
+
+	model, cmd = app.Update(*stopped)
+	app = model.(AppModel)
+
+	if !isQuit(cmd) {
+		t.Fatal("the forced stop did not lead to tea.Quit")
+	}
+	if note := app.ExitNote(); !strings.Contains(note, "still undoing") {
+		t.Errorf("app.ExitNote() = %q, want the launcher's still-undoing note", note)
+	}
+}

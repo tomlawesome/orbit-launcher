@@ -87,9 +87,22 @@ func startApp(stdout, stderr io.Writer) int {
 
 	program := tea.NewProgram(app)
 	sender.Attach(program)
-	if _, err := program.Run(); err != nil {
+	final, err := program.Run()
+	if err != nil {
 		fmt.Fprintln(stderr, "orbit-launcher:", err)
 		return 1
+	}
+	// A Ctrl-C stop's note can only be read once the alternate screen
+	// is gone, so it is printed here rather than by the TUI. It starts
+	// on a line of its own: keys typed before the launcher took the
+	// terminal were echoed onto the normal screen, where it lands.
+	if app, ok := final.(ui.AppModel); ok {
+		if note := app.ExitNote(); note != "" {
+			fmt.Fprintln(stderr, "\norbit-launcher:", note)
+		}
+		if app.StopForced() {
+			return 1
+		}
 	}
 	return 0
 }

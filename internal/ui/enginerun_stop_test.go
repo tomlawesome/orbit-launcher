@@ -331,3 +331,168 @@ func TestEngineRun_AnEngineDoneWhileStoppingQuitsInsteadOfShowingAFailure(t *tes
 		})
 	}
 }
+
+// Security audit: a stop whose installer was still undoing its work when
+// the launcher gave up on it (grace ran out, or a second Ctrl-C) leaves
+// the folder and the containers half restored. The launcher says so
+// after the screen closes, through flowOutcome.ExitNote (and
+// AppModel.ExitNote). A clean stop passes on the installer's own words.
+
+// stillUndoing is the launcher's fixed phrase in that note (owner
+// decision 20a, 2026-10-17).
+const stillUndoing = "still undoing"
+
+// forcedStopNoteWords are the parts of the owner's wording, by action,
+// that every forced-stop note carries.
+func forcedStopNoteWords(action string) []string {
+	return []string{
+		"the " + action + " was stopped, but Orbit's installer was still undoing its work",
+		"when the launcher stopped waiting and ended it",
+		"The folder and the Docker containers and volumes it created may be half restored",
+		"check them before",
+	}
+}
+
+func TestEngineRun_AStopForcedAfterTheGraceLeavesAnExitNoteAndIsNotAFailure(t *testing.T) {
+	for _, action := range []string{"install", "update"} {
+		t.Run(action, func(t *testing.T) {
+			shortenStopGrace(t, 200*time.Millisecond)
+			s := stoppableStream(t, stubbornScript)
+			cleaned := 0
+			r := streamingRunOn(t, action, s, &cleaned)
+
+			r, cmd := runUpdate(t, r, ctrlC())
+			r, stopped, quit := settleStop(t, r, cmd)
+
+			if stopped == nil || !stopped.forced {
+				t.Fatalf("the stop was not forced (stopped = %+v); the test premise is broken", stopped)
+			}
+			if !quit {
+				t.Fatal("the run did not quit when the grace ran out")
+			}
+			note := outcomeOf(r).ExitNote
+			if note == "" {
+				t.Fatal("a stop that outlived its grace left no exit note: the operator would never be told the " + action + " may be half undone")
+			}
+			if !strings.Contains(note, stillUndoing) {
+				t.Errorf("exit note lacks %q: %q", stillUndoing, note)
+			}
+			for _, want := range forcedStopNoteWords(action) {
+				if !strings.Contains(note, want) {
+					t.Errorf("exit note lacks %q: %q", want, note)
+				}
+			}
+			if r.state == runFailed {
+				t.Errorf("a stop the operator asked for ended on the failure screen:\n%s", runScreen(r))
+			}
+		})
+	}
+}
+
+func TestEngineRun_ASecondCtrlCWhileStoppingLeavesTheExitNote(t *testing.T) {
+	// The default grace is left alone, as in the test above for the
+	// kill itself: the second press is what forces the stop.
+	s := stoppableStream(t, stubbornScript)
+	cleaned := 0
+	r := streamingRunOn(t, "install", s, &cleaned)
+	r, _ = runUpdate(t, r, ctrlC()) // the wait it arms is deliberately not run
+	if r.state != runStopping {
+		t.Fatalf("state after the first Ctrl+C = %v, want runStopping", r.state)
+	}
+
+	r, cmd := runUpdate(t, r, ctrlC())
+	r, _, quit := settleStop(t, r, cmd)
+
+	if !quit {
+		t.Fatal("the second Ctrl+C did not quit")
+	}
+	note := outcomeOf(r).ExitNote
+	if !strings.Contains(note, stillUndoing) {
+		t.Errorf("a second Ctrl+C gave up on the installer without saying so: exit note %q", note)
+	}
+}
+
+func TestEngineRun_ACleanStopKeepsTheInstallersOwnWordsAsTheExitNote(t *testing.T) {
+	stderr := []string{
+		"Orbit installer: The install stopped before it finished; rolling it back.",
+		"Orbit installer: This install was rolled back: the folder is as it was before, and the containers and volumes it created are removed.",
+	}
+	s := stoppableStream(t, rollbackScript(filepath.Join(t.TempDir(), "rolled-back")))
+	cleaned := 0
+	r := streamingRunOn(t, "install", s, &cleaned)
+	r, _ = runUpdate(t, r, ctrlC())
+	if r.state != runStopping {
+		t.Fatalf("state after Ctrl+C = %v, want runStopping", r.state)
+	}
+
+	r, cmd := runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{
+		Err: errors.New("signal: terminated"), ExitCode: -1, StderrTail: stderr,
+	}})
+
+	if !isQuit(cmd) {
+		t.Fatal("the engine's DoneMsg during a stop did not lead to tea.Quit")
+	}
+	if r.state == runFailed {
+		t.Fatalf("a clean stop ended on the failure screen:\n%s", runScreen(r))
+	}
+	note := outcomeOf(r).ExitNote
+	if want := strings.Join(stderr, "\n"); note != want {
+		t.Errorf("exit note = %q, want the installer's own two lines %q", note, want)
+	}
+	if strings.Contains(note, stillUndoing) {
+		t.Errorf("a clean stop is described as one that outlived its grace: %q", note)
+	}
+}
+
+func TestEngineRun_ACleanStopWithNothingOnStderrHasNoExitNote(t *testing.T) {
+	s := stoppableStream(t, rollbackScript(filepath.Join(t.TempDir(), "rolled-back")))
+	cleaned := 0
+	r := streamingRunOn(t, "install", s, &cleaned)
+	r, _ = runUpdate(t, r, ctrlC())
+
+	r, cmd := runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 0}})
+
+	if !isQuit(cmd) {
+		t.Fatal("the engine's DoneMsg during a stop did not lead to tea.Quit")
+	}
+	if note := outcomeOf(r).ExitNote; note != "" {
+		t.Errorf("exit note = %q, want none: the installer said nothing", note)
+	}
+}
+
+func TestEngineRun_CtrlCOutsideAStopLeavesNoExitNote(t *testing.T) {
+	failed := func(t *testing.T) engineRun {
+		r := startedRun(t, "install", engineRunSeams{})
+		r, _ = runUpdate(t, r, engineReadyMsg{stream: &engine.Stream{C: make(chan any)}, cleanup: func() error { return nil }})
+		r, _ = runUpdate(t, r, engineStreamEndedMsg{})
+		return r
+	}
+	configPrompt := func(t *testing.T) engineRun {
+		r := startedRun(t, "update", engineRunSeams{})
+		r.state = runStreaming
+		r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", "configuration-failure", "retry")})
+		r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1")}})
+		return r
+	}
+	for _, c := range []struct {
+		name  string
+		build func(*testing.T) engineRun
+		state engineRunState
+	}{
+		{"failed", failed, runFailed},
+		{"configuration prompt", configPrompt, runConfigPrompt},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := c.build(t)
+			if r.state != c.state {
+				t.Fatalf("state = %v, want %v", r.state, c.state)
+			}
+
+			r, _ = runUpdate(t, r, ctrlC())
+
+			if note := outcomeOf(r).ExitNote; note != "" {
+				t.Errorf("Ctrl+C outside a stop left an exit note: %q", note)
+			}
+		})
+	}
+}

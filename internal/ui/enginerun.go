@@ -76,6 +76,10 @@ type flowOutcome struct {
 	WantsMenu bool
 	URL       string
 	Elapsed   time.Duration
+	// ExitNote is printed by main after the screen closes; StopForced
+	// marks it as a stop that outlived its grace, which exits 1.
+	ExitNote   string
+	StopForced bool
 }
 
 // backToMenu is leaving a flow for the main menu before anything has
@@ -86,11 +90,13 @@ var backToMenu = flowOutcome{Done: true, WantsMenu: true}
 
 func outcomeOf(r engineRun) flowOutcome {
 	return flowOutcome{
-		Done:      r.Done,
-		Succeeded: r.Succeeded,
-		WantsMenu: r.WantsMenu,
-		URL:       r.URL,
-		Elapsed:   r.Elapsed,
+		Done:       r.Done,
+		Succeeded:  r.Succeeded,
+		WantsMenu:  r.WantsMenu,
+		URL:        r.URL,
+		Elapsed:    r.Elapsed,
+		ExitNote:   r.exitNote,
+		StopForced: r.stopForced,
 	}
 }
 
@@ -179,6 +185,12 @@ type engineRun struct {
 	lastFailed    *engine.Event
 	stderrTail    []string
 	runErr        error
+
+	// exitNote is what a Ctrl-C stop leaves to say once the launcher has
+	// exited; stopForced is set when the launcher ended the installer
+	// before it finished undoing its work.
+	exitNote   string
+	stopForced bool
 
 	// menu is the cursor on whichever post-run screen is showing; each
 	// screen names its own rows (configPromptMenu, failedMenu).
@@ -350,9 +362,10 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
-		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+		if done, ok := msg.msg.(engine.DoneMsg); ok && r.state == runStopping {
 			// The installer finished its own stop. Whatever it exited
 			// with, the operator asked for this: not a failure.
+			r.stderrTail = done.StderrTail
 			return r.quitNow(false)
 		}
 		return r.handleStream(msg.msg)
@@ -613,9 +626,28 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 	if r.stream != nil && force {
 		r.stream.Kill()
 	}
+	// The alt screen is gone by the time anyone could read this, so the
+	// note rides out on the final model and main prints it. A forced
+	// note stays put: the killed installer's DoneMsg can still arrive
+	// before the quit does.
+	if r.state == runStopping && !r.stopForced {
+		if force {
+			r.exitNote = forcedStopNote(r.action)
+			r.stopForced = true
+		} else {
+			r.exitNote = strings.Join(r.stderrTail, "\n")
+		}
+	}
 	r.cfg.close()
 	r.releaseRunFiles()
 	return r, tea.Quit
+}
+
+// forcedStopNote is the owner's wording for a stop whose installer was
+// still undoing its work when the launcher ended it.
+func forcedStopNote(action deploy.Action) string {
+	return "the " + string(action) + " was stopped, but Orbit's installer was still undoing its work when the launcher stopped waiting and ended it. " +
+		"The folder and the Docker containers and volumes it created may be half restored — check them before installing again."
 }
 
 // handleMenuKey drives a post-run screen's menu over items: Esc is back
