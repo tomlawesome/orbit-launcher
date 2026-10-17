@@ -25,9 +25,16 @@ jobs:
   fast:
     name: Static and unit checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
+
+    env:
+      # Copied from .gitlab-ci.yml's variables, the source of truth;
+      # test/supplychain fails when a copy here differs (#216).
+      STATICCHECK_VERSION: 452d5bb86b45416c35891262f6a11dbd6a970117
+      BATS_VERSION: "1.14.0"
+      BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
 
     steps:
       - name: Check out repository
@@ -52,19 +59,24 @@ jobs:
       - name: Vet
         run: go build ./... && go vet ./...
 
-      - name: Shellcheck bootstrap script
-        run: shellcheck scripts/get-orbit-launcher.sh
+      - name: Shellcheck scripts
+        run: shellcheck scripts/*.sh scripts/ci/*.sh
 
       - name: Set up bats
         run: |
-          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats-core
-          echo "/tmp/bats-core/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          bash scripts/ci/fetch-verified.sh \
+            "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" \
+            "${BATS_SHA256}" "${RUNNER_TEMP}/bats.tar.gz"
+          mkdir -p "${RUNNER_TEMP}/bats-core"
+          tar -xzf "${RUNNER_TEMP}/bats.tar.gz" -C "${RUNNER_TEMP}/bats-core" --strip-components=1
+          echo "${RUNNER_TEMP}/bats-core/bin" >> "$GITHUB_PATH"
 
-      - name: Test bootstrap script
+      - name: Test shell scripts
         run: bats scripts/test/
 
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@452d5bb86b45416c35891262f6a11dbd6a970117
+        run: go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
 
       - name: Run staticcheck
         run: staticcheck ./...

@@ -137,6 +137,18 @@ func TestDerivedActionsDeduplicatesSubpathsAndSorts(t *testing.T) {
 	}
 }
 
+// writeGitlabPin gives a fixture repository the .gitlab-ci.yml half of the
+// gitleaks pin, quoted as the real file quotes it. GitleaksPin reads both
+// hosts since #216 (SU-8), so a fixture with only secret-scan.yml is a
+// repository whose GitLab pin has vanished.
+func writeGitlabPin(t *testing.T, root, version, sum string) {
+	t.Helper()
+	body := "variables:\n  GITLEAKS_VERSION: \"" + version + "\"\n  GITLEAKS_SHA256: " + sum + "\n"
+	if err := os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGitleaksPinReadsTheEnvBlock(t *testing.T) {
 	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 	root := writeWorkflows(t, map[string]string{"secret-scan.yml": `
@@ -144,6 +156,7 @@ func TestGitleaksPinReadsTheEnvBlock(t *testing.T) {
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: ` + digest + `
 `})
+	writeGitlabPin(t, root, "8.30.1", digest)
 	version, sha, err := GitleaksPin(root)
 	if err != nil {
 		t.Fatal(err)
@@ -152,6 +165,56 @@ func TestGitleaksPinReadsTheEnvBlock(t *testing.T) {
 		t.Errorf("parsed version=%q sha=%q", version, sha)
 	}
 }
+
+// A second line setting the same key to another value is a pin that differs
+// from itself; reading only the first would hide the other (#216, SU-8).
+func TestGitleaksPinRefusesAKeySetTwiceToDifferentValues(t *testing.T) {
+	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+	const other = "0000000000000000000000000000000000000000000000000000000000000000"
+	for _, c := range []struct{ name, extra, want string }{
+		{"version", "      GITLEAKS_VERSION: 8.31.0\n", "sets GITLEAKS_VERSION twice"},
+		{"digest", "      GITLEAKS_SHA256: " + other + "\n", "sets GITLEAKS_SHA256 twice"},
+		{"the same value twice is not a conflict", "      GITLEAKS_VERSION: \"8.30.1\"\n", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := writeWorkflows(t, map[string]string{"secret-scan.yml": "    env:\n" +
+				"      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + digest + "\n" + c.extra})
+			writeGitlabPin(t, root, "8.30.1", digest)
+			_, _, err := GitleaksPin(root)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("GitleaksPin = %v, want the agreeing copies accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("GitleaksPin = %v, want an error containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestGitleaksPinIgnoresATrailingComment(t *testing.T) {
+	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+	root := writeWorkflows(t, map[string]string{"secret-scan.yml": "    env:\n" +
+		"      GITLEAKS_VERSION: \"8.30.1\" # bumped with .gitlab-ci.yml\n" +
+		"      GITLEAKS_SHA256: " + digest + "\n"})
+	writeGitlabPin(t, root, "8.30.1", digest)
+	version, sum, err := GitleaksPin(root)
+	if err != nil || version != "8.30.1" || sum != digest {
+		t.Fatalf("GitleaksPin = %q, %q, %v; want 8.30.1 and the digest", version, sum, err)
+	}
+}
+
+func TestGitleaksPinFailsWithoutTheGitLabPipeline(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"secret-scan.yml": secretScanPin})
+	_, _, err := GitleaksPin(root)
+	if err == nil || !strings.Contains(err.Error(), ".gitlab-ci.yml") {
+		t.Fatalf("GitleaksPin = %v, want an error naming .gitlab-ci.yml", err)
+	}
+}
+
+const secretScanPin = "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb\n"
 
 func TestGitleaksPinFailsWhenTheWorkflowStopsPinning(t *testing.T) {
 	root := writeWorkflows(t, map[string]string{"secret-scan.yml": "    env:\n      GITLEAKS_VERSION: 8.30.1\n"})
@@ -507,6 +570,7 @@ func goodRepo(t *testing.T) (string, Policy) {
 			"      - uses: actions/setup-go@" + setupGoSHA + " # v7.0.0\n",
 		"secret-scan.yml": "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + gitleaksDigest + "\n",
 	})
+	writeGitlabPin(t, root, "8.30.1", gitleaksDigest)
 	pol := goodPolicy()
 	pol.Tools = []Tool{{Name: "gitleaks", Version: "8.30.1", SHA256: gitleaksDigest, License: "MIT", UpdateOwner: "x"}}
 	writePolicy(t, root, pol)

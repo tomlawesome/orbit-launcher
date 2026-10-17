@@ -533,6 +533,15 @@ func indent(block string) string {
 // whichever standard streams are still unset at the pty.
 func startLive(t *testing.T, binPath, dir string) *liveSession {
 	t.Helper()
+	return startLiveEnv(t, binPath, dir)
+}
+
+// startLiveEnv is startLive with extraEnv appended after everything else,
+// so each entry wins over the job's own value of the same name (os/exec
+// keeps the last). The update leg's first install uses it to install an
+// earlier release than the one the job hands every other session (#198).
+func startLiveEnv(t *testing.T, binPath, dir string, extraEnv ...string) *liveSession {
+	t.Helper()
 
 	// Suffixed per (sub)test — Install and Remove each call startLive
 	// once, and os.Create truncates, so a single shared path would
@@ -643,6 +652,7 @@ func startLive(t *testing.T, binPath, dir string) *liveSession {
 		// Deliberately not what an operator gets: unset (the default), a
 		// fallback still falls back.
 		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := term.Start(cmd); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
@@ -743,12 +753,15 @@ const signInModeMarker = "[local/oidc]"
 
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	const stopScreen = "Install stopped"
+	// An update's failure screen says "Update stopped" (flowStoppedTitle);
+	// the update leg (#198) waits here too, and must not sit out the budget
+	// on a failure screen it does not recognise.
+	stopScreens := []string{"Install stopped", "Update stopped"}
 	// Each look is at one 120x40 screen, so it costs the same however
 	// much the install has printed. The stream matcher that once fell so
 	// far behind the launcher's repaints that a finished install looked
 	// frozen (#159, #165) has nothing left to fall behind.
-	markers := []string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, stopScreen, target}
+	markers := append([]string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, target}, stopScreens...)
 	// acted is the screen the last Enter was sent on. The stream gave
 	// each marker once, as it was drawn; a screen goes on showing it
 	// until the launcher moves on. A screen identical to that one is the
@@ -768,7 +781,7 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		if strings.Contains(result, target) {
 			return
 		}
-		if strings.Contains(result, stopScreen) {
+		if vtscreen.ContainsAny(stopScreens...)(result) {
 			// The install genuinely stopped — sending Enter here would
 			// just cycle the menu until the 600s budget expires instead
 			// of reporting why. Fail now, with the installer's own
@@ -939,162 +952,191 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	// followed by 602s of Remove before the hang diagnosis fired (#145).
 	installed := t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
-
-		sendLine := func(s string) { session.send(s + "\r") }
-
-		session.mustSoon("Install")
-		session.choose("Install") // by digit, not by trusting the preselection
-		session.mustSoon("Choose a deployment profile")
-		sendLine("") // Standard selected by default
-		session.mustSoon("Ready to install")
-		sendLine("") // confirm — the development notice opens first (#175)
-		session.passNotice()
-		session.runStarted() // the mission console's piped engine run starts
-
-		// The piped, terminal-less first attempt cannot prompt, so on a
-		// fresh target it ends in the engine's non-interactive
-		// configuration refusal (target rolled back). A contract-era
-		// engine (orbit develop) reports it as an event and lands on
-		// the styled configuration prompt; a legacy engine (orbit main)
-		// reports nothing and lands on the failure screen. Both
-		// screens' default option leads to the guided configuration.
-		session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-			vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
-		sendLine("") // Continue — guided configuration / Open the guided installer
-		session.chooseSSO()
-
-		// Strict mode is on, so the only guided configuration available
-		// is the in-console one, and this marker says it is the one that
-		// ran. A fallback would have stopped the run above instead.
-		acceptMenusUntil(t, session, inConsolePromptMarker)
-		sendLine(appURL)
-		session.must("OIDC issuer URL")
-		sendLine(testOIDCIssuer)
-		session.must("OIDC client ID")
-		sendLine("orbit-launcher-live-ci-test")
-		// The in-console prompt puts the label and "input hidden" on
-		// separate lines; the label alone is what is matched, as above.
-		session.must("OIDC client secret")
-		sendLine("ci-live-test-fake-secret-value")
-
-		// Wait for the launcher's own success screen, never for the
-		// installer's completion prose — orbit main's v1.2.0 release
-		// reworded it ("Orbit is deployed from …" now; "Orbit is
-		// ready." before), which is precisely why prose is unstable by
-		// design and outcomes key off exit codes (learned the hard way:
-		// this exact assertion timed out against a fully successful
-		// install). The stacked success menu is this repo's own
-		// contract. A completion-prose line mentioning "Optional
-		// services" can match the adaptive menu pattern and cost one
-		// stray Enter on the success screen — which lands on "Get into
-		// Orbit", a deliberate no-quit action, so it is benign.
-		acceptMenusUntil(t, session, "Get into Orbit")
-
-		var lastStatus int
-		var lastErr error
-		healthy := false
-		// Same two-minute ceiling as the 60 tries it replaced, but each
-		// request is bounded too, and the loop stops short of the cleanup
-		// reserve.
-		until := time.Now().Add(capBudget(2*time.Minute, session.deadline, time.Now()))
-		for time.Now().Before(until) {
-			resp, err := healthClient.Get("http://localhost:3000/")
-			if err == nil {
-				lastStatus = resp.StatusCode
-				resp.Body.Close()
-				if lastStatus == http.StatusOK {
-					healthy = true
-					break
-				}
-			} else {
-				lastErr = err
-			}
-			time.Sleep(2 * time.Second)
-		}
-		if !healthy {
-			t.Fatalf("deployed Orbit app never answered 200 on :3000 (last status %d, last error %v)", lastStatus, lastErr)
-		}
-
-		session.send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
-		session.send("\r")     // quits this orbit-launcher instance cleanly
+		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
+		waitHealthy(t, session)
+		quitFromSuccess(session)
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
 			t.Skip("Install failed; nothing to remove")
 		}
-		session := startLive(t, binPath, dir)
-
-		// Nothing is asserted about the caret here (issue #122). The
-		// health probe is enabled — this is a real deployment — and this
-		// test's APP_URL is deliberately unresolvable, so the probe fails,
-		// marks the deployment degraded and moves the caret to Repair
-		// (splash.go:308-319); it was observed doing exactly that. Which
-		// row is preselected is therefore a race, so the row is chosen by
-		// digit instead of by counting arrows from an assumed start.
-		//
-		// Detection is asserted here, on the splash: its identity line
-		// carries the bare FQDN — the scheme is launcher noise at a
-		// glance — which proves deploy.Detect read the real .env-orbit
-		// this Install wrote. Against go-expect's byte stream it could
-		// not be: the line is styled and centred, so escape sequences
-		// interleaved within the FQDN. The screen holds it whole (#181).
-		fqdn := strings.TrimPrefix(appURL, "https://")
-		session.mustSoonScreen("Install", fqdn)
-		session.choose("Remove")
-		session.mustSoon("This stops Orbit and removes its containers")
-		// The confirm screen's identity line carries the same FQDN.
-		session.must(fqdn)
-		session.send("\r") // Stand down Orbit selected by default
-		session.must("Orbit has been stood down")
-		session.send("\x1b[B\x1b[B\r") // Copy command, Menu, Exit (#228)
-
-		// Asserted against the project this deployment really uses, by
-		// the label Compose stamps on every container it creates. A
-		// filter on the temp directory's name would match nothing and
-		// pass whatever Remove did.
-		project := composeProjectName(dir)
-		// If this ever stops matching, the install ignored the project
-		// name it was given and this run has been operating on some
-		// other Orbit — worth failing loudly, because the cleanup that
-		// follows carries -v.
-		if want := liveProjectName(dir); project != want {
-			t.Fatalf("deployment recorded Compose project %q, want %q: this run was not isolated", project, want)
-		}
-		out, err := exec.Command("docker", "ps", "-a",
-			"--filter", "label=com.docker.compose.project="+project,
-			"--format", "{{.Names}}").CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker ps: %v\n%s", err, out)
-		}
-		if len(out) != 0 {
-			t.Errorf("expected no containers after Remove, got:\n%s", out)
-		}
-
-		// Remove's own design promise: data volumes and files are
-		// preserved (Remove is the reversible half; the copy-pasteable
-		// command it shows, but never runs, is the destructive half —
-		// see internal/deploy/removal_property_test.go, which already
-		// asserts as a fast unit-test property that this package never
-		// calls that command itself).
-		if _, err := os.Stat(filepath.Join(dir, ".env-orbit")); err != nil {
-			t.Errorf("expected .env-orbit to survive Remove, stat error: %v", err)
-		}
-		// Compose names a deployment's volumes <project>_<volume> and
-		// labels them with the project, so the label is the exact
-		// question being asked: did *this* deployment's data survive.
-		// A bare "orbit-db-data" name filter would answer for any
-		// Orbit on the machine, including a real one.
-		volOut, err := exec.Command("docker", "volume", "ls",
-			"--filter", "label=com.docker.compose.project="+project,
-			"--format", "{{.Name}}").CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker volume ls: %v\n%s", err, volOut)
-		}
-		if len(volOut) == 0 {
-			t.Error("expected the deployment's data volumes to survive Remove, found none")
-		}
+		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
+}
+
+// installThroughConsole drives a fresh Install from the splash through the
+// in-console configuration, answering with appURL, the test issuer,
+// clientID and secret, then accepts install.sh's menus until target shows:
+// the success menu's "Get into Orbit", or a failure screen a test expects.
+func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID, secret, target string) {
+	t.Helper()
+	sendLine := func(s string) { session.send(s + "\r") }
+
+	session.mustSoon("Install")
+	session.choose("Install") // by digit, not by trusting the preselection
+	session.mustSoon("Choose a deployment profile")
+	sendLine("") // Standard selected by default
+	session.mustSoon("Ready to install")
+	sendLine("") // confirm — the development notice opens first (#175)
+	session.passNotice()
+	session.runStarted() // the mission console's piped engine run starts
+
+	// The piped, terminal-less first attempt cannot prompt, so on a
+	// fresh target it ends in the engine's non-interactive
+	// configuration refusal (target rolled back). A contract-era
+	// engine (orbit develop) reports it as an event and lands on
+	// the styled configuration prompt; a legacy engine (orbit main)
+	// reports nothing and lands on the failure screen. Both
+	// screens' default option leads to the guided configuration.
+	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
+		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
+	sendLine("") // Continue — guided configuration / Open the guided installer
+	session.chooseSSO()
+
+	// Strict mode is on, so the only guided configuration available
+	// is the in-console one, and this marker says it is the one that
+	// ran. A fallback would have stopped the run above instead.
+	acceptMenusUntil(t, session, inConsolePromptMarker)
+	sendLine(appURL)
+	session.must("OIDC issuer URL")
+	sendLine(testOIDCIssuer)
+	session.must("OIDC client ID")
+	sendLine(clientID)
+	// The in-console prompt puts the label and "input hidden" on
+	// separate lines; the label alone is what is matched, as above.
+	session.must("OIDC client secret")
+	sendLine(secret)
+
+	// Wait for the launcher's own success screen, never for the
+	// installer's completion prose — orbit main's v1.2.0 release
+	// reworded it ("Orbit is deployed from …" now; "Orbit is
+	// ready." before), which is precisely why prose is unstable by
+	// design and outcomes key off exit codes (learned the hard way:
+	// this exact assertion timed out against a fully successful
+	// install). The stacked success menu is this repo's own
+	// contract. A completion-prose line mentioning "Optional
+	// services" can match the adaptive menu pattern and cost one
+	// stray Enter on the success screen — which lands on "Get into
+	// Orbit", a deliberate no-quit action, so it is benign.
+	// The port-conflict leg passes "Install stopped" instead: any
+	// remaining confirmation menu is answered the same way, or the launcher
+	// waits on it until the budget runs out and the held port is never even
+	// tried (#151).
+	acceptMenusUntil(t, session, target)
+}
+
+// waitHealthy waits for the deployed app to answer 200 on :3000.
+func waitHealthy(t *testing.T, session *liveSession) {
+	t.Helper()
+	var lastStatus int
+	var lastErr error
+	healthy := false
+	// Same two-minute ceiling as the 60 tries it replaced, but each
+	// request is bounded too, and the loop stops short of the cleanup
+	// reserve.
+	until := time.Now().Add(capBudget(2*time.Minute, session.deadline, time.Now()))
+	for time.Now().Before(until) {
+		resp, err := healthClient.Get("http://localhost:3000/")
+		if err == nil {
+			lastStatus = resp.StatusCode
+			resp.Body.Close()
+			if lastStatus == http.StatusOK {
+				healthy = true
+				break
+			}
+		} else {
+			lastErr = err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !healthy {
+		t.Fatalf("deployed Orbit app never answered 200 on :3000 (last status %d, last error %v)", lastStatus, lastErr)
+	}
+}
+
+// quitFromSuccess leaves the launcher from its success screen.
+func quitFromSuccess(session *liveSession) {
+	session.send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
+	session.send("\r")     // quits this orbit-launcher instance cleanly
+}
+
+// removeAndAssertCleanup drives a real Remove of the deployment in dir and
+// asserts its cleanup promise: no containers left, configuration and data
+// volumes kept.
+func removeAndAssertCleanup(t *testing.T, binPath, dir, appURL string) {
+	t.Helper()
+	session := startLive(t, binPath, dir)
+
+	// Nothing is asserted about the caret here (issue #122). The
+	// health probe is enabled — this is a real deployment — and this
+	// test's APP_URL is deliberately unresolvable, so the probe fails,
+	// marks the deployment degraded and moves the caret to Repair
+	// (splash.go:308-319); it was observed doing exactly that. Which
+	// row is preselected is therefore a race, so the row is chosen by
+	// digit instead of by counting arrows from an assumed start.
+	//
+	// Detection is asserted here, on the splash: its identity line
+	// carries the bare FQDN — the scheme is launcher noise at a
+	// glance — which proves deploy.Detect read the real .env-orbit
+	// this Install wrote. Against go-expect's byte stream it could
+	// not be: the line is styled and centred, so escape sequences
+	// interleaved within the FQDN. The screen holds it whole (#181).
+	fqdn := strings.TrimPrefix(appURL, "https://")
+	session.mustSoonScreen("Install", fqdn)
+	session.choose("Remove")
+	session.mustSoon("This stops Orbit and removes its containers")
+	// The confirm screen's identity line carries the same FQDN.
+	session.must(fqdn)
+	session.send("\r") // Stand down Orbit selected by default
+	session.must("Orbit has been stood down")
+	session.send("\x1b[B\x1b[B\r") // Copy command, Menu, Exit (#228)
+
+	// Asserted against the project this deployment really uses, by
+	// the label Compose stamps on every container it creates. A
+	// filter on the temp directory's name would match nothing and
+	// pass whatever Remove did.
+	project := composeProjectName(dir)
+	// If this ever stops matching, the install ignored the project
+	// name it was given and this run has been operating on some
+	// other Orbit — worth failing loudly, because the cleanup that
+	// follows carries -v.
+	if want := liveProjectName(dir); project != want {
+		t.Fatalf("deployment recorded Compose project %q, want %q: this run was not isolated", project, want)
+	}
+	out, err := exec.Command("docker", "ps", "-a",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--format", "{{.Names}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker ps: %v\n%s", err, out)
+	}
+	if len(out) != 0 {
+		t.Errorf("expected no containers after Remove, got:\n%s", out)
+	}
+
+	// Remove's own design promise: data volumes and files are
+	// preserved (Remove is the reversible half; the copy-pasteable
+	// command it shows, but never runs, is the destructive half —
+	// see internal/deploy/removal_property_test.go, which already
+	// asserts as a fast unit-test property that this package never
+	// calls that command itself).
+	if _, err := os.Stat(filepath.Join(dir, ".env-orbit")); err != nil {
+		t.Errorf("expected .env-orbit to survive Remove, stat error: %v", err)
+	}
+	// Compose names a deployment's volumes <project>_<volume> and
+	// labels them with the project, so the label is the exact
+	// question being asked: did *this* deployment's data survive.
+	// A bare "orbit-db-data" name filter would answer for any
+	// Orbit on the machine, including a real one.
+	volOut, err := exec.Command("docker", "volume", "ls",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--format", "{{.Name}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker volume ls: %v\n%s", err, volOut)
+	}
+	if len(volOut) == 0 {
+		t.Error("expected the deployment's data volumes to survive Remove, found none")
+	}
 }
 
 // TestLive_InstallPortConflictFailsCleanly is the failure-path live
@@ -1131,40 +1173,12 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
 	session := startLive(t, binPath, dir)
 
-	sendLine := func(s string) { session.send(s + "\r") }
-
-	session.mustSoon("Install")
-	session.choose("Install") // by digit, not by trusting the preselection
-	session.mustSoon("Choose a deployment profile")
-	sendLine("")
-	session.mustSoon("Ready to install")
-	sendLine("") // confirm — the development notice opens first (#175)
-	session.passNotice()
-	session.runStarted()
-
 	// The piped attempt's configuration refusal, then guided
-	// configuration — identical to the happy path up to here.
-	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
-	sendLine("")
-	session.chooseSSO()
-
-	acceptMenusUntil(t, session, inConsolePromptMarker)
-	sendLine(appURL)
-	session.must("OIDC issuer URL")
-	sendLine(testOIDCIssuer)
-	session.must("OIDC client ID")
-	sendLine("orbit-launcher-live-failure-test")
-	session.must("OIDC client secret")
-	sendLine("ci-live-failure-fake-secret")
-
-	// Any remaining confirmation menu is answered as the happy path does,
-	// or the launcher waits on the menu until the budget runs out and the
-	// held port is never even tried (#151). Then the deploy
+	// configuration — identical to the happy path. Then the deploy
 	// proceeds into compose and dies on the held port. The launcher's own
 	// failure screen — not a hang, not a fake success — is the contract,
 	// with its stacked menu present.
-	acceptMenusUntil(t, session, "Install stopped")
+	installThroughConsole(t, session, appURL, "orbit-launcher-live-failure-test", "ci-live-failure-fake-secret", "Install stopped")
 	session.must("Menu")
 
 	// Exit via the failure menu (guided installer, Menu, Exit).

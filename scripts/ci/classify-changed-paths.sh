@@ -4,7 +4,9 @@
 # two lines, in this order:
 #
 #   DOCS_ONLY=true|false           every changed path is documentation (#153)
-#   LIVE_PINS_CHANGED=true|false   a pin the live install runs on moved (#164)
+#   LIVE_PINS_CHANGED=true|false   a pin the live install runs on moved (#164),
+#                                  or a file its pinned downloads go through
+#                                  changed (#216)
 #
 # Always exits 0: the caller writes both lines to a dotenv artifact, and a
 # non-zero exit here would fail the pipeline rather than gate it.
@@ -38,6 +40,11 @@ is_safe_path() {
 # inside, and the Go tarball it fetches. A change to any of these cannot be
 # proven by any other job, because nothing else installs anything (#164).
 LIVE_PIN_KEYS='UBUNTU_IMAGE|GO_VERSION|GO_SHA256'
+
+# The files those pins pass through on their way in: the live job fetches the
+# Go tarball through the checked-download script, so a change to it alone is
+# a change to what the install runs on (#216). Whole paths, `|`-separated.
+LIVE_PIN_PATHS='scripts/ci/fetch-verified.sh'
 
 docs_only=false
 live_pins=true
@@ -88,7 +95,18 @@ fi
 # pipeline definition is edited far more often than these three lines are, and
 # the point is to charge an ordinary CI edit nothing.
 live_pins=false
-if ! pin_diff="$(git diff -U0 "$base" "$head" -- .gitlab-ci.yml 2>/dev/null)"; then
+pin_path=""
+while IFS= read -r path; do
+  case "|$LIVE_PIN_PATHS|" in
+    *"|$path|"*) pin_path="$path" ;;
+  esac
+done <<EOF
+$changed
+EOF
+if [ -n "$pin_path" ]; then
+  echo "classify: $pin_path changed, and the live install's downloads go through it, so it runs" >&2
+  live_pins=true
+elif ! pin_diff="$(git diff -U0 "$base" "$head" -- .gitlab-ci.yml 2>/dev/null)"; then
   echo "classify: could not read the pipeline diff, so the live install runs" >&2
   live_pins=true
 elif printf '%s\n' "$pin_diff" \
