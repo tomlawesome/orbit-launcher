@@ -256,6 +256,49 @@ func TestRepairCommand_RefusesAnUntrustedScript(t *testing.T) {
 	}
 }
 
+// Owner decision 19a: a missing .env-orbit no longer stops the script, but
+// the script must still come from a trusted path. An untrusted scripts/
+// directory or script is refused, not reported as "no deployment".
+func TestRepairCommand_ScriptWithoutEnvFileStillNeedsATrustedPath(t *testing.T) {
+	cases := map[string]func(t *testing.T, dir string){
+		"world-writable scripts directory": func(t *testing.T, dir string) {
+			chmod(t, filepath.Join(dir, "scripts"), 0o777)
+		},
+		"symlinked script": func(t *testing.T, dir string) {
+			elsewhere := filepath.Join(t.TempDir(), "repair.sh")
+			if err := os.WriteFile(elsewhere, []byte("#!/bin/bash\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			script := filepath.Join(dir, "scripts", "repair.sh")
+			if err := os.Remove(script); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(elsewhere, script); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, untrust := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			chmod(t, dir, 0o755)
+			scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o644})
+			untrust(t, dir)
+			cmd, err := RepairCommand(dir, RepairPlan)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) {
+				t.Fatalf("err = %v, want an *UntrustedPathError", err)
+			}
+			if errors.Is(err, ErrNoDeployment) {
+				t.Error("an untrusted script was reported as no deployment")
+			}
+			if cmd != nil {
+				t.Error("an untrusted script returned a command")
+			}
+		})
+	}
+}
+
 func TestOpenConfigTree_RefusesAnUntrustedConfigure(t *testing.T) {
 	tree := handedOverTree(t)
 	chmod(t, filepath.Join(tree, "scripts", "configure.sh"), 0o666)
