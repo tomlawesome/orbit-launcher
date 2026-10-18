@@ -553,6 +553,94 @@ func TestOpenConfigTree_ChecksOrbitImage(t *testing.T) {
 	}
 }
 
+// #204: repair.sh reads .orbit-image the same way configure.sh does, so
+// Repair's command checks a present .orbit-image at the deployment root
+// like the scripts; an absent one is fine (older deployments).
+func TestRepairCommand_ChecksOrbitImage(t *testing.T) {
+	deploymentWithImage := func(t *testing.T, mode os.FileMode) string {
+		dir := trustedDeployment(t)
+		writeTestFile(t, filepath.Join(dir, ".orbit-image"), "ghcr.io/tomlawesome/orbit@sha256:abc\n", mode)
+		return dir
+	}
+
+	accepted := map[string]func(t *testing.T) string{
+		"absent": func(t *testing.T) string { return trustedDeployment(t) },
+		"owner-only": func(t *testing.T) string {
+			return deploymentWithImage(t, 0o600)
+		},
+		"world-readable": func(t *testing.T) string {
+			return deploymentWithImage(t, 0o644)
+		},
+		"group-writable, as the scripts may be": func(t *testing.T) string {
+			return deploymentWithImage(t, 0o664)
+		},
+	}
+	for name, prepare := range accepted {
+		t.Run("accepted: "+name, func(t *testing.T) {
+			cmd, err := RepairCommand(prepare(t), RepairPlan)
+			if err != nil {
+				t.Fatalf("RepairCommand: %v", err)
+			}
+			if cmd == nil {
+				t.Fatal("RepairCommand returned no command")
+			}
+		})
+	}
+
+	refused := []struct {
+		name    string
+		prepare func(t *testing.T) (dir, image string)
+	}{
+		{
+			name: "symbolic link",
+			prepare: func(t *testing.T) (string, string) {
+				dir := trustedDeployment(t)
+				elsewhere := filepath.Join(t.TempDir(), "orbit-image")
+				writeTestFile(t, elsewhere, "ghcr.io/attacker/orbit:latest\n", 0o644)
+				image := filepath.Join(dir, ".orbit-image")
+				if err := os.Symlink(elsewhere, image); err != nil {
+					t.Fatal(err)
+				}
+				return dir, image
+			},
+		},
+		{
+			name: "world-writable",
+			prepare: func(t *testing.T) (string, string) {
+				dir := deploymentWithImage(t, 0o666)
+				return dir, filepath.Join(dir, ".orbit-image")
+			},
+		},
+		{
+			name: "not a regular file",
+			prepare: func(t *testing.T) (string, string) {
+				dir := trustedDeployment(t)
+				image := filepath.Join(dir, ".orbit-image")
+				if err := syscall.Mkfifo(image, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return dir, image
+			},
+		},
+	}
+	for _, tc := range refused {
+		t.Run("refused: "+tc.name, func(t *testing.T) {
+			dir, image := tc.prepare(t)
+			cmd, err := RepairCommand(dir, RepairPlan)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) {
+				t.Fatalf("err = %v, want an *UntrustedPathError naming %s", err, image)
+			}
+			if cmd != nil {
+				t.Error("a refused deployment returned a command")
+			}
+			if untrusted.Path != image {
+				t.Errorf("refusal names %q, want %q", untrusted.Path, image)
+			}
+		})
+	}
+}
+
 // The owner check on .orbit-image needs a second uid, which only root
 // can create files for.
 func TestOpenConfigTree_RefusesAnOrbitImageAnotherUserOwns(t *testing.T) {
