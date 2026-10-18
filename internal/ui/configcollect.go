@@ -202,7 +202,22 @@ func (r engineRun) fallbackToHandoff(reason string) (engineRun, tea.Cmd) {
 func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	if r.state != runConfigCollect {
 		// A cancelled session's process can still deliver its queued
-		// messages; they belong to nothing now.
+		// messages; they belong to nothing now. A process or plan that
+		// was still being started when the session was left is stopped
+		// or cleaned up here, since nothing else holds it.
+		switch msg := msg.(type) {
+		case configStepMsg:
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			if msg.stdin != nil {
+				msg.stdin.Close()
+			}
+		case configPlanMsg:
+			if msg.plan.cleanup != nil {
+				msg.plan.cleanup()
+			}
+		}
 		return r, nil
 	}
 	switch msg := msg.(type) {
@@ -309,6 +324,8 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			return r, nil
 		}
 		r.cfg.close()
+		// One retry per run after configuration (see handleStream).
+		r.retriedAfterConfig = true
 		return r.retryEngine()
 	}
 	return r, nil

@@ -131,6 +131,12 @@ var errNoEngineSender = errors.New("the launcher couldn't read the engine's outp
 // that closed before its DoneMsg.
 var errEngineStoppedEarly = errors.New("the engine stopped without reporting how the run finished")
 
+// errStillIncomplete is the failure when the engine refuses for
+// configuration again on the retry that followed guided configuration.
+//
+//lint:ignore ST1005 shown as a whole sentence on the failure screen
+var errStillIncomplete = errors.New("Orbit still says the configuration is incomplete.")
+
 // streamWrap names the owning flow's messages for what the engine
 // stream reader sees: one message from the stream, and the stream's
 // end (reason is nil for an ordinary close). ended is handed the
@@ -178,6 +184,12 @@ type engineRun struct {
 	// cfg is the in-console configuration session, live while state is
 	// runConfigCollect.
 	cfg configCollect
+
+	// retriedAfterConfig is set once guided configuration has led to an
+	// engine retry in this run. A retry that refuses for configuration
+	// again goes to the failure screen rather than round the same
+	// session for ever; a fresh start from the menu is a new run.
+	retriedAfterConfig bool
 
 	// Outcome evidence, gathered from events and the exit code.
 	configRefused bool
@@ -443,6 +455,17 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			return r.succeed()
 		}
 		r.runErr = m.Err
+		if r.configRefused && r.retriedAfterConfig {
+			// Guided configuration already ran and the engine still
+			// refuses: another session would ask the same again.
+			r.releaseRunFiles()
+			// The refusal event would otherwise be shown instead.
+			r.lastFailed = nil
+			r.runErr = errStillIncomplete
+			r.state = runFailed
+			r.menu = menu{}
+			return r, nil
+		}
 		if r.configRefused {
 			// The engine's documented configuration-required refusal:
 			// the target was rolled back, and the fix is the guided

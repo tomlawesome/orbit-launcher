@@ -177,7 +177,8 @@ func (l inputLine) stop(at, dir int) (int, bool) {
 
 // around is the part of the line that fits in n cells, split at the
 // cursor, so a narrow row keeps the cursor in view (#223): as much
-// before the cursor as fits, then what still fits after it. With the
+// before the cursor as fits, less some room kept for the text after it,
+// then what still fits after it. With the
 // cursor at the end it is the line's tail. It cuts between grapheme
 // clusters and measures them as lipgloss.Width does, the walk
 // truncateStyled makes from the other end: a wide character takes two
@@ -198,8 +199,19 @@ func (l inputLine) around(n int) (before, after string) {
 			break
 		}
 	}
+	// With text after the cursor, keep room for some of it (up to a
+	// quarter of the row), so moving left on a wide line shows what
+	// follows the cursor instead of pinning it to the right edge.
+	room := n
+	if k0 < len(starts) {
+		afterCells := 0
+		for _, w := range widths[k0:] {
+			afterCells += w
+		}
+		room = n - min(afterCells, n/4)
+	}
 	from, cells := cut, 0
-	for k := k0 - 1; k >= 0 && cells+widths[k] <= n; k-- {
+	for k := k0 - 1; k >= 0 && cells+widths[k] <= room; k-- {
 		cells += widths[k]
 		from = starts[k]
 	}

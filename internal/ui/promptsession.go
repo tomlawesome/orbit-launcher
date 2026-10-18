@@ -20,8 +20,9 @@ import (
 type promptSession struct {
 	prompt *engine.Prompt // non-nil while one answer is being typed
 	reason string         // honest words for the last rejection
-	// last and aborted name the field last asked for and the one the
-	// engine gave up on (its prompt-abort line); "" until they happen.
+	// last and aborted name the field last asked for and not yet
+	// accepted, and the one the engine gave up on (its prompt-abort
+	// line); "" until they happen.
 	last, aborted string
 	// sawPrompt records that the engine spoke the protocol at all:
 	// configuration tells a legacy configure.sh apart by its absence.
@@ -49,6 +50,9 @@ func (s promptSession) applyLine(text string) (_ promptSession, ok bool) {
 	case engine.PromptAccept:
 		s.reason = ""
 		s.prompt = nil
+		// An accepted field is no longer being asked for, so a later
+		// give-up must not name it.
+		s.last = ""
 	case engine.PromptAbort:
 		// The engine gives up (third rejection or closed input) and
 		// exits through its refusal path.
