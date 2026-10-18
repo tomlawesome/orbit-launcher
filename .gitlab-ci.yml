@@ -108,11 +108,12 @@ variables:
   # GitHub job's `orbit_branch` and `orbit_channel` inputs are.
   #
   # The production pair is `main` and "" (install.sh's own default, `latest`).
-  # Both sit on `preview` until orbit #1016 is fixed by the v1.3.0 release:
-  # the published `latest` names a source revision that no longer exists, so
-  # a default install fails before the launcher is involved (owner,
-  # 2026-09-14). Branch and channel move together because install.sh and the
-  # image must be one generation. Put them back when v1.3.0 ships.
+  # Both sit on `preview` (owner, 2026-09-14): Orbit's `main` still carries
+  # its v1.2.0 release from before its renumbering to 0.x, a generation older
+  # than the configure engine the launcher drives (#204). Branch and channel
+  # move together because install.sh and the image must be one generation.
+  # Put them back once Orbit's next release reaches `main`; #193 pins the
+  # commit for good.
   ORBIT_PROJECT: ai/orbit
   # Orbit's public GitHub mirror, used only when GitLab refuses the job
   # token (Renovate's merge requests, #173) or ORBIT_FILES_SOURCE says so.

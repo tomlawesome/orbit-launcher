@@ -522,7 +522,7 @@ keep working. Two things follow from that:
   current `install.sh` fresh from orbit's stable branch at the moment
   Install or Update is confirmed — not a copy checked into this repo,
   not a pinned revision. `install.sh` itself resolves every other asset
-  it needs (compose files, `configure.sh`, `configuration.sh`) from the
+  it needs (compose files, `configure.sh`, `.orbit-image`) from the
   exact source revision recorded in the Docker image's own OCI labels,
   so fetching only this one file is sufficient. The one exception is
   `ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH`: when set, `FetchInstallScript`

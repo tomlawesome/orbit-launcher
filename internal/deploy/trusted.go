@@ -123,10 +123,11 @@ func requireTrustedConfigDirs(dir string) error {
 // orbitScripts are the scripts in a deployment's scripts/ directory that
 // source one another: trusting one of them means trusting all that are
 // there.
-var orbitScripts = []string{"configure.sh", "configuration.sh", "installer-ui.sh", "engine-check.sh", "repair.sh"}
+var orbitScripts = []string{"configure.sh", "installer-ui.sh", "repair.sh"}
 
 // requireTrustedScripts is RequireTrustedPath for scripts/<name>, plus
-// each sibling it may source that is present.
+// each sibling it may source that is present, plus orbitImageFile when
+// present: configure.sh (which repair.sh's check also runs) reads it.
 func requireTrustedScripts(dir, name string) error {
 	if err := RequireTrustedPath(dir, filepath.Join("scripts", name)); err != nil {
 		return err
@@ -139,7 +140,7 @@ func requireTrustedScripts(dir, name string) error {
 			return err
 		}
 	}
-	return nil
+	return requireTrustedIfPresent(dir, orbitImageFile)
 }
 
 // checkTrustedDir checks one directory and returns its owner. want is
