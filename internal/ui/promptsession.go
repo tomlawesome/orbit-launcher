@@ -113,15 +113,21 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	// The input row. A secret is never echoed — not even its length.
 	caret := style.MenuCaret.Render(style.SymbolSelected) + " "
 	cursor := style.AccentText.Render(style.SymbolCursor)
-	var shown string
+	// Nor, for a secret, where the cursor sits (#258): it stays drawn
+	// at the start, wherever the editing keys have moved it.
+	var before, after string
 	switch {
-	case p.Kind == "secret": // shown stays empty
+	case p.Kind == "secret": // both stay empty
 	case width > 0:
-		shown = s.input.tail(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
+		before, after = s.input.around(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
 	default:
-		shown = s.input.String()
+		before, after = s.input.around(lipgloss.Width(s.input.String()))
 	}
-	fmt.Fprintln(b, caret+style.Ink.Render(shown)+cursor)
+	row := caret + style.Ink.Render(before) + cursor
+	if after != "" { // a cursor at the end draws the row byte for byte as before
+		row += style.Ink.Render(after)
+	}
+	fmt.Fprintln(b, row)
 
 	if s.reason != "" {
 		fmt.Fprintln(b)

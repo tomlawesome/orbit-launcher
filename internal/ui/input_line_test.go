@@ -193,7 +193,10 @@ func TestInputLine_ModifierKeysTypeNothing(t *testing.T) {
 			{"ctrl+b", tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}},
 			{"alt+b", tea.KeyPressMsg{Code: 'b', Mod: tea.ModAlt}},
 			{"ctrl+alt+b", tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl | tea.ModAlt}},
-			{"ctrl+a", tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}},
+			// Ctrl+A now jumps to the start of the line (#258), and the
+			// rig reads only the text before the cursor; Ctrl+Q means
+			// nothing in a field.
+			{"ctrl+q", tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl}},
 		} {
 			rig.press(mk.k)
 			if got := rig.typed(); got != "a" {

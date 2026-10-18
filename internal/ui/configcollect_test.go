@@ -673,14 +673,14 @@ func TestConfigCollect_OnlyAPPURLIsRemembered(t *testing.T) {
 	r := engineRun{cfg: configCollect{stdin: nopWriteCloser{&stdin}}}
 
 	r.cfg.session.prompt = &engine.Prompt{Field: "OIDC_CLIENT_SECRET", Kind: "secret"}
-	r.cfg.session.input = inputLine{[]rune("hunter2")}
+	r.cfg.session.input = inputLine{runes: []rune("hunter2")}
 	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "" {
 		t.Errorf("a secret was remembered as the origin: %q", r.cfg.origin)
 	}
 
 	r.cfg.session.prompt = &engine.Prompt{Field: "APP_URL", Kind: "url"}
-	r.cfg.session.input = inputLine{[]rune("https://orbit.example.com")}
+	r.cfg.session.input = inputLine{runes: []rune("https://orbit.example.com")}
 	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "https://orbit.example.com" {
 		t.Errorf("APP_URL was not remembered: %q", r.cfg.origin)
