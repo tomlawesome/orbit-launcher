@@ -343,13 +343,19 @@ func TestEngineRun_AnEngineDoneWhileStoppingQuitsInsteadOfShowingAFailure(t *tes
 const stillUndoing = "still undoing"
 
 // forcedStopNoteWords are the parts of the owner's wording, by action,
-// that every forced-stop note carries.
+// that every forced-stop note carries. The note ends "check them before
+// installing again." for an install and "check them before updating
+// again." for an update (owner decision 21a, 2026-10-18).
 func forcedStopNoteWords(action string) []string {
+	again := "installing"
+	if action == "update" {
+		again = "updating"
+	}
 	return []string{
 		"the " + action + " was stopped, but Orbit's installer was still undoing its work",
 		"when the launcher stopped waiting and ended it",
 		"The folder and the Docker containers and volumes it created may be half restored",
-		"check them before",
+		"check them before " + again + " again.",
 	}
 }
 
