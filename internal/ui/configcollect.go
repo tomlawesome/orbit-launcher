@@ -2,12 +2,13 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -16,20 +17,23 @@ import (
 
 // In-console guided configuration, driven by orbit's machine prompt
 // protocol (docs/engine-events.md "Machine prompts (v0)", orbit#297).
-// On the engine's configuration refusal the launcher stages a config
-// tree (deploy.FetchConfigTree), seeds it from the target, and runs
+// On the engine's configuration refusal the launcher opens the configuration
+// tree the engine handed over (ORBIT_LAUNCHER_CONFIG_TREE, ai/orbit#1225;
+// see deploy.BuildInstallCommand), seeds it from the target, and runs
 // configure.sh's own guided flow with machine prompts — every answer
 // validated by the engine's validators, never the launcher's guesses,
 // and no value (least of all the secret) ever appearing in a protocol
-// line. A legacy engine that doesn't speak the protocol fails fast
-// with no prompt line, and the flow falls back to the same terminal
-// handoff as before — capability detected by behaviour, never by
-// version sniffing.
+// line. Nothing is downloaded (#190): an engine that handed over no
+// tree, or one that doesn't speak the protocol (it fails fast with no
+// prompt line), gets the same terminal handoff as before — capability
+// detected by behaviour, never by version sniffing.
 
-// configPlan is the prepared session: the staged tree plus what
-// configure.sh --check says still needs collecting.
+// configPlan is the prepared session: the configuration tree plus what
+// configure.sh --check says still needs collecting. cleanup ends the
+// session (clearing what it collected); the tree itself is the engine
+// run's, released with the run's files.
 type configPlan struct {
-	treeDir    string
+	configTree string
 	cleanup    func()
 	needInit   bool
 	needSecret bool
@@ -53,15 +57,39 @@ type configStepMsg struct {
 // configStreamMsg wraps one message from the configure stream.
 type configStreamMsg struct{ msg any }
 
+// configStreamEndedMsg reports a configure stream closing; stream says
+// which step's, since each step has its own.
+type configStreamEndedMsg struct {
+	stream *engine.Stream
+	reason error
+}
+
+// configStream is the configure steps' wrapping for the engine stream
+// reader.
+var configStream = streamWrap{
+	msg: func(msg any) tea.Msg { return configStreamMsg{msg: msg} },
+	ended: func(s *engine.Stream, reason error) tea.Msg {
+		return configStreamEndedMsg{stream: s, reason: reason}
+	},
+}
+
 // configAdoptedMsg reports the collected configuration landing in the
 // target.
 type configAdoptedMsg struct{ err error }
 
+// configRecheckMsg carries configure.sh --check's fresh answer, asked
+// again once --init has landed (see recheckAfterInit).
+type configRecheckMsg struct {
+	check deploy.ConfigCheck
+	err   error
+}
+
 // Seams so flow tests drive the whole session with fakes.
 type (
-	prepareConfigFunc func(ctx context.Context, targetDir string) configPlanMsg
-	startConfigFunc   func(treeDir string, step deploy.ConfigStep) (*engine.Stream, io.WriteCloser, error)
-	adoptConfigFunc   func(treeDir, targetDir string) error
+	prepareConfigFunc func(ctx context.Context, targetDir, configTree string) configPlanMsg
+	startConfigFunc   func(configTree string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error)
+	adoptConfigFunc   func(configTree, targetDir string) error
+	recheckConfigFunc func(ctx context.Context, configTree string) (deploy.ConfigCheck, error)
 )
 
 // configCollect is the live session state.
@@ -71,13 +99,23 @@ type configCollect struct {
 	stream *engine.Stream
 	stdin  io.WriteCloser
 
-	prompt    *engine.Prompt // non-nil while one answer is being typed
-	reason    string         // honest words for the last rejection
-	sawPrompt bool           // protocol capability evidence, per step
-	input     []rune
+	// session is the step's machine-prompt exchange; its sawPrompt is
+	// the protocol capability evidence, per step.
+	session promptSession
+	// origin is the accepted APP_URL answer, kept so a later field's
+	// guidance can name this deployment's real callback URL. Only ever
+	// set from a non-secret field.
+	origin string
+
+	// signIn is the highlight on the sign-in-mode screen (issue #154),
+	// over configSignInLabels; Local accounts, first, is the default.
+	signIn menu
+	// authMode is the answer, once chosen, threaded into BuildConfigureCommand
+	// for the --init step it gates. Empty until the person chooses.
+	authMode deploy.AuthMode
 }
 
-// close releases the session's process and staged tree.
+// close releases the session's process and what it collected.
 func (c *configCollect) close() {
 	if c.stream != nil {
 		c.stream.Kill()
@@ -93,22 +131,25 @@ func (c *configCollect) close() {
 	}
 }
 
-func defaultPrepareConfig(ctx context.Context, targetDir string) configPlanMsg {
-	treeDir, cleanup, err := deploy.FetchConfigTree(ctx)
+// defaultPrepareConfig opens the configuration tree the engine handed over
+// and plans the session there. No tree (an install.sh without
+// ai/orbit#1225) is an error, which routes to the terminal handoff.
+func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) configPlanMsg {
+	cleanup, err := deploy.OpenConfigTree(configTree)
 	if err != nil {
 		return configPlanMsg{err: err}
 	}
-	if err := deploy.ImportTargetConfig(treeDir, targetDir); err != nil {
+	if err := deploy.ImportTargetConfig(configTree, targetDir); err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
 	}
-	check, err := deploy.RunConfigCheck(ctx, treeDir)
+	check, err := deploy.RunConfigCheck(ctx, configTree)
 	if err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
 	}
 	return configPlanMsg{plan: configPlan{
-		treeDir:    treeDir,
+		configTree: configTree,
 		cleanup:    cleanup,
 		needInit:   check.NeedsInit(),
 		needSecret: check.NeedsSecret(),
@@ -116,8 +157,8 @@ func defaultPrepareConfig(ctx context.Context, targetDir string) configPlanMsg {
 	}}
 }
 
-func defaultStartConfig(treeDir string, step deploy.ConfigStep) (*engine.Stream, io.WriteCloser, error) {
-	return engine.StartInteractive(deploy.BuildConfigureCommand(treeDir, step))
+func defaultStartConfig(configTree string, step deploy.ConfigStep, mode deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+	return engine.StartInteractive(deploy.BuildConfigureCommand(configTree, step, mode))
 }
 
 // beginConfigCollect starts the in-console path: prepare the session in
@@ -129,21 +170,30 @@ func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	if prepare == nil {
 		prepare = defaultPrepareConfig
 	}
-	targetDir := r.targetDir
+	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
-		return prepare(context.Background(), targetDir)
+		return prepare(context.Background(), targetDir, configTree)
 	}
 }
 
-// pumpConfig delivers the next configure-stream message.
-func pumpConfig(s *engine.Stream) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-s.C
-		if !ok {
-			return nil
-		}
-		return configStreamMsg{msg: msg}
-	}
+// The four ways in-console collection can be abandoned, in fixed
+// phrases. Deliberately not built from the underlying error: it carries
+// local paths, and configure.sh's output carries answers. Neither
+// belongs in a log CI keeps as an artifact (see logDiag).
+const (
+	fallbackNoTree       = "the engine handed over no configuration tree"
+	fallbackUnfixable    = "the configuration needs fields this console can't ask for"
+	fallbackStepFailed   = "the configuration step would not start"
+	fallbackLegacyEngine = "the engine never spoke the machine prompt protocol"
+)
+
+// fallbackToHandoff records why in-console collection was abandoned,
+// then routes on: normally into the terminal handoff, or — under
+// ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG — to a hard stop, which
+// beginHandoff decides.
+func (r engineRun) fallbackToHandoff(reason string) (engineRun, tea.Cmd) {
+	logDiag("in-console configuration unavailable: " + reason)
+	return r.beginHandoff()
 }
 
 // handleConfigMsg advances the session. Any failure that isn't the
@@ -157,12 +207,34 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case configPlanMsg:
-		if msg.err != nil || len(msg.plan.unfixable) > 0 {
-			// Can't collect here (fetch failed, or fields beyond the
-			// protocol's vocabulary are missing) — the guided installer
-			// in the real terminal can.
+		var untrusted *deploy.UntrustedPathError
+		if errors.As(msg.err, &untrusted) {
+			// The tree is on a path the launcher does not trust (#191):
+			// a refusal, naming the path and the reason, never a quiet
+			// fallback. The failure screen still offers the guided
+			// installer as the person's own choice.
 			r.cfg.close()
-			return r.beginHandoff()
+			r.releaseRunFiles()
+			r.lastFailed = nil
+			r.stderrTail = nil
+			r.runErr = msg.err
+			r.state = runFailed
+			r.menu = menu{}
+			return r, nil
+		}
+		if msg.err != nil || len(msg.plan.unfixable) > 0 {
+			// Can't collect here (no tree was handed over, or fields
+			// beyond the protocol's vocabulary are missing) — the
+			// guided installer in the real terminal can.
+			reason := fallbackNoTree
+			if msg.err == nil {
+				// How many, not which: the names come from the tree's
+				// own --check output, which is never logged. The count
+				// is enough to tell this apart from a missing tree.
+				reason = fmt.Sprintf("%s (%d)", fallbackUnfixable, len(msg.plan.unfixable))
+			}
+			r.cfg.close()
+			return r.fallbackToHandoff(reason)
 		}
 		r.cfg.plan = msg.plan
 		if !msg.plan.needInit && !msg.plan.needSecret {
@@ -170,29 +242,70 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 			// produced a complete configuration): adopt and retry.
 			return r.adoptAndRetry()
 		}
+		if msg.plan.needInit {
+			// Issue #154: before the first --init, ask how people will
+			// sign in. Local accounts is the default; choosing either
+			// row starts --init with that mode (handleConfigSignInModeKey).
+			r.state = runConfigSignInMode
+			r.cfg.signIn = menu{}
+			return r, nil
+		}
 		return r.startNextConfigStep()
 
 	case configStepMsg:
 		if msg.err != nil {
 			r.cfg.close()
-			return r.beginHandoff()
+			return r.fallbackToHandoff(fallbackStepFailed)
 		}
 		r.cfg.stream = msg.stream
 		r.cfg.stdin = msg.stdin
-		r.cfg.sawPrompt = false
-		r.cfg.prompt = nil
-		r.cfg.reason = ""
-		return r, pumpConfig(msg.stream)
+		r.cfg.session = promptSession{}
+		return r, readEngineStream(r.send, msg.stream, configStream)
 
 	case configStreamMsg:
 		return r.handleConfigStream(msg.msg)
 
+	case configStreamEndedMsg:
+		if msg.stream != r.cfg.stream {
+			// A finished step's stream closing behind its DoneMsg,
+			// which already moved the session on.
+			return r, nil
+		}
+		// The step's stream closed before its DoneMsg: the engine
+		// stopped without saying how the step went, so the install
+		// stops here, visibly, rather than waiting on a prompt that
+		// will never come.
+		logDiag("configuration stream: closed before the step finished")
+		r.cfg.close()
+		r.releaseRunFiles()
+		r.lastFailed = nil
+		r.stderrTail = nil
+		r.runErr = msg.reason
+		if r.runErr == nil {
+			r.runErr = errEngineStoppedEarly
+		}
+		r.state = runFailed
+		r.menu = menu{}
+		return r, nil
+
+	case configRecheckMsg:
+		if msg.err != nil {
+			// Same honest fallback as the first check: can't tell
+			// what's still owed, so the terminal handoff decides
+			// instead of guessing.
+			r.cfg.close()
+			return r.beginHandoff()
+		}
+		r.cfg.plan.needSecret = msg.check.NeedsSecret()
+		return r.startNextConfigStep()
+
 	case configAdoptedMsg:
 		if msg.err != nil {
 			r.cfg.close()
+			r.releaseRunFiles()
 			r.runErr = msg.err
 			r.state = runFailed
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		r.cfg.close()
@@ -218,65 +331,66 @@ func (r engineRun) startNextConfigStep() (engineRun, tea.Cmd) {
 	if start == nil {
 		start = defaultStartConfig
 	}
-	treeDir := r.cfg.plan.treeDir
+	configTree, mode := r.cfg.plan.configTree, r.cfg.authMode
 	return r, func() tea.Msg {
-		stream, stdin, err := start(treeDir, step)
+		stream, stdin, err := start(configTree, step, mode)
 		return configStepMsg{stream: stream, stdin: stdin, err: err}
+	}
+}
+
+// recheckAfterInit re-runs configure.sh --check once --init has
+// landed. M7 leaves OIDC off by default, so the check made before
+// --init can find the secret "not in use" even though --init is
+// about to turn OIDC on; whether the secret is still owed is only
+// knowable after --init actually runs, never assumed either way from
+// the plan made before it.
+func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
+	recheck := r.recheckConfig
+	if recheck == nil {
+		recheck = deploy.RunConfigCheck
+	}
+	configTree := r.cfg.plan.configTree
+	return r, func() tea.Msg {
+		check, err := recheck(context.Background(), configTree)
+		return configRecheckMsg{check: check, err: err}
 	}
 }
 
 func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.RawLineMsg:
-		if parsed, ok := engine.ParsePromptLine(m.Text); ok {
-			switch p := parsed.(type) {
-			case engine.Prompt:
-				prompt := p
-				r.cfg.prompt = &prompt
-				r.cfg.sawPrompt = true
-				r.cfg.input = nil
-			case engine.PromptReject:
-				r.cfg.reason = rejectionWords(p.Reason)
-				r.cfg.prompt = nil
-			case engine.PromptAccept:
-				r.cfg.reason = ""
-				r.cfg.prompt = nil
-			case engine.PromptAbort:
-				// The engine gives up (third rejection or closed
-				// input) and exits through its refusal path; DoneMsg
-				// routes back to the refusal menu.
-				r.cfg.prompt = nil
-			}
-		}
-		return r, pumpConfig(r.cfg.stream)
+		// A prompt-abort exits through the engine's refusal path;
+		// DoneMsg routes back to the refusal menu.
+		r.cfg.session, _ = r.cfg.session.applyLine(m.Text)
+		return r, nil
 
 	case engine.EventMsg:
 		// configure.sh emits no phase events; tolerate and move on.
-		return r, pumpConfig(r.cfg.stream)
+		return r, nil
 
 	case engine.DoneMsg:
-		sawPrompt := r.cfg.sawPrompt
+		sawPrompt := r.cfg.session.sawPrompt
 		if m.Err == nil {
 			// Step complete; mark it off and continue.
-			if r.cfg.step == deploy.ConfigStepInit {
-				r.cfg.plan.needInit = false
-			} else {
-				r.cfg.plan.needSecret = false
-			}
 			r.cfg.stream = nil
 			r.cfg.stdin = nil
+			if r.cfg.step == deploy.ConfigStepInit {
+				r.cfg.plan.needInit = false
+				return r.recheckAfterInit()
+			}
+			r.cfg.plan.needSecret = false
 			return r.startNextConfigStep()
 		}
 		r.cfg.close()
 		if !sawPrompt {
 			// Exited without ever speaking the protocol: a legacy
 			// configure.sh. The terminal handoff is the honest path.
-			return r.beginHandoff()
+			return r.fallbackToHandoff(fallbackLegacyEngine)
 		}
 		// The engine aborted (rejections exhausted or input closed) —
 		// back to the refusal menu; the person decides what's next.
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
 	return r, nil
@@ -289,82 +403,133 @@ func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 	if adopt == nil {
 		adopt = deploy.AdoptConfig
 	}
-	treeDir, targetDir := r.cfg.plan.treeDir, r.targetDir
+	configTree, targetDir := r.cfg.plan.configTree, r.targetDir
 	return r, func() tea.Msg {
-		return configAdoptedMsg{err: adopt(treeDir, targetDir)}
+		return configAdoptedMsg{err: adopt(configTree, targetDir)}
 	}
 }
 
 // retryEngine starts a fresh engine run against the now-provisioned
 // target: fresh console, fresh clock, fresh outcome evidence.
 func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
+	// The retry is a new engine run with its own configuration tree.
+	r.releaseRunFiles()
 	r.configRefused = false
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
-	r.menuSel = 0
+	r.menu = menu{}
 	return r.start(r.width, r.height)
 }
 
-// handleConfigKey is the typing surface: append, backspace, enter
-// submits the answer line, esc cancels the whole session back to the
-// refusal menu.
-func (r engineRun) handleConfigKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
-	if msg.Type == tea.KeyEsc {
+// handleConfigSignInModeKey drives the sign-in-mode screen (issue #154):
+// up/down move the highlight between the two rows, enter chooses it and
+// starts --init with that mode, esc cancels the whole session back to
+// the refusal menu — the same cancel handleConfigKey gives the rest of
+// this session.
+func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
 		r.cfg.close()
 		r.state = runConfigPrompt
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
-	if r.cfg.prompt == nil {
+	var chosen string
+	r.cfg.signIn, chosen = r.cfg.signIn.over(configSignInLabels()).update(msg)
+	if chosen == "" {
 		return r, nil
 	}
-	switch msg.Type {
-	case tea.KeyRunes:
-		r.cfg.input = append(r.cfg.input, msg.Runes...)
-	case tea.KeySpace:
-		r.cfg.input = append(r.cfg.input, ' ')
-	case tea.KeyBackspace:
-		if len(r.cfg.input) > 0 {
-			r.cfg.input = r.cfg.input[:len(r.cfg.input)-1]
-		}
-	case tea.KeyEnter:
-		if r.cfg.stdin != nil {
-			answer := string(r.cfg.input)
-			fmt.Fprintln(r.cfg.stdin, answer)
-		}
-		r.cfg.prompt = nil
-		r.cfg.input = nil
+	r.cfg.authMode = deploy.AuthModeLocal
+	if chosen == signInSSO {
+		r.cfg.authMode = deploy.AuthModeOIDC
+	}
+	r.state = runConfigCollect
+	return r.startNextConfigStep()
+}
+
+// handleConfigKey is the typing surface (promptSession.key: typing,
+// and Enter submits the answer line); esc cancels the whole session
+// back to the refusal menu.
+func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
+		r.cfg.close()
+		r.state = runConfigPrompt
+		r.menu = menu{}
+		return r, nil
+	}
+	var field, answer string
+	r.cfg.session, field, answer = r.cfg.session.key(msg, r.cfg.stdin)
+	if field == "APP_URL" && r.cfg.stdin != nil {
+		r.cfg.origin = answer
 	}
 	return r, nil
 }
 
 // promptWords maps protocol field names to the same human labels
-// install.sh's own TTY prompts use. An unknown field renders its
-// protocol name — honest, never guessed at.
-func promptWords(field string) (label, hint string) {
+// install.sh's own TTY prompts use, plus the guidance a person actually
+// needs to answer at that moment. An unknown field renders its protocol
+// name — honest, never guessed at.
+//
+// notes carry worked examples, because naming a field is not the same as
+// telling someone where to find its value: "your identity provider's
+// https:// issuer" is true and still leaves an administrator staring at
+// an empty line, which is exactly what happened on the first real test.
+// The issuer examples are the two common self-hosted providers, shown in
+// full so the shape — including Authentik's trailing slash, which its
+// discovery document requires and which is easy to drop — is visible
+// rather than described. origin is the answer already given for
+// APP_URL, so the client-ID note can name this deployment's real
+// callback URL instead of a placeholder; it is empty when unknown.
+func promptWords(field, origin string) (label, hint string, notes []string) {
 	switch field {
 	case "APP_URL":
-		return "Public Orbit origin", "the https:// address Orbit will live at"
+		return "Public Orbit origin", "the https:// address Orbit will live at", []string{
+			"e.g. https://orbit.example.com",
+		}
 	case "OIDC_ISSUER":
-		return "OIDC issuer URL", "your identity provider's https:// issuer"
+		return "OIDC issuer URL", "must serve /.well-known/openid-configuration", []string{
+			"Authentik  https://sso.example.com/application/o/orbit/",
+			"Keycloak   https://sso.example.com/realms/orbit",
+		}
 	case "OIDC_CLIENT_ID":
-		return "OIDC client ID", "from your identity provider's app registration"
+		return "OIDC client ID", "from your identity provider's app registration", callbackNote(origin)
 	case "OIDC_CLIENT_SECRET":
-		return "OIDC client secret", "input hidden"
+		return "OIDC client secret", "input hidden", []string{
+			"issued with the client ID — not your account password",
+		}
 	// repair.sh --execute's own prompt fields (orbit#261 slice 4),
 	// same grammar, same rendering.
 	case "action-word":
-		return "The action word", "type rotate to proceed — anything else cancels"
+		return "The action word", "type rotate to proceed — anything else cancels", nil
 	case "checkpoint-passphrase":
-		return "Checkpoint passphrase", "input hidden — protects the pre-rotation backup"
+		return "Checkpoint passphrase", "input hidden — protects the pre-rotation backup", nil
 	case "checkpoint-passphrase-confirm":
-		return "Confirm the passphrase", "input hidden"
+		return "Confirm the passphrase", "input hidden", nil
 	case "safe-batch":
-		return "Run the safe repairs?", "y to proceed"
+		return "Run the safe repairs?", "y to proceed", nil
 	default:
-		return field, ""
+		return field, "", nil
 	}
+}
+
+// callbackNote names the redirect URI this deployment will actually sign
+// in through, which is the value the identity provider's registration
+// needs and the one most often got wrong. origin is the answer already
+// given for APP_URL; when it is missing or long enough to break the
+// 80-cell bar, the note falls back to the shape rather than a truncated
+// address someone might paste.
+func callbackNote(origin string) []string {
+	const callbackPath = "/api/auth/callback"
+	generic := []string{"register <your Orbit URL>" + callbackPath, "as the redirect URI in your provider"}
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" || !strings.HasPrefix(origin, "https://") {
+		return generic
+	}
+	line := "register " + origin + callbackPath
+	if len(line) > 76 {
+		return generic
+	}
+	return []string{line, "as the redirect URI in your provider"}
 }
 
 // rejectionWords maps the engine's rejection reason classes to honest
@@ -372,7 +537,7 @@ func promptWords(field string) (label, hint string) {
 func rejectionWords(reason string) string {
 	switch reason {
 	case "empty":
-		return "cannot be empty"
+		return "can't be empty"
 	case "invalid-characters":
 		return "contains whitespace or control characters"
 	case "not-https":
@@ -388,42 +553,82 @@ func rejectionWords(reason string) string {
 	}
 }
 
+const (
+	signInLocal = "Local accounts"
+	signInSSO   = "Single sign-on (SSO) with an identity provider"
+)
+
+// configSignInLabels are the sign-in-mode screen's rows as the menu
+// knows them: configSignInRows' labels, in order.
+func configSignInLabels() []string {
+	labels := make([]string, len(configSignInRows))
+	for i, row := range configSignInRows {
+		labels[i] = row.label
+	}
+	return labels
+}
+
+// configSignInRows is the sign-in-mode screen's copy, ratified 2026-09-09
+// on issue #154 and reproduced here exactly — not to be reworded without
+// a fresh ratification. Local accounts is first (and the default); both
+// rows are otherwise shown as equals.
+var configSignInRows = []struct {
+	label string
+	desc  []string
+}{
+	{signInLocal, []string{
+		"People get a password managed by Orbit. Nothing else to set up.",
+		"A provider can be added later with configure.sh.",
+	}},
+	{signInSSO, []string{
+		"People sign in through your OIDC provider — Authentik, Keycloak,",
+		"Entra ID and the like. Orbit asks for its address and client",
+		"details next. Local accounts stay available as well.",
+	}},
+}
+
+// viewConfigSignInMode renders the sign-in-mode screen (issue #154):
+// the question --init is about to be answered for, asked before --init
+// ever runs so the right ORBIT_CONFIGURE_AUTH_MODE can be set on it.
+func (r engineRun) viewConfigSignInMode(width, height int) string {
+	var b strings.Builder
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "How will people sign in?")
+
+	// Unlike menuRow's individually centred labels, the two choices and
+	// their descriptions are one left-aligned block, as ratified: every
+	// line is padded to the block's width so skyBlock's per-line centring
+	// moves the block as a whole and the descriptions stay under their
+	// label.
+	var block []string
+	for i, row := range configSignInRows {
+		label := "  " + style.MenuUnselected.Render(row.label)
+		if i == r.cfg.signIn.sel {
+			label = style.MenuCaret.Render(style.SymbolSelected) + " " + style.MenuSelected.Render(row.label)
+		}
+		block = append(block, label)
+		for _, line := range row.desc {
+			block = append(block, style.MutedText.Render("    "+line))
+		}
+		block = append(block, "")
+	}
+	blockWidth := 0
+	for _, line := range block {
+		blockWidth = max(blockWidth, lipgloss.Width(line))
+	}
+	for _, line := range block {
+		fmt.Fprintln(&b, line+strings.Repeat(" ", blockWidth-lipgloss.Width(line)))
+	}
+	return skyBlock(r.console.sky, width, height, b.String())
+}
+
 // viewConfigCollect renders the session: preparing, or one field being
 // asked for.
 func (r engineRun) viewConfigCollect(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
-	fmt.Fprintln(&b)
+	// Amber, as on the stop before it: the person is still inside that
+	// stop (#229).
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
 
-	p := r.cfg.prompt
-	if p == nil {
-		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return centreBlock(width, height, b.String())
-	}
-
-	label, hint := promptWords(p.Field)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
-	if hint != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(hint))
-	}
-	fmt.Fprintln(&b)
-
-	// The input row. A secret is never echoed — not even its length.
-	shown := string(r.cfg.input)
-	if p.Kind == "secret" {
-		shown = ""
-	}
-	cursor := style.AccentText.Render("▏")
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+cursor)
-
-	if r.cfg.reason != "" {
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, style.DegradedText.Render(r.cfg.reason))
-	}
-	if p.Attempt > 1 {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
-	}
-	return centreBlock(width, height, b.String())
+	r.cfg.session.view(&b, r.cfg.origin, width, r.console.spinner)
+	return skyBlock(r.console.sky, width, height, b.String())
 }

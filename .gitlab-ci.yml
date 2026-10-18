@@ -1,0 +1,898 @@
+# orbit-launcher's pipeline on the owner's self-hosted GitLab
+# (gitlab.tomlawson.io), the gate merges wait on since #140 step 3 made
+# GitLab the source and GitHub the mirror.
+#
+# It reproduces the GitHub gate job for job -- ci.yml's static and unit
+# checks, secret-scan.yml, visual-regression.yml and live-install-test.yml --
+# running the same commands against the same pinned tool versions, so a
+# finding on one host means the same thing on the other. GitHub still runs
+# its workflows on the mirrored push as a second opinion; nothing here
+# publishes or promotes, except the release button below (#178), which the
+# owner presses to cut a version tag.
+#
+# The mirror is set up in the GitLab project settings, not in this file. Its
+# identity is a GitLab-generated SSH key held as a write-access deploy key on
+# GitHub; "Deploy keys" is the only bypass on GitHub's rulesets, so nothing
+# else can push there. Nothing is filed, pushed or merged on GitHub by hand.
+# Issues 1-148 have the same number on both hosts; from 149 on, GitLab only.
+#
+# Deliberately not here:
+#
+#   1. codeql.yml: GitHub's own scanner keeps running on the mirror.
+#
+# And the one exception the other way: `deps` has no GitHub counterpart. It
+# replaced GitHub's dependency-review.yml when merges moved here (#140), so
+# GitHub carries no copy on purpose (AGENTS.md).
+#
+# The pins below are the source of truth. The GitHub workflows copy the tool
+# pins by hand, and test/supplychain fails when a copy differs (#216). Every
+# pinned download on both hosts goes through scripts/ci/fetch-verified.sh,
+# which refuses a file whose digest differs and leaves nothing behind.
+#
+# This repo no longer publishes runnable launcher binaries at all (#171,
+# ai/orbit#1107 ADR-0031): Orbit builds, signs and ships the launcher
+# alongside itself. This repo keeps its source, tags and CI tests only.
+#
+# Only the live install test needs a Docker daemon, and a daemon needs a
+# privileged container whichever way it arrives. It asks for the project's own
+# privileged runner by tag (`orbit-launcher-build`, #140 decision 1); every
+# other job stays untagged on the shared group runner so the privileged one is
+# not the queue for the whole pipeline.
+
+stages:
+  - classify
+  - fast
+  - acceptance
+  - release
+  - maintenance
+
+workflow:
+  rules:
+    # Tags publish nothing here: Orbit builds and ships a pinned tag (#171).
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Once a branch has an open merge request, the merge-request pipeline is
+    # the one that matters.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+default:
+  tags:
+    - big
+  interruptible: true
+  # Infrastructure only: a job that failed on its own merits is never retried.
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stale_schedule
+      - scheduler_failure
+
+variables:
+  # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
+  # images: a moving tag would silently change what the gate ran on.
+  GO_IMAGE: golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+  # The same Go build as a tarball, for the two jobs whose image is chosen by
+  # something other than Go (a browser, a Docker daemon).
+  GO_VERSION: "1.27.2"
+  GO_SHA256: ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
+  # Ships the exact Chromium that test/visual/package-lock.json's
+  # @playwright/test expects, so no browser download happens in the job. Noble
+  # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
+  # committed screenshot baselines were taken.
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+  # The live test stands up a real Orbit through orbit's install.sh, which was
+  # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
+  # Debian leg that was tried and dropped).
+  UBUNTU_IMAGE: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+  # Same pins as the workflows. A commit on staticcheck's master, not a
+  # release: go1.27.2 writes compiler export data version 5, and every release
+  # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
+  # so staticcheck fails on every package (#202). Master moved to x/tools
+  # v0.51.0 and Go 1.27 on 2026-10-09. Move back to a release tag once one
+  # carries it.
+  STATICCHECK_VERSION: 452d5bb86b45416c35891262f6a11dbd6a970117
+  # The `deps` job's two tools.
+  GOVULNCHECK_VERSION: v1.8.0
+  GO_LICENSES_VERSION: v2.0.1
+  BATS_VERSION: "1.14.0"
+  BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
+  TTYD_VERSION: "1.7.7"
+  TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
+  # this GitLab, not the GitHub mirror. Overridable per pipeline the way the
+  # GitHub job's `orbit_branch` and `orbit_channel` inputs are.
+  #
+  # The production pair is `main` and "" (install.sh's own default, `latest`).
+  # Both sit on `preview` until orbit #1016 is fixed by the v1.3.0 release:
+  # the published `latest` names a source revision that no longer exists, so
+  # a default install fails before the launcher is involved (owner,
+  # 2026-09-14). Branch and channel move together because install.sh and the
+  # image must be one generation. Put them back when v1.3.0 ships.
+  ORBIT_PROJECT: ai/orbit
+  # Orbit's public GitHub mirror, used only when GitLab refuses the job
+  # token (Renovate's merge requests, #173) or ORBIT_FILES_SOURCE says so.
+  # A preview channel cannot use it: the mirror has no release manifest, so
+  # the live job fails instead (#194).
+  ORBIT_GITHUB_REPO: tomlawesome/orbit
+  ORBIT_FILES_SOURCE: auto
+  ORBIT_BRANCH: preview
+  ORBIT_CHANNEL: preview
+  # Set to "true" on a pipeline started by hand to run the live test without
+  # the merge-request label.
+  RUN_LIVE: "false"
+  # Go's caches live inside the project directory so GitLab's cache can carry
+  # them between jobs and pipelines; the paths are relative for the same reason.
+  GOMODCACHE: $CI_PROJECT_DIR/.go/mod
+  GOCACHE: $CI_PROJECT_DIR/.go/build
+
+# --- Reusable pieces ---------------------------------------------------------
+
+.go_cache:
+  cache:
+    key:
+      prefix: go
+      files:
+        - go.sum
+    paths:
+      - .go/mod
+      - .go/build
+
+# The official tarball, checksum-verified, for images that are not the Go
+# image. `go env -w` is not used: GOMODCACHE and GOCACHE arrive from the
+# pipeline variables above, exactly as they do in the Go image.
+.go_tarball: &go_tarball |
+  tarball="go${GO_VERSION}.linux-amd64.tar.gz"
+  bash scripts/ci/fetch-verified.sh "https://go.dev/dl/${tarball}" \
+    "${GO_SHA256}" "/tmp/${tarball}"
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "/tmp/${tarball}"
+  export PATH="/usr/local/go/bin:${PATH}"
+  go version
+
+# The one place the privileged runner is named. Everything that needs a Docker
+# daemon reaches it through here, so the tag is a single edit if the runner is
+# ever re-registered under another name.
+.privileged_runner:
+  tags:
+    - orbit-launcher-build
+
+# Every job names its own image, and GitLab never merges `default: image:`
+# into a job's own `image:` -- the job's replaces it whole
+# (docs.gitlab.com/ci/yaml/#default) -- so the pull policy cannot live in
+# `default:`. It is written once here instead and merged into each job's
+# image with `<<: *pull_if_not_present`.
+.pull_if_not_present: &pull_if_not_present
+  pull_policy: if-not-present
+
+# `DOCS_ONLY` comes from `classify`; `fast` and `deps` run this first. Unset
+# means run: this default is the whole point of the gate. Exiting here ends
+# the job successfully, and every later `script:` entry with it, because the
+# runner executes them all in one shell.
+.docs_only_skip: &docs_only_skip |
+  if [ "${DOCS_ONLY:-false}" = "true" ]; then
+    echo "skipped: every changed path is documentation (#153)"
+    exit 0
+  fi
+
+# The start of every apt install here; each job then installs its own
+# packages.
+.apt_prologue: &apt_prologue |
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+
+# The daemon inside the job's own container, copied from ai/orbit's
+# `.docker_in_job`. The dind *service* pattern cannot be used here: install.sh
+# publishes Orbit on the loopback address and the live test health-checks
+# http://localhost:3000/ from the job, so the daemon has to share the job's
+# network namespace, exactly as GitHub's runner does. `/builds` is a real
+# volume; the rest of the container is overlayfs, which overlay2 cannot stack
+# on, so the daemon's data root goes there.
+.docker_in_job: &docker_in_job |
+  # cgroup v2 nesting, as docker:dind's entrypoint does it. The job is the
+  # root of its own cgroup namespace, and cgroup v2 refuses to enable
+  # controllers on a group that still holds processes, so the job's processes
+  # move to an `init` child first. Without this the daemon still starts and
+  # `docker pull` works, but any `docker run` that asks for a limit
+  # (--pids-limit, --memory, --cpus) fails with `cannot enter cgroupv2
+  # "/sys/fs/cgroup/docker" ... it is in an invalid state`. install.sh's
+  # hardened OIDC-discovery parser asks for all three, and reported the
+  # refusal as "OIDC provider configuration could not be validated" (#144).
+  if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    mkdir -p /sys/fs/cgroup/init
+    xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+    sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control
+  fi
+  docker_data_root="${CI_BUILDS_DIR:-/builds}/.orbit-launcher-docker-data"
+  mkdir -p "$docker_data_root"
+  nohup dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
+  for _ in $(seq 1 60); do
+    docker info > /dev/null 2>&1 && break
+    sleep 1
+  done
+  docker info > /dev/null 2>&1 || { echo "the in-job Docker daemon did not start"; cat /tmp/dockerd.log; exit 1; }
+
+# --- fast --------------------------------------------------------------------
+
+# ci.yml `fast`, step for step.
+# --- classify ----------------------------------------------------------------
+#
+# Reads the diff once and answers two questions. Whether it is documentation
+# only, so a prose change stops paying for the Go gate (#153); and whether a
+# pin the live install runs on moved, so an image or toolchain bump can no
+# longer report green without ever being installed (#164). The decisions live
+# in scripts/ci/classify-changed-paths.sh and are tested by
+# scripts/test/classify-changed-paths.bats: a gate that wrongly skips still
+# looks green, so the logic is unit-tested rather than written inline here.
+#
+# The verdicts reach `fast`, `deps` and `live` as dotenv variables. GitLab cannot
+# gate `rules:` on one -- rules are evaluated when the pipeline is created,
+# before any job has run -- so those two jobs start and then stop themselves in
+# their own `script:`, reporting "skipped" rather than vanishing. Orbit's
+# classifier works the same way (ai/orbit#883).
+#
+# Only an ordinary merge request is ever classified. A push to a delivery
+# branch, the promotion into `main`, and anything else that reaches here get an
+# empty base commit, and the script answers false to every question it cannot
+# settle -- so the full gate is what happens by default, and skipping is opt-in
+# against the named safe paths in the script.
+classify:
+  stage: classify
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  timeout: 5m
+  variables:
+    # The base commit has to be in the checkout for the diff to read at all.
+    GIT_DEPTH: 0
+  before_script:
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends git
+  script:
+    - |
+      set -euo pipefail
+      base=""
+      if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ] \
+        && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" != "main" ]; then
+        base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
+      fi
+      bash scripts/ci/classify-changed-paths.sh "$base" "$CI_COMMIT_SHA" \
+        | tee classify.env
+  artifacts:
+    reports:
+      dotenv: classify.env
+    expire_in: 1 day
+
+fast:
+  stage: fast
+  image:
+    <<: *pull_if_not_present
+    name: $GO_IMAGE
+  extends: .go_cache
+  timeout: 15m
+  needs:
+    - job: classify
+      artifacts: true
+  before_script:
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends shellcheck
+  script:
+    # coverage.out is written before anything can stop the job, because the
+    # artifact is declared `when: always` and an empty upload logs an error.
+    # `mode: set` with no lines under it is a valid, honest profile: no
+    # statements were measured. scripts/coverage.sh overwrites it when the
+    # gate runs.
+    - |
+      printf 'mode: set\n' > coverage.out
+    - *docs_only_skip
+    - |
+      # The tracked Go files, not `gofmt -l .`: GitLab's cache can only carry
+      # paths inside the project directory, so GOMODCACHE lives there and a
+      # walk of the working tree reports the Go toolchain's own deliberately
+      # broken testdata (#142). On GitHub's clean checkout the two are the
+      # same set of files.
+      unformatted="$(git ls-files -z '*.go' | xargs -0 --no-run-if-empty gofmt -l)"
+      if [ -n "$unformatted" ]; then
+        echo "gofmt found unformatted files:"
+        echo "$unformatted"
+        exit 1
+      fi
+    - go build ./... && go vet ./...
+    - shellcheck scripts/*.sh scripts/ci/*.sh
+    - |
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" \
+        "${BATS_SHA256}" /tmp/bats.tar.gz
+      mkdir -p /tmp/bats-core
+      tar -xzf /tmp/bats.tar.gz -C /tmp/bats-core --strip-components=1
+      export PATH="/tmp/bats-core/bin:${PATH}"
+      bats scripts/test/
+    - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+    - staticcheck ./...
+    # Unit tests plus the compiled binary's own runs under test/pty, merged
+    # into one profile (#169): see scripts/coverage.sh.
+    - scripts/coverage.sh -race
+    - go run ./tools/coveragefloor coverage.out
+  artifacts:
+    name: coverage
+    when: always
+    paths:
+      - coverage.out
+    expire_in: 14 days
+
+# Replaces GitHub's dependency-review.yml, which ran only on GitHub pull
+# requests and so stopped running when merges moved here (#140). Same policy
+# as the retired .github/dependency-review-config.yml -- fail on a known
+# vulnerability, fail on a licence outside the allow-list -- but done with
+# Go's own tools rather than GitHub's dependency graph, which never had
+# reliable licence data for Go modules. govulncheck reports only
+# vulnerabilities the code actually calls, standard library included, so a
+# failure here means a real fix: usually a `go get -u` or a Go patch bump.
+# The project itself is AGPL-3.0, which is not on the list: it is ignored, not
+# allowed, so a dependency under AGPL still fails.
+deps:
+  stage: fast
+  # Short scanners run on the light lane (2 CPU / 2 GB, three at a time) so
+  # they stop holding a big-lane slot; if one is ever killed for memory,
+  # move it back to big (owner decision, ai/agent-infra#3, 2026-09-05).
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $GO_IMAGE
+  extends: .go_cache
+  timeout: 10m
+  needs:
+    - job: classify
+      artifacts: true
+  script:
+    - *docs_only_skip
+    - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+    - govulncheck ./...
+    - go install "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
+    - |
+      go-licenses check ./... \
+        --ignore github.com/tomlawesome/orbit-launcher \
+        --allowed_licenses=0BSD,Apache-2.0,BSD-2-Clause,BSD-3-Clause,CC0-1.0,ISC,MIT,MIT-0,MPL-2.0,Unicode-3.0,Unlicense
+    # What a declared licence does not cover (#176): embedded files,
+    # vendored and generated code, and code a comment says came from
+    # elsewhere, in every package the shipped binary links. Each must be
+    # reviewed in .github/licence-review.txt.
+    - go run ./tools/licencereview
+    # The notices the binary embeds and prints with --licences (#182) must
+    # match what it links: a dependency bump fails here until
+    # `go run ./tools/licencenotices` is re-run and committed.
+    - go run ./tools/licencenotices -check
+
+# secret-scan.yml, step for step. Full history: the point is catching a secret
+# that reached the remote in an earlier commit and is no longer in the working
+# tree, which a filesystem scan cannot see. --redact keeps any finding out of
+# the build log; the log names the file and rule, never the value.
+gitleaks:
+  stage: fast
+  # Starts immediately rather than queueing behind `classify`: this one is
+  # never skipped, so it has nothing to learn from the verdict, and a secret
+  # is the finding you want soonest.
+  needs: []
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  timeout: 10m
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git
+  script:
+    - |
+      set -euo pipefail
+      tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}" \
+        "${GITLEAKS_SHA256}" "/tmp/${tarball}"
+      mkdir -p /tmp/bin
+      tar -xzf "/tmp/${tarball}" -C /tmp/bin gitleaks
+      chmod +x /tmp/bin/gitleaks
+      /tmp/bin/gitleaks version
+      /tmp/bin/gitleaks git --redact --no-banner --log-level error .
+
+# --- acceptance --------------------------------------------------------------
+
+# visual-regression.yml. Same trigger: a merge request that touches the TUI or
+# the visual suite (or a pipeline started by hand). A failure here is a real
+# failure -- the TUI's output is its interface, so look at the diff and never
+# re-run it hoping for green.
+#
+# The first run on this host is also the test of whether the committed
+# baselines survive the move: the browser build is the one the lock file
+# names, but system fonts are the image's, not GitHub's runner image's.
+visual:
+  stage: acceptance
+  image:
+    <<: *pull_if_not_present
+    name: $PLAYWRIGHT_IMAGE
+  extends: .go_cache
+  timeout: 15m
+  needs: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # The Go tarball and ttyd come in through the checked-download script, so
+    # a change to it alone is a change to what this job runs on (#216).
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - internal/ui/**/*
+        - test/visual/**/*
+        - .gitlab-ci.yml
+        - scripts/ci/fetch-verified.sh
+  before_script:
+    - *go_tarball
+    - |
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+        "${TTYD_SHA256}" /usr/local/bin/ttyd
+      chmod +x /usr/local/bin/ttyd
+  script:
+    - cd test/visual
+    - npm ci
+    - npx playwright test
+  artifacts:
+    name: playwright-report
+    when: on_failure
+    paths:
+      - test/visual/playwright-report/
+      - test/visual/test-results/
+    expire_in: 14 days
+
+# live-install-test.yml: the real install, end to end, building orbit-launcher
+# fresh from this commit. Opt-in, as on GitHub -- the `run-live-matrix` label
+# on the merge request, or RUN_LIVE=true on a pipeline started by hand -- since
+# it is slow: real image pulls, real health checks, minutes not seconds. A
+# merge request that edits this file also creates the job, but it then waits
+# for someone to start it by hand (#192): see the third rule below.
+#
+# install.sh is read from ai/orbit through the API with the job's own token
+# (ai/orbit is private, so its raw URLs need one), then served to the launcher
+# from the loopback address: ORBIT_LAUNCHER_INSTALL_SCRIPT_URL takes a URL and
+# nothing else, so the launcher still fetches the script over HTTP the way a
+# real install does. This needs ai/orbit's job-token allowlist to name
+# ai/orbit-launcher, a project setting only the owner changes.
+#
+# The suite's own budget is 30m (go test -timeout below). A job cap under it
+# turns a slow-but-passing run into a cancelled one with no Go-level failure to
+# read, which is what happened on GitHub's first orbit-branch dispatch.
+live:
+  stage: acceptance
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  extends:
+    - .privileged_runner
+    - .go_cache
+  timeout: 35m
+  needs:
+    # `optional` so a pipeline that never creates `classify` still builds; the
+    # gate below treats a missing verdict as "run".
+    - job: classify
+      artifacts: true
+      optional: true
+  rules:
+    - if: $RUN_LIVE == "true"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
+    # The third route in (#164). !157 bumped UBUNTU_IMAGE, and its pipeline was
+    # green because nothing that ran installs anything into that image -- the
+    # live job, the only one that does, was never created. `changes:` is
+    # file-level, so this admits every edit to this file and the gate below
+    # decides; creating a job costs nothing, and one that stops in its first
+    # command costs seconds.
+    #
+    # A merge request that edits this file now waits for a person to press
+    # play on this job (#192). The job runs the pipeline's own UBUNTU_IMAGE on
+    # the privileged runner, and on this route nobody has looked at the change
+    # yet -- a Renovate bump or a bad upstream digest would otherwise run
+    # privileged unreviewed. `allow_failure: false` keeps the merge blocked
+    # until someone starts it; starting it is the review. The RUN_LIVE and
+    # label routes above stay automatic, because a person set them.
+    #
+    # The Go tarball comes in through scripts/ci/fetch-verified.sh, so a change
+    # to that script alone changes what the install runs on, and starts this
+    # route too (#216). classify-changed-paths.sh's LIVE_PIN_PATHS lists the
+    # same files, so the gate below lets the job through for them.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .gitlab-ci.yml
+        - scripts/ci/fetch-verified.sh
+      when: manual
+      allow_failure: false
+  variables:
+    ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
+  before_script:
+    # Why this job exists decides whether it does the work. RUN_LIVE and the
+    # label are deliberate requests and always run. The third route is not: it
+    # fires on any edit to this file, so unless a pin the install actually runs
+    # on moved (or a file those downloads go through changed), stop here -- before the apt-get, the Go tarball and the Docker
+    # daemon below, which is where the minutes are. An unset verdict means run.
+    - |
+      if [ "${RUN_LIVE:-}" != "true" ] \
+        && ! printf '%s' "${CI_MERGE_REQUEST_LABELS:-}" \
+          | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+        && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then
+        echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
+        exit 0
+      fi
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
+    - *go_tarball
+    - *docker_in_job
+  script:
+    - mkdir -p .live/install-script
+    - |
+      # Where the files come from (#173): ai/orbit on this GitLab, read with
+      # the job token. That token carries the access of whoever started the
+      # pipeline, and Renovate's project bot can never read another project,
+      # so on its merge requests GitLab answers 403. Then, and only then,
+      # install.sh comes from Orbit's public GitHub mirror instead, at the
+      # same branch: GitLab pushes it after each Orbit merge, so it trails by
+      # minutes at most. The configure tree reaches the launcher through
+      # install.sh's own handover (#190); the only other files fetched are the
+      # preview release manifest and what verifies it (#194, below).
+      # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path; with
+      # a preview channel that now fails, so prove it on a stable one.
+      project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+      gitlab_orbit_url() {
+        printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
+      }
+      orbit_source="${ORBIT_FILES_SOURCE:-auto}"
+      if [ "$orbit_source" = "auto" ]; then
+        probe="$(curl --silent --location --output /dev/null --write-out '%{http_code}' \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"
+        case "$probe" in
+          401|403) orbit_source=github ;;
+          *) orbit_source=gitlab ;;
+        esac
+        echo "ai/orbit on GitLab answered ${probe} for install.sh"
+      fi
+      case "$orbit_source" in
+        gitlab)
+          echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab, ${ORBIT_BRANCH}"
+          fetch_orbit_file() {
+            curl --fail --silent --show-error --location \
+              --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+              --output "${3:-.live/install-script}/$2" "$(gitlab_orbit_url "$1")" \
+              || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${ORBIT_BRANCH}"; exit 1; }
+          }
+          ;;
+        github)
+          echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO}, ${ORBIT_BRANCH} at $(git ls-remote "https://github.com/${ORBIT_GITHUB_REPO}.git" "refs/heads/${ORBIT_BRANCH}" | cut -f1)"
+          fetch_orbit_file() {
+            curl --fail --silent --show-error --location \
+              --output "${3:-.live/install-script}/$2" \
+              "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1" \
+              || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${ORBIT_BRANCH}"; exit 1; }
+          }
+          ;;
+        *)
+          echo "ORBIT_FILES_SOURCE must be auto, gitlab or github, not ${orbit_source}"
+          exit 1
+          ;;
+      esac
+      fetch_orbit_file scripts/install.sh install.sh
+      head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }
+      # A preview install gets its release manifest from this job, not from
+      # install.sh (#194). install.sh fetches a manifest on its own only for
+      # the stable channel, whose manifest is a GitHub release asset; for
+      # preview it refuses and wants one handed over, already verified, in
+      # ORBIT_RELEASE_MANIFEST (ai/orbit#1107, ADR-0031). So the job does
+      # what get-orbit.sh does for stable: read the manifest and its
+      # signature, verify both with Orbit's own verifier and key from the
+      # same branch as install.sh, then hand the path over. Preview's
+      # manifest exists only as job artifacts of ai/orbit's preview pipeline
+      # (record_image writes it, sign_evidence its signature), read with the
+      # job token like the files above.
+      #
+      # The GitHub mirror has no pipeline artifacts, so a preview run that
+      # can only reach the mirror fails here rather than skipping: a skip
+      # would let an image bump go green with nothing installed into it,
+      # which is how #164 happened. A pipeline the owner starts by hand with
+      # RUN_LIVE=true carries the owner's access and reads ai/orbit directly.
+      if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
+        if [ "$orbit_source" = "github" ]; then
+          echo "the preview release manifest cannot be read from ${ORBIT_PROJECT} with this job's token, and the GitHub mirror has none; start the pipeline by hand with RUN_LIVE=true (#194)"
+          exit 1
+        fi
+        mkdir -p .live/orbit/scripts/ci .live/orbit/release
+        fetch_orbit_file scripts/ci/verify-release-manifest.sh verify-release-manifest.sh .live/orbit/scripts/ci
+        fetch_orbit_file scripts/ci/ensure-cosign.sh ensure-cosign.sh .live/orbit/scripts/ci
+        fetch_orbit_file cosign.pub cosign.pub .live/orbit
+        for script in verify-release-manifest.sh ensure-cosign.sh; do
+          head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${ORBIT_BRANCH}"; exit 1; }
+        done
+        head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${ORBIT_BRANCH}"; exit 1; }
+        curl --fail --silent --show-error --location \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --output .live/orbit/release/orbit-release-manifest.json \
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
+        curl --fail --silent --show-error --location \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --output .live/orbit/release/orbit-release-manifest.json.sig \
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+        jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${ORBIT_BRANCH} is not a JSON release manifest"; exit 1; }
+        [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${ORBIT_BRANCH} is an empty signature"; exit 1; }
+        COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+          bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+          || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
+        export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
+        # Install what the manifest names (#241): its image is in the GitLab
+        # registry that built it. install.sh ignores the manifest's
+        # repository and defaults to ghcr.io, where the GitHub copy can lag
+        # by up to two hours or never arrive. The token goes in on stdin.
+        image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
+        export ORBIT_REGISTRY="${image_repository%%/*}"
+        export ORBIT_REPOSITORY="${image_repository#*/}"
+        printf '%s' "$CI_JOB_TOKEN" | docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+        echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"
+        echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
+        # The update leg's first install (#198): an earlier preview release,
+        # so the update goes from one signed image to another. Its manifest
+        # and signature are read by job ID, since a branch only ever names
+        # its latest pipeline; the IDs come from whoever starts the pipeline
+        # (ORBIT_FIRST_RECORD_IMAGE_JOB, ORBIT_FIRST_SIGN_EVIDENCE_JOB),
+        # because this job's token cannot list ai/orbit's pipelines.
+        # Verified exactly as above. Its install.sh comes from the commit the
+        # manifest names and must match the sha256 the manifest records for
+        # it, so script and image stay one generation. Unset, the leg skips.
+        first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+        first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+        if [ -z "$first_record" ] && [ -z "$first_sign" ]; then
+          echo "no ORBIT_FIRST_RECORD_IMAGE_JOB / ORBIT_FIRST_SIGN_EVIDENCE_JOB: the update leg (#198) skips"
+        else
+          for job_id in "$first_record" "$first_sign"; do
+            case "$job_id" in
+              ''|*[!0-9]*) echo "ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB must both be ai/orbit job IDs (#198)"; exit 1 ;;
+            esac
+          done
+          first_dir=.live/orbit/release/first
+          mkdir -p "$first_dir"
+          curl --fail --silent --show-error --location \
+            --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            --output "$first_dir/orbit-release-manifest.json" \
+            "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \
+            || { echo "could not read the earlier release manifest from ai/orbit job ${first_record} (#198)"; exit 1; }
+          curl --fail --silent --show-error --location \
+            --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            --output "$first_dir/orbit-release-manifest.json.sig" \
+            "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \
+            || { echo "could not read the earlier release signature from ai/orbit job ${first_sign} (#198)"; exit 1; }
+          jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "ai/orbit job ${first_record} did not return a JSON release manifest (#198)"; exit 1; }
+          [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "ai/orbit job ${first_sign} returned an empty signature (#198)"; exit 1; }
+          COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+            bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+            || { echo "the earlier release manifest from ai/orbit jobs ${first_record}/${first_sign} failed verification; nothing is installed from it (#198)"; exit 1; }
+          jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+            || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+          first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+          [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+            || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+          first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+          current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+          if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+            echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+            exit 1
+          fi
+          first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+          case "$first_commit" in
+            *[!0-9a-f]*) first_commit="" ;;
+          esac
+          [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+          curl --fail --silent --show-error --location \
+            --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            --output "$first_dir/install.sh" \
+            "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+            || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+          [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+            || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+          export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+          export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+          echo "the update leg (#198) installs ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"
+        fi
+      fi
+      python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
+      for _ in $(seq 1 30); do
+        curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
+        sleep 1
+      done
+      export ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=http://127.0.0.1:8765/install.sh
+      # install.sh reads ORBIT_CHANNEL and ORBIT_RELEASE_MANIFEST itself; the
+      # launcher never sets the engine's environment, so the job's own
+      # environment reaches it unchanged through every spawn. An empty
+      # ORBIT_CHANNEL means install.sh's own default.
+      [ -n "$ORBIT_CHANNEL" ] || unset ORBIT_CHANNEL
+      go build -o /tmp/orbit-launcher ./cmd/orbit-launcher
+      export ORBIT_LAUNCHER_LIVE_BINARY=/tmp/orbit-launcher
+    - go test -tags live -count=1 -v -timeout 30m ./test/live/...
+  after_script:
+    # Docker state, always, for debugging.
+    - docker ps -a || true
+    - docker volume ls || true
+  artifacts:
+    name: live-raw-log
+    when: always
+    paths:
+      - .live/live-raw.log.*
+    expire_in: 7 days
+
+# --- maintenance ---------------------------------------------------------
+
+# Renovate, taking over from Dependabot for this host (#140 step 4). It runs
+# here rather than in a runner project of its own: one repository, one
+# schedule, one place to look when an expected merge request does not appear.
+# What it watches, how it groups and why is in renovate.json at the repo root.
+#
+# No `tags:`. Nothing in this job talks to a Docker daemon, so it stays on the
+# shared untagged runner and never queues behind `orbit-launcher-build`.
+#
+# Two CI/CD variables the owner creates under Settings > CI/CD > Variables.
+# Mask both. Leave both unprotected unless the schedule's branch is itself
+# protected: a protected variable is simply absent from a job running on an
+# unprotected branch, and Renovate then fails at start-up with an
+# authentication error that says nothing about variable settings.
+#
+#   RENOVATE_TOKEN     A project access token on ai/orbit-launcher, or a bot
+#                      account's personal access token, with the `api` scope
+#                      and the Developer role. `api` is what lets Renovate
+#                      read the repository, push branches and open merge
+#                      requests; a `read_api` token can look and never write.
+#   GITHUB_COM_TOKEN   A github.com fine-grained personal access token with no
+#                      permissions granted at all -- public read only.
+#                      Renovate uses it for changelogs and release notes.
+#                      Without it the unauthenticated github.com API
+#                      rate-limits partway through a run and merge requests
+#                      arrive with their release notes missing.
+#
+# Neither value is ever printed: nothing below dumps an environment, and
+# LOG_LEVEL stays at info. `debug` logs the resolved configuration and would.
+#
+# One optional schedule variable picks the mode. RENOVATE_DRY_RUN=full makes a
+# run that reports what it would do and creates nothing, which is what the
+# first run should be. Delete the variable and the next run opens merge
+# requests. Renovate reads that name itself; the job only has to make an empty
+# value mean "unset", because Renovate accepts extract, lookup or full and
+# nothing else.
+renovate:
+  stage: maintenance
+  # Pinned by digest, the way every other image here is. The digest is the
+  # docker-content-digest header from a manifest HEAD against
+  # registry-1.docker.io, not a tag listing.
+  #
+  # Deliberately not the newest release. 44.64.0 was current on 2026-09-04 and
+  # neither it nor 44.63.0 starts at all: both ship an `apk` datasource that
+  # imports `tar`, and `tar` is not in the image's node_modules, so the run
+  # dies on "Cannot find package 'tar'" before it reads any configuration.
+  # 44.62.2 is the newest release published before that datasource existed.
+  # renovate.json excludes exactly those two versions, so Renovate offers the
+  # next release itself; that bump is only proven by the following scheduled
+  # run, so a run that dies at start-up means: revert, and add the version to
+  # the exclusion.
+  #
+  # The default image rather than `-full`: it carries Node only and installs
+  # the tools a run needs as it goes (binarySource=install), which is where
+  # the Go toolchain a `gomod`/`gomodTidy` run needs comes from. `-full` preinstalls a much wider toolset and costs several
+  # gigabytes of pull on a shared runner every week.
+  image:
+    <<: *pull_if_not_present
+    name: renovate/renovate:44.133.0@sha256:05c512c35c764ef6a179e69c3b30567eca254d67f13a0143479fe3c84852c67a
+  timeout: 1h
+  # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
+  # and runs `go mod tidy` inside the job, which can pass the light lane's
+  # 2 GB limit. Same choice as mikroview's renovate:run.
+  # A weekly maintenance run has nothing that could supersede it, and being
+  # cancelled part-way leaves half-written branches behind.
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE == "true"
+  variables:
+    # The checkout exists only so RENOVATE_CONFIG_FILE below has a file to
+    # read. Renovate clones the repository it updates itself, elsewhere.
+    GIT_DEPTH: 1
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    # Renovate reads a repository's own config from its default branch, which
+    # here is `dev` and carries renovate.json. The weekly schedule runs on
+    # `dev` too, so the copy in this job's checkout is that same file, and
+    # handing it over as global config changes nothing: the repository copy
+    # merges over this one and they are identical.
+    RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/renovate.json
+    # No onboarding merge request: the repository already has its own config,
+    # so there is nothing to offer to fix.
+    RENOVATE_ONBOARDING: "false"
+    RENOVATE_REQUIRE_CONFIG: "optional"
+    LOG_LEVEL: info
+  script:
+    - |
+      set -eu
+      if [ -z "${RENOVATE_DRY_RUN:-}" ]; then
+        unset RENOVATE_DRY_RUN
+        echo "renovate: live run, merge requests will be created"
+      else
+        echo "renovate: dry run (${RENOVATE_DRY_RUN}), nothing will be created"
+      fi
+      renovate
+
+# --- Release: the version-tag button (#178) ----------------------------------
+#
+# Since #171 nothing here publishes a binary, but Orbit pins launcher tags,
+# so a tag is still how a launcher version is cut. These two jobs are
+# gauntlet's release:version / release:gitlab pair: a manual button on a dev
+# pipeline that tags that commit, so nobody creates a v* tag by hand.
+#
+# release:version works out the next minor version with
+# tools/calculateversion and refuses unless that tag does not exist yet,
+# sorts above every tag already cut, and the commit is still the tip of dev
+# (scripts/ci/release-tag-check.sh, tested by
+# scripts/test/release-tag-check.bats). It has no `needs:`, so the button is
+# not playable until every earlier stage has passed. release:gitlab then
+# creates the annotated tag and its GitLab release with release-cli, acting
+# with the rights of whoever pressed the button. Tag pipelines run nothing
+# (workflow: above); GitLab's push mirror carries the tag to GitHub.
+release:version:
+  stage: release
+  image:
+    <<: *pull_if_not_present
+    name: $GO_IMAGE
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      # A manual job is allow_failure by default; forcing it false would
+      # leave every dev pipeline reading "blocked" for a tag nobody intends
+      # to cut yet.
+      allow_failure: true
+  cache: []
+  script:
+    - |
+      set -eu
+      # calculateversion reads local tags; a CI clone may not hold them all.
+      git fetch --quiet --force --tags origin
+      version="$(go run ./tools/calculateversion)"
+      remote_tags="$(git ls-remote --tags origin)"
+      dev_sha="$(git ls-remote origin refs/heads/dev | cut -f1)"
+      bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" "$dev_sha" "$CI_COMMIT_SHA" > release.env
+      cat release.env
+  artifacts:
+    reports:
+      dotenv: release.env
+    expire_in: 90 days
+
+release:gitlab:
+  stage: release
+  # The same pin as gauntlet's release:gitlab, by tag and digest, because
+  # this job creates the tag. release-cli is published only on GitLab's own
+  # registry, so it cannot come through a Docker Hub proxy.
+  image:
+    <<: *pull_if_not_present
+    name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
+  interruptible: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+  needs:
+    - job: release:version
+      artifacts: true
+  cache: []
+  script:
+    - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
+  release:
+    tag_name: $RELEASE_TAG
+    tag_message: $RELEASE_TAG
+    ref: $CI_COMMIT_SHA
+    name: orbit-launcher $RELEASE_TAG
+    description: |
+      orbit-launcher $RELEASE_TAG, a source revision for Orbit to pin.
+
+      This repo publishes no binaries (#171): Orbit builds, signs and ships
+      the launcher alongside itself.

@@ -2,10 +2,10 @@ package ui
 
 import (
 	"context"
-	"net/url"
 	"os"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
@@ -23,8 +23,7 @@ const (
 
 // AppModel is the root model: it starts at the splash screen and, once a
 // choice is made, hands control to that flow. Install (Standard profile
-// only), Update, Remove and Repair (a deliberate non-mutating stub) are
-// all wired to real flows. Install and Update conclude on the shared
+// only), Update, Remove and Repair are all wired to real flows. Install and Update conclude on the shared
 // success screen, whose Menu action returns to a freshly detected
 // splash — the launcher is a loop now, not a one-way corridor.
 type AppModel struct {
@@ -46,12 +45,42 @@ type AppModel struct {
 
 	// targetDir is where an existing deployment, if any, would be found.
 	// Overridable in tests; production code leaves it empty and gets the
-	// working directory.
+	// working directory. resolvedTargetDir is the one place it is
+	// resolved: every flow is handed that directory and guesses nothing.
 	targetDir string
 
 	// flowSeams lets tests fake the engine/handoff dependencies of
 	// flows this model constructs; zero in production (real deps).
 	flowSeams engineRunSeams
+
+	// flowCheckVolumes fakes Install's stale-database-volume pre-flight
+	// so tests need no Docker daemon; nil in production (real check).
+	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
+
+	// flowInstalledAt fakes Remove's and Update's install-date lookup
+	// the same way; nil in production (asks Docker).
+	flowInstalledAt func(context.Context, *deploy.Deployment) time.Time
+
+	// flowNoticeDuration shortens Install's development-notice countdown
+	// (#175) in tests; zero in production (the 70 s default).
+	flowNoticeDuration time.Duration
+
+	// altScreen puts the program in the terminal's alternate screen
+	// buffer. It was a tea.NewProgram option until the view started
+	// carrying it, so the root model now holds the caller's choice: the
+	// real entry point asks for it, an in-memory teatest run does not.
+	altScreen bool
+
+	// exitNote is a Ctrl-C stop's last word, kept for main to print
+	// once the screen has closed (ExitNote).
+	exitNote string
+
+	// flowSend is how a flow's engine stream reader gets its output
+	// back into the event loop (#159). cmd/orbit-launcher supplies the
+	// running program's Send; a test either supplies its own or gets a
+	// run that reports it cannot read the engine, never one that waits
+	// in silence.
+	flowSend func(tea.Msg)
 }
 
 // NewAppModel constructs the root application model, starting at the
@@ -78,8 +107,9 @@ func (m AppModel) WithUpdateCheck(fn func(context.Context) (version string, hasU
 	return m
 }
 
-// WithVersion sets the version string rendered bottom-right on the
-// splash, the mission console and the success screen, e.g. "v0.1.0".
+// WithVersion sets the launcher version printed, as given, in the centred
+// foot of the splash and the mission console, e.g. "v0.1.0". An empty
+// version renders no foot; release.DisplayVersion decides the shape.
 func (m AppModel) WithVersion(v string) AppModel {
 	m.version = v
 	m.splash.version = v
@@ -101,17 +131,57 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 	return m
 }
 
+// WithSender gives the flows a way to push messages into the event
+// loop from outside it, which the engine stream reader needs (#159).
+// Without it a run cannot read the engine and says so plainly rather
+// than waiting for output that can never arrive.
+func (m AppModel) WithSender(send func(tea.Msg)) AppModel {
+	m.flowSend = send
+	return m
+}
+
+// WithoutVolumeCheck disables Install's stale-database-volume pre-flight
+// (issue #105). Its answer comes from the local Docker daemon, so it is
+// the one part of the Install flow whose behaviour depends on the machine
+// underneath it — which is exactly what a hermetic test suite cannot
+// have. See ORBIT_LAUNCHER_NO_VOLUME_CHECK in cmd/orbit-launcher.
+// It also leaves the install date off Remove's and Update's confirm
+// screens: that date is read from the same daemon's volumes.
+func (m AppModel) WithoutVolumeCheck() AppModel {
+	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
+	m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
+	return m
+}
+
+// WithAltScreen renders in the terminal's alternate screen buffer, so the
+// launcher owns the whole window and hands the user's scrollback back
+// untouched on exit. Only cmd/orbit-launcher asks for it — see
+// AppModel.View.
+func (m AppModel) WithAltScreen() AppModel {
+	m.altScreen = true
+	return m
+}
+
 // applyDeployment populates s's identity block from a fresh detection.
 func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	d, err := deploy.Detect(m.resolvedTargetDir())
-	if err != nil || d == nil {
+	if err != nil {
+		// The file is there but unreadable: no identity and nothing to
+		// probe, and Update preselected so the first Enter lands on the
+		// screen that explains rather than an Install that would be
+		// refused (#238).
+		s.state = stateUnreadable
+		s.menu.sel = menuUpdate
 		return s
 	}
-	s.fqdn = displayHost(d.AppURL)
+	if d == nil {
+		return s
+	}
+	s.fqdn = deploymentIdentity(d)
 	s.appURL = d.AppURL
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
-	s.selected = menuUpdate // a deployment's most likely next act
+	s.menu.sel = menuUpdate // a deployment's most likely next act
 	s.healthProbe = m.healthProbe
 	return s
 }
@@ -148,18 +218,6 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// displayHost reduces an APP_URL to the bare FQDN the identity block
-// shows — scheme and path are launcher noise at a glance.
-func displayHost(appURL string) string {
-	if u, err := url.Parse(appURL); err == nil && u.Host != "" {
-		return u.Host
-	}
-	if appURL != "" {
-		return appURL
-	}
-	return "deployment detected"
-}
-
 func (m AppModel) resolvedTargetDir() string {
 	if m.targetDir != "" {
 		return m.targetDir
@@ -185,7 +243,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateRemove:
 		updated, cmd := m.remove.Update(msg)
 		m.remove = updated.(RemoveModel)
-		return m, cmd
+		return m.watchOutcome(m.remove.Outcome(), cmd)
 	case appStateRepair:
 		updated, cmd := m.repair.Update(msg)
 		m.repair = updated.(RepairModel)
@@ -201,17 +259,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateSuccess:
 		updated, cmd := m.success.Update(msg)
 		m.success = updated.(SuccessModel)
-		if m.success.Chosen == "menu" {
-			return m.refreshSplash()
-		}
-		return m, cmd
+		return m.watchOutcome(m.success.Outcome(), cmd)
 	}
 	return m, nil
 }
 
+// ExitNote is the warning that a Ctrl-C stop ended the installer before
+// it finished undoing its work; empty otherwise.
+func (m AppModel) ExitNote() string { return m.exitNote }
+
 // watchOutcome moves the app forward when a flow's engine run
 // concludes: the shared success screen, or back to the menu.
 func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	// Before the Done check: a stop quits without ever setting Done.
+	if o.ExitNote != "" {
+		m.exitNote = o.ExitNote
+	}
 	if !o.Done {
 		return m, cmd
 	}
@@ -241,37 +304,63 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "Remove":
 		// deploy.Detect's error return only ever reflects a real I/O
 		// failure reading an existing .env-orbit, never "not installed"
-		// (that's a nil Deployment, nil error) — the Remove confirm
-		// screen already renders sensibly for a nil Deployment, so
-		// there's nothing actionable to do with an error here beyond
-		// proceeding with what we have.
-		deployment, _ := deploy.Detect(m.resolvedTargetDir())
+		// (that's a nil Deployment, nil error). Either way nothing usable
+		// was found, so Remove stops at the start; it names where it
+		// looked, or says the file could not be read (#238).
+		dir := m.resolvedTargetDir()
+		deployment, err := deploy.Detect(dir)
 		m.remove = NewRemoveModel(deployment)
+		m.remove.targetDir = dir
+		m.remove.detectErr = err
+		m.remove.lookupInstalledAt = m.flowInstalledAt
 		m.state = appStateRemove
-		return m, sizeCmd
+		// Init looks up the install date — read-only, so like Install's
+		// pre-flight it starts with the flow.
+		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
-		m.repair.prepare = m.flowSeams.prepareRepair
+		m.repair.engineRunSeams = m.flowSeams
+		m.repair.send = m.flowSend
 		m.state = appStateRepair
 		return m, tea.Batch(sizeCmd, m.repair.Init())
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams
+		m.install.checkVolumes = m.flowCheckVolumes
+		m.install.noticeDuration = m.flowNoticeDuration
+		m.install.send = m.flowSend
 		m.state = appStateInstall
-		return m, sizeCmd
+		// Install's Init runs the stale-database-volume pre-flight
+		// (issue #105) — like Repair's, it is read-only, so it starts
+		// with the flow rather than waiting for a confirmation.
+		return m, tea.Batch(sizeCmd, m.install.Init())
 	case "Update":
-		deployment, _ := deploy.Detect(m.resolvedTargetDir())
-		m.update = NewUpdateModel(deployment, m.resolvedTargetDir(), m.version)
+		dir := m.resolvedTargetDir()
+		deployment, err := deploy.Detect(dir)
+		m.update = NewUpdateModel(deployment, dir, m.version)
+		m.update.detectErr = err
 		m.update.seams = m.flowSeams
+		m.update.send = m.flowSend
+		m.update.lookupInstalledAt = m.flowInstalledAt
 		m.state = appStateUpdate
-		return m, sizeCmd
+		return m, tea.Batch(sizeCmd, m.update.Init())
 	default:
 		return m, tea.Quit
 	}
 }
 
-// View implements tea.Model.
-func (m AppModel) View() string {
+// View implements tea.Model. The alternate screen is a property of the
+// view rather than a program option, so this is where the caller's choice
+// (WithAltScreen) is applied — every flow below draws the same way
+// whether or not the launcher owns the whole window.
+func (m AppModel) View() tea.View {
+	v := m.screen()
+	v.AltScreen = m.altScreen
+	return v
+}
+
+// screen is the view of whichever flow currently owns the screen.
+func (m AppModel) screen() tea.View {
 	switch m.state {
 	case appStateSplash:
 		return m.splash.View()
@@ -286,5 +375,5 @@ func (m AppModel) View() string {
 	case appStateSuccess:
 		return m.success.View()
 	}
-	return ""
+	return tea.NewView("")
 }

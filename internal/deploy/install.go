@@ -1,16 +1,27 @@
 package deploy
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"syscall"
+	"strings"
 )
 
 // BuildInstallCommand stages script (install.sh's content) to a temp
 // file and returns a ready-to-run command against targetDir, plus a
-// cleanup func that removes the staged file — call it once the command
-// has finished.
+// cleanup func that removes what the run staged — call it once the
+// run, and any configuration session using its configuration tree, is
+// over.
+//
+// Each run also gets a fresh, private (0700) and empty directory,
+// passed to install.sh as ORBIT_LAUNCHER_CONFIG_TREE: on its
+// configuration refusal install.sh copies the configuration tree it has
+// already verified against the image into it (ai/orbit#1225), and that
+// copy is the only configure.sh the launcher ever runs (ConfigTreeDir,
+// OpenConfigTree). The cleanup removes it with whatever install.sh
+// left there.
 //
 // Deliberately not run here, and deliberately leaves Stdin/Stdout/Stderr
 // unset: install.sh must see a real controlling terminal, because its
@@ -24,26 +35,76 @@ import (
 // field name or validation rule; the handoff runs install.sh exactly
 // as if a person had run `curl -fsSL .../install.sh | bash` themselves.
 func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanup func() error, err error) {
+	scriptPath, env, cleanup, err := stageInstall(script)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd = exec.Command("bash", scriptPath)
+	cmd.Dir = targetDir
+	cmd.Env = env
+	return cmd, cleanup, nil
+}
+
+// stageInstall writes script to a temp file and makes the run's private
+// configuration tree directory. It returns the script's path, the run's
+// environment, and the cleanup that removes both.
+func stageInstall(script []byte) (scriptPath string, env []string, cleanup func() error, err error) {
 	scriptFile, err := os.CreateTemp("", "orbit-launcher-install-*.sh")
 	if err != nil {
-		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
-	cleanup = func() error { return os.Remove(scriptFile.Name()) }
+	removeScript := func() error { return os.Remove(scriptFile.Name()) }
 
 	if _, err := scriptFile.Write(script); err != nil {
 		scriptFile.Close()
-		cleanup()
-		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+		removeScript()
+		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
 	if err := scriptFile.Close(); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("stage install.sh: %w", err)
+		removeScript()
+		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
 	}
 
-	cmd = exec.Command("bash", scriptFile.Name())
-	cmd.Dir = targetDir
-	return cmd, cleanup, nil
+	// MkdirTemp creates the directory 0700, owned by this user, and
+	// empty — what install.sh insists on before it writes there.
+	configTree, err := os.MkdirTemp("", "orbit-launcher-config-*")
+	if err != nil {
+		removeScript()
+		return "", nil, nil, fmt.Errorf("stage configuration tree: %w", err)
+	}
+	cleanup = func() error {
+		return errors.Join(removeScript(), os.RemoveAll(configTree))
+	}
+
+	// Appended to the launcher's own environment, never replacing it:
+	// install.sh reads ORBIT_CHANNEL, COMPOSE_PROJECT_NAME and the rest
+	// from what the person (or CI) set.
+	env = append(os.Environ(), ConfigTreeEnv+"="+configTree)
+	return scriptFile.Name(), env, cleanup, nil
 }
+
+// ConfigTreeDir is the configuration tree directory cmd hands install.sh,
+// or "" when it hands over none.
+func ConfigTreeDir(cmd *exec.Cmd) string {
+	prefix := ConfigTreeEnv + "="
+	for i := len(cmd.Env) - 1; i >= 0; i-- {
+		if dir, ok := strings.CutPrefix(cmd.Env[i], prefix); ok {
+			return dir
+		}
+	}
+	return ""
+}
+
+// Action is the engine flag an unattended run is started with, as
+// RepairMode, ConfigStep and AuthMode are for their scripts.
+type Action string
+
+// The engine actions BuildEngineCommand accepts.
+const (
+	ActionInstall Action = "install"
+	ActionUpdate  Action = "update"
+	ActionRepair  Action = "repair"
+)
 
 // BuildEngineCommand stages script like BuildInstallCommand but builds
 // the mission console's non-interactive engine run instead of a
@@ -63,18 +124,18 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 // target back via install.sh's own file transaction, verified against
 // orbit develop, so the follow-up interactive handoff always starts
 // from a clean target.
-func BuildEngineCommand(script []byte, targetDir, action string) (cmd *exec.Cmd, cleanup func() error, err error) {
+func BuildEngineCommand(script []byte, targetDir string, action Action) (cmd *exec.Cmd, cleanup func() error, err error) {
 	switch action {
-	case "install", "update", "repair":
+	case ActionInstall, ActionUpdate, ActionRepair:
 	default:
 		return nil, nil, fmt.Errorf("unknown engine action %q", action)
 	}
 
-	cmd, cleanup, err = BuildInstallCommand(script, targetDir)
+	scriptPath, env, cleanup, err := stageInstall(script)
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd.Args = append(cmd.Args, "--plain", "--"+action)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd = detachedCommand(context.Background(), targetDir, "bash", scriptPath, "--plain", "--"+string(action))
+	cmd.Env = env
 	return cmd, cleanup, nil
 }

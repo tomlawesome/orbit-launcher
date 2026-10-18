@@ -2,13 +2,13 @@ name: Live install/remove test (on demand)
 
 # The real virtualized live test — see docs/implementation-plan.md
 # section 3.5 — run on demand against a pull request, building
-# orbit-launcher fresh from that PR's source (not a published
-# artifact; that authoritative run happens as part of
-# release-preview.yml, right after a preview build actually publishes,
-# testing that exact artifact via the real bootstrap script). Opt-in
-# via the run-live-matrix label, since it's slow — real image pulls,
-# real health checks, minutes not seconds — and shouldn't burn CI time
-# on every commit.
+# orbit-launcher fresh from that PR's source. This repo no longer
+# publishes launcher binaries of its own (#171): Orbit builds, signs and
+# ships the launcher, so there is no separately-published artifact to
+# test here — only the freshly-built one. Opt-in via the
+# run-live-matrix label, since it's slow — real image pulls, real
+# health checks, minutes not seconds — and shouldn't burn CI time on
+# every commit.
 #
 # Runs on ubuntu-latest only. A debian:12 container leg was tried and
 # dropped (see issue #59): docker-compose.yml's bind-mounted volumes
@@ -32,11 +32,8 @@ on:
       orbit_branch:
         description: >-
           orbit branch to fetch install.sh from (empty = the production
-          default, orbit main). installer-compat-watch.yml is the
-          purpose-built job for this, but workflow_dispatch only resolves
-          workflows present on the default branch and that one hasn't been
-          promoted to main yet — this input covers the gap from the one
-          live-test workflow that is dispatchable.
+          default, orbit main). This is the dispatchable way to run a live
+          test against a non-default orbit branch's install.sh.
         required: false
         default: ""
       orbit_channel:
@@ -70,7 +67,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

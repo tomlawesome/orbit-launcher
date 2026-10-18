@@ -2,8 +2,11 @@ package deploy
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestStandDownCommand_PassesEnvFile is the load-bearing test for issue
@@ -56,4 +59,80 @@ func TestStandDownCommand_EndsWithDown(t *testing.T) {
 	if len(cmd.Args) == 0 || cmd.Args[len(cmd.Args)-1] != "down" {
 		t.Errorf("expected the command to end with \"down\", got %v", cmd.Args)
 	}
+}
+
+// When docker compose down fails, the error carries docker's own output,
+// so the person sees why their containers are still running.
+func TestStandDown_FailureCarriesDockersOutput(t *testing.T) {
+	fakeDockerPrinting(t, "no such service: orbit\n", 1)
+
+	err := StandDown(t.Context(), trustedDeployment(t))
+	if err == nil {
+		t.Fatal("expected an error when docker compose down fails")
+	}
+	if !strings.Contains(err.Error(), "no such service: orbit") {
+		t.Errorf("error should carry docker's output, got: %v", err)
+	}
+}
+
+// TestRemovalCommand_PassesTheSameEnvFileAsStandDown: the pasted removal
+// line runs "docker compose down -v", which needs .env-orbit for exactly
+// the reason StandDown does. The flag must sit inside the compose
+// invocation, before "down -v", not somewhere after the "&&".
+func TestRemovalCommand_PassesTheSameEnvFileAsStandDown(t *testing.T) {
+	got := mustRemovalCommand(t, "/opt/orbit")
+	envAt := strings.Index(got, "--env-file /opt/orbit/.env-orbit")
+	if envAt < 0 {
+		t.Fatalf("RemovalCommand(%q) = %q, missing --env-file /opt/orbit/.env-orbit", "/opt/orbit", got)
+	}
+	downAt := strings.Index(got, " down -v")
+	if downAt < 0 || envAt > downAt {
+		t.Errorf("RemovalCommand(%q) = %q, --env-file must come before \" down -v\"", "/opt/orbit", got)
+	}
+}
+
+// TestRemovalCommand_QuotesPathsTheShellWouldSplit: the line is pasted
+// into a shell, so a directory with a space or quote in its name must
+// still arrive as one argument. Ordinary paths stay bare for readability.
+func TestRemovalCommand_QuotesPathsTheShellWouldSplit(t *testing.T) {
+	cases := []struct{ dir, want string }{
+		{"/opt/orbit", `docker compose --project-directory /opt/orbit --env-file /opt/orbit/.env-orbit down -v && sudo rm -rf /opt/orbit`},
+		{"/mnt/My Drive/orbit", `docker compose --project-directory '/mnt/My Drive/orbit' --env-file '/mnt/My Drive/orbit/.env-orbit' down -v && sudo rm -rf '/mnt/My Drive/orbit'`},
+		{"/opt/tom's orbit", `docker compose --project-directory '/opt/tom'\''s orbit' --env-file '/opt/tom'\''s orbit/.env-orbit' down -v && sudo rm -rf '/opt/tom'\''s orbit'`},
+	}
+	for _, c := range cases {
+		if got := mustRemovalCommand(t, c.dir); got != c.want {
+			t.Errorf("RemovalCommand(%q)\n got: %s\nwant: %s", c.dir, got, c.want)
+		}
+	}
+}
+
+// TestShellQuote_RoundTripsThroughSh checks the quoting against a real
+// shell rather than against the expected strings above: each path must
+// come back out of sh byte for byte.
+func TestShellQuote_RoundTripsThroughSh(t *testing.T) {
+	for _, p := range []string{
+		"/mnt/My Drive/orbit",
+		"/opt/tom's orbit",
+		"/opt/$orbit",
+		`/opt/orbit\`,
+	} {
+		out, err := exec.Command("sh", "-c", "printf '%s\\n' "+shellQuote(p)).Output()
+		if err != nil {
+			t.Errorf("sh for %q: %v", p, err)
+			continue
+		}
+		if string(out) != p+"\n" {
+			t.Errorf("shellQuote(%q) through sh = %q, want %q", p, out, p+"\n")
+		}
+	}
+}
+
+// setStandDownTimeout shortens StandDown's own limit to d for one test
+// and restores the default when it ends.
+func setStandDownTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := standDownTimeout
+	standDownTimeout = d
+	t.Cleanup(func() { standDownTimeout = prev })
 }

@@ -13,12 +13,17 @@ import (
 // Lines carry only the fixed field/kind/reason vocabulary — never a
 // configuration value, never the secret.
 
+// PromptMaxAttempts is how many answers the engine takes for one field:
+// when the last of them is rejected it sends PromptAbort, not another
+// Prompt.
+const PromptMaxAttempts = 3
+
 // Prompt is the engine's request for one configuration value. The
 // engine is now blocked reading one answer line from stdin.
 type Prompt struct {
 	Field    string
 	Kind     string // url | text | secret — unknown values carried verbatim
-	Attempt  int    // 1-based; bounded at 3 by the engine
+	Attempt  int    // 1-based; bounded at PromptMaxAttempts by the engine
 	Required bool
 }
 
@@ -52,19 +57,11 @@ func ParsePromptLine(line string) (msg any, ok bool) {
 		return nil, false
 	}
 
-	fields := map[string]string{}
-	for _, token := range tokens[1:] {
-		key, value, found := strings.Cut(token, "=")
-		if !found || key == "" {
-			// A bare word means this is prose that merely starts with
-			// a protocol word — not a protocol line.
-			return nil, false
-		}
-		// Unknown trailing key=value fields are tolerated, same as the
-		// event stream contract; last occurrence wins.
-		fields[key] = value
-	}
-	if fields["field"] == "" {
+	// A bare word means this is prose that merely starts with a
+	// protocol word — not a protocol line. Unknown trailing key=value
+	// fields are tolerated, same as the event stream contract.
+	fields, ok := keyValueFields(tokens[1:])
+	if !ok || fields["field"] == "" {
 		return nil, false
 	}
 

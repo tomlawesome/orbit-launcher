@@ -8,59 +8,61 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // Repair diagnosis — orbit scripts/repair.sh --check (orbit#261, first
-// slice). repair.sh is deliberately standalone and source-less so a
-// current copy can diagnose any generation of deployment, but it
+// slice). The launcher runs the deployment's own scripts/repair.sh: the
+// copy install.sh placed there from the digest-pinned image, so it came
+// through the same verified channel as the rest of the deployment
+// (#190). Nothing is fetched and nothing is written — a deployment
+// without the script simply has no diagnosis, said honestly. repair.sh
 // anchors to the tree it lives in (it cds to its own parent-of-scripts
 // and delegates configuration readiness to that tree's own
-// configure.sh). It isn't a deployment asset, so the launcher fetches
-// it fresh — same channel as install.sh — and stages it into the
-// target's scripts/ directory before each diagnosis. The diagnosis
-// itself is read-only by construction (the script's own contract,
-// contract-tested orbit-side); the staged file is the one write, and
-// it is overwritten on every run so it can never go stale.
+// configure.sh), and its diagnosis is read-only by construction (the
+// script's own contract, contract-tested orbit-side).
 
-// ErrRepairUnavailable means the configured orbit line doesn't publish
-// repair.sh yet (orbit main today): diagnosis honestly isn't available
+// ErrNoDeployment means there is no Orbit deployment in the directory
+// at all (neither .env-orbit nor scripts/repair.sh): the caller's cue
+// for the shared no-deployment screen rather than "diagnosis
+// unavailable" (#237).
+var ErrNoDeployment = errors.New("no Orbit deployment here (no " + EnvFile + ")")
+
+// ErrRepairUnavailable means the deployment has no scripts/repair.sh —
+// it predates the repair diagnosis: diagnosis honestly isn't available
 // rather than being guessed at.
-var ErrRepairUnavailable = errors.New("this orbit line doesn't publish the repair diagnosis yet")
+var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (no scripts/repair.sh)")
 
-// FetchRepairScript downloads the current repair.sh from the same
-// source as install.sh (including the CI override).
-func FetchRepairScript(ctx context.Context) ([]byte, error) {
-	scriptsBase, _ := scriptSourceURLs()
-	body, err := fetchFile(ctx, scriptsBase+"/repair.sh")
+// repairScript is repair.sh's name in the deployment's scripts
+// directory, where install.sh places it.
+const repairScript = "repair.sh"
+
+// RepairCommand builds one repair run against the deployment's own
+// scripts/repair.sh. An absent script is ErrNoDeployment when there is
+// no .env-orbit either, else ErrRepairUnavailable; one on a path
+// RequireTrustedPath refuses is an UntrustedPathError. There is no
+// fallback to any other copy.
+//
+// A trusted scripts/repair.sh runs even without .env-orbit: the
+// script's own Step 0 is deliberately looser than Detect (any of
+// .env-orbit, docker-compose.yml, .orbit-secrets or installer staging
+// counts), so a deployment that lost its env file is diagnosed and
+// restored rather than refused, and its exit 5 reaches the same
+// no-deployment screen (ui maps engine.ExitNotInstalled).
+func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
+	d, err := Detect(targetDir)
 	if err != nil {
-		var status statusError
-		if errors.As(err, &status) {
-			return nil, ErrRepairUnavailable
+		return nil, fmt.Errorf("read the deployment: %w", err)
+	}
+	if err := requireScript(targetDir, repairScript, ErrRepairUnavailable); err != nil {
+		// No script and no env file is no deployment at all (#237);
+		// no script beside an env file is a deployment too old for
+		// repair. Any other lookup or trust failure is returned as is.
+		if d == nil && errors.Is(err, ErrRepairUnavailable) {
+			return nil, ErrNoDeployment
 		}
-		return nil, fmt.Errorf("fetch repair.sh: %w", err)
+		return nil, err
 	}
-	if !strings.HasPrefix(string(body), "#!") {
-		return nil, ErrRepairUnavailable
-	}
-	return body, nil
-}
-
-// StageRepairScript writes repair.sh into the target's scripts/
-// directory, where it diagnoses that installation.
-func StageRepairScript(targetDir string, script []byte) error {
-	if _, err := os.Stat(targetDir); err != nil {
-		return fmt.Errorf("target directory: %w", err)
-	}
-	scriptsDir := filepath.Join(targetDir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		return fmt.Errorf("stage repair.sh: %w", err)
-	}
-	dst := filepath.Join(scriptsDir, "repair.sh")
-	if err := os.WriteFile(dst, script, 0o700); err != nil {
-		return fmt.Errorf("stage repair.sh: %w", err)
-	}
-	return os.Chmod(dst, 0o700)
+	return BuildRepairCommand(targetDir, mode), nil
 }
 
 // RepairMode selects which repair invocation runs.
@@ -92,18 +94,18 @@ const (
 	RepairExecuteDangerous RepairMode = "--execute --dangerous"
 )
 
-// BuildRepairCommand builds one repair run. Detached (Setsid) for
-// uniformity with every other engine invocation — nothing the launcher
-// spawns may ever reach /dev/tty. The dangerous mode gets the machine
-// prompt transport (orbit#297 grammar, repair's own env var), which is
-// the only non-TTY way its confirmation prompts can exist at all.
+// BuildRepairCommand builds one repair run, detached like every engine
+// script run (detachedCommand), so neither repair.sh nor anything it
+// starts can reach /dev/tty. Not every child is detached: Docker calls
+// stay attached, and the terminal handoff (BuildInstallCommand) must
+// reach the terminal. The dangerous mode gets the machine prompt
+// transport (orbit#297 grammar, repair's own env var), which is the only
+// non-TTY way its confirmation prompts can exist at all.
 func BuildRepairCommand(targetDir string, mode RepairMode) *exec.Cmd {
-	args := append([]string{"scripts/repair.sh"}, strings.Fields(string(mode))...)
-	cmd := exec.Command("bash", args...)
-	cmd.Dir = targetDir
+	args := append([]string{filepath.Join(scriptsDir, repairScript)}, strings.Fields(string(mode))...)
+	cmd := detachedCommand(context.Background(), targetDir, "bash", args...)
 	if mode == RepairExecuteDangerous {
 		cmd.Env = append(os.Environ(), "ORBIT_REPAIR_PROMPTS=machine")
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }

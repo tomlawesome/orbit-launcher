@@ -4,13 +4,13 @@ on:
   push:
     branches:
       - main
-      - develop
+      - dev
       - preview
       - "hotfix/**"
   pull_request:
     branches:
       - main
-      - develop
+      - dev
       - preview
       - "hotfix/**"
 
@@ -25,13 +25,20 @@ jobs:
   fast:
     name: Static and unit checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
 
+    env:
+      # Copied from .gitlab-ci.yml's variables, the source of truth;
+      # test/supplychain fails when a copy here differs (#216).
+      STATICCHECK_VERSION: 452d5bb86b45416c35891262f6a11dbd6a970117
+      BATS_VERSION: "1.14.0"
+      BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
+
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -52,25 +59,33 @@ jobs:
       - name: Vet
         run: go build ./... && go vet ./...
 
-      - name: Shellcheck bootstrap script
-        run: shellcheck scripts/get-orbit-launcher.sh
+      - name: Shellcheck scripts
+        run: shellcheck scripts/*.sh scripts/ci/*.sh
 
       - name: Set up bats
         run: |
-          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats-core
-          echo "/tmp/bats-core/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          bash scripts/ci/fetch-verified.sh \
+            "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" \
+            "${BATS_SHA256}" "${RUNNER_TEMP}/bats.tar.gz"
+          mkdir -p "${RUNNER_TEMP}/bats-core"
+          tar -xzf "${RUNNER_TEMP}/bats.tar.gz" -C "${RUNNER_TEMP}/bats-core" --strip-components=1
+          echo "${RUNNER_TEMP}/bats-core/bin" >> "$GITHUB_PATH"
 
-      - name: Test bootstrap script
-        run: bats scripts/test/get-orbit-launcher.bats
+      - name: Test shell scripts
+        run: bats scripts/test/
 
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+        run: go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
 
       - name: Run staticcheck
         run: staticcheck ./...
 
       - name: Test
-        run: go test -race -coverprofile=coverage.out ./...
+        run: scripts/coverage.sh -race
+
+      - name: Check coverage floors
+        run: go run ./tools/coveragefloor coverage.out
 
       - name: Upload diagnostic coverage
         if: always()
@@ -79,53 +94,3 @@ jobs:
           name: coverage
           path: coverage.out
           retention-days: 14
-
-  verify_preview_for_stable:
-    name: Verify tested preview for stable merge
-    # Job-level skip (not a workflow path filter) so branch protection still
-    # receives a terminal check result on every PR, matching orbit's own
-    # documented reason for the same pattern in its quality strategy.
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      attestations: read
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Download preview release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download preview-latest \
-            --repo "${{ github.repository }}" \
-            --dir preview-release \
-            --pattern "orbit-launcher_linux_amd64.tar.gz" \
-            --pattern "checksums.txt"
-
-      - name: Verify checksum
-        run: |
-          cd preview-release
-          sha256sum -c <(grep amd64 checksums.txt)
-
-      - name: Verify embedded revision matches this pull request's head
-        run: |
-          tar -xzf preview-release/orbit-launcher_linux_amd64.tar.gz -C preview-release orbit-launcher
-          chmod +x preview-release/orbit-launcher
-          actual="$(preview-release/orbit-launcher --version | sed -n 's/.*(\(.*\))/\1/p')"
-          expected="${{ github.event.pull_request.head.sha }}"
-          if [[ "$actual" != "$expected" ]]; then
-            echo "::error::preview-latest release was built from $actual, but this PR's head is $expected — the preview release is stale relative to this merge"
-            exit 1
-          fi
-          echo "Verified: preview-latest release matches this PR's exact head commit."
-
-      - name: Verify build provenance attestation
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh attestation verify preview-release/orbit-launcher_linux_amd64.tar.gz \
-            --repo "${{ github.repository }}"

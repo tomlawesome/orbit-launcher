@@ -1,13 +1,15 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
@@ -27,15 +29,29 @@ const (
 // existing .env-orbit values.
 type UpdateModel struct {
 	width, height int
+	star          starfield.Model
 	targetDir     string
 	version       string
 	deployment    *deploy.Deployment
+	detectErr     error // deploy.Detect's error for targetDir; see RemoveModel
 	state         updateState
-	confirmSel    int // 0 = Update Orbit, 1 = Cancel
+	confirm       menu // updateConfirmRows
+
+	// left is Esc, Cancel or Menu on the flow's first screen: back to the
+	// main menu with nothing started (#210).
+	left bool
+
+	// installedAt and lookupInstalledAt: see RemoveModel.
+	installedAt       time.Time
+	lookupInstalledAt func(context.Context, *deploy.Deployment) time.Time
 
 	run engineRun
 
 	seams engineRunSeams
+
+	// send is the run's way back into the event loop, for the engine
+	// stream reader; set by AppModel from the program's sender.
+	send func(tea.Msg)
 }
 
 // NewUpdateModel constructs the Update flow for a detected deployment. A
@@ -47,19 +63,54 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 	if d == nil {
 		state = updateStateNotFound
 	}
-	return UpdateModel{deployment: d, targetDir: targetDir, version: version, state: state}
+	return UpdateModel{deployment: d, targetDir: targetDir, version: version, state: state, confirm: newMenu(updateConfirmRows...)}
 }
 
-// Outcome surfaces the engine run's result to AppModel.
-func (m UpdateModel) Outcome() flowOutcome { return outcomeOf(m.run) }
+var updateConfirmRows = []string{"Update Orbit", "Cancel"}
 
-// Init implements tea.Model.
-func (m UpdateModel) Init() tea.Cmd { return nil }
+// deadEndRows are a dead end's one row, Update's and Remove's not-found
+// screens: back to the main menu (#228).
+var deadEndRows = []string{"Menu"}
+
+// Outcome surfaces the flow's result to AppModel: back to the menu when
+// the person left on the first screen, otherwise the engine run's.
+func (m UpdateModel) Outcome() flowOutcome {
+	if m.left {
+		return backToMenu
+	}
+	return outcomeOf(m.run)
+}
+
+// Init implements tea.Model. On the confirm screen it starts the
+// read-only install-date lookup, as RemoveModel.Init does.
+func (m UpdateModel) Init() tea.Cmd {
+	if m.state != updateStateConfirm {
+		return nil
+	}
+	return installedAtCmd(m.lookupInstalledAt, m.deployment)
+}
 
 // Update implements tea.Model.
 func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// See InstallModel.Update: neither message is consumed here, a resize
+	// arms no tick chain, and the engine run re-arms the one chain while
+	// it owns the screen.
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
+		m.star = newSky(resized.Width, resized.Height)
+	}
+	if _, ok := msg.(tickMsg); ok {
+		m.star = m.star.Advance()
+		if m.state != updateStateRunning {
+			return m, tick()
+		}
+	}
+
+	// The lookup may answer after the run has started; it is this
+	// model's message, never the engine run's.
+	if at, ok := msg.(installedAtMsg); ok {
+		m.installedAt = at.at
+		return m, nil
 	}
 
 	if m.state == updateStateRunning {
@@ -68,42 +119,44 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		return m.handleKey(key)
 	}
 	return m, nil
 }
 
-func (m UpdateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
 		return m, tea.Quit
 	}
 	switch m.state {
 	case updateStateNotFound:
-		return m, tea.Quit
+		// The dead end: its one row and Esc both go back to the menu,
+		// and no other key does anything (#228).
+		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
+			m.left = true
+		}
+		return m, nil
 	case updateStateConfirm:
 		return m.handleConfirmKey(msg)
 	}
 	return m, nil
 }
 
-func (m UpdateModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
-		return m, tea.Quit
-	case tea.KeyUp, tea.KeyDown:
-		m.confirmSel = 1 - m.confirmSel
-		return m, nil
-	case tea.KeyEnter:
-		if m.confirmSel == 1 {
-			return m, tea.Quit
-		}
+func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	var chosen string
+	var back bool
+	m.confirm, chosen, back = m.confirm.onScreen(msg)
+	switch {
+	case back, chosen == "Cancel":
+		m.left = true
+	case chosen == "Update Orbit":
 		m.state = updateStateRunning
 		title := "Update"
-		if m.deployment != nil && m.deployment.AppURL != "" {
-			title = "Update — " + displayHost(m.deployment.AppURL)
+		if m.deployment != nil {
+			title = "Update — " + deploymentIdentity(m.deployment)
 		}
-		m.run = newEngineRun("update", m.resolvedTargetDir(), title, m.version).withSeams(m.seams)
+		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd
@@ -111,15 +164,11 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m UpdateModel) resolvedTargetDir() string {
-	if m.targetDir != "" {
-		return m.targetDir
-	}
-	return targetDirOrPlaceholder(m.deployment)
-}
-
 // View implements tea.Model.
-func (m UpdateModel) View() string {
+func (m UpdateModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m UpdateModel) view() string {
 	if m.width == 0 {
 		return ""
 	}
@@ -139,30 +188,19 @@ func (m UpdateModel) View() string {
 // muted prose, individually-centred stacked menu, no keybind hints.
 
 func (m UpdateModel) viewNotFound() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("No Orbit deployment found here"))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.MutedText.Render("There's nothing to update in this directory —"))
-	fmt.Fprintln(&b, style.MutedText.Render("Install is the way to get into Orbit first."))
-	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Exit"}, 0)
-	return centreBlock(m.width, m.height, b.String())
+	if m.detectErr != nil {
+		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.detectErr)
+	}
+	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+		"There's nothing to update in this directory —",
+		"Install is the way to get into Orbit first.")
 }
 
 func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Pull the latest Orbit and update this deployment"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Pull the latest Orbit and update this deployment")
 
-	identity := "no deployment details found"
-	if m.deployment != nil && m.deployment.AppURL != "" {
-		identity = displayHost(m.deployment.AppURL) + " · installed " + m.deployment.InstalledAt.Format("2006-01-02")
-	}
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(identity))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
 	if image := m.deploymentImage(); image != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(image))
 	}
@@ -170,8 +208,8 @@ func (m UpdateModel) viewConfirm() string {
 	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))
 	fmt.Fprintln(&b, style.MutedText.Render("Your existing configuration is preserved. Nothing is deleted."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, []string{"Update Orbit", "Cancel"}, m.confirmSel)
-	return centreBlock(m.width, m.height, b.String())
+	m.confirm.write(&b)
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // deploymentImage is the deployment's image reference without its

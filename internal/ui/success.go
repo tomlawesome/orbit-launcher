@@ -1,12 +1,12 @@
 package ui
 
 import (
-	"fmt"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -32,11 +32,12 @@ type SuccessModel struct {
 	elapsed time.Duration
 	version string
 
-	selected int
+	menu menu // successMenu
 
 	// Chosen is which action the user picked: "terminal" quits, "menu"
-	// returns to the splash (AppModel reads it). "Get into Orbit" stays
-	// on this screen — the URL opens, the screen remains.
+	// returns to the splash (AppModel reads it through Outcome). "Get
+	// into Orbit" stays on this screen — the URL opens, the screen
+	// remains.
 	Chosen string
 
 	// openURL launches the deployment URL in a browser, best effort.
@@ -55,7 +56,17 @@ var successMenu = []string{"Get into Orbit", "Terminal", "Menu"}
 // console's real wall-clock duration; zero renders no footer figure
 // (handover 06: omitted after flows with no meaningful clock).
 func NewSuccessModel(appURL string, elapsed time.Duration, version string) SuccessModel {
-	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version}
+	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version, menu: newMenu(successMenu...)}
+}
+
+// Outcome surfaces the screen's result to AppModel the way every flow
+// does: the Menu row or Esc (#225) leaves for the menu; Terminal and
+// Ctrl-C quit instead.
+func (m SuccessModel) Outcome() flowOutcome {
+	if m.Chosen == "menu" {
+		return backToMenu
+	}
+	return flowOutcome{}
 }
 
 // Init implements tea.Model.
@@ -71,7 +82,7 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.star = starfield.New(m.width, m.height, 1)
+		m.star = newSky(m.width, m.height)
 		m.starReady = true
 		return m, nil
 
@@ -96,48 +107,39 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m SuccessModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
 		m.Chosen = "terminal"
 		return m, tea.Quit
-
-	case tea.KeyUp:
-		m.selected = (m.selected - 1 + len(successMenu)) % len(successMenu)
-		return m, nil
-
-	case tea.KeyDown:
-		m.selected = (m.selected + 1) % len(successMenu)
-		return m, nil
-
-	case tea.KeyEnter:
-		switch m.selected {
-		case 0: // Get into Orbit
-			m.openFailed = m.launchURL() != nil
-			return m, nil
-		case 1: // Terminal
-			m.Chosen = "terminal"
-			return m, tea.Quit
-		case 2: // Menu
-			m.Chosen = "menu"
-			return m, nil
-		}
 	}
 
-	if msg.Type == tea.KeyRunes {
-		for _, r := range msg.Runes {
-			if r == 'q' {
-				m.Chosen = "terminal"
-				return m, tea.Quit
-			}
-		}
+	// Esc is one step back, and back from a finished flow is the
+	// menu, as after Repair (#225).
+	var chosen string
+	var back bool
+	m.menu, chosen, back = m.menu.onScreen(msg)
+	if back {
+		m.Chosen = "menu"
+		return m, nil
 	}
+	switch chosen {
+	case "Get into Orbit":
+		m.openFailed = m.launchURL() != nil
+		return m, nil
+	case "Terminal":
+		m.Chosen = "terminal"
+		return m, tea.Quit
+	case "Menu":
+		m.Chosen = "menu"
+		return m, nil
+	}
+
 	return m, nil
 }
 
@@ -147,7 +149,7 @@ func (m SuccessModel) launchURL() error {
 		open = defaultOpenURL
 	}
 	if m.appURL == "" {
-		return fmt.Errorf("no deployment URL")
+		return errors.New("no deployment URL")
 	}
 	return open(m.appURL)
 }
@@ -160,20 +162,21 @@ func defaultOpenURL(url string) error {
 			return exec.Command(opener, url).Start()
 		}
 	}
-	return fmt.Errorf("no opener available")
+	return errors.New("no opener available")
 }
 
 // View implements tea.Model.
-func (m SuccessModel) View() string {
+func (m SuccessModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m SuccessModel) view() string {
 	if m.width == 0 {
 		return ""
 	}
 
 	contentLines := m.centreBlockLines()
 	bodyHeight := m.height - 1
-	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
-
-	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffset)
+	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffsetFor(bodyHeight, len(contentLines)))
 
 	achieved := ""
 	if m.elapsed > 0 {
@@ -199,8 +202,8 @@ func (m SuccessModel) centreBlockLines() []string {
 	lines = append(lines, style.SuccessText.Render("alive"))
 	lines = append(lines, "")
 
-	for i, label := range successMenu {
-		lines = append(lines, menuRow(label, i == m.selected))
+	for i, label := range m.menu.items {
+		lines = append(lines, menuRow(label, i == m.menu.sel))
 	}
 	if m.openFailed {
 		lines = append(lines, "")

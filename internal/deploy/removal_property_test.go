@@ -21,7 +21,8 @@ import (
 // destructive command themselves. A future edit that added `-v` to
 // StandDown's docker invocation, for example, would fail this test even
 // though it wouldn't fail any behavioural test that only checks the
-// current fake-docker fixture.
+// current fake-docker fixture. detachedCommand (detached.go) builds the
+// scripts' commands, so its call sites are scanned too (#207).
 func TestNoExecCallEverIncludesTheDestructiveFlags(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -48,12 +49,7 @@ func TestNoExecCallEverIncludesTheDestructiveFlags(t *testing.T) {
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext" {
-				return true
-			}
-			pkgIdent, ok := sel.X.(*ast.Ident)
-			if !ok || pkgIdent.Name != "exec" {
+			if !isExecCall(call) {
 				return true
 			}
 
@@ -73,14 +69,24 @@ func TestNoExecCallEverIncludesTheDestructiveFlags(t *testing.T) {
 	}
 }
 
+// isExecCall reports whether call starts a process: exec.Command,
+// exec.CommandContext, or this package's detachedCommand.
+func isExecCall(call *ast.CallExpr) bool {
+	if id, ok := call.Fun.(*ast.Ident); ok {
+		return id.Name == "detachedCommand"
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext" {
+		return false
+	}
+	pkgIdent, ok := sel.X.(*ast.Ident)
+	return ok && pkgIdent.Name == "exec"
+}
+
 func TestStandDown_NeverPassesTheVolumeFlag(t *testing.T) {
-	fakeBin := t.TempDir()
-	callLog := filepath.Join(fakeBin, "calls.log")
-	writeFakeDocker(t, fakeBin, callLog)
+	callLog := fakeDockerLogging(t)
 
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	if err := StandDown(t.Context(), "/tmp/some-orbit-deployment"); err != nil {
+	if err := StandDown(t.Context(), trustedDeployment(t)); err != nil {
 		t.Fatalf("StandDown: %v", err)
 	}
 
@@ -98,14 +104,5 @@ func TestStandDown_NeverPassesTheVolumeFlag(t *testing.T) {
 	}
 	if strings.Contains(calls, "rm") {
 		t.Errorf("StandDown must never invoke rm: logged calls = %q", calls)
-	}
-}
-
-func writeFakeDocker(t *testing.T, binDir, callLog string) {
-	t.Helper()
-	script := "#!/usr/bin/env bash\necho \"$@\" >> " + callLog + "\n"
-	path := filepath.Join(binDir, "docker")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker: %v", err)
 	}
 }

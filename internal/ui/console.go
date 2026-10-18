@@ -5,8 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -48,21 +50,20 @@ func phaseIndex(token string) int {
 	return -1
 }
 
-// stateWords maps known engine states to the console's display words.
-// An unknown state renders as its literal token, unstyled — the
-// contract's renderable-but-unstyled rule.
+// stateWords maps known engine states to the console's display words;
+// most show as the engine's own word, completed reads as "done". An
+// unknown state renders as its literal token, unstyled — the contract's
+// renderable-but-unstyled rule.
 var stateWords = map[string]string{
-	"waiting":   "waiting",
-	"starting":  "starting",
-	"running":   "running",
-	"healthy":   "healthy",
-	"completed": "done",
-	"skipped":   "skipped",
-	"failed":    "failed",
-	"blocked":   "blocked",
+	engine.StateWaiting:   engine.StateWaiting,
+	engine.StateStarting:  engine.StateStarting,
+	engine.StateRunning:   engine.StateRunning,
+	engine.StateHealthy:   engine.StateHealthy,
+	engine.StateCompleted: "done",
+	engine.StateSkipped:   engine.StateSkipped,
+	engine.StateFailed:    engine.StateFailed,
+	engine.StateBlocked:   engine.StateBlocked,
 }
-
-var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
 // consoleEntry is one displayed line: a parsed event or a raw
 // (non-event) stdout line shown verbatim.
@@ -136,8 +137,14 @@ func (c ConsoleModel) observeEvent(e engine.Event) ConsoleModel {
 }
 
 // observeRaw records a non-event stdout line — legacy-engine prose,
-// displayed dim and verbatim.
+// displayed dim after being made safe to draw: a carriage return or
+// cursor escape would otherwise move the terminal cursor and
+// overwrite the box border.
 func (c ConsoleModel) observeRaw(line string) ConsoleModel {
+	line = cleanLine(ansi.Strip(line))
+	if strings.TrimSpace(line) == "" {
+		return c // an all-escape line is not an entry
+	}
 	c.entries = appendEntry(c.entries, consoleEntry{raw: line})
 	return c
 }
@@ -152,7 +159,7 @@ func appendEntry(entries []consoleEntry, e consoleEntry) []consoleEntry {
 
 // setSize (re)builds the background sky for the given screen size.
 func (c ConsoleModel) setSize(width, height int) ConsoleModel {
-	c.sky = starfield.New(width, height, 1)
+	c.sky = newSky(width, height)
 	c.skyReady = true
 	return c
 }
@@ -160,7 +167,7 @@ func (c ConsoleModel) setSize(width, height int) ConsoleModel {
 // advance moves the spinner and the sky one frame (called on the
 // shared UI tick).
 func (c ConsoleModel) advance() ConsoleModel {
-	c.spinner = (c.spinner + 1) % len(spinnerFrames)
+	c.spinner = (c.spinner + 1) % len(style.SpinnerFrames)
 	if c.skyReady {
 		c.sky = c.sky.Advance()
 	}
@@ -202,17 +209,17 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	ev := e.event
 	var glyph string
 	switch ev.State {
-	case "completed", "healthy":
+	case engine.StateCompleted, engine.StateHealthy:
 		glyph = style.SuccessText.Render(style.SymbolSuccess)
-	case "skipped":
+	case engine.StateSkipped:
 		glyph = style.Tagline.Render(style.SymbolQueued)
-	case "failed":
+	case engine.StateFailed:
 		glyph = style.ErrorText.Render(style.SymbolFailure)
-	case "blocked":
+	case engine.StateBlocked:
 		glyph = style.DegradedText.Render(style.SymbolFailure)
-	case "waiting", "starting", "running":
+	case engine.StateWaiting, engine.StateStarting, engine.StateRunning:
 		if latest {
-			glyph = style.WarmText.Render(string(spinnerFrames[c.spinner]))
+			glyph = style.WarmText.Render(string(style.SpinnerFrames[c.spinner]))
 		} else {
 			glyph = style.Tagline.Render(style.SymbolQueued)
 		}
@@ -228,11 +235,11 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	line := glyph + " " + style.MutedText.Render(ev.Component) + " "
 	if known {
 		switch ev.State {
-		case "completed", "healthy":
+		case engine.StateCompleted, engine.StateHealthy:
 			line += style.MutedText.Render(word)
-		case "failed":
+		case engine.StateFailed:
 			line += style.ErrorText.Render(word) + style.Tagline.Render(" — "+ev.Reason)
-		case "blocked":
+		case engine.StateBlocked:
 			line += style.DegradedText.Render(word) + style.Tagline.Render(" — "+ev.Reason)
 		default:
 			line += style.Tagline.Render(word)
@@ -251,11 +258,7 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 func (c ConsoleModel) view(width, height int) string {
 	lines := c.contentLines(width, height)
 	rows := compositeScene(c.sky, c.skyReady, width, height-1, lines, 1)
-	foot := ""
-	if c.version != "" {
-		foot = footerRow(width, "orbit-launcher "+c.version)
-	}
-	return strings.Join(rows, "\n") + "\n" + foot
+	return strings.Join(rows, "\n") + "\n" + footerRow(width, footVersion(c.version))
 }
 
 // contentLines builds the console's centred content block.
@@ -271,6 +274,9 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 		}
 	}
 	interior := boxWidth - 4 // "│ " and " │"
+	if interior < 0 {
+		interior = 0 // a 2- or 3-column box has borders and nothing else
+	}
 
 	// Rows: title, blank, box top, interior…, box bottom, blank, bar,
 	// stage word. The footer row is the caller's.
@@ -282,36 +288,21 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	var lines []string
 
 	// Title row: "ORBIT · <title>" left, elapsed clock right.
-	clock := formatClock(c.elapsed())
-	titleLeft := style.MutedText.Render("ORBIT") + style.AccentText.Render(" · ") + style.MutedText.Render(c.title)
-	titleGap := boxWidth - lipgloss.Width(titleLeft) - lipgloss.Width(clock)
-	if titleGap < 1 {
-		titleGap = 1
-	}
-	lines = append(lines, titleLeft+strings.Repeat(" ", titleGap)+style.Tagline.Render(clock))
+	lines = append(lines, c.titleRow(boxWidth))
 	lines = append(lines, strings.Repeat(" ", boxWidth))
-
-	border := lipgloss.NewStyle().Foreground(style.Border)
-	lines = append(lines, border.Render("╭"+strings.Repeat("─", boxWidth-2)+"╮"))
 
 	visible := c.entries
 	if len(visible) > boxInterior {
 		visible = visible[len(visible)-boxInterior:]
 	}
-	pad := boxInterior - len(visible)
-	for i := 0; i < pad; i++ {
-		lines = append(lines, border.Render("│")+strings.Repeat(" ", boxWidth-2)+border.Render("│"))
-	}
+	// Padding rows first, so the log sits at the bottom of the box.
+	rows := make([]string, boxInterior-len(visible), boxInterior)
 	for i, e := range visible {
-		latest := i == len(visible)-1
-		content := truncateStyled(c.entryLine(e, latest), interior)
-		gap := interior - lipgloss.Width(content)
-		if gap < 0 {
-			gap = 0
-		}
-		lines = append(lines, border.Render("│")+" "+content+strings.Repeat(" ", gap+1)+border.Render("│"))
+		// With no room inside the frame (interior 0) drawBox draws the
+		// row as its borders, the same as a padding row.
+		rows = append(rows, truncateStyled(c.entryLine(e, i == len(visible)-1), interior))
 	}
-	lines = append(lines, border.Render("╰"+strings.Repeat("─", boxWidth-2)+"╯"))
+	lines = append(lines, drawBox(lipgloss.NewStyle().Foreground(style.Border), boxWidth, rows)...)
 	lines = append(lines, strings.Repeat(" ", boxWidth))
 
 	// The stage bar: fill is phases reached out of the canonical
@@ -327,17 +318,54 @@ func (c ConsoleModel) contentLines(width, height int) []string {
 	if c.rollback {
 		barStyle = style.DegradedText
 	}
-	bar := barStyle.Render(strings.Repeat("─", fill)) + lipgloss.NewStyle().Foreground(style.BorderSoft).Render(strings.Repeat("─", boxWidth-fill))
-	lines = append(lines, bar)
+	lines = append(lines, drawBar(fill, boxWidth, barStyle))
 
-	stage := style.MutedText.Render(c.stageWord())
-	gap := boxWidth - lipgloss.Width(c.stageWord())
+	stage := truncateStyled(style.MutedText.Render(c.stageWord()), boxWidth)
+	gap := boxWidth - lipgloss.Width(stage)
 	if gap < 0 {
 		gap = 0
 	}
 	lines = append(lines, stage+strings.Repeat(" ", gap))
 
 	return lines
+}
+
+// titleRow renders "ORBIT · <title>" left and the elapsed clock right,
+// always exactly boxWidth cells. When the box is too narrow for all of
+// it, the parts go in a fixed order (#187): the title text is cut to
+// what fits, then dropped with its separator once under four cells of
+// it would show, then the ORBIT mark goes, and the clock is cut only
+// when it is the last thing left. The clock is the one live sign that
+// the install is still moving, the mark says which screen this is, and
+// the title repeats a choice the user made a moment ago — so it goes
+// first. Cuts are plain, as truncateStyled's are.
+func (c ConsoleModel) titleRow(boxWidth int) string {
+	const mark, sep, minTitle = "ORBIT", style.Separator, 4
+	clock := formatClock(c.elapsed())
+	clockWidth := lipgloss.Width(clock)
+	room := boxWidth - clockWidth - 1 // the left side, keeping a 1-cell gap
+	left := ""
+	switch titleRoom := room - lipgloss.Width(mark) - lipgloss.Width(sep); {
+	case titleRoom >= lipgloss.Width(c.title):
+		left = style.MutedText.Render(mark) + style.AccentText.Render(sep) + style.MutedText.Render(c.title)
+	case titleRoom >= minTitle:
+		title := []rune(c.title)
+		for lipgloss.Width(string(title)) > titleRoom {
+			title = title[:len(title)-1]
+		}
+		left = style.MutedText.Render(mark) + style.AccentText.Render(sep) + style.MutedText.Render(string(title))
+	case room >= lipgloss.Width(mark):
+		left = style.MutedText.Render(mark)
+	}
+	if left == "" {
+		if clockWidth > boxWidth {
+			clock = string([]rune(clock)[:boxWidth])
+			clockWidth = boxWidth
+		}
+		return strings.Repeat(" ", boxWidth-clockWidth) + style.Tagline.Render(clock)
+	}
+	gap := boxWidth - lipgloss.Width(left) - clockWidth
+	return left + strings.Repeat(" ", gap) + style.Tagline.Render(clock)
 }
 
 // formatClock renders the elapsed clock as m:ss (h:mm:ss past an hour).
@@ -367,32 +395,28 @@ func formatAchieved(d time.Duration) string {
 
 // truncateStyled bounds a styled line to w cells. Styled segments make
 // exact truncation fiddly; entries are built to fit, so this is a
-// guard: over-wide lines fall back to their plain text truncated.
+// guard: over-wide lines fall back to their plain text, cut to the
+// whole grapheme clusters that fit in w cells, measured as
+// lipgloss.Width measures them (a wide character is two cells; an emoji
+// with its variation selector, a keycap or a ZWJ family is one cluster).
+// It walks clusters the way lipgloss.Width does (xansi.Truncate does
+// not: it counts ASCII bytes one by one, so "1" and its keycap mark are
+// measured apart). The cut is one pass, stopping at the first cluster
+// that does not fit: an engine line can be a hundred thousand
+// characters of carriage-return progress (#157).
 func truncateStyled(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	plain := []rune(stripANSI(s))
-	if len(plain) > w {
-		plain = plain[:w]
-	}
-	return string(plain)
-}
-
-func stripANSI(s string) string {
-	var b strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case inEscape:
-			if r == 'm' {
-				inEscape = false
-			}
-		case r == '\x1b':
-			inEscape = true
-		default:
-			b.WriteRune(r)
+	plain := ansi.Strip(s)
+	i, cells := 0, 0
+	for i < len(plain) {
+		cluster, cw := xansi.FirstGraphemeCluster(plain[i:], xansi.GraphemeWidth)
+		if cells+cw > w {
+			break
 		}
+		cells += cw
+		i += len(cluster)
 	}
-	return b.String()
+	return plain[:i]
 }

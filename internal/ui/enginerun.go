@@ -2,13 +2,14 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -42,11 +43,21 @@ const (
 	runPreparing engineRunState = iota
 	runStreaming
 	runConfigPrompt
+	runConfigSignInMode
 	runConfigCollect
 	runHandoffRunning
 	runFailed
 	runSucceeded
+	// runStopping is Ctrl-C mid-run: the engine has been asked to stop
+	// and the launcher waits, bounded by stopGrace, for its own rollback.
+	runStopping
 )
+
+// stopGrace is how long a Ctrl-C mid-run waits for the installer to undo
+// what it started before killing it. Its cleanup is a docker rm, a file
+// rollback and an rm -rf — seconds; the bound is for a wedged daemon.
+// A variable so tests can shorten it.
+var stopGrace = 15 * time.Second
 
 // Seam types: the overridable dependencies an engine run needs, so
 // flow tests never touch the network or a real terminal.
@@ -65,7 +76,15 @@ type flowOutcome struct {
 	WantsMenu bool
 	URL       string
 	Elapsed   time.Duration
+	// ExitNote is printed by main after the screen closes.
+	ExitNote string
 }
+
+// backToMenu is leaving a flow for the main menu before anything has
+// run: Esc on the flow's first screen, or the Cancel or Back row there,
+// which is the same act (#210, owner decision 4a). Ctrl-C is never this;
+// it quits.
+var backToMenu = flowOutcome{Done: true, WantsMenu: true}
 
 func outcomeOf(r engineRun) flowOutcome {
 	return flowOutcome{
@@ -74,22 +93,60 @@ func outcomeOf(r engineRun) flowOutcome {
 		WantsMenu: r.WantsMenu,
 		URL:       r.URL,
 		Elapsed:   r.Elapsed,
+		ExitNote:  r.exitNote,
 	}
 }
 
 // engineReadyMsg carries the started engine stream (or the error that
 // prevented it — fetch failure, unwritable temp dir).
 type engineReadyMsg struct {
-	stream  *engine.Stream
-	cleanup func() error
-	err     error
+	stream *engine.Stream
+	// configTree is the directory the engine was handed for its
+	// configuration tree (deploy.ConfigTreeDir); cleanup removes it.
+	configTree string
+	cleanup    func() error
+	err        error
 }
+
+// engineStoppedMsg ends the wait after Ctrl-C: the engine has exited
+// (forced false) or the grace ran out with it still running (forced).
+type engineStoppedMsg struct{ forced bool }
 
 // engineStreamMsg wraps one message from the engine stream's channel.
 type engineStreamMsg struct{ msg any }
 
+// engineStreamEndedMsg reports the engine stream closing. Arriving
+// while the run is still streaming, it means the engine stopped without
+// ever saying how the run went.
+type engineStreamEndedMsg struct{ reason error }
+
+// errNoEngineSender is what a run reports when it was built without a
+// way to deliver engine output. It names the launcher, not the engine:
+// the engine did nothing wrong.
+var errNoEngineSender = errors.New("the launcher couldn't read the engine's output")
+
+// errEngineStoppedEarly is the one reason every flow gives for a stream
+// that closed before its DoneMsg.
+var errEngineStoppedEarly = errors.New("the engine stopped without reporting how the run finished")
+
+// streamWrap names the owning flow's messages for what the engine
+// stream reader sees: one message from the stream, and the stream's
+// end (reason is nil for an ordinary close). ended is handed the
+// stream so a flow that starts several in turn can tell a superseded
+// one's ending from its current one's.
+type streamWrap struct {
+	msg   func(msg any) tea.Msg
+	ended func(s *engine.Stream, reason error) tea.Msg
+}
+
+// engineRunStream is the install/update run's wrapping.
+var engineRunStream = streamWrap{
+	msg:   func(msg any) tea.Msg { return engineStreamMsg{msg: msg} },
+	ended: func(_ *engine.Stream, reason error) tea.Msg { return engineStreamEndedMsg{reason: reason} },
+}
+
 type engineRun struct {
-	action    string // "install" or "update" — the engine flag
+	action    deploy.Action // the engine flag
 	targetDir string
 	title     string
 	version   string
@@ -103,6 +160,18 @@ type engineRun struct {
 
 	stream  *engine.Stream
 	cleanup func() error
+	// configTree is where this run's engine copies its verified
+	// configuration tree on a configuration refusal (ai/orbit#1225). It
+	// lives until cleanup runs, which a refusal defers until the
+	// configuration that follows it is over (releaseRunFiles).
+	configTree string
+
+	// cancelPrepare cancels the in-flight fetch-and-start. A Ctrl-C
+	// while preparing cancels it and sets quitting; the run then quits
+	// only when the preparation reports back, killing anything it
+	// managed to start, so no engine is ever left running unobserved.
+	cancelPrepare context.CancelFunc
+	quitting      bool
 
 	// cfg is the in-console configuration session, live while state is
 	// runConfigCollect.
@@ -114,7 +183,14 @@ type engineRun struct {
 	stderrTail    []string
 	runErr        error
 
-	menuSel int
+	// exitNote is set only when the launcher killed an installer that
+	// was still undoing its work; main prints it after the screen closes
+	// and exits 1. Empty means a clean stop, or no stop.
+	exitNote string
+
+	// menu is the cursor on whichever post-run screen is showing; each
+	// screen names its own rows (configPromptMenu, failedMenu).
+	menu menu
 
 	// Done/Succeeded/WantsMenu are read by the owning flow model and
 	// AppModel. URL and Elapsed feed the success screen.
@@ -124,18 +200,16 @@ type engineRun struct {
 	URL       string
 	Elapsed   time.Duration
 
+	// send pushes a message into the event loop from outside it, for
+	// the engine stream reader. Production wires this from the program;
+	// a run without it cannot read the engine at all and says so.
+	send func(tea.Msg)
+
 	// Test seams; nil gets the real implementations.
-	prepareEngine  prepareEngineFunc
-	prepareInstall prepareInstallFunc
-	runHandoff     runHandoffFunc
-	detect         detectFunc
-	now            nowFunc
-	prepareConfig  prepareConfigFunc
-	startConfig    startConfigFunc
-	adoptConfig    adoptConfigFunc
+	engineRunSeams
 }
 
-func newEngineRun(action, targetDir, title, version string) engineRun {
+func newEngineRun(action deploy.Action, targetDir, title, version string) engineRun {
 	return engineRun{
 		action:    action,
 		targetDir: targetDir,
@@ -152,43 +226,101 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	if prepare == nil {
-		prepare = defaultPrepareEngine
-	}
-	targetDir, action := r.targetDir, r.action
+	targetDir, action := r.targetDir, string(r.action)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
-		stream, cleanup, err := prepare(context.Background(), targetDir, action)
+		if prepare == nil {
+			return defaultPrepareEngine(ctx, targetDir, action)
+		}
+		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
 	}
 }
 
 // defaultPrepareEngine fetches install.sh and starts it as the
-// detached, piped, plain-mode engine run.
-func defaultPrepareEngine(ctx context.Context, targetDir, action string) (*engine.Stream, func() error, error) {
+// detached, piped, plain-mode engine run, reporting the configuration tree
+// directory the engine was handed.
+func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineReadyMsg {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
-	cmd, cleanup, err := deploy.BuildEngineCommand(script, targetDir, action)
+	// A cancel that lands after the script arrived must still stop the
+	// engine from starting: once started, only the model can kill it.
+	if err := ctx.Err(); err != nil {
+		return engineReadyMsg{err: err}
+	}
+	cmd, cleanup, err := deploy.BuildEngineCommand(script, targetDir, deploy.Action(action))
 	if err != nil {
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
 	stream, err := engine.Start(cmd)
 	if err != nil {
 		cleanup()
-		return nil, nil, err
+		return engineReadyMsg{err: err}
 	}
-	return stream, cleanup, nil
+	return engineReadyMsg{stream: stream, configTree: deploy.ConfigTreeDir(cmd), cleanup: cleanup}
 }
 
-// pumpEngine delivers the next stream message into the event loop.
-func pumpEngine(s *engine.Stream) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-s.C
-		if !ok {
-			return nil
+// releaseRunFiles removes what the engine run staged — install.sh and
+// its configuration tree — once nothing needs them any more. A
+// configuration refusal holds them past the run's end, for the
+// configuration session; every way out of that (a retry, the terminal
+// handoff, leaving, quitting, a failure) comes through here.
+func (r *engineRun) releaseRunFiles() {
+	if r.cleanup != nil {
+		_ = r.cleanup()
+		r.cleanup = nil
+	}
+	r.configTree = ""
+}
+
+// readEngineStream starts the one long-lived reader for an engine
+// stream, and is the only code that reads one: the install/update run,
+// Repair and in-console configuration all come through here, each with
+// its own wrapping (#206).
+//
+// It replaces a chain of one-shot commands, where each message was
+// fetched by a command that had to hand back a fresh one (#159). That
+// chain held a single token, and every path that failed to pass it on
+// stopped the run for good: the engine kept writing, the channel kept
+// filling, and nothing ever read it again. Because the launcher runs
+// with no tick chain under ORBIT_LAUNCHER_NO_ANIMATION, the program
+// then had nothing at all left to wake it, and looked frozen while
+// being merely idle.
+//
+// A re-arm inside the message handler could not fix that, as the
+// compat run on 2026-09-10 showed: the handler only runs when a message
+// arrives, and the only thing that delivers messages is the pump it was
+// meant to revive.
+//
+// A goroutine reading until the channel closes holds no token to lose.
+// It ends by saying so, so a stream that stops early becomes a failure
+// the operator can see rather than a screen that never changes.
+//
+// Messages reach the flow in the order the engine wrote them, because
+// send delivers each one before the next is read; the flows' state
+// guards depend on that order.
+func readEngineStream(send func(tea.Msg), s *engine.Stream, wrap streamWrap) tea.Cmd {
+	if send == nil {
+		// Every production path sets this. A nil sender means the flow
+		// was built without one, and the run would otherwise wait in
+		// silence for messages nothing can deliver — the exact failure
+		// this reader exists to remove, so it fails loudly instead.
+		logDiag("engine stream: no sender wired for this run")
+		return func() tea.Msg {
+			return wrap.ended(s, errNoEngineSender)
 		}
-		return engineStreamMsg{msg: msg}
+	}
+	return func() tea.Msg {
+		go func() {
+			for msg := range s.C {
+				send(wrap.msg(msg))
+			}
+			send(wrap.ended(s, nil))
+		}()
+		return nil
 	}
 }
 
@@ -205,6 +337,15 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, tick()
 
 	case engineReadyMsg:
+		if r.quitting {
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			if msg.cleanup != nil {
+				_ = msg.cleanup()
+			}
+			return r, tea.Quit
+		}
 		if msg.err != nil {
 			r.runErr = msg.err
 			r.state = runFailed
@@ -212,13 +353,28 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
+		r.configTree = msg.configTree
 		r.state = runStreaming
-		return r, pumpEngine(r.stream)
+		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
+		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+			// The installer finished its own stop. Whatever it exited
+			// with, the operator asked for this: not a failure.
+			return r.quitNow(false)
+		}
 		return r.handleStream(msg.msg)
 
-	case configPlanMsg, configStepMsg, configStreamMsg, configAdoptedMsg:
+	case engineStoppedMsg:
+		if r.state != runStopping {
+			return r, nil
+		}
+		return r.quitNow(msg.forced)
+
+	case engineStreamEndedMsg:
+		return r.handleStreamEnded(msg)
+
+	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
@@ -246,8 +402,15 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		return r.succeed()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return r.handleKey(msg)
+
+	case tea.PasteMsg:
+		// Only the configuration prompt takes a paste (#222).
+		if r.state == runConfigCollect {
+			r.cfg.session = r.cfg.session.paste(msg.Content)
+		}
+		return r, nil
 	}
 	return r, nil
 }
@@ -263,18 +426,17 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			failed := m.Event
 			r.lastFailed = &failed
 		}
-		return r, pumpEngine(r.stream)
+		return r, nil
 
 	case engine.RawLineMsg:
 		r.console = r.console.observeRaw(m.Text)
-		return r, pumpEngine(r.stream)
+		return r, nil
 
 	case engine.DoneMsg:
-		if r.cleanup != nil {
-			r.cleanup()
-			r.cleanup = nil
-		}
 		r.stderrTail = m.StderrTail
+		if m.Err == nil || !r.configRefused {
+			r.releaseRunFiles()
+		}
 		if m.Err == nil {
 			return r.succeed()
 		}
@@ -282,15 +444,42 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		if r.configRefused {
 			// The engine's documented configuration-required refusal:
 			// the target was rolled back, and the fix is the guided
-			// configuration in a real terminal.
+			// configuration — in-console from the configuration tree the
+			// engine just handed over, which is why the run's files
+			// are kept until that is over.
 			r.state = runConfigPrompt
-			r.menuSel = 0
+			r.menu = menu{}
 			return r, nil
 		}
 		r.state = runFailed
-		r.menuSel = 0
+		r.menu = menu{}
 		return r, nil
 	}
+	return r, nil
+}
+
+// handleStreamEnded closes out a run whose stream has stopped.
+//
+// Arriving after the run resolved, it is the ordinary case: DoneMsg was
+// handled and the channel closed behind it, so there is nothing to do.
+// Arriving while the run is still streaming, the engine stopped without
+// reporting an outcome, and the honest thing is to say so — a run that
+// cannot be reported on has failed, whatever it managed to do first.
+func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.Cmd) {
+	if r.state != runStreaming {
+		return r, nil
+	}
+	logDiag("engine stream: closed before the run finished")
+	if r.cleanup != nil {
+		r.cleanup()
+		r.cleanup = nil
+	}
+	r.runErr = msg.reason
+	if r.runErr == nil {
+		r.runErr = errEngineStoppedEarly
+	}
+	r.state = runFailed
+	r.menu = menu{}
 	return r, nil
 }
 
@@ -314,7 +503,31 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 // the config collection stretch. Deliberately flagless: install.sh's
 // own menus pick the right action for whatever state the target is in,
 // on any engine generation.
+//
+// Under ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG the handoff is
+// refused outright and the run stops on the failure screen instead.
+// The gate sits here rather than at each fallback so that the menu
+// row offering the handoff by hand cannot quietly reopen the path the
+// variable exists to close — with it set, this process never reaches
+// install.sh's interactive prompts, which is what lets CI treat one of
+// those prompts appearing as proof of the in-console path.
 func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
+	// The handoff stages its own install.sh and configuration tree; a
+	// refused run's are done with.
+	r.releaseRunFiles()
+	if requireInConsoleConfig() {
+		logDiag("refusing the terminal handoff: " + requireInConsoleEnv + " is set")
+		// The strict refusal is now the reason this run stopped, so
+		// the earlier evidence must not render in its place —
+		// viewFailed prefers lastFailed over runErr.
+		r.lastFailed = nil
+		r.stderrTail = nil
+		// The variable's name is in the diagnostic line above.
+		r.runErr = errors.New("in-console configuration required — terminal handoff refused")
+		r.state = runFailed
+		r.menu = menu{}
+		return r, nil
+	}
 	r.state = runHandoffRunning
 	prepare := r.prepareInstall
 	if prepare == nil {
@@ -323,43 +536,58 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 	return r, prepareInstallCmd(prepare, r.targetDir)
 }
 
-func (r engineRun) handleKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
-		if r.stream != nil {
-			r.stream.Kill()
+func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
+	if isCtrlC(msg) {
+		if r.state == runPreparing {
+			// Nothing to kill yet: cancel the preparation and quit when
+			// it reports back (see the engineReadyMsg case).
+			r.quitting = true
+			if r.cancelPrepare != nil {
+				r.cancelPrepare()
+			}
+			return r, nil
 		}
-		r.cfg.close()
-		return r, tea.Quit
+		if r.state == runStreaming && r.stream != nil {
+			return r.beginStop()
+		}
+		// Anything else, including a second Ctrl-C while stopping, is
+		// the usual force.
+		return r.quitNow(true)
 	}
 
 	switch r.state {
+	case runConfigSignInMode:
+		return r.handleConfigSignInModeKey(msg)
+
 	case runConfigCollect:
 		return r.handleConfigKey(msg)
 
 	case runConfigPrompt:
-		return r.handleMenuKey(msg, len(configPromptMenu), func(sel int) (engineRun, tea.Cmd) {
-			switch sel {
-			case 0:
+		return r.handleMenuKey(msg, configPromptMenu, func(label string) (engineRun, tea.Cmd) {
+			switch label {
+			case "Continue — guided configuration":
 				return r.beginConfigCollect()
-			case 1:
+			case "Menu":
+				r.releaseRunFiles()
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
-			default:
+			default: // Exit
+				r.releaseRunFiles()
 				return r, tea.Quit
 			}
 		})
 
 	case runFailed:
-		return r.handleMenuKey(msg, len(failedMenu), func(sel int) (engineRun, tea.Cmd) {
-			switch sel {
-			case 0:
+		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
+			switch label {
+			case "Open the guided installer":
 				return r.beginHandoff()
-			case 1:
+			case "Menu":
 				r.Done = true
 				r.WantsMenu = true
 				return r, nil
-			default:
+			default: // Exit
 				return r, tea.Quit
 			}
 		})
@@ -367,22 +595,76 @@ func (r engineRun) handleKey(msg tea.KeyMsg) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
-func (r engineRun) handleMenuKey(msg tea.KeyMsg, items int, choose func(int) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
+// beginStop is Ctrl-C mid-run: SIGTERM so install.sh's EXIT trap can
+// roll the run back, then a wait on the engine's exit bounded by
+// stopGrace (the pattern of docker stop and systemd's TimeoutStopSec).
+// Nothing here cancels a context the engine was built on: its
+// detachedCommand cancel would SIGKILL the group before the trap ran,
+// and BuildEngineCommand builds it on context.Background().
+func (r engineRun) beginStop() (engineRun, tea.Cmd) {
+	stream, grace := r.stream, stopGrace
+	stream.Terminate()
+	r.state = runStopping
+	return r, func() tea.Msg {
+		select {
+		case <-stream.Done():
+			return engineStoppedMsg{}
+		case <-time.After(grace):
+			return engineStoppedMsg{forced: true}
+		}
+	}
+}
+
+// quitNow ends the run and the launcher, killing the engine first if
+// force is set (it is a no-op once the engine has been reaped).
+func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
+	killed := false
+	if r.stream != nil && force {
+		killed = r.stream.Kill()
+	}
+	// The alt screen is gone by the time anyone could read this, so the
+	// note rides out on the final model and main prints it. Only a kill
+	// that landed on a live installer earns the note: a second Ctrl-C or
+	// the grace timer can arrive after the installer has already exited
+	// by itself, and that stop was clean. The note is never overwritten:
+	// the killed installer's own DoneMsg can still be handled before the
+	// quit.
+	if killed && r.state == runStopping && r.exitNote == "" {
+		r.exitNote = forcedStopNote(r.action)
+	}
+	r.cfg.close()
+	r.releaseRunFiles()
+	return r, tea.Quit
+}
+
+// forcedStopNote is the owner's wording for a stop whose installer was
+// still undoing its work when the launcher ended it. A stopped update
+// says "before updating again" (decision 21a).
+func forcedStopNote(action deploy.Action) string {
+	again := "installing"
+	if action == deploy.ActionUpdate {
+		again = "updating"
+	}
+	return "the " + string(action) + " was stopped, but Orbit's installer was still undoing its work when the launcher stopped waiting and ended it. " +
+		"The folder and the Docker containers and volumes it created may be half restored — check them before " + again + " again."
+}
+
+// handleMenuKey drives a post-run screen's menu over items: Esc is back
+// to the main menu, and Enter hands choose the selected row's label.
+func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose func(string) (engineRun, tea.Cmd)) (engineRun, tea.Cmd) {
+	var chosen string
+	var back bool
+	r.menu, chosen, back = r.menu.over(items).onScreen(msg)
+	if back {
+		r.releaseRunFiles()
 		r.Done = true
 		r.WantsMenu = true
 		return r, nil
-	case tea.KeyUp:
-		r.menuSel = (r.menuSel - 1 + items) % items
-		return r, nil
-	case tea.KeyDown:
-		r.menuSel = (r.menuSel + 1) % items
-		return r, nil
-	case tea.KeyEnter:
-		return choose(r.menuSel)
 	}
-	return r, nil
+	if chosen == "" {
+		return r, nil
+	}
+	return choose(chosen)
 }
 
 // Both post-run screens offer the same three exits, in the same order:
@@ -402,8 +684,13 @@ func (r engineRun) view(width, height int) string {
 	switch r.state {
 	case runPreparing, runStreaming:
 		return r.console.view(width, height)
+	case runStopping:
+		return skyBlock(r.console.sky, width, height,
+			workingLine(r.console.spinner, "stopping the "+string(r.action), "the installer is undoing what it started — a few seconds"))
 	case runConfigPrompt:
 		return r.viewConfigPrompt(width, height)
+	case runConfigSignInMode:
+		return r.viewConfigSignInMode(width, height)
 	case runConfigCollect:
 		return r.viewConfigCollect(width, height)
 	case runHandoffRunning:
@@ -416,38 +703,45 @@ func (r engineRun) view(width, height int) string {
 
 func (r engineRun) viewConfigPrompt(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Orbit needs your configuration"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
 	fmt.Fprintln(&b, style.MutedText.Render("The engine stopped before touching anything: some settings"))
 	fmt.Fprintln(&b, style.MutedText.Render("only you can provide. Continue to fill them in right here —"))
 	fmt.Fprintln(&b, style.MutedText.Render("every answer is checked by Orbit's own setup, which takes"))
-	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+r.action+" resumes."))
+	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+string(r.action)+" resumes."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, configPromptMenu, r.menuSel)
-	return centreBlock(width, height, b.String())
+	r.menu.over(configPromptMenu).write(&b)
+	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 func (r engineRun) viewFailed(width, height int) string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render(flowStoppedTitle(r.action)))
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
+	// Docker's words, at Docker's length: wrapped, never cut at the edge.
+	limit := measure(width, errorWidth)
 	if r.lastFailed != nil {
 		word := r.lastFailed.Phase
 		if idx := phaseIndex(word); idx >= 0 {
 			word = consolePhases[idx].word
 		}
-		fmt.Fprintln(&b, style.ErrorText.Render(word)+style.Tagline.Render(" — "+r.lastFailed.Reason+" · next: "+r.lastFailed.Action))
+		// The phase word leads in the error colour; the rest wraps.
+		lines := wrapWords(word+" — "+r.lastFailed.Reason+style.Separator+"next: "+r.lastFailed.Action, limit)
+		for i, line := range lines {
+			if rest, ok := strings.CutPrefix(line, word); i == 0 && ok {
+				line = style.ErrorText.Render(word) + style.Tagline.Render(rest)
+			} else {
+				line = style.Tagline.Render(line)
+			}
+			fmt.Fprintln(&b, line)
+		}
 	} else if r.runErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(r.runErr.Error()))
+		writeWrapped(&b, style.Tagline, r.runErr.Error(), limit)
 	}
 	for _, line := range tailLines(r.stderrTail, 6) {
-		fmt.Fprintln(&b, style.Tagline.Render(line))
+		writeWrapped(&b, style.Tagline, line, limit)
 	}
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, failedMenu, r.menuSel)
-	return centreBlock(width, height, b.String())
+	r.menu.over(failedMenu).write(&b)
+	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 // writeStackedMenu writes menu rows in the centred grammar: each label
@@ -459,11 +753,11 @@ func writeStackedMenu(b *strings.Builder, items []string, selected int) {
 	}
 }
 
-func flowStoppedTitle(action string) string {
-	if action == "update" {
+func flowStoppedTitle(action deploy.Action) string {
+	if action == deploy.ActionUpdate {
 		return "Update stopped"
 	}
-	return "Installation stopped"
+	return "Install stopped"
 }
 
 func tailLines(lines []string, n int) []string {
@@ -477,10 +771,7 @@ func tailLines(lines []string, n int) []string {
 // the same vertical rhythm as the scene screens.
 func centreBlock(width, height int, content string) string {
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	topOffset := int(0.42 * float64(height-1-len(lines)))
-	if topOffset < 0 {
-		topOffset = 0
-	}
+	topOffset := topOffsetFor(height-1, len(lines))
 	var b strings.Builder
 	for i := 0; i < topOffset; i++ {
 		b.WriteString("\n")

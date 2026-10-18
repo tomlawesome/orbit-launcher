@@ -5,23 +5,13 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
-
-// updateCheckTimeout bounds how long the splash screen's optional
-// self-update check may run before it's abandoned — the check is
-// entirely non-blocking (a background tea.Cmd; the screen renders
-// immediately either way), but a hung request should still eventually
-// give up rather than leak forever.
-const updateCheckTimeout = 3 * time.Second
-
-// healthProbeTimeout bounds the optional deployment health probe the
-// same way.
-const healthProbeTimeout = 2 * time.Second
 
 // updateAvailableMsg carries a newer stable release's tag back into the
 // bubbletea event loop once checkForUpdate resolves. It is never sent
@@ -37,7 +27,8 @@ type healthResultMsg struct{ healthy bool }
 // (deployment answers), degraded (deployment exists but is not
 // answering healthily). stateUnknown covers a detected deployment whose
 // probe hasn't resolved (or was disabled) — rendered as the FQDN with no
-// status word, never as a guess.
+// status word, never as a guess. stateUnreadable is a .env-orbit that is
+// there but could not be read (#238): no FQDN to show, and not dormant.
 type deployState int
 
 const (
@@ -45,6 +36,7 @@ const (
 	stateUnknown
 	stateAlive
 	stateDegraded
+	stateUnreadable
 )
 
 // MenuItem is one row of the splash screen's main menu. Gap requests a
@@ -65,6 +57,15 @@ var MainMenu = []MenuItem{
 	{Label: "Exit"},
 }
 
+// mainMenu is MainMenu as the shared menu value: its labels, in order.
+func mainMenu() menu {
+	labels := make([]string, len(MainMenu))
+	for i, item := range MainMenu {
+		labels[i] = item.Label
+	}
+	return newMenu(labels...)
+}
+
 // Menu indices used by the state-based preselection.
 const (
 	menuInstall = 0
@@ -72,7 +73,8 @@ const (
 	menuRepair  = 2
 )
 
-const tickInterval = 120 * time.Millisecond
+// tickInterval is the UI tick, the starfield's own interval.
+const tickInterval = starfield.TickInterval
 
 type tickMsg time.Time
 
@@ -109,25 +111,6 @@ const (
 	wordFadeOut = 0.4
 )
 
-// inkRamp is the fade ladder from near-background to full ink — colour
-// steps are the terminal-honest way to fade (glyphs never move; only
-// brightness changes). Index by alpha.
-var inkRamp = []lipgloss.Style{
-	lipgloss.NewStyle().Foreground(lipgloss.Color("#232837")),
-	lipgloss.NewStyle().Foreground(lipgloss.Color("#3c4557")),
-	lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7488")),
-	lipgloss.NewStyle().Foreground(lipgloss.Color("#a9b1c1")),
-	lipgloss.NewStyle().Bold(true).Foreground(style.Text),
-}
-
-// sweepRamp lifts a wordmark cell toward gold-white as the sweep
-// highlight passes it.
-var sweepRamp = []lipgloss.Style{
-	lipgloss.NewStyle().Bold(true).Foreground(style.Text),
-	lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f2e7c8")),
-	lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffeec4")),
-}
-
 func rampStyle(ramp []lipgloss.Style, a float64) lipgloss.Style {
 	if a < 0 {
 		a = 0
@@ -162,7 +145,7 @@ func envelope(s, start float64) float64 {
 // single centred version foot (design/mockups-v6-starchart.html).
 type SplashModel struct {
 	width, height int
-	selected      int
+	menu          menu // mainMenu
 	star          starfield.Model
 	starReady     bool
 	quitting      bool
@@ -187,7 +170,7 @@ type SplashModel struct {
 	// change what's displayed, but it never fights the user's hands.
 	userNavigated bool
 
-	// version is the launcher's own version ("v0.1.0", "dev");
+	// version is the launcher's own version as main hands it ("v0.1.0");
 	// orbitVersion is the detected deployment's applied orbit version.
 	// Both render in the single centred foot; orbitVersion may be empty.
 	version      string
@@ -216,7 +199,7 @@ type SplashModel struct {
 
 // NewSplashModel constructs the splash/main-menu screen.
 func NewSplashModel() SplashModel {
-	return SplashModel{state: stateDormant}
+	return SplashModel{state: stateDormant, menu: mainMenu()}
 }
 
 // NewSplashModelNoAnimation constructs a splash/main-menu screen frozen at
@@ -226,7 +209,7 @@ func NewSplashModel() SplashModel {
 // screen that otherwise animates continuously, and deterministic
 // screenshots for visual regression (see test/visual).
 func NewSplashModelNoAnimation() SplashModel {
-	return SplashModel{noAnimation: true, state: stateDormant, introDone: true}
+	return SplashModel{noAnimation: true, state: stateDormant, introDone: true, menu: mainMenu()}
 }
 
 // Init implements tea.Model.
@@ -249,13 +232,12 @@ func (m SplashModel) Init() tea.Cmd {
 // unreachable, no stable release published yet) is silently treated as
 // "nothing to report" — a failed update check must never surface as a
 // user-facing error on the one screen that renders unconditionally on
-// every launch.
+// every launch. The check bounds its own request (release.CheckForUpdate),
+// so the screen renders immediately and a hung server is abandoned.
 func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 	check := m.checkForUpdate
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
-		defer cancel()
-		version, hasUpdate, err := check(ctx)
+		version, hasUpdate, err := check(context.Background())
 		if err != nil || !hasUpdate {
 			return nil
 		}
@@ -265,13 +247,12 @@ func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 
 // probeHealthCmd asks the detected deployment whether it's answering.
 // Like the update check it runs in the background and never surfaces an
-// error — an unreachable deployment simply reads as degraded.
+// error — an unreachable deployment simply reads as degraded. The probe
+// bounds its own request (deploy.ProbeHealth).
 func (m SplashModel) probeHealthCmd() tea.Cmd {
 	probe, appURL := m.healthProbe, m.appURL
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), healthProbeTimeout)
-		defer cancel()
-		return healthResultMsg{healthy: probe(ctx, appURL)}
+		return healthResultMsg{healthy: probe(context.Background(), appURL)}
 	}
 }
 
@@ -285,7 +266,7 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.star = starfield.New(m.width, m.height, 1)
+		m.star = newSky(m.width, m.height)
 		m.starReady = true
 		return m, nil
 
@@ -314,30 +295,24 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// what's wrong, the caret already points at the fix — but
 			// only while the user hasn't taken over.
 			if !m.userNavigated {
-				m.selected = menuRepair
+				m.menu.sel = menuRepair
 			}
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Leaving takes the Exit row or Ctrl-C: there is no q shortcut, and
+	// Esc backs out only as far as this menu, so a hurried key never
+	// closes the launcher (#226).
+	if isCtrlC(msg) {
 		m.quitting = true
 		return m, tea.Quit
-	}
-	if msg.Type == tea.KeyRunes {
-		for _, r := range msg.Runes {
-			if r == 'q' {
-				m.quitting = true
-				return m, tea.Quit
-			}
-		}
 	}
 
 	// Any other key during the arrival skips straight to the lit room —
@@ -347,35 +322,33 @@ func (m SplashModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.introDone = true
 		return m, nil
 	}
-
-	switch msg.Type {
-	case tea.KeyUp:
-		m.userNavigated = true
-		m.selected = (m.selected - 1 + len(MainMenu)) % len(MainMenu)
+	if msg.Code == tea.KeyEsc {
 		return m, nil
+	}
 
-	case tea.KeyDown:
+	// Up, Down and Enter are the shared menu's; the splash adds only
+	// that a move is the user taking over from the preselection.
+	if msg.Code == tea.KeyUp || msg.Code == tea.KeyDown {
 		m.userNavigated = true
-		m.selected = (m.selected + 1) % len(MainMenu)
-		return m, nil
-
-	case tea.KeyEnter:
-		m.Chosen = MainMenu[m.selected].Label
+	}
+	var chosen string
+	m.menu, chosen = m.menu.update(msg)
+	if chosen != "" {
+		m.Chosen = chosen
 		m.quitting = true
 		return m, tea.Quit
 	}
 
-	if msg.Type == tea.KeyRunes {
-		for _, r := range msg.Runes {
-			if r >= '1' && r <= '9' {
-				idx := int(r - '1')
-				if idx < len(MainMenu) {
-					m.userNavigated = true
-					m.selected = idx
-					m.Chosen = MainMenu[idx].Label
-					m.quitting = true
-					return m, tea.Quit
-				}
+	// A digit moves the caret to its row and nothing else; Enter acts,
+	// as on every other menu, so a stray 5 never closes the launcher
+	// (#228 C1).
+	for _, r := range msg.Text {
+		if r >= '1' && r <= '9' {
+			idx := int(r - '1')
+			if idx < len(MainMenu) {
+				m.userNavigated = true
+				m.menu.sel = idx
+				return m, nil
 			}
 		}
 	}
@@ -390,7 +363,7 @@ func (m SplashModel) markStyle() lipgloss.Style {
 	switch m.state {
 	case stateAlive:
 		return style.SuccessText
-	case stateDegraded:
+	case stateDegraded, stateUnreadable:
 		return style.DegradedText
 	default:
 		return style.MarkStyle
@@ -398,21 +371,24 @@ func (m SplashModel) markStyle() lipgloss.Style {
 }
 
 // footText is the splash's whole foot: the launcher's version, plus the
-// deployment's orbit version once one is known.
+// deployment's orbit version once one is known. With no launcher version
+// there is no foot at all, as on the console.
 func (m SplashModel) footText() string {
-	launcher := m.version
-	if launcher == "" {
-		launcher = "dev"
+	text := footVersion(m.version)
+	if text == "" {
+		return ""
 	}
-	text := "orbit-launcher " + launcher
 	if m.orbitVersion != "" {
-		text += " · orbit " + m.orbitVersion
+		text += style.Separator + "orbit " + m.orbitVersion
 	}
 	return text
 }
 
 // View implements tea.Model.
-func (m SplashModel) View() string {
+func (m SplashModel) View() tea.View { return tea.NewView(m.view()) }
+
+// view renders the screen's content.
+func (m SplashModel) view() string {
 	if m.quitting {
 		return ""
 	}
@@ -425,9 +401,7 @@ func (m SplashModel) View() string {
 
 	contentLines := m.centreBlockLines()
 	bodyHeight := m.height - 1 // the last row is reserved for the foot
-	topOffset := int(0.42 * float64(bodyHeight-len(contentLines)))
-
-	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffset)
+	rows := compositeScene(m.star, m.starReady, m.width, bodyHeight, contentLines, topOffsetFor(bodyHeight, len(contentLines)))
 	return strings.Join(rows, "\n") + "\n" + footerRow(m.width, m.footText())
 }
 
@@ -456,9 +430,12 @@ func (m SplashModel) centreBlockLines() []string {
 	case stateDegraded:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, style.DegradedText.Render("degraded"))
+	case stateUnreadable:
+		lines = append(lines, style.Tagline.Render("can't read "+deploy.EnvFile))
 	}
 	if m.updateNotice != "" {
 		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
+		lines = append(lines, style.MutedText.Render("re-run Orbit's installer: curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash"))
 	}
 	lines = append(lines, "")
 
@@ -466,7 +443,7 @@ func (m SplashModel) centreBlockLines() []string {
 		if item.Gap {
 			lines = append(lines, "")
 		}
-		lines = append(lines, menuRow(item.Label, i == m.selected))
+		lines = append(lines, menuRow(item.Label, i == m.menu.sel))
 	}
 	return lines
 }
@@ -477,13 +454,13 @@ func (m SplashModel) centreBlockLines() []string {
 // settled view will hold it at — no jump at the handover.
 func (m SplashModel) viewIntro() string {
 	bodyHeight := m.height - 1
+	if bodyHeight <= 0 {
+		return "" // no row to draw in yet — same as before the first size
+	}
 	s := m.introSeconds()
 
 	settledLines := m.centreBlockLines()
-	settledTop := int(0.42 * float64(bodyHeight-len(settledLines)))
-	if settledTop < 0 {
-		settledTop = 0
-	}
+	settledTop := topOffsetFor(bodyHeight, len(settledLines))
 	wordmarkRest := settledTop + 2 // mark, blank, wordmark
 	centreRow := bodyHeight/2 - 1
 	if centreRow < 0 {
@@ -493,10 +470,10 @@ func (m SplashModel) viewIntro() string {
 	lines := make([]string, bodyHeight)
 
 	if a := envelope(s, introGetStart); a > 0.06 {
-		lines[centreRow] = rampStyle(inkRamp, a).Render("Get")
+		lines[centreRow] = rampStyle(style.InkRamp, a).Render("Get")
 	}
 	if a := envelope(s, introIntoStart); a > 0.06 {
-		lines[centreRow] = rampStyle(inkRamp, a).Render("Into")
+		lines[centreRow] = rampStyle(style.InkRamp, a).Render("Into")
 	}
 
 	if s >= introOrbitStart {
@@ -537,9 +514,9 @@ func (m SplashModel) viewIntro() string {
 			a := (s - introMenuStart - float64(i)*introMenuStep) / introMenuFade
 			if a > 0.06 && r >= 0 && r < bodyHeight {
 				if a >= 1 {
-					lines[r] = menuRow(mi.Label, i == m.selected)
+					lines[r] = menuRow(mi.Label, i == m.menu.sel)
 				} else {
-					lines[r] = rampStyle(inkRamp[:4], a).Render(mi.Label)
+					lines[r] = rampStyle(style.InkRamp[:4], a).Render(mi.Label)
 				}
 			}
 			item++
@@ -557,13 +534,13 @@ func (m SplashModel) viewIntro() string {
 // introWordmark renders the letter-spaced wordmark mid-arrival: fading
 // in, then lifted cell by cell as the gold-white sweep crosses it.
 func (m SplashModel) introWordmark(fade, s float64) string {
-	word := "O R B I T"
+	word := style.Tracked("ORBIT")
 	if fade < 1 {
-		return rampStyle(inkRamp, fade).Render(word)
+		return rampStyle(style.InkRamp, fade).Render(word)
 	}
 	sweep := (s - introSweepStart) / introSweepLen
 	if sweep < 0 || sweep > 1 {
-		return inkRamp[len(inkRamp)-1].Render(word)
+		return style.InkRamp[len(style.InkRamp)-1].Render(word)
 	}
 	pos := sweep * float64(len(word))
 	var b strings.Builder
@@ -577,7 +554,7 @@ func (m SplashModel) introWordmark(fade, s float64) string {
 			d = -d
 		}
 		lift := 1 - d/2.2
-		b.WriteString(rampStyle(sweepRamp, lift).Render(string(r)))
+		b.WriteString(rampStyle(style.SweepRamp, lift).Render(string(r)))
 	}
 	return b.String()
 }

@@ -2,22 +2,24 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // RepairModel is the real read-only diagnosis and plan (orbit#261
-// slices 1–3): the launcher fetches orbit's standalone repair.sh
-// fresh, stages it into the deployment, runs `--plan` (diagnosis plus
+// slices 1–3): the launcher runs the deployment's own repair.sh — the
+// copy install.sh placed there from the image, never a download (#190)
+// — with `--plan` (diagnosis plus
 // the classified proposed actions — still zero mutation by the
 // script's own contract), and renders the finding/diagnosis/plan
 // grammar — enums in, honest words out, outcome keyed off exit codes,
@@ -33,6 +35,7 @@ import (
 // menu never offers an action the plan didn't propose.
 type RepairModel struct {
 	width, height int
+	star          starfield.Model
 	targetDir     string
 	version       string
 
@@ -45,29 +48,49 @@ type RepairModel struct {
 	manualNotes []string
 	exitCode    int
 	runErr      error
+	// stoppedIn is the state a failure interrupted, which the error
+	// screen titles itself by (see fail).
+	stoppedIn repairState
 
 	// Execution evidence (orbit#261 slice 4): what ran, how it ended,
 	// with findings/diagnosis holding the post-execution re-diagnosis.
 	executeResults []engine.ExecuteResult
 	execSummary    *engine.ExecutionSummary
+	dangerous      *engine.Dangerous
 
 	// The dangerous rotation's machine-prompt session.
-	stdin     io.WriteCloser
-	rotPrompt *engine.Prompt
-	rotReason string
-	rotInput  []rune
+	stdin io.WriteCloser
+	rot   promptSession
 
-	stream  *engine.Stream
-	menuSel int
+	stream *engine.Stream
+	// frame is the working lines' spinner frame, advanced on every tick.
+	frame int
+	// menu is the cursor on whichever menu screen is showing; each screen
+	// names its own rows (planMenu, executedMenu, repairMenu).
+	menu menu
+
+	// ctx scopes every start this model launches; cancel
+	// stops one in flight. A Ctrl-C before a run exists cancels it and
+	// sets quitting; the model then quits only when the preparation
+	// reports back, killing a diagnosis it managed to start. A mutation
+	// that started anyway is kept instead, on a fresh context (see
+	// keepRunAfterCancel).
+	ctx      context.Context
+	cancel   context.CancelFunc
+	quitting bool
 
 	// Done/WantsMenu surface the outcome to AppModel, exactly like a
 	// flow's engine run.
 	Done      bool
 	WantsMenu bool
 
-	// Test seams; nil gets the real implementations.
-	prepare       prepareRepairFunc
-	prepareRotate prepareRotateFunc
+	// send is the flow's way back into the event loop, for the engine
+	// stream reader; set by AppModel from the program's sender.
+	send func(tea.Msg)
+
+	// Test seams (prepareRepair, prepareRotate); nil gets the real
+	// implementations.
+	engineRunSeams
 }
 
 type repairState int
@@ -80,6 +103,9 @@ const (
 	repairExecuting
 	repairRotating
 	repairExecuted
+	// repairNotFound is the engine's exit 5: no Orbit deployment in the
+	// directory. It is the one no-deployment screen (#229), a dead end.
+	repairNotFound
 )
 
 type (
@@ -104,9 +130,38 @@ type repairRotateReadyMsg struct {
 // repairStreamMsg wraps one message from the diagnosis stream.
 type repairStreamMsg struct{ msg any }
 
+// repairStreamEndedMsg reports a repair stream closing; stream says
+// which run's, since a --plan rejected for --check, a fresh diagnosis
+// after an execution and the execution itself each have their own.
+type repairStreamEndedMsg struct {
+	stream *engine.Stream
+	reason error
+}
+
+// repairStream is Repair's wrapping for the engine stream reader.
+var repairStream = streamWrap{
+	msg: func(msg any) tea.Msg { return repairStreamMsg{msg: msg} },
+	ended: func(s *engine.Stream, reason error) tea.Msg {
+		return repairStreamEndedMsg{stream: s, reason: reason}
+	},
+}
+
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	return RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	// One context for the model's whole life: Init cannot store state,
+	// and the model quits once it is cancelled.
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	return m
+}
+
+// prepareContext is the context preparations run on; a model built
+// without NewRepairModel falls back to one that is never cancelled.
+func (m RepairModel) prepareContext() context.Context {
+	if m.ctx == nil {
+		return context.Background()
+	}
+	return m.ctx
 }
 
 // Outcome surfaces the flow result to AppModel.
@@ -123,40 +178,42 @@ func (m RepairModel) Init() tea.Cmd {
 
 // startRun launches one read-only repair invocation in the given mode.
 func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
-	prepare := m.prepare
+	prepare := m.prepareRepair
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}
-	targetDir := m.targetDir
+	targetDir, ctx := m.targetDir, m.prepareContext()
 	return func() tea.Msg {
-		stream, err := prepare(context.Background(), targetDir, mode)
+		stream, err := prepare(ctx, targetDir, mode)
 		return repairReadyMsg{stream: stream, err: err}
 	}
 }
 
-// defaultPrepareRepair fetches, stages and starts one repair run.
+// defaultPrepareRepair starts one repair run of the deployment's own
+// scripts/repair.sh — nothing is fetched or written (#190).
 func defaultPrepareRepair(ctx context.Context, targetDir string, mode deploy.RepairMode) (*engine.Stream, error) {
-	script, err := deploy.FetchRepairScript(ctx)
+	cmd, err := deploy.RepairCommand(targetDir, mode)
 	if err != nil {
 		return nil, err
 	}
-	if err := deploy.StageRepairScript(targetDir, script); err != nil {
+	// A cancel that has already landed must still stop the start.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return engine.Start(deploy.BuildRepairCommand(targetDir, mode))
+	return engine.Start(cmd)
 }
 
 // defaultPrepareRotate starts the dangerous rotation with its stdin
 // piped — the machine-prompt transport the script demands.
 func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream, io.WriteCloser, error) {
-	script, err := deploy.FetchRepairScript(ctx)
+	cmd, err := deploy.RepairCommand(targetDir, deploy.RepairExecuteDangerous)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := deploy.StageRepairScript(targetDir, script); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	return engine.StartInteractive(deploy.BuildRepairCommand(targetDir, deploy.RepairExecuteDangerous))
+	return engine.StartInteractive(cmd)
 }
 
 // startExecution resets the evidence a fresh run will replace and
@@ -165,9 +222,21 @@ func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream
 func (m *RepairModel) startExecution() {
 	m.findings, m.diagnosis = nil, nil
 	m.executeResults, m.execSummary = nil, nil
+	m.dangerous = nil
 	m.manualNotes = nil
 	m.stream, m.stdin = nil, nil
-	m.rotPrompt, m.rotReason, m.rotInput = nil, "", nil
+	m.rot = promptSession{}
+	m.exitCode = 0
+	m.stoppedIn = repairPreparing
+}
+
+// keepRunAfterCancel keeps a mutating run the engine started just as
+// Ctrl-C landed: it is never signalled, because a kill milliseconds
+// after start is exactly stopping halfway. The launcher stays and
+// watches it; the fresh context lets a later "Diagnose again" start.
+func (m *RepairModel) keepRunAfterCancel() {
+	m.quitting = false
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 }
 
 func (m RepairModel) startRotate() tea.Cmd {
@@ -175,20 +244,10 @@ func (m RepairModel) startRotate() tea.Cmd {
 	if prepare == nil {
 		prepare = defaultPrepareRotate
 	}
-	targetDir := m.targetDir
+	targetDir, ctx := m.targetDir, m.prepareContext()
 	return func() tea.Msg {
-		stream, stdin, err := prepare(context.Background(), targetDir)
+		stream, stdin, err := prepare(ctx, targetDir)
 		return repairRotateReadyMsg{stream: stream, stdin: stdin, err: err}
-	}
-}
-
-func pumpRepair(s *engine.Stream) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-s.C
-		if !ok {
-			return nil
-		}
-		return repairStreamMsg{msg: msg}
 	}
 }
 
@@ -196,36 +255,85 @@ func pumpRepair(s *engine.Stream) tea.Cmd {
 func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// See RemoveModel.Update: the sky is built here, the tick chain
+		// is not — there is exactly one, and it is already running.
 		m.width, m.height = msg.Width, msg.Height
+		m.star = newSky(msg.Width, msg.Height)
 		return m, nil
 
+	case tickMsg:
+		m.star = m.star.Advance()
+		m.frame = nextFrame(m.frame)
+		return m, tick()
+
 	case repairReadyMsg:
+		if m.quitting {
+			if msg.stream == nil {
+				return m, tea.Quit
+			}
+			if m.state == repairPreparing {
+				msg.stream.Kill()
+				return m, tea.Quit
+			}
+			m.keepRunAfterCancel()
+		}
 		if msg.err != nil {
-			m.runErr = msg.err
-			m.state = repairError
-			if msg.err == deploy.ErrRepairUnavailable {
+			m.fail(msg.err)
+			switch {
+			case errors.Is(msg.err, deploy.ErrNoDeployment):
+				m.state = repairNotFound
+			case errors.Is(msg.err, deploy.ErrRepairUnavailable):
 				m.state = repairUnavailable
 			}
 			return m, nil
 		}
 		m.stream = msg.stream
-		return m, pumpRepair(m.stream)
+		return m, readEngineStream(m.send, m.stream, repairStream)
 
 	case repairRotateReadyMsg:
+		if m.quitting {
+			if msg.stream == nil {
+				if msg.stdin != nil {
+					_ = msg.stdin.Close()
+				}
+				return m, tea.Quit
+			}
+			// Keep the rotation and close its input at once: the
+			// engine backs out at its first prompt.
+			m.keepRunAfterCancel()
+			m.stream = msg.stream
+			if msg.stdin != nil {
+				_ = msg.stdin.Close()
+			}
+			m.stdin = nil
+			return m, readEngineStream(m.send, m.stream, repairStream)
+		}
 		if msg.err != nil {
-			m.runErr = msg.err
-			m.state = repairError
+			m.fail(msg.err)
+			if errors.Is(msg.err, deploy.ErrNoDeployment) {
+				m.state = repairNotFound
+			}
 			return m, nil
 		}
 		m.stream = msg.stream
 		m.stdin = msg.stdin
-		return m, pumpRepair(m.stream)
+		return m, readEngineStream(m.send, m.stream, repairStream)
 
 	case repairStreamMsg:
 		return m.handleStream(msg.msg)
 
-	case tea.KeyMsg:
+	case repairStreamEndedMsg:
+		return m.handleStreamEnded(msg)
+
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		// Only the rotation prompt takes a paste (#222).
+		if m.state == repairRotating {
+			m.rot = m.rot.paste(msg.Content)
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -241,22 +349,9 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 	switch s := msg.(type) {
 	case engine.RawLineMsg:
 		if m.state == repairRotating {
-			if parsed, ok := engine.ParsePromptLine(s.Text); ok {
-				switch p := parsed.(type) {
-				case engine.Prompt:
-					prompt := p
-					m.rotPrompt = &prompt
-					m.rotInput = nil
-				case engine.PromptReject:
-					m.rotReason = rejectionWords(p.Reason)
-					m.rotPrompt = nil
-				case engine.PromptAccept:
-					m.rotReason = ""
-					m.rotPrompt = nil
-				case engine.PromptAbort:
-					m.rotPrompt = nil
-				}
-				return m, pumpRepair(m.stream)
+			var ok bool
+			if m.rot, ok = m.rot.applyLine(s.Text); ok {
+				return m, nil
 			}
 		}
 		if f, ok := engine.ParseFinding(s.Text); ok {
@@ -266,6 +361,9 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 		} else if es, ok := engine.ParseExecutionSummary(s.Text); ok {
 			summary := es
 			m.execSummary = &summary
+		} else if dg, ok := engine.ParseDangerous(s.Text); ok {
+			summary := dg
+			m.dangerous = &summary
 		} else if p, ok := engine.ParsePlanAction(s.Text); ok {
 			m.planActions = append(m.planActions, p)
 		} else if ps, ok := engine.ParsePlanSummary(s.Text); ok {
@@ -275,13 +373,40 @@ func (m RepairModel) handleStream(msg any) (tea.Model, tea.Cmd) {
 			diag := d
 			m.diagnosis = &diag
 		}
-		return m, pumpRepair(m.stream)
+		return m, nil
 	case engine.EventMsg:
 		// repair.sh emits no phase events; tolerate and move on.
-		return m, pumpRepair(m.stream)
+		return m, nil
 	case engine.DoneMsg:
 		return m.handleDone(s)
 	}
+	return m, nil
+}
+
+// handleStreamEnded closes out a run whose stream has stopped. The
+// ending of a stream that is not the current one — a --plan replaced
+// by --check, a run already resolved and left behind — belongs to
+// nothing. The current stream ending after its DoneMsg is the ordinary
+// case and changes nothing either. Only a run still waiting on its
+// stream has lost it: the engine stopped without reporting an outcome,
+// and the screen says so (#206).
+func (m RepairModel) handleStreamEnded(msg repairStreamEndedMsg) (tea.Model, tea.Cmd) {
+	if msg.stream != m.stream {
+		return m, nil
+	}
+	switch m.state {
+	case repairPreparing, repairExecuting, repairRotating:
+	default:
+		return m, nil
+	}
+	logDiag("repair stream: closed before the run finished")
+	err := msg.reason
+	if err == nil {
+		err = errEngineStoppedEarly
+	}
+	m.stdin = nil
+	m.rot = promptSession{}
+	m.fail(err)
 	return m, nil
 }
 
@@ -292,31 +417,41 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case repairExecuting, repairRotating:
 		// Execution outcomes come from the parsed execution summary,
-		// with the exit code as the honest fallback.
-		if m.execSummary == nil && s.ExitCode != 0 {
-			m.runErr = s.Err
-			m.state = repairError
-			m.menuSel = 0
+		// with the exit code as the honest fallback. Exit 6 is the
+		// dangerous batch refused: the operator said no, or there was
+		// no terminal to ask. Nothing was attempted, so it ends on the
+		// after-picture like any other outcome, not on the error screen.
+		if m.execSummary == nil && s.ExitCode == engine.ExitNotInstalled {
+			// Not an Orbit installation, in every mode: the one
+			// no-deployment screen, as for a diagnosis.
+			m.state = repairNotFound
+			m.menu = menu{}
+			return m, nil
+		}
+		if m.execSummary == nil && s.ExitCode != engine.ExitHealthy && s.ExitCode != engine.ExitDangerousRefused {
+			m.fail(s.Err)
 			return m, nil
 		}
 		m.state = repairExecuted
-		m.menuSel = 0
+		m.menu = menu{}
 		return m, nil
 	}
 
 	switch s.ExitCode {
-	case 0, 3, 4, 5:
-		// The contract's outcomes — shared by --check and --plan,
-		// including "this isn't an orbit installation", which arrives
-		// with its own finding line and deserves the same honest
-		// rendering.
+	case engine.ExitNotInstalled:
+		// "This isn't an Orbit installation", in every mode: the one
+		// no-deployment screen Update and Remove show, not a diagnosis
+		// (#229). The finding and tally that came with it say no more.
+		m.state = repairNotFound
+	case engine.ExitHealthy, engine.ExitAttention, engine.ExitFailed:
+		// The contract's outcomes, shared by --check and --plan.
 		m.state = repairDiagnosis
 		if m.mode == deploy.RepairPlan {
 			// The manual guidance lines ride stderr, value-free by
 			// the script's contract.
 			m.manualNotes = s.StderrTail
 		}
-	case 2:
+	case engine.ExitUsage:
 		if m.mode == deploy.RepairPlan {
 			// A repair.sh too old for --plan: usage error. Fall back
 			// to the diagnosis it does speak.
@@ -324,17 +459,25 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 			m.findings, m.diagnosis = nil, nil
 			m.planActions, m.planSummary, m.manualNotes = nil, nil, nil
 			m.stream = nil
-			m.menuSel = 0
+			m.menu = menu{}
 			return m, m.startRun(deploy.RepairCheck)
 		}
-		m.runErr = s.Err
-		m.state = repairError
+		m.fail(s.Err)
 	default:
-		m.runErr = s.Err
-		m.state = repairError
+		m.fail(s.Err)
 	}
-	m.menuSel = 0
+	m.menu = menu{}
 	return m, nil
+}
+
+// fail ends the run on the error screen, which is titled by the state
+// it interrupted: a safe repair or a rotation that stopped is not a
+// failed read-only check.
+func (m *RepairModel) fail(err error) {
+	m.runErr = err
+	m.stoppedIn = m.state
+	m.state = repairError
+	m.menu = menu{}
 }
 
 var repairMenu = []string{"Menu", "Exit"}
@@ -376,8 +519,25 @@ func (m RepairModel) planHasDangerous() bool {
 // out.
 var executedMenu = []string{"Diagnose again", "Menu", "Exit"}
 
-func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isCtrlC(msg) {
+		if m.stream == nil && (m.state == repairPreparing || m.state == repairExecuting || m.state == repairRotating) {
+			// The run is still being started: cancel that
+			// and quit when it reports back (see the ready cases).
+			m.quitting = true
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, nil
+		}
+		switch m.state {
+		case repairExecuting:
+			// A running mutation is never signalled: stopping it halfway
+			// is the one thing more dangerous than letting it finish.
+			return m, nil
+		case repairRotating:
+			return m.stopRotation()
+		}
 		if m.stream != nil {
 			m.stream.Kill()
 		}
@@ -386,13 +546,17 @@ func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch m.state {
 	case repairPreparing, repairExecuting:
-		if msg.Type == tea.KeyEsc && m.state == repairPreparing {
+		if msg.Code == tea.KeyEsc && m.state == repairPreparing {
 			// The read-only run can be abandoned freely; a running
 			// execution is left to finish — killing a mutation
 			// mid-flight is the one thing more dangerous than running
 			// it.
+			// Still being started: cancel the start, as Ctrl-C does,
+			// or the process it launches outlives the screen (#221).
 			if m.stream != nil {
 				m.stream.Kill()
+			} else if m.cancel != nil {
+				m.cancel()
 			}
 			m.Done = true
 			m.WantsMenu = true
@@ -401,6 +565,15 @@ func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case repairRotating:
 		return m.handleRotateKey(msg)
+
+	case repairNotFound:
+		// The dead end: its one row and Esc both go back to the menu,
+		// and no other key does anything (#228), as in Update and Remove.
+		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
+			m.Done = true
+			m.WantsMenu = true
+		}
+		return m, nil
 
 	case repairDiagnosis:
 		menu := m.planMenu()
@@ -424,22 +597,12 @@ func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 
 	case repairExecuted:
-		return m.handleMenu(msg, executedMenu, func(label string) (tea.Model, tea.Cmd) {
-			switch label {
-			case "Diagnose again":
-				m.startExecution()
-				m.planActions, m.planSummary = nil, nil
-				m.state = repairPreparing
-				m.mode = deploy.RepairPlan
-				return m, m.startRun(deploy.RepairPlan)
-			case "Menu":
-				m.Done = true
-				m.WantsMenu = true
-				return m, nil
-			default:
-				return m, tea.Quit
-			}
-		})
+		return m.handleExecutedMenu(msg)
+
+	case repairError:
+		if m.stoppedMutation() {
+			return m.handleExecutedMenu(msg)
+		}
 	}
 
 	return m.handleMenu(msg, repairMenu, func(label string) (tea.Model, tea.Cmd) {
@@ -452,76 +615,100 @@ func (m RepairModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	})
 }
 
-// handleMenu is the shared stacked-menu key handling, dispatching by
-// label so contextual menus can't drift out of sync with selection
-// indexes.
-func (m RepairModel) handleMenu(msg tea.KeyMsg, items []string, choose func(string) (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
+// handleExecutedMenu is executedMenu's keys, for the after-picture and
+// for a mutation that stopped partway.
+func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	return m.handleMenu(msg, executedMenu, func(label string) (tea.Model, tea.Cmd) {
+		switch label {
+		case "Diagnose again":
+			m.startExecution()
+			m.planActions, m.planSummary = nil, nil
+			m.state = repairPreparing
+			m.mode = deploy.RepairPlan
+			return m, m.startRun(deploy.RepairPlan)
+		case "Menu":
+			m.Done = true
+			m.WantsMenu = true
+			return m, nil
+		default:
+			return m, tea.Quit
+		}
+	})
+}
+
+// stoppedMutation says the error screen is showing a safe repair or
+// rotation whose script had started: the deployment may be partly
+// changed, so it gets the after-picture's menu, not the read-only one.
+// A start failure ran nothing and keeps the plain menu.
+func (m RepairModel) stoppedMutation() bool {
+	// A usage error is the script refusing before it did anything.
+	return m.state == repairError && m.stream != nil && m.exitCode != engine.ExitUsage &&
+		(m.stoppedIn == repairExecuting || m.stoppedIn == repairRotating)
+}
+
+// handleMenu drives a menu screen over items: Esc is back to the main
+// menu, and Enter hands choose the selected row's label (menu.go), so
+// contextual menus can't drift out of sync with selection indexes.
+func (m RepairModel) handleMenu(msg tea.KeyPressMsg, items []string, choose func(string) (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
+	var chosen string
+	var back bool
+	m.menu, chosen, back = m.menu.over(items).onScreen(msg)
+	if back {
 		m.Done = true
 		m.WantsMenu = true
 		return m, nil
-	case tea.KeyUp:
-		m.menuSel = (m.menuSel - 1 + len(items)) % len(items)
-		return m, nil
-	case tea.KeyDown:
-		m.menuSel = (m.menuSel + 1) % len(items)
-		return m, nil
-	case tea.KeyEnter:
-		return choose(items[m.menuSel])
 	}
-	return m, nil
+	if chosen == "" {
+		return m, nil
+	}
+	return choose(chosen)
 }
 
 // handleRotateKey is the rotation session's typing surface — the same
-// grammar as the in-console configuration prompts. Esc abandons the
-// session; the engine treats closed input as its documented abort and
-// changes nothing.
-func (m RepairModel) handleRotateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEsc {
-		if m.stdin != nil {
-			m.stdin.Close()
-			m.stdin = nil
-		}
-		if m.stream != nil {
-			m.stream.Kill()
-		}
-		m.state = repairDiagnosis
-		m.menuSel = 0
+// promptSession as the in-console configuration prompts. Esc closes the
+// session's input, which the engine treats as its documented abort at
+// its next prompt; a rotation already past its prompts is left to
+// finish. Either way the run ends on the after-picture.
+func (m RepairModel) handleRotateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.Code == tea.KeyEsc {
+		return m.stopRotation()
+	}
+	m.rot, _, _ = m.rot.key(msg, m.stdin)
+	return m, nil
+}
+
+// stopRotation closes the rotation's input and waits: the engine is
+// never signalled, because what it already began must be backed out or
+// finished by the engine itself. With input already closed, or not yet
+// open, there is nothing to do.
+func (m RepairModel) stopRotation() (tea.Model, tea.Cmd) {
+	if m.stdin == nil {
 		return m, nil
 	}
-	if m.rotPrompt == nil {
-		return m, nil
-	}
-	switch msg.Type {
-	case tea.KeyRunes:
-		m.rotInput = append(m.rotInput, msg.Runes...)
-	case tea.KeySpace:
-		m.rotInput = append(m.rotInput, ' ')
-	case tea.KeyBackspace:
-		if len(m.rotInput) > 0 {
-			m.rotInput = m.rotInput[:len(m.rotInput)-1]
-		}
-	case tea.KeyEnter:
-		if m.stdin != nil {
-			fmt.Fprintln(m.stdin, string(m.rotInput))
-		}
-		m.rotPrompt = nil
-		m.rotInput = nil
-	}
+	m.stdin.Close()
+	m.stdin = nil
+	m.rot = promptSession{}
 	return m, nil
 }
 
 // View implements tea.Model.
-func (m RepairModel) View() string {
+func (m RepairModel) View() tea.View { return tea.NewView(m.view()) }
+
+// cannotStopLine is the second line of a working screen whose step
+// changes the machine and so ignores Ctrl-C and Esc while it runs:
+// Repair's, and Remove's stand-down (#227).
+const cannotStopLine = "can't be stopped from here — stopping halfway is the one unsafe step"
+
+// view renders the screen's content.
+func (m RepairModel) view() string {
 	if m.width == 0 {
 		return ""
 	}
 	switch m.state {
 	case repairPreparing:
-		return centreBlock(m.width, m.height, style.MutedText.Render("reading the deployment — nothing will be changed"))
+		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "reading the deployment", "nothing will be changed"))
 	case repairExecuting:
-		return centreBlock(m.width, m.height, style.WarmText.Render("⠋")+" "+style.MutedText.Render("running the safe repairs — every step reversible, backups first"))
+		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible, backups first", cannotStopLine))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -530,6 +717,9 @@ func (m RepairModel) View() string {
 		return m.viewUnavailable()
 	case repairError:
 		return m.viewError()
+	case repairNotFound:
+		return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+			"There's nothing here for Repair to read — nothing was changed.")
 	}
 	return m.viewDiagnosis()
 }
@@ -539,66 +729,49 @@ func (m RepairModel) View() string {
 // what is at stake.
 func (m RepairModel) viewRotating() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Rotate database credentials"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Rotate database credentials")
 	fmt.Fprintln(&b, style.MutedText.Render("A passphrase-protected backup of the current credential is"))
 	fmt.Fprintln(&b, style.MutedText.Render("taken and verified before anything changes."))
 	fmt.Fprintln(&b)
 
-	p := m.rotPrompt
-	if p == nil {
-		fmt.Fprintln(&b, style.MutedText.Render("talking to the engine…"))
-		return centreBlock(m.width, m.height, b.String())
+	if m.stream != nil && m.stdin == nil {
+		// Input closed, engine still running: it is backing out at its
+		// next prompt or finishing a step it already began.
+		fmt.Fprintln(&b, workingLine(m.frame, "stopping", "waiting for the engine to back out or finish what it began"))
+		return skyBlock(m.star, m.width, m.height, b.String())
 	}
 
-	label, hint := promptWords(p.Field)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(style.Text).Render(label))
-	if hint != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(hint))
-	}
-	fmt.Fprintln(&b)
-	shown := string(m.rotInput)
-	if p.Kind == "secret" {
-		shown = ""
-	}
-	fmt.Fprintln(&b, style.MenuCaret.Render(style.SymbolSelected)+" "+lipgloss.NewStyle().Foreground(style.Text).Render(shown)+style.AccentText.Render("▏"))
-	if m.rotReason != "" {
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, style.DegradedText.Render(m.rotReason))
-	}
-	if p.Attempt > 1 {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("attempt %d of 3", p.Attempt)))
-	}
-	return centreBlock(m.width, m.height, b.String())
+	m.rot.view(&b, "", m.width, m.frame)
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // viewExecuted is the after-picture: what ran, how it ended, and the
 // fresh re-diagnosis the executor printed.
 func (m RepairModel) viewExecuted() string {
 	var b strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Foreground(style.Text)
+	var glyph, title string
 
 	result := ""
 	if m.execSummary != nil {
 		result = m.execSummary.Result
 	}
 	switch result {
-	case "complete":
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Repairs applied"))
-	case "declined":
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Nothing was changed"))
-	case "unactionable":
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Nothing safe to run"))
-	case "empty":
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Nothing to repair"))
-	case "failed":
-		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Some repairs failed"))
+	case engine.ResultComplete:
+		glyph, title = style.SuccessText.Render(style.SymbolMark), "Repairs applied"
+	case engine.ResultDeclined:
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Nothing was changed"
+	case engine.ResultUnactionable:
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Nothing safe to run"
+	case engine.ResultEmpty:
+		glyph, title = style.SuccessText.Render(style.SymbolMark), "Nothing to repair"
+	case engine.ResultFailed:
+		glyph, title = style.ErrorText.Render(style.SymbolFailure), "Some repairs failed"
+	case engine.ResultRefused:
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repair refused"
 	default:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repair run ended"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repair run ended"
 	}
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, glyph, title)
 
 	for _, e := range m.executeResults {
 		fmt.Fprintln(&b, executeLine(e))
@@ -607,12 +780,38 @@ func (m RepairModel) viewExecuted() string {
 		fmt.Fprintln(&b)
 	}
 	if m.execSummary != nil && (m.execSummary.Done > 0 || m.execSummary.Failed > 0) {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done · %d failed", m.execSummary.Done, m.execSummary.Failed)))
+		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d done%s%d failed", m.execSummary.Done, style.Separator, m.execSummary.Failed)))
+	}
+	if m.execSummary != nil && m.execSummary.Result == engine.ResultRefused {
+		// The whole run was refused before any batch ran; the reason
+		// enum says why, and the exit code alone cannot.
+		switch m.execSummary.Reason {
+		case "deployment-version-unsupported":
+			fmt.Fprintln(&b, style.DegradedText.Render("nothing was changed — this deployment's Orbit release is too old to repair here"))
+			fmt.Fprintln(&b, style.DegradedText.Render("upgrade or reinstall it with a supported release, then diagnose again"))
+		default:
+			refusal := "nothing was changed — the engine refused to run"
+			if m.execSummary.Reason != "" {
+				refusal += " (" + m.execSummary.Reason + ")"
+			}
+			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+		}
+	}
+	if m.dangerous != nil && m.dangerous.Result == engine.ResultRefused {
+		// The dangerous batch's gate was never passed. Nothing was
+		// rotated and nothing failed — say only that, and say why when
+		// the stream told us, because "you declined" and "there was no
+		// terminal to ask" send the operator to different next steps.
+		refusal := "credentials left as they were — nothing was rotated"
+		if m.dangerous.Reason == "non-interactive" {
+			refusal += " (no terminal was available to approve it)"
+		}
+		fmt.Fprintln(&b, style.DegradedText.Render(refusal))
 	}
 
 	// The after-picture: the executor's own honest re-diagnosis.
 	if m.diagnosis != nil {
-		if m.diagnosis.Result == "healthy" {
+		if m.diagnosis.Result == engine.ResultHealthy {
 			fmt.Fprintln(&b, style.SuccessText.Render("diagnosis clear after repairs"))
 		} else {
 			fmt.Fprintln(&b, style.Tagline.Render("still standing after repairs:"))
@@ -622,23 +821,23 @@ func (m RepairModel) viewExecuted() string {
 		}
 	}
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, executedMenu, m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	m.menu.over(executedMenu).write(&b)
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // executeLine renders one execution outcome in honest words.
 func executeLine(e engine.ExecuteResult) string {
 	var glyph string
 	switch e.Result {
-	case "done":
+	case engine.ResultDone:
 		glyph = style.SuccessText.Render(style.SymbolSuccess)
-	case "failed":
+	case engine.ResultFailed:
 		glyph = style.ErrorText.Render(style.SymbolFailure)
 	default:
 		glyph = style.Tagline.Render(style.SymbolQueued)
 	}
-	words := lipgloss.NewStyle().Foreground(style.Text).Render(actionWords(e.Action))
-	if e.Result == "skipped" {
+	words := style.Ink.Render(actionWords(e.Action))
+	if e.Result == engine.ResultSkipped {
 		words = style.Tagline.Render(actionWords(e.Action))
 	}
 	return glyph + " " + words + style.Tagline.Render(" — "+classWords(e.Resolves))
@@ -646,27 +845,38 @@ func executeLine(e engine.ExecuteResult) string {
 
 func (m RepairModel) viewUnavailable() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.AccentText.Render(style.SymbolMark))
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Diagnosis needs a newer Orbit"))
-	fmt.Fprintln(&b)
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Diagnosis needs a newer Orbit")
 	fmt.Fprintln(&b, style.MutedText.Render("This Orbit release doesn't publish its repair diagnosis"))
 	fmt.Fprintln(&b, style.MutedText.Render("yet. Nothing on the deployment was touched."))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, repairMenu, m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	m.menu.over(repairMenu).write(&b)
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m RepairModel) viewError() string {
 	var b strings.Builder
-	fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+lipgloss.NewStyle().Bold(true).Foreground(style.Text).Render("Diagnosis couldn't run"))
-	fmt.Fprintln(&b)
+	title := "Diagnosis stopped"
+	switch m.stoppedIn {
+	case repairExecuting:
+		title = "Repairs stopped"
+	case repairRotating:
+		title = "Credential rotation stopped"
+	}
+	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), title)
 	if m.runErr != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(m.runErr.Error()))
+		// Docker's words, at Docker's length.
+		writeWrapped(&b, style.Tagline, m.runErr.Error(), measure(m.width, errorWidth))
+	}
+	rows := repairMenu
+	if m.stoppedMutation() {
+		writeWrapped(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth))
+		rows = executedMenu
+	}
+	if m.runErr != nil || m.stoppedMutation() {
 		fmt.Fprintln(&b)
 	}
-	writeStackedMenu(&b, repairMenu, m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	m.menu.over(rows).write(&b)
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m RepairModel) viewDiagnosis() string {
@@ -676,26 +886,24 @@ func (m RepairModel) viewDiagnosis() string {
 	if m.diagnosis != nil {
 		result = m.diagnosis.Result
 	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(style.Text)
+	var glyph, title string
 	switch {
-	case m.exitCode == 5:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("No Orbit installation here"))
-	case m.planSummary != nil && m.planSummary.Result == "empty",
-		result == "healthy",
-		m.planSummary != nil && m.exitCode == 0:
-		fmt.Fprintln(&b, style.SuccessText.Render(style.SymbolMark)+" "+title.Render("Diagnosis clear"))
-	case m.planSummary != nil && m.exitCode == 3:
+	case m.planSummary != nil && m.planSummary.Result == engine.ResultEmpty,
+		result == engine.ResultHealthy,
+		m.planSummary != nil && m.exitCode == engine.ExitHealthy:
+		glyph, title = style.SuccessText.Render(style.SymbolMark), "Diagnosis clear"
+	case m.planSummary != nil && m.exitCode == engine.ExitPlanAvailable:
 		// Plan mode's stdout carries only the plan (verified against
 		// the real script): the proposal is the story.
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Repairs proposed"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repairs proposed"
 	case m.planSummary != nil:
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Needs your attention"))
-	case result == "attention":
-		fmt.Fprintln(&b, style.DegradedText.Render(style.SymbolMark)+" "+title.Render("Needs attention"))
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Needs your attention"
+	case result == engine.ResultAttention:
+		glyph, title = style.DegradedText.Render(style.SymbolMark), "Needs attention"
 	default:
-		fmt.Fprintln(&b, style.ErrorText.Render(style.SymbolFailure)+" "+title.Render("Problems found"))
+		glyph, title = style.ErrorText.Render(style.SymbolFailure), "Problems found"
 	}
-	fmt.Fprintln(&b)
+	writeInlineHeader(&b, glyph, title)
 
 	for _, f := range sortedFindings(m.findings) {
 		fmt.Fprintln(&b, findingLine(f))
@@ -705,24 +913,24 @@ func (m RepairModel) viewDiagnosis() string {
 	}
 
 	if m.diagnosis != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked · %d skipped", m.diagnosis.Checked, m.diagnosis.Skipped)))
+		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
 	}
 
 	m.writePlan(&b, result)
 
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, m.planMenu(), m.menuSel)
-	return centreBlock(m.width, m.height, b.String())
+	m.menu.over(m.planMenu()).write(&b)
+	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // writePlan renders the proposed plan (orbit#261 slice 3): what the
-// engine would do, classified — and the plain truth that nothing here
-// can execute yet.
+// engine would do, classified — and the plain truth that nothing has
+// run yet.
 func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 	if len(m.planActions) == 0 {
 		// No plan lines: healthy, a --check fallback run, or nothing
 		// plannable. Keep the honest note whenever something's wrong.
-		if result != "healthy" && m.exitCode != 5 {
+		if result != engine.ResultHealthy {
 			fmt.Fprintln(b, style.Tagline.Render("repair actions arrive with a later Orbit release"))
 		}
 		return
@@ -737,7 +945,7 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 		}
 	}
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary)))
+	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous())))
 }
 
 // planLine renders one proposed action: the action in plain words and
@@ -755,9 +963,9 @@ func planLine(p engine.PlanAction) string {
 	}
 	context := classWords(p.Resolves)
 	if p.Backup == "required" {
-		context += " · backup first"
+		context += style.Separator + "backup first"
 	}
-	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(actionWords(p.Action)) +
+	return glyph + " " + style.Ink.Render(actionWords(p.Action)) +
 		style.Tagline.Render(" — "+context)
 }
 
@@ -783,20 +991,31 @@ func actionWords(action string) string {
 	}
 }
 
-// planSummaryWords is the one-line truth under the plan.
-func planSummaryWords(s *engine.PlanSummary) string {
+// planSummaryWords is the one-line truth under the plan. runnable says
+// whether the menu below offers a repair to run, so the line points at
+// it when it does and never claims execution is unavailable.
+func planSummaryWords(s *engine.PlanSummary, runnable bool) string {
 	if s == nil {
-		return "execution arrives with a later Orbit release — nothing here has run"
+		if runnable {
+			return "nothing has run yet — pick a repair below to run it"
+		}
+		return "nothing has run yet"
 	}
 	switch s.Result {
-	case "ready":
-		return "a safe plan is ready — execution arrives with a later Orbit release"
-	case "manual-required":
-		return "some steps need your hands — execution arrives with a later Orbit release"
-	case "empty":
+	case engine.ResultReady:
+		if runnable {
+			return "a safe plan is ready — pick a repair below to run it"
+		}
+		return "a safe plan is ready — nothing has run yet"
+	case engine.ResultManualRequired:
+		if runnable {
+			return "some steps need your hands — the rest can run from the menu below"
+		}
+		return "some steps need your hands — nothing has run yet"
+	case engine.ResultEmpty:
 		return "nothing to plan"
 	default:
-		return s.Result + " — execution arrives with a later Orbit release"
+		return s.Result + " — nothing has run yet"
 	}
 }
 
@@ -829,18 +1048,18 @@ func findingLine(f engine.Finding) string {
 	case "fail":
 		glyph = style.ErrorText.Render(style.SymbolFailure)
 	case "warn":
-		glyph = style.DegradedText.Render("!")
+		glyph = style.DegradedText.Render(style.SymbolWarn)
 	}
-	return glyph + " " + lipgloss.NewStyle().Foreground(style.Text).Render(targetWords(f.Target)) + style.Tagline.Render(" — "+classWords(f.Class))
+	return glyph + " " + style.Ink.Render(targetWords(f.Target)) + style.Tagline.Render(" — "+classWords(f.Class))
 }
 
 // targetWords maps target classes to the thing a person knows.
 func targetWords(target string) string {
 	switch target {
 	case "directory":
-		return "target directory"
+		return "deployment directory"
 	case "env-file":
-		return ".env-orbit"
+		return deploy.EnvFile
 	case "compose-file":
 		return "docker-compose.yml"
 	case "compose":
@@ -870,7 +1089,7 @@ func targetWords(target string) string {
 func classWords(class string) string {
 	switch class {
 	case "not-orbit-directory":
-		return "no recognizable Orbit installation"
+		return "no recognisable Orbit installation"
 	case "managed-file-missing":
 		return "missing"
 	case "managed-file-symlink":

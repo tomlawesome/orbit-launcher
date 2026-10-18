@@ -13,20 +13,26 @@
 package live
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	expect "github.com/Netflix/go-expect"
-	"github.com/creack/pty"
+	"github.com/tomlawesome/orbit-launcher/internal/ui"
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // testOIDCIssuer is a real, public, stable OIDC discovery endpoint.
@@ -39,101 +45,686 @@ import (
 const testOIDCIssuer = "https://accounts.google.com"
 
 // binaryPath resolves the binary under test. Set
-// ORBIT_LAUNCHER_LIVE_BINARY to test a specific artifact (the CI job
-// sets this to the real, just-downloaded preview-latest binary, fetched
-// via the real bootstrap script — see the workflow); unset, it builds
-// fresh from source, which is what local runs and PR-triggered CI use.
+// ORBIT_LAUNCHER_LIVE_BINARY to test a specific pre-built artifact;
+// unset, the harness builds it from source once for the package, which
+// is what local runs and every CI job now use — this repo no longer publishes launcher binaries of
+// its own (#171), so there is nothing else to point it at.
 func binaryPath(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("ORBIT_LAUNCHER_LIVE_BINARY"); p != "" {
 		return p
 	}
+	return launcher.BuildBinary(t)
+}
 
-	repoRoot, err := filepath.Abs("../..")
+// TestMain lets the harness build the binary once for the whole package
+// and remove it after the last test.
+func TestMain(m *testing.M) { os.Exit(launcher.Run(m)) }
+
+// liveSession is one launcher process on one real pty, plus the
+// expectations driven against it. It exists so every expectation in this
+// file runs the same hang diagnosis on timeout (issue #100) instead of
+// each subtest re-declaring its own bare must/send closures.
+//
+// The pty is drawn by Charm's x/vt terminal emulator (#181), and every
+// expectation reads the screen it renders rather than the raw byte
+// stream go-expect matched before.
+type liveSession struct {
+	t    *testing.T
+	term *vtscreen.Terminal
+	cmd  *exec.Cmd
+	// budget is the wall-clock ceiling used by expectWithin. It exists
+	// as a field (rather than expectWithin reading the expectBudget
+	// constant directly) so a test can substitute a short budget to
+	// exercise the timeout path without waiting out the real one.
+	budget time.Duration
+	// screenBudget is the much shorter ceiling for the launcher's own
+	// screens (#166); a field for the same reason as budget.
+	screenBudget time.Duration
+	// stderrPath is the file the launcher's stderr is pointed at. The
+	// goroutine dump SIGQUIT produces goes there, not down the pty, so
+	// capturing it can never depend on the transport under suspicion.
+	stderrPath string
+	// deadline is go test's own -timeout deadline, from t.Deadline; zero
+	// means there is none. Every wait ends cleanupReserve before it.
+	deadline time.Time
+}
+
+// healthClient bounds each request to the deployed app, so one that never
+// answers cannot hold the health loop past its deadline.
+var healthClient = &http.Client{Timeout: 10 * time.Second}
+
+// cleanupReserve is how long before go test's own -timeout every wait
+// gives up, so t.Cleanup (docker compose down -v) still runs. A timeout
+// panic runs no cleanups and leaves a real stack on the machine.
+const cleanupReserve = 3 * time.Minute
+
+// capBudget shortens budget so the wait ends cleanupReserve before
+// deadline; zero means the reserve is already spent.
+func capBudget(budget time.Duration, deadline, now time.Time) time.Duration {
+	if deadline.IsZero() {
+		return budget
+	}
+	left := deadline.Sub(now) - cleanupReserve
+	if left <= 0 {
+		return 0
+	}
+	return min(budget, left)
+}
+
+// expectBudget is the wall-clock ceiling for any single wait on the
+// engine.
+//
+// install.sh's own readiness wait defaults to 180s
+// (ORBIT_INSTALLER_READINESS_TIMEOUT_SECONDS) counted from a later
+// starting point than this wait (after config collection, image
+// resolve, and asset staging) — a first boot's ClamAV virus-database
+// download in particular can approach that budget on its own. 180s here
+// genuinely wasn't enough and caused a false failure on an install that
+// had, in fact, fully succeeded (confirmed by Remove finding a real,
+// complete deployment afterward) — verified by actually running this
+// against real Docker before trusting the number. The mission console's
+// piped first attempt (which, on a fresh target, does the image pull and
+// asset staging before its configuration refusal) front-loads more of
+// that work, so the budget is higher still.
+//
+// It is a real wall-clock deadline, kept by vtscreen.Wait. Under
+// go-expect it had to be built by hand around each expectation (#121):
+// go-expect's own timeout measured idleness between runes, and the
+// starfield's repaints meant an expectation that would never match
+// never timed out.
+const expectBudget = 600 * time.Second
+
+// screenBudget is the ceiling for a wait on the launcher's own screen --
+// a menu, the notice, the sign-in question, the mission console opening --
+// rather than on the engine (#166). Those answer a keypress in well under a
+// second on a green run, so a launcher that has not drawn one after this
+// long is broken, not slow, and failing here saves the rest of the
+// 600 s expectBudget. Waits on the engine (image pull, health checks, its
+// own prompts) keep expectBudget. Each wait's elapsed time is logged, so
+// this number can be checked against the latest green run.
+const screenBudget = 90 * time.Second
+
+// expectWithin waits under s.budget for a screen match accepts, and
+// returns that screen, diagnosing the hang before failing.
+func (s *liveSession) expectWithin(what string, match vtscreen.Match) string {
+	s.t.Helper()
+	out, err := s.expectWithinErr(what, match)
 	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
+		s.t.Fatalf("%s: %v", what, err)
 	}
-	binPath := filepath.Join(t.TempDir(), "orbit-launcher")
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/orbit-launcher")
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build orbit-launcher: %v\n%s", err, out)
+	return out
+}
+
+// expectWithinErr holds all of expectWithin's logic but returns the
+// failure instead of calling t.Fatalf, so the timeout/diagnose path can
+// be exercised and asserted on by a test.
+func (s *liveSession) expectWithinErr(what string, match vtscreen.Match) (string, error) {
+	s.t.Helper()
+	return s.expectWithinBudget(what, s.budget, match)
+}
+
+// expectWithinBudget is expectWithinErr with the ceiling chosen by the
+// caller: s.budget for waits on the engine, s.screenBudget for the
+// launcher's own screens (#166).
+//
+// The wait looks at the screen and never reads the pty itself — vtscreen's
+// emulator does that on its own goroutine — so diagnose can run while
+// the wait is still parked. go-expect's reader could not share the pty
+// that way: two readers on its bufio.Reader panicked ("slice bounds out
+// of range") and destroyed the diagnosis.
+func (s *liveSession) expectWithinBudget(what string, budget time.Duration, match vtscreen.Match) (string, error) {
+	s.t.Helper()
+	requested := budget
+	// A wait that outlives go test's -timeout ends in a panic that runs no
+	// t.Cleanup, so no wait may reach into the reserve kept for cleanup.
+	budget = capBudget(budget, s.deadline, time.Now())
+	if budget <= 0 {
+		s.diagnose(what)
+		return "", fmt.Errorf("%s: test deadline is within cleanupReserve (%s); failing now so cleanup can run", what, cleanupReserve)
 	}
-	return binPath
+	start := time.Now()
+	screen, err := vtscreen.Wait(s.term, budget, match)
+	if err != nil {
+		// A cut budget's timeout would otherwise read like a budget bug.
+		if budget < requested {
+			err = fmt.Errorf("%w (budget cut from %s to %s to leave %s for cleanup before the test deadline)", err, requested, budget, cleanupReserve)
+		}
+		s.diagnose(what)
+		return "", err
+	}
+	// The evidence screenBudget is calibrated against (#166).
+	s.t.Logf("%s: matched after %s (budget %s)", what, time.Since(start).Round(100*time.Millisecond), budget)
+	return screen, nil
+}
+
+// must waits for str, and on failure diagnoses the hang before failing —
+// this is the one chance to learn anything about a freeze that has never
+// reproduced locally.
+func (s *liveSession) must(str string) {
+	s.t.Helper()
+	s.expectWithin(fmt.Sprintf("expected %q", str), vtscreen.ContainsAny(str))
+}
+
+// mustSoon is must for the launcher's own screens: the same diagnosis on
+// failure, but under screenBudget instead of expectBudget (#166).
+func (s *liveSession) mustSoon(str string) {
+	s.t.Helper()
+	s.mustSoonScreen(str)
+}
+
+// mustSoonScreen is mustSoon for one screen showing every one of texts.
+func (s *liveSession) mustSoonScreen(texts ...string) {
+	s.t.Helper()
+	what := fmt.Sprintf("expected %q", texts)
+	if len(texts) == 1 {
+		what = fmt.Sprintf("expected %q", texts[0])
+	}
+	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAll(texts...)); err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
+}
+
+// send types str as raw input. It cannot fail the way go-expect's Send
+// could: the text goes into the virtual terminal's input, and a launcher
+// that never reads it shows up as the next wait's timeout, which
+// diagnoses.
+func (s *liveSession) send(str string) {
+	s.t.Helper()
+	vtscreen.Send(s.term, str)
+}
+
+// noticeWait outlasts the development notice's 70 s countdown (#175). The
+// binary keeps its full countdown -- nothing outside it can shorten an
+// approved gate -- so a run through Install now waits it out, exactly as
+// test/pty does.
+const noticeWait = 72 * time.Second
+
+// passNotice gets past the development notice the way a person does: End
+// shows the whole notice, the countdown runs out, the phrase is typed and
+// Enter accepts it. The wait does not have to keep reading the pty to
+// stop the binary blocking on its own output while the countdown redraws
+// every second: vtscreen's emulator drains the pty into the virtual screen
+// on its own goroutine for as long as the session lives.
+func (s *liveSession) passNotice() {
+	s.t.Helper()
+	s.mustSoon("A note before you install")
+	s.send("\x1b[F") // End
+	time.Sleep(noticeWait)
+	s.send("I've read this and I understand\r")
+}
+
+// runStarted waits, under screenBudget, for the mission console to say the
+// engine run has begun. It sits in each test right after Install now, not
+// inside passNotice, so a run stuck before the console -- a notice that
+// never lets go, as on pipeline 2063 -- fails in screenBudget instead of
+// in the 600 s engine wait that follows (#166).
+//
+// "Contacting the engine" alone is not enough on a screen: it shows only
+// until the engine's first line arrives, which the byte stream always
+// carried but a look every vtscreen.PollInterval can miss. The console's
+// title row stays for the whole run, and the two screens a run ends on
+// prove it began just as well.
+func (s *liveSession) runStarted() {
+	s.t.Helper()
+	const what = "expected the mission console"
+	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
+		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Install stopped")); err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
+}
+
+// chooseSSO answers the launcher's own sign-in question (#154), asked
+// before the guided configuration's first --init on a fresh target. The
+// suite drives the OIDC prompts, so it picks the second row, SSO, the
+// way test/pty's full-OIDC journey does: Local accounts is the default.
+func (s *liveSession) chooseSSO() {
+	s.t.Helper()
+	s.mustSoon("How will people sign in?")
+	s.mustSoon("Local accounts")
+	s.send("\x1b[B") // Down to Single sign-on (SSO)
+	s.send("\r")
+}
+
+// choose selects a top-level menu row by its digit rather than by counting
+// arrow presses from an assumed caret position (issue #122). A digit only
+// moves the caret to its row (#228), so Enter then acts on it.
+//
+// Relative navigation races the splash's async health probe: a failed
+// probe marks the deployment degraded and moves the caret to Repair
+// (splash.go:308-319), so two Downs intended as Update->Repair->Remove
+// instead walk Repair->Remove->Exit and the Enter quits the launcher.
+// That is the intermittent "freezes after one settled frame" of #100.
+// A digit maps "1"-"9" straight to a menu index, so this picks the
+// intended row whenever the probe lands, leaving the probe itself
+// enabled and its degraded-state behaviour exercised.
+func (s *liveSession) choose(label string) {
+	s.t.Helper()
+	for i, item := range ui.MainMenu {
+		if item.Label == label {
+			s.send(strconv.Itoa(i + 1))
+			s.send("\r")
+			return
+		}
+	}
+	s.t.Fatalf("no top-level menu row labelled %q", label)
+}
+
+// diagnose answers the open question in issue #100: when the Remove
+// subtest freezes after one settled frame, is the launcher wedged or is
+// the pty transport dead? The recorded signature — zero further output,
+// not even starfield tick diffs, while the same binary's Install subtest
+// passes in the same job — points at the transport, but nothing so far
+// has proven it either way.
+//
+// Order matters here. The kernel-level state is read first and goes to
+// the test log, because it survives a dead pty; the goroutine dump is
+// asked for second and lands in the stderr file (#158), never on the
+// pty, which is exactly the channel under suspicion. If /proc says the
+// process is blocked writing and no dump arrives, the transport is the
+// bug and the launcher is innocent. If the dump arrives and shows the app wedged in
+// its own code, this stops being a test problem.
+func (s *liveSession) diagnose(reason string) {
+	s.t.Helper()
+	if s.cmd == nil || s.cmd.Process == nil {
+		return
+	}
+	pid := s.cmd.Process.Pid
+	s.t.Logf("hang diagnosis (%s): orbit-launcher pid %d", reason, pid)
+
+	// wchan is the money shot: a process parked in the tty write path is
+	// blocked on a pty nobody is draining. status carries State and the
+	// thread count for corroboration.
+	for _, name := range []string{"wchan", "status"} {
+		content, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), name))
+		if err != nil {
+			s.t.Logf("  /proc/%d/%s: %v", pid, name, err)
+			continue
+		}
+		s.t.Logf("  /proc/%d/%s:\n%s", pid, name, strings.TrimSpace(string(content)))
+	}
+
+	// Every thread's wchan, not just the leader's. A Go process parks its
+	// main thread on a futex whatever else is happening, so the leader's
+	// wchan alone says almost nothing; the thread that is blocked writing
+	// to the pty, if there is one, shows up here and nowhere else.
+	s.t.Logf("  threads:\n%s", indent(threadStates(pid)))
+
+	// The engine and everything it started. This used to be
+	// `ps -p <launcher pid>`, which cannot show a child — it was never
+	// asked (#158). Reading that output as "no child processes listed"
+	// sent #157's investigation at the pty and the Bubble Tea loop when
+	// the engine's own reader was the problem. The engine runs
+	// session-detached (Setsid in deploy.BuildEngineCommand), so it
+	// shares neither session nor process group with the launcher and
+	// only the parent link finds it.
+	kids := descendants(pid)
+	if len(kids) == 0 {
+		s.t.Log("  descendants: none — the engine has exited or was never started")
+	} else {
+		s.t.Logf("  descendants (%d):\n%s", len(kids), indent(processTable(kids)))
+	}
+
+	// SIGQUIT makes the Go runtime dump every goroutine's stack to
+	// stderr, which startLive points at a file. GOTRACEBACK=all is set
+	// there so the dump covers runtime goroutines too. Nothing here
+	// touches the pty or the screen, so it works whatever state the
+	// transport under suspicion is in.
+	if err := s.cmd.Process.Signal(syscall.SIGQUIT); err != nil {
+		s.t.Logf("  SIGQUIT: %v", err)
+		return
+	}
+	s.t.Logf("  goroutine dump: %s", s.awaitGoroutineDump())
+}
+
+// awaitGoroutineDump waits for the runtime's stack dump to land in the
+// stderr file and reports what arrived. Its absence is a finding, not an
+// error: a Go process that will not answer SIGQUIT is a different fault
+// from one that answers and shows a blocked goroutine.
+func (s *liveSession) awaitGoroutineDump() string {
+	if s.stderrPath == "" {
+		return "not captured — no stderr file was configured"
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		content, err := os.ReadFile(s.stderrPath)
+		if err == nil {
+			if i := strings.Index(string(content), "goroutine "); i >= 0 {
+				text := string(content)[i:]
+				s.t.Logf("  goroutine dump, first 120 lines:\n%s", indent(headLines(text, 120)))
+				return fmt.Sprintf("%d bytes in %s (full dump kept there)", len(text), s.stderrPath)
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Sprintf("none within 10s — the process did not answer SIGQUIT; stderr so far is in %s", s.stderrPath)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// descendants returns pid's whole process subtree, breadth first, read
+// from /proc rather than ps so a session-detached child is still found.
+func descendants(pid int) []int {
+	var found []int
+	queue := []int{pid}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		tasks, err := filepath.Glob(filepath.Join("/proc", strconv.Itoa(parent), "task", "*", "children"))
+		if err != nil {
+			continue
+		}
+		for _, task := range tasks {
+			content, err := os.ReadFile(task)
+			if err != nil {
+				continue
+			}
+			for _, field := range strings.Fields(string(content)) {
+				child, err := strconv.Atoi(field)
+				if err != nil {
+					continue
+				}
+				found = append(found, child)
+				queue = append(queue, child)
+			}
+		}
+	}
+	return found
+}
+
+// processTable renders one line per pid: state, wchan and command. State
+// is the whole point — a child blocked writing to a full pipe (D or S on
+// pipe_write) reads completely differently from one that has exited.
+func processTable(pids []int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-8s %-6s %-24s %s\n", "PID", "STATE", "WCHAN", "COMMAND")
+	for _, pid := range pids {
+		fmt.Fprintf(&b, "%-8d %-6s %-24s %s\n", pid, stateOf(filepath.Join("/proc", strconv.Itoa(pid))), procText(pid, "wchan"), commandOf(pid))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// threadStates renders one line per thread of pid.
+func threadStates(pid int) string {
+	tasks, err := filepath.Glob(filepath.Join("/proc", strconv.Itoa(pid), "task", "*"))
+	if err != nil || len(tasks) == 0 {
+		return "unreadable"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-8s %-6s %s\n", "TID", "STATE", "WCHAN")
+	for _, task := range tasks {
+		tid, err := strconv.Atoi(filepath.Base(task))
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "%-8d %-6s %s\n", tid, stateOf(task), readTrimmed(filepath.Join(task, "wchan")))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// commandOf is a process's argv, or its comm if argv is unreadable (a
+// kernel thread, or a process that exited between listing and reading).
+func commandOf(pid int) string {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err == nil {
+		args := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
+		if len(args) > 0 {
+			return strings.Join(args, " ")
+		}
+	}
+	return "[" + procText(pid, "comm") + "]"
+}
+
+// stateOf reads a process or thread's state letter from its stat file.
+// The command sits in field 2 and can itself contain spaces and
+// brackets, so parsing starts after its last closing bracket; state is
+// the field immediately after.
+func stateOf(dir string) string {
+	content, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return "?"
+	}
+	i := strings.LastIndex(string(content), ") ")
+	if i < 0 {
+		return "?"
+	}
+	fields := strings.Fields(string(content)[i+2:])
+	if len(fields) == 0 {
+		return "?"
+	}
+	return fields[0]
+}
+
+func procText(pid int, name string) string {
+	return readTrimmed(filepath.Join("/proc", strconv.Itoa(pid), name))
+}
+
+func readTrimmed(path string) string {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "?"
+	}
+	return strings.TrimSpace(string(content))
+}
+
+func headLines(text string, n int) string {
+	lines := strings.SplitN(text, "\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indent(block string) string {
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		lines[i] = "    " + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // startLive spawns binPath with a real controlling terminal attached —
 // not just a pty on stdin/stdout, but a real session controlling
 // terminal, which install.sh's has_controlling_terminal() (opens
-// /dev/tty directly) actually requires. go-expect's Console alone does
-// not establish this; creack/pty's own Start() helper does, via
-// Setsid+Setctty — discovered the hard way verifying this test
-// manually before writing it (see orbit-launcher issue #51/#52).
-func startLive(t *testing.T, binPath, dir string) *expect.Console {
+// /dev/tty directly) actually requires. A pty on the standard streams
+// alone does not establish this; Setsid+Setctty below do — discovered
+// the hard way verifying this test manually before writing it (see
+// orbit-launcher issue #51/#52). vtscreen's Start keeps both, and points
+// whichever standard streams are still unset at the pty.
+func startLive(t *testing.T, binPath, dir string) *liveSession {
+	t.Helper()
+	return startLiveEnv(t, binPath, dir)
+}
+
+// startLiveEnv is startLive with extraEnv appended after everything else,
+// so each entry wins over the job's own value of the same name (os/exec
+// keeps the last). The update leg's first install uses it to install an
+// earlier release than the one the job hands every other session (#198).
+func startLiveEnv(t *testing.T, binPath, dir string, extraEnv ...string) *liveSession {
 	t.Helper()
 
-	// install.sh's own readiness wait defaults to 180s
-	// (ORBIT_INSTALLER_READINESS_TIMEOUT_SECONDS) counted from a later
-	// starting point than this console (after config collection, image
-	// resolve, and asset staging) — a first boot's ClamAV virus-database
-	// download in particular can approach that budget on its own. 180s
-	// here (measured from process start) genuinely wasn't enough and
-	// caused a false failure on an install that had, in fact, fully
-	// succeeded (confirmed by Remove finding a real, complete
-	// deployment afterward) — verified by actually running this against
-	// real Docker before trusting the number. The mission console's
-	// piped first attempt (which, on a fresh target, does the image
-	// pull and asset staging before its configuration refusal) front-
-	// loads more of that work, so the budget is higher still.
-	opts := []expect.ConsoleOpt{expect.WithDefaultTimeout(600 * time.Second)}
+	// Suffixed per (sub)test — Install and Remove each call startLive
+	// once, and os.Create truncates, so a single shared path would
+	// silently let Remove's log erase Install's, exactly the run that
+	// matters most when Install is the one hanging or failing.
+	logPath := ""
 	if rawLogPath := os.Getenv("ORBIT_LAUNCHER_LIVE_RAW_LOG"); rawLogPath != "" {
-		// Suffixed per (sub)test — Install and Remove each call startLive
-		// once, and os.Create truncates, so a single shared path would
-		// silently let Remove's log erase Install's, exactly the run
-		// that matters most when Install is the one hanging or failing.
-		suffix := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-		rawLog, err := os.Create(rawLogPath + "." + suffix)
+		logPath = rawLogPath + "." + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	}
+	var raw io.Writer
+	if logPath != "" {
+		rawLog, err := os.Create(logPath)
 		if err != nil {
 			t.Fatalf("create raw log: %v", err)
 		}
-		t.Cleanup(func() { rawLog.Close() })
-		opts = append(opts, expect.WithStdout(rawLog))
+		t.Cleanup(func() { _ = rawLog.Close() })
+		raw = rawLog
 	}
-	console, err := expect.NewConsole(opts...)
+	term, err := vtscreen.New(120, 40, raw)
 	if err != nil {
-		t.Fatalf("create console: %v", err)
+		t.Fatalf("create virtual terminal: %v", err)
 	}
-	t.Cleanup(func() { console.Close() })
-	if err := pty.Setsize(console.Tty(), &pty.Winsize{Rows: 40, Cols: 120}); err != nil {
-		t.Fatalf("set pty size: %v", err)
+	t.Cleanup(func() { _ = term.Close() })
+	if logPath != "" {
+		recordScreens(t, term, logPath+".screens")
 	}
 
 	cmd := exec.Command(binPath)
 	cmd.Dir = dir
-	cmd.Stdin = console.Tty()
-	cmd.Stdout = console.Tty()
-	cmd.Stderr = console.Tty()
-	cmd.Env = append(os.Environ(), "TERM=xterm", "NO_COLOR=1", "ORBIT_LAUNCHER_NO_UPDATE_CHECK=1")
+
+	// Stderr gets its own file rather than the pty (#158). The launcher
+	// writes two things there: logDiag's fallback reasons, and — on
+	// SIGQUIT — the goroutine dump. Both used to go down the pty, which
+	// is the transport a freeze puts under suspicion, and in jobs 9834
+	// and 10034 the dump never arrived, so the one artefact that would
+	// have shown the stall directly was the one the freeze could
+	// suppress. A file cannot block and cannot be starved by a reader.
+	// The name extends the raw log's, so CI's existing artifact globs
+	// (`.live/live-raw.log.*` on GitLab, `live-raw.log.*` on GitHub) keep
+	// it too.
+	stderrPath := filepath.Join(t.TempDir(), "launcher-stderr.log")
+	if logPath != "" {
+		stderrPath = logPath + ".stderr"
+	}
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		t.Fatalf("create launcher stderr log: %v", err)
+	}
+	t.Cleanup(func() { stderrFile.Close() })
+	cmd.Stderr = stderrFile // stdin and stdout are left to vtscreen: the pty
+
+	// The health probe stays on, as an operator's launcher has it. The
+	// other behaviours HermeticEnv turns off matter to this suite as
+	// follows.
+	//
+	// The stale-database-volume pre-flight (issue #105) reads the
+	// host's volumes, so a volume left behind by a crashed earlier
+	// run would interrupt this install with a screen the test never
+	// expects — and the gate would sit out its full 600s waiting for
+	// a profile screen that isn't coming, which is precisely the
+	// hang class issue #100 exists to diagnose. Covered by its own
+	// unit and seam tests instead of on machine state.
+	//
+	// No arrival animation (issue #120). Menu rows render at
+	// introMenuStart but keys stay swallowed until introEnd
+	// (internal/ui/splash.go:98-102), so a test that matches "Install"
+	// and immediately sends a selection can have it eaten as the skip,
+	// leaving the menu settled with nothing chosen.
+	//
+	// Sending a separate skip key first was measured not to fix it:
+	// that attempt hung in exactly the same place as no skip key at
+	// all, because the bubbletea of the day batched consecutive
+	// printable runes into a single key message and handleKey's
+	// swallow returns before the digit shortcuts are examined
+	// (splash.go:343-380), so "s" and the selection sent back-to-back
+	// were discarded together. Each printable character is its own
+	// key press now, so the two would arrive separately — but this
+	// suite does not need the arrival either way, for the reason
+	// below.
+	//
+	// This costs no coverage. The arrival's own behaviour — any key
+	// skips and is swallowed, it finishes on its own after enough
+	// ticks, NO_ANIMATION never plays it — is asserted by
+	// internal/ui/splash_test.go, and how it looks belongs to
+	// visual-regression.yml. What this suite exists to pin is the
+	// install.sh handoff contract, which the animation only ever
+	// added nondeterminism to.
+	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe),
+		// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps
+		// every goroutine, not just the one that took the signal.
+		"GOTRACEBACK=all",
+		// The Compose project this run owns, and the whole of its
+		// isolation from any other Orbit on the daemon — see
+		// liveProjectName. It reaches the engine because nothing
+		// scrubs it on the way: every command that sets cmd.Env
+		// (deploy/install.go for ORBIT_LAUNCHER_CONFIG_TREE,
+		// deploy/configure.go, deploy/repair.go) appends to
+		// os.Environ() rather than replacing it. install.sh then reads
+		// COMPOSE_PROJECT_NAME itself and records it in .env-orbit.
+		"COMPOSE_PROJECT_NAME="+liveProjectName(dir),
+		// Prove the path, don't hope for it. When the engine hands over
+		// no configure tree in ORBIT_LAUNCHER_CONFIG_TREE (an install.sh
+		// without ai/orbit#1225, #190), the launcher quietly switches to
+		// the terminal handoff — a run that looks identical to a passing
+		// one, because both paths ask for the same fields. With this set
+		// the launcher refuses the handoff and stops instead, so a
+		// fallback is a red test rather than an invisible one.
+		// Deliberately not what an operator gets: unset (the default), a
+		// fallback still falls back.
+		"ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG=1")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	if err := cmd.Start(); err != nil {
+	if err := term.Start(cmd); err != nil {
 		t.Fatalf("start orbit-launcher: %v", err)
 	}
+	// Registered after the terminal's Close and the screen log, so it
+	// runs before both: the log's last screen is the one the launcher
+	// left, and the pty is not closed under a live process.
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
 
-	// Skip the splash's arrival animation with one benign key (any key
-	// skips and is swallowed). Load-bearing twice over, learned from a
-	// real 20-minute release-gate hang: menu text appears mid-cascade,
-	// so an Enter sent right after matching it lands while the arrival
-	// is still playing and gets swallowed as the skip — and because the
-	// splash animates continuously, go-expect's read timeout never goes
-	// idle, so the next expectation waits forever, not five seconds.
-	if _, err := console.Send("s"); err != nil {
-		t.Fatalf("send arrival-skip key: %v", err)
+	session := &liveSession{t: t, term: term, cmd: cmd, budget: expectBudget, screenBudget: screenBudget, stderrPath: stderrPath}
+	if deadline, ok := t.Deadline(); ok {
+		session.deadline = deadline
 	}
-	return console
+	return session
+}
+
+// screenLogInterval is how often recordScreens looks for a new screen.
+const screenLogInterval = 500 * time.Millisecond
+
+// recordScreens writes the screen log that sits beside the raw byte
+// stream in the ORBIT_LAUNCHER_LIVE_RAW_LOG artefact CI uploads
+// (live-raw.log.*): every screen that differs from the last one written,
+// looked for every screenLogInterval for the whole session, each headed
+// by its time since the session started, and the screen the launcher was
+// left on when the test ends. A brief screen between two looks is not
+// in it.
+func recordScreens(t *testing.T, term *vtscreen.Terminal, path string) {
+	t.Helper()
+	log, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create screen log: %v", err)
+	}
+	start := time.Now()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(screenLogInterval)
+		defer ticker.Stop()
+		last := ""
+		write := func(label string) {
+			screen := vtscreen.Screen(term)
+			if screen == last && label == "" {
+				return
+			}
+			last = screen
+			fmt.Fprintf(log, "=== screen at +%s%s ===\n%s\n", time.Since(start).Round(100*time.Millisecond), label, screen)
+		}
+		for {
+			select {
+			case <-stop:
+				write(", test ending")
+				return
+			case <-ticker.C:
+				write("")
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		// A screen read waits on the emulator's lock; an emulator wedged
+		// writing to a pty nobody drains would hold this cleanup for
+		// ever, so it is given a few seconds and then left.
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		_ = log.Close()
+	})
 }
 
 // acceptMenusUntil sends Enter to accept the default choice on any of
@@ -142,33 +733,189 @@ func startLive(t *testing.T, binPath, dir string) *expect.Console {
 // change exactly which menus appear before the guided configuration
 // prompts, so this stays adaptive rather than hardcoding an exact
 // sequence.
-func acceptMenusUntil(t *testing.T, console *expect.Console, target string) {
+//
+// One question is not a menu: an M7 installer (orbit !908, ADR-0023 §1)
+// opens the guided configuration by asking "Sign in with local accounts
+// only, or also with an identity provider? [local/oidc] (default:
+// local)". Enter there would pick local-only, and the OIDC prompts this
+// suite drives next would never come, so it is answered "oidc" — the
+// flow every assertion below was written for. A pre-M7 installer never
+// asks, and never matches.
+//
+// stopScreenReasonPattern matches the installer's own reason line on its
+// failure screen, e.g. "Orbit installer: Could not fetch
+// config/tika-config.json from the published revision." (see
+// internal/ui/install_test.go around lines 254-288 for real examples).
+var stopScreenReasonPattern = regexp.MustCompile(`Orbit installer: .*`)
+
+// signInModeMarker is the M7 sign-in mode question (see acceptMenusUntil).
+const signInModeMarker = "[local/oidc]"
+
+func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	pattern := regexp.MustCompile(`Greetings, what can we do for you today\?|Choose a deployment profile|Review:|Final review:|Optional services|` + regexp.QuoteMeta(target))
-	targetPattern := regexp.MustCompile(regexp.QuoteMeta(target))
+	// An update's failure screen says "Update stopped" (flowStoppedTitle);
+	// the update leg (#198) waits here too, and must not sit out the budget
+	// on a failure screen it does not recognise.
+	stopScreens := []string{"Install stopped", "Update stopped"}
+	// Each look is at one 120x40 screen, so it costs the same however
+	// much the install has printed. The stream matcher that once fell so
+	// far behind the launcher's repaints that a finished install looked
+	// frozen (#159, #165) has nothing left to fall behind.
+	markers := append([]string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, target}, stopScreens...)
+	// acted is the screen the last Enter was sent on. The stream gave
+	// each marker once, as it was drawn; a screen goes on showing it
+	// until the launcher moves on. A screen identical to that one is the
+	// same menu not yet answered, never a new one, so it is not answered
+	// again.
+	acted := ""
 	for {
-		// No explicit per-call timeout here — this falls back to the
-		// console's own configured default (see startLive), which is
-		// generous specifically because a real image pull plus health
+		// No tighter budget than expectWithin's — that ceiling is
+		// deliberately generous because a real image pull plus health
 		// checks can genuinely take minutes. An earlier draft hardcoded
-		// 60s here, silently shadowing that default and causing a real
-		// CI failure on a resource-constrained runner even though the
-		// install had, in fact, not failed — just hadn't finished yet.
-		result, err := console.Expect(expect.Regexp(pattern))
-		if err != nil {
-			t.Fatalf("waiting for %q or a menu: %v", target, err)
-		}
-		if targetPattern.MatchString(result) {
+		// 60s here, causing a real CI failure on a resource-constrained
+		// runner even though the install had, in fact, not failed — just
+		// hadn't finished yet.
+		result := session.expectWithin("waiting for "+target+" or a menu", func(screen string) bool {
+			return screen != acted && vtscreen.ContainsAny(markers...)(screen)
+		})
+		if strings.Contains(result, target) {
 			return
 		}
-		if _, err := console.Send("\r"); err != nil {
-			t.Fatalf("accept menu default: %v", err)
+		if vtscreen.ContainsAny(stopScreens...)(result) {
+			// The install genuinely stopped — sending Enter here would
+			// just cycle the menu until the 600s budget expires instead
+			// of reporting why. Fail now, with the installer's own
+			// reason if it's available.
+			if reasons := stopScreenReasonPattern.FindAllString(result, -1); len(reasons) > 0 {
+				t.Fatalf("install stopped waiting for %s: %s", target, reasons[len(reasons)-1])
+			}
+			more, err := vtscreen.Wait(session.term, 10*time.Second, stopScreenReasonPattern.MatchString)
+			if err == nil {
+				if reasons := stopScreenReasonPattern.FindAllString(more, -1); len(reasons) > 0 {
+					t.Fatalf("install stopped waiting for %s: %s", target, reasons[len(reasons)-1])
+				}
+			}
+			t.Fatalf("install stopped waiting for %s, but no reason line was captured", target)
 		}
+		acted = result
+		if strings.Contains(result, signInModeMarker) {
+			session.send("oidc\r")
+			continue
+		}
+		session.send("\r")
 	}
 }
 
-func dockerComposeDown(projectName string) {
-	_ = exec.Command("docker", "compose", "-p", projectName, "down", "-v").Run()
+// inConsolePromptMarker is the guidance line the launcher prints under
+// its own APP_URL prompt (internal/ui/configcollect.go, promptWords).
+//
+// It has to be this rather than the field's label: the labels are
+// deliberately the same words install.sh's own TTY prompts use, so
+// "Public Orbit origin" matches whichever path ran and proves neither.
+// This sentence is written in this repository and rendered only by
+// viewConfigCollect, i.e. only while the launcher itself is drawing the
+// prompt. On the handoff path the launcher draws nothing at all —
+// install.sh owns the terminal — and the string appears nowhere in the
+// orbit repository, checked.
+const inConsolePromptMarker = "the https:// address Orbit will live at"
+
+// liveProjectName is the Compose project a run of this suite owns. The
+// test hands it to the launcher through the environment (see startLive),
+// install.sh reads it and persists it into the deployment's .env-orbit,
+// and every assertion and cleanup below then reads it back from there.
+//
+// Isolation comes from this explicit name now, not from the directory.
+// Before Orbit #999/#1043 a fresh install took its project from the
+// target directory's basename, so t.TempDir() isolated each run for
+// free. docker-compose.yml's own `name: orbit` wins instead now — so
+// without a name of its own, this suite would share one Compose project
+// with any real Orbit on the host, and its cleanup (`down -v`) would
+// destroy that deployment's containers and data volumes. On a developer
+// machine that is someone's live database.
+//
+// Derived from dir rather than drawn at random because a test's Install
+// and Remove halves start separate launcher processes against the same
+// target and have to agree on the answer. t.TempDir() is unique per test
+// per run, which is what makes the result unique — so two runs on one
+// daemon stay out of each other's way, as they did before.
+func liveProjectName(dir string) string {
+	sum := sha256.Sum256([]byte(dir))
+	return "orbit-live-" + hex.EncodeToString(sum[:4])
+}
+
+// composeProjectName reports the Compose project a deployment in dir
+// actually uses, read from the deployment itself rather than guessed.
+// For a run of this suite that is liveProjectName's value, which
+// install.sh recorded in .env-orbit.
+//
+// The precedence it mirrors: an explicit COMPOSE_PROJECT_NAME (in
+// .env-orbit or the environment), then docker-compose.yml's own
+// top-level `name: orbit`, and only then the install directory's
+// basename — reached only when there is no usable compose file, which a
+// real install never is. "orbit" is therefore the honest fallback for a
+// directory with no .env-orbit; it is not what this suite's own runs
+// should ever return.
+//
+// Never scope a filter or a sweep with this value unless it has been
+// checked against liveProjectName first. A rolled-back install leaves
+// no .env-orbit, so the fallback is reached — and "orbit" is exactly
+// the project a real Orbit on the host uses. A live run of this suite
+// did precisely that and its "no containers left" assertion matched
+// the host's own running Orbit.
+func composeProjectName(dir string) string {
+	const declared = "orbit"
+	data, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
+	if err != nil {
+		return declared
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || strings.TrimSpace(key) != "COMPOSE_PROJECT_NAME" {
+			continue
+		}
+		if value = strings.Trim(strings.TrimSpace(value), `"'`); value != "" {
+			return value
+		}
+	}
+	return declared
+}
+
+// dockerComposeDown tears down the deployment this run installed in
+// dir, using the same shape internal/deploy's standDownCommand builds
+// (plus -v and --remove-orphans, because this is a test sweep and not
+// the reversible Remove), so it sweeps exactly what was installed and
+// nothing else.
+//
+// The error is logged rather than dropped — a cleanup that silently
+// fails leaves containers and volumes on the runner for the next run to
+// trip over, and nothing in the transcript says why.
+func dockerComposeDown(t *testing.T, dir string) {
+	t.Helper()
+	project := liveProjectName(dir)
+	envFile := filepath.Join(dir, ".env-orbit")
+
+	args := []string{"compose", "--project-directory", dir, "--env-file", envFile}
+	if _, err := os.Stat(envFile); err != nil {
+		// A failed install rolls its own target back, so there may be
+		// no .env-orbit and no compose file left to sweep from.
+		// Compose can still remove a project by the labels it stamped
+		// on what it created, which collects whatever a dead compose
+		// phase left running.
+		args = []string{"compose", "-p", project}
+	}
+	args = append(args, "down", "-v", "--remove-orphans")
+
+	cmd := exec.Command("docker", args...)
+	// This command carries -v, so it must not be able to resolve to any
+	// project but this run's. A COMPOSE_PROJECT_NAME in the environment
+	// outranks both .env-orbit and the compose file's own `name:`
+	// (checked against docker compose itself), so even a deployment
+	// that somehow recorded a different project cannot redirect a
+	// volume-deleting sweep onto a real Orbit on the host.
+	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+project)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("cleanup: docker compose down for project %s in %s failed: %v\n%s", project, dir, err, out)
+	}
 }
 
 // TestLive_InstallHealthyEndpointThenRemove is the real virtualized
@@ -188,171 +935,208 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 
 	binPath := binaryPath(t)
 	dir := t.TempDir()
-	// install.sh derives the Compose project name from the target
-	// directory's basename when none is set — t.TempDir() gives a
-	// unique one per run, so concurrent/repeated CI runs never collide.
-	projectName := filepath.Base(dir)
-	t.Cleanup(func() { dockerComposeDown(projectName) })
+	// This run's deployment is isolated by the explicit project name
+	// startLive gives it (liveProjectName), not by this directory:
+	// since Orbit #999/#1043 the directory's basename no longer names
+	// the Compose project, and without a name of its own this install —
+	// and the sweep below — would land on whatever real Orbit the host
+	// already has.
+	t.Cleanup(func() { dockerComposeDown(t, dir) })
 
 	appURL := fmt.Sprintf("https://orbit-live-test-%d.internal", time.Now().UnixNano())
 
-	t.Run("Install", func(t *testing.T) {
-		console := startLive(t, binPath, dir)
-
-		must := func(s string) {
-			t.Helper()
-			if _, err := console.ExpectString(s); err != nil {
-				t.Fatalf("expected %q: %v", s, err)
-			}
-		}
-		send := func(s string) {
-			t.Helper()
-			if _, err := console.Send(s); err != nil {
-				t.Fatalf("send: %v", err)
-			}
-		}
-		sendLine := func(s string) { send(s + "\r") }
-
-		must("Install")
-		sendLine("") // Install selected by default
-		must("Choose a deployment profile")
-		sendLine("") // Standard selected by default
-		must("Ready to install")
-		sendLine("") // confirm — the mission console's piped engine run starts
-
-		// The piped, terminal-less first attempt cannot prompt, so on a
-		// fresh target it ends in the engine's non-interactive
-		// configuration refusal (target rolled back). A contract-era
-		// engine (orbit develop) reports it as an event and lands on
-		// the styled configuration prompt; a legacy engine (orbit main)
-		// reports nothing and lands on the failure screen. Both
-		// screens' default option leads to the same guided
-		// configuration — in-console over the machine prompt protocol
-		// when the engine speaks it, the interactive terminal handoff
-		// otherwise (the launcher falls back automatically) — and both
-		// paths use the same field prompts, so this test, which runs
-		// against whichever install.sh the job points at, accepts
-		// either.
-		if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
-			`Orbit needs your configuration|Installation stopped`))); err != nil {
-			t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
-		}
-		sendLine("") // Continue — guided configuration / Open the guided installer
-
-		acceptMenusUntil(t, console, "Public Orbit origin")
-		sendLine(appURL)
-		must("OIDC issuer URL")
-		sendLine(testOIDCIssuer)
-		must("OIDC client ID")
-		sendLine("orbit-launcher-live-ci-test")
-		// Generation-agnostic: a contract-era engine (orbit develop)
-		// collects this in-console over the machine prompt protocol
-		// ("OIDC client secret" + "input hidden" on separate lines),
-		// while a legacy engine's terminal handoff prints install.sh's
-		// own "OIDC client secret (input hidden)" prompt. Match the
-		// common prefix so this suite proves both paths.
-		must("OIDC client secret")
-		sendLine("ci-live-test-fake-secret-value")
-
-		// Wait for the launcher's own success screen, never for the
-		// installer's completion prose — orbit main's v1.2.0 release
-		// reworded it ("Orbit is deployed from …" now; "Orbit is
-		// ready." before), which is precisely why prose is unstable by
-		// design and outcomes key off exit codes (learned the hard way:
-		// this exact assertion timed out against a fully successful
-		// install). The stacked success menu is this repo's own
-		// contract. A completion-prose line mentioning "Optional
-		// services" can match the adaptive menu pattern and cost one
-		// stray Enter on the success screen — which lands on "Get into
-		// Orbit", a deliberate no-quit action, so it is benign.
-		acceptMenusUntil(t, console, "Get into Orbit")
-
-		var lastStatus int
-		var lastErr error
-		healthy := false
-		for i := 0; i < 60; i++ {
-			resp, err := http.Get("http://localhost:3000/")
-			if err == nil {
-				lastStatus = resp.StatusCode
-				resp.Body.Close()
-				if lastStatus == http.StatusOK {
-					healthy = true
-					break
-				}
-			} else {
-				lastErr = err
-			}
-			time.Sleep(2 * time.Second)
-		}
-		if !healthy {
-			t.Fatalf("deployed Orbit app never answered 200 on :3000 (last status %d, last error %v)", lastStatus, lastErr)
-		}
-
-		send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
-		send("\r")     // quits this orbit-launcher instance cleanly
+	// Remove only means something against the deployment Install left
+	// behind. When Install fails there is nothing to remove, and driving
+	// the launcher through a Remove anyway only waits for a screen that
+	// never comes: on GitLab pipeline 214 a 31s Install failure was
+	// followed by 602s of Remove before the hang diagnosis fired (#145).
+	installed := t.Run("Install", func(t *testing.T) {
+		session := startLive(t, binPath, dir)
+		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
+		waitHealthy(t, session)
+		quitFromSuccess(session)
 	})
 
 	t.Run("Remove", func(t *testing.T) {
-		console := startLive(t, binPath, dir)
-
-		must := func(s string) {
-			t.Helper()
-			if _, err := console.ExpectString(s); err != nil {
-				t.Fatalf("expected %q: %v", s, err)
-			}
+		if !installed {
+			t.Skip("Install failed; nothing to remove")
 		}
-		send := func(s string) {
-			t.Helper()
-			if _, err := console.Send(s); err != nil {
-				t.Fatalf("send: %v", err)
-			}
-		}
-
-		must("Install")
-		// A detected deployment preselects Update, so Remove is two rows
-		// down (Update, Repair, Remove). The health probe (enabled here —
-		// this is a real deployment) resolves alive and never moves the
-		// caret; the first keypress pins it regardless.
-		must("▸ Update")
-		for i := 0; i < 2; i++ {
-			send("\x1b[B") // Repair, Remove
-		}
-		send("\r") // select Remove
-		must("This stops Orbit and removes its containers")
-		// The confirm screen's identity line carries the bare FQDN —
-		// the scheme is launcher noise at a glance, same as the splash.
-		// Matching it still proves deploy.Detect read the real
-		// .env-orbit this Install wrote.
-		must(strings.TrimPrefix(appURL, "https://"))
-		send("\r") // Stand down Orbit selected by default
-		must("Orbit has been stood down")
-		send("\r") // Exit
-
-		out, err := exec.Command("docker", "compose", "-p", projectName, "ps", "--format", "{{.Name}}").CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker compose ps: %v\n%s", err, out)
-		}
-		if len(out) != 0 {
-			t.Errorf("expected no containers after Remove, got:\n%s", out)
-		}
-
-		// Remove's own design promise: data volumes and files are
-		// preserved (Remove is the reversible half; the copy-pasteable
-		// command it shows, but never runs, is the destructive half —
-		// see internal/deploy/removal_property_test.go, which already
-		// asserts as a fast unit-test property that this package never
-		// calls that command itself).
-		if _, err := os.Stat(filepath.Join(dir, ".env-orbit")); err != nil {
-			t.Errorf("expected .env-orbit to survive Remove, stat error: %v", err)
-		}
-		volOut, err := exec.Command("docker", "volume", "ls", "--filter", "name="+projectName, "--format", "{{.Name}}").CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker volume ls: %v\n%s", err, volOut)
-		}
-		if len(volOut) == 0 {
-			t.Error("expected the deployment's data volumes to survive Remove, found none")
-		}
+		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
+}
+
+// installThroughConsole drives a fresh Install from the splash through the
+// in-console configuration, answering with appURL, the test issuer,
+// clientID and secret, then accepts install.sh's menus until target shows:
+// the success menu's "Get into Orbit", or a failure screen a test expects.
+func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID, secret, target string) {
+	t.Helper()
+	sendLine := func(s string) { session.send(s + "\r") }
+
+	session.mustSoon("Install")
+	session.choose("Install") // by digit, not by trusting the preselection
+	session.mustSoon("Choose a deployment profile")
+	sendLine("") // Standard selected by default
+	session.mustSoon("Ready to install")
+	sendLine("") // confirm — the development notice opens first (#175)
+	session.passNotice()
+	session.runStarted() // the mission console's piped engine run starts
+
+	// The piped, terminal-less first attempt cannot prompt, so on a
+	// fresh target it ends in the engine's non-interactive
+	// configuration refusal (target rolled back). A contract-era
+	// engine (orbit develop) reports it as an event and lands on
+	// the styled configuration prompt; a legacy engine (orbit main)
+	// reports nothing and lands on the failure screen. Both
+	// screens' default option leads to the guided configuration.
+	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
+		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
+	sendLine("") // Continue — guided configuration / Open the guided installer
+	session.chooseSSO()
+
+	// Strict mode is on, so the only guided configuration available
+	// is the in-console one, and this marker says it is the one that
+	// ran. A fallback would have stopped the run above instead.
+	acceptMenusUntil(t, session, inConsolePromptMarker)
+	sendLine(appURL)
+	session.must("OIDC issuer URL")
+	sendLine(testOIDCIssuer)
+	session.must("OIDC client ID")
+	sendLine(clientID)
+	// The in-console prompt puts the label and "input hidden" on
+	// separate lines; the label alone is what is matched, as above.
+	session.must("OIDC client secret")
+	sendLine(secret)
+
+	// Wait for the launcher's own success screen, never for the
+	// installer's completion prose — orbit main's v1.2.0 release
+	// reworded it ("Orbit is deployed from …" now; "Orbit is
+	// ready." before), which is precisely why prose is unstable by
+	// design and outcomes key off exit codes (learned the hard way:
+	// this exact assertion timed out against a fully successful
+	// install). The stacked success menu is this repo's own
+	// contract. A completion-prose line mentioning "Optional
+	// services" can match the adaptive menu pattern and cost one
+	// stray Enter on the success screen — which lands on "Get into
+	// Orbit", a deliberate no-quit action, so it is benign.
+	// The port-conflict leg passes "Install stopped" instead: any
+	// remaining confirmation menu is answered the same way, or the launcher
+	// waits on it until the budget runs out and the held port is never even
+	// tried (#151).
+	acceptMenusUntil(t, session, target)
+}
+
+// waitHealthy waits for the deployed app to answer 200 on :3000.
+func waitHealthy(t *testing.T, session *liveSession) {
+	t.Helper()
+	var lastStatus int
+	var lastErr error
+	healthy := false
+	// Same two-minute ceiling as the 60 tries it replaced, but each
+	// request is bounded too, and the loop stops short of the cleanup
+	// reserve.
+	until := time.Now().Add(capBudget(2*time.Minute, session.deadline, time.Now()))
+	for time.Now().Before(until) {
+		resp, err := healthClient.Get("http://localhost:3000/")
+		if err == nil {
+			lastStatus = resp.StatusCode
+			resp.Body.Close()
+			if lastStatus == http.StatusOK {
+				healthy = true
+				break
+			}
+		} else {
+			lastErr = err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !healthy {
+		t.Fatalf("deployed Orbit app never answered 200 on :3000 (last status %d, last error %v)", lastStatus, lastErr)
+	}
+}
+
+// quitFromSuccess leaves the launcher from its success screen.
+func quitFromSuccess(session *liveSession) {
+	session.send("\x1b[B") // Terminal (Get into Orbit, Terminal, Menu)
+	session.send("\r")     // quits this orbit-launcher instance cleanly
+}
+
+// removeAndAssertCleanup drives a real Remove of the deployment in dir and
+// asserts its cleanup promise: no containers left, configuration and data
+// volumes kept.
+func removeAndAssertCleanup(t *testing.T, binPath, dir, appURL string) {
+	t.Helper()
+	session := startLive(t, binPath, dir)
+
+	// Nothing is asserted about the caret here (issue #122). The
+	// health probe is enabled — this is a real deployment — and this
+	// test's APP_URL is deliberately unresolvable, so the probe fails,
+	// marks the deployment degraded and moves the caret to Repair
+	// (splash.go:308-319); it was observed doing exactly that. Which
+	// row is preselected is therefore a race, so the row is chosen by
+	// digit instead of by counting arrows from an assumed start.
+	//
+	// Detection is asserted here, on the splash: its identity line
+	// carries the bare FQDN — the scheme is launcher noise at a
+	// glance — which proves deploy.Detect read the real .env-orbit
+	// this Install wrote. Against go-expect's byte stream it could
+	// not be: the line is styled and centred, so escape sequences
+	// interleaved within the FQDN. The screen holds it whole (#181).
+	fqdn := strings.TrimPrefix(appURL, "https://")
+	session.mustSoonScreen("Install", fqdn)
+	session.choose("Remove")
+	session.mustSoon("This stops Orbit and removes its containers")
+	// The confirm screen's identity line carries the same FQDN.
+	session.must(fqdn)
+	session.send("\r") // Stand down Orbit selected by default
+	session.must("Orbit has been stood down")
+	session.send("\x1b[B\x1b[B\r") // Copy command, Menu, Exit (#228)
+
+	// Asserted against the project this deployment really uses, by
+	// the label Compose stamps on every container it creates. A
+	// filter on the temp directory's name would match nothing and
+	// pass whatever Remove did.
+	project := composeProjectName(dir)
+	// If this ever stops matching, the install ignored the project
+	// name it was given and this run has been operating on some
+	// other Orbit — worth failing loudly, because the cleanup that
+	// follows carries -v.
+	if want := liveProjectName(dir); project != want {
+		t.Fatalf("deployment recorded Compose project %q, want %q: this run was not isolated", project, want)
+	}
+	out, err := exec.Command("docker", "ps", "-a",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--format", "{{.Names}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker ps: %v\n%s", err, out)
+	}
+	if len(out) != 0 {
+		t.Errorf("expected no containers after Remove, got:\n%s", out)
+	}
+
+	// Remove's own design promise: data volumes and files are
+	// preserved (Remove is the reversible half; the copy-pasteable
+	// command it shows, but never runs, is the destructive half —
+	// see internal/deploy/removal_property_test.go, which already
+	// asserts as a fast unit-test property that this package never
+	// calls that command itself).
+	if _, err := os.Stat(filepath.Join(dir, ".env-orbit")); err != nil {
+		t.Errorf("expected .env-orbit to survive Remove, stat error: %v", err)
+	}
+	// Compose names a deployment's volumes <project>_<volume> and
+	// labels them with the project, so the label is the exact
+	// question being asked: did *this* deployment's data survive.
+	// A bare "orbit-db-data" name filter would answer for any
+	// Orbit on the machine, including a real one.
+	volOut, err := exec.Command("docker", "volume", "ls",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--format", "{{.Name}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker volume ls: %v\n%s", err, volOut)
+	}
+	if len(volOut) == 0 {
+		t.Error("expected the deployment's data volumes to survive Remove, found none")
+	}
 }
 
 // TestLive_InstallPortConflictFailsCleanly is the failure-path live
@@ -383,69 +1167,267 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 
 	binPath := binaryPath(t)
 	dir := t.TempDir()
-	projectName := filepath.Base(dir)
-	t.Cleanup(func() { dockerComposeDown(projectName) })
+	// Isolated by its own project name, same as the happy path above.
+	t.Cleanup(func() { dockerComposeDown(t, dir) })
 
 	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
-	console := startLive(t, binPath, dir)
-
-	must := func(s string) {
-		t.Helper()
-		if _, err := console.ExpectString(s); err != nil {
-			t.Fatalf("expected %q: %v", s, err)
-		}
-	}
-	send := func(s string) {
-		t.Helper()
-		if _, err := console.Send(s); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
-	sendLine := func(s string) { send(s + "\r") }
-
-	must("Install")
-	sendLine("")
-	must("Choose a deployment profile")
-	sendLine("")
-	must("Ready to install")
-	sendLine("")
+	session := startLive(t, binPath, dir)
 
 	// The piped attempt's configuration refusal, then guided
-	// configuration — identical to the happy path up to here.
-	if _, err := console.Expect(expect.Regexp(regexp.MustCompile(
-		`Orbit needs your configuration|Installation stopped`))); err != nil {
-		t.Fatalf("expected the configuration prompt or failure screen after the piped attempt: %v", err)
-	}
-	sendLine("")
-
-	acceptMenusUntil(t, console, "Public Orbit origin")
-	sendLine(appURL)
-	must("OIDC issuer URL")
-	sendLine(testOIDCIssuer)
-	must("OIDC client ID")
-	sendLine("orbit-launcher-live-failure-test")
-	must("OIDC client secret")
-	sendLine("ci-live-failure-fake-secret")
-
-	// The deploy proceeds into compose and dies on the held port. The
-	// launcher's own failure screen — not a hang, not a fake success —
-	// is the contract, with its stacked menu present.
-	must("Installation stopped")
-	must("Menu")
+	// configuration — identical to the happy path. Then the deploy
+	// proceeds into compose and dies on the held port. The launcher's own
+	// failure screen — not a hang, not a fake success — is the contract,
+	// with its stacked menu present.
+	installThroughConsole(t, session, appURL, "orbit-launcher-live-failure-test", "ci-live-failure-fake-secret", "Install stopped")
+	session.must("Menu")
 
 	// Exit via the failure menu (guided installer, Menu, Exit).
-	send("\x1b[B")
-	send("\x1b[B")
-	send("\r")
+	session.send("\x1b[B")
+	session.send("\x1b[B")
+	session.send("\r")
 
 	// Nothing half-changed: no containers left running for this
 	// project. (Stopped/created remnants are compose implementation
 	// detail; running anything would be the real lie.)
-	psOut, err := exec.Command("docker", "ps", "--filter", "name="+projectName, "--format", "{{.Names}}").CombinedOutput()
+	// liveProjectName, deliberately, not composeProjectName: this
+	// install was meant to fail, and install.sh rolls its target back,
+	// so there is usually no .env-orbit left to read. The reader would
+	// fall back to "orbit" and this assertion would then report the
+	// host's own Orbit as wreckage from a failed install — which is
+	// what it did on the first live run of this file.
+	psOut, err := exec.Command("docker", "ps",
+		"--filter", "label=com.docker.compose.project="+liveProjectName(dir),
+		"--format", "{{.Names}}").CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker ps: %v\n%s", err, psOut)
 	}
 	if len(psOut) != 0 {
 		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
+	}
+}
+
+// The hang diagnosis only ever runs when a release-gate run has already
+// failed, which is the worst possible moment to discover it is broken.
+// This exercises it end to end against a real launcher process on a real
+// pty — no Docker needed, so it runs even when the rest of this file
+// skips — and proves the two things it promises: that the kernel state
+// is readable, and that a SIGQUIT dump actually reaches the transcript.
+func TestLive_HangDiagnosisProducesAGoroutineDump(t *testing.T) {
+	session := startLive(t, binaryPath(t), t.TempDir())
+
+	// A settled first frame, so the process is genuinely up and drawing
+	// before it is asked to account for itself.
+	session.must("Install")
+
+	if _, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(session.cmd.Process.Pid), "wchan")); err != nil {
+		t.Skipf("no readable /proc on this platform: %v", err)
+	}
+
+	session.diagnose("instrumentation self-test")
+
+	// The dump goes to the stderr file now, not down the pty (#158), so
+	// this asserts the artefact the freeze path actually depends on.
+	stderr, err := os.ReadFile(session.stderrPath)
+	if err != nil {
+		t.Fatalf("read launcher stderr log: %v", err)
+	}
+	if !strings.Contains(string(stderr), "goroutine ") {
+		t.Errorf("no goroutine dump in %s; got %d bytes", session.stderrPath, len(stderr))
+	}
+
+	if err := session.cmd.Wait(); err == nil {
+		t.Error("SIGQUIT should have terminated the launcher")
+	}
+}
+
+// TestDiagnose_FindsASessionDetachedDescendant is #158 itself. The
+// engine runs under Setsid, so it shares neither session nor process
+// group with the launcher. The old diagnosis ran `ps -p <launcher pid>`,
+// which lists that one pid and nothing else, and its empty output was
+// read as "no child processes listed" — a finding it never established,
+// which sent #157's investigation to the wrong place. Only the parent
+// link finds a detached child.
+func TestDiagnose_FindsASessionDetachedDescendant(t *testing.T) {
+	if _, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(os.Getpid()), "stat")); err != nil {
+		t.Skipf("no readable /proc on this platform: %v", err)
+	}
+
+	child := exec.Command("sleep", "60")
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := child.Start(); err != nil {
+		t.Fatalf("start detached child: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	})
+
+	found := descendants(os.Getpid())
+	if !slices.Contains(found, child.Process.Pid) {
+		t.Fatalf("descendants(%d) = %v, missing the detached child %d", os.Getpid(), found, child.Process.Pid)
+	}
+
+	table := processTable([]int{child.Process.Pid})
+	if !strings.Contains(table, "sleep 60") {
+		t.Errorf("processTable did not report the child's command:\n%s", table)
+	}
+	if !strings.Contains(table, strconv.Itoa(child.Process.Pid)) {
+		t.Errorf("processTable did not report the child's pid:\n%s", table)
+	}
+}
+
+// TestExpectWithin_TimeoutProducesTheHangDiagnosis drives
+// expectWithinErr into its timeout path with a short budget and requires
+// the two things that path promises: an error that says the wall clock
+// ran out, and the hang diagnosis run before it returns — seen here as
+// the SIGQUIT diagnose sends, which ends the child.
+//
+// It needs no Docker, network or the real launcher binary — just any
+// process on a real pty that keeps producing output. The child's tight
+// echo loop is deliberate: it keeps the virtual terminal writing,
+// scrolling and moving its cursor for the whole budget, which is when a
+// screen read and the emulator contend. Under go-expect the same loop
+// kept a reader parked in bufio.Reader.ReadRune and made a second reader
+// in diagnose panic ("slice bounds out of range"). Under Charm's vttest,
+// reading through Terminal.Snapshot deadlocked against the emulator's own
+// callbacks, and reading cell by cell starved behind the emulator's
+// writes (vtscreen.Screen says how). Each fails this test: the panic as
+// a panic, the deadlock as a wait that never returns, the starvation as
+// a last screen with no "tick" on it, which is how this test caught it.
+func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
+	term, err := vtscreen.New(80, 24, nil)
+	if err != nil {
+		t.Fatalf("create virtual terminal: %v", err)
+	}
+	t.Cleanup(func() { _ = term.Close() })
+
+	cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := term.Start(cmd); err != nil {
+		t.Fatalf("start noisy child: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	session := &liveSession{
+		t: t, term: term, cmd: cmd, budget: 2 * time.Second, screenBudget: 2 * time.Second,
+		stderrPath: filepath.Join(t.TempDir(), "child-stderr.log"),
+	}
+
+	_, err = session.expectWithinErr("waiting for something that never arrives", vtscreen.ContainsAny("this string never appears"))
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no match within") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "no match within")
+	}
+	if !strings.Contains(err.Error(), "tick") {
+		t.Errorf("error = %q, want it to carry the last screen", err.Error())
+	}
+
+	// diagnose ended the child with SIGQUIT before the error came back.
+	_ = cmd.Wait()
+	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGQUIT {
+		t.Errorf("child state = %v, want it ended by the diagnosis's SIGQUIT", cmd.ProcessState)
+	}
+}
+
+func TestCapBudgetLeavesRoomForCleanup(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		name     string
+		budget   time.Duration
+		deadline time.Time
+		want     time.Duration
+	}{
+		{"no deadline leaves the budget alone", 600 * time.Second, time.Time{}, 600 * time.Second},
+		{"a far deadline leaves the budget alone", 600 * time.Second, now.Add(time.Hour), 600 * time.Second},
+		{"a near deadline caps it to what is left before the reserve", 600 * time.Second, now.Add(cleanupReserve + 10*time.Second), 10 * time.Second},
+		{"a deadline inside the reserve leaves nothing", 600 * time.Second, now.Add(cleanupReserve - time.Second), 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := capBudget(c.budget, c.deadline, now); got != c.want {
+				t.Errorf("capBudget(%s, %v, now) = %s, want %s", c.budget, c.deadline.Sub(now), got, c.want)
+			}
+		})
+	}
+}
+
+// TestExpectWithin_FailsBeforeTheTestDeadline proves a wait gives up while
+// there is still time for t.Cleanup to take the stack down, rather than
+// running into go test's -timeout, which runs no cleanups. Same noisy child
+// as the hang-diagnosis test, so the wait has a live screen to watch. Both
+// cases would wait the full minute without the cap; 30 s is half of that.
+func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		deadline    time.Duration // from now
+		stderr      bool
+		wantSubs    []string
+		wantSIGQUIT bool
+	}{
+		{
+			// capBudget leaves nothing, so the wait fails at once; the only
+			// time spent is diagnose's dump wait, which the sh child never
+			// answers, and its SIGQUIT is the proof the diagnosis ran.
+			name: "reserve already spent", deadline: cleanupReserve - time.Second, stderr: true,
+			wantSubs: []string{"test deadline is within"}, wantSIGQUIT: true,
+		},
+		{
+			// capBudget leaves 1 s, so the wait really times out and the
+			// error must say the budget was cut, not that it was 1 s.
+			name: "reserve about to be spent", deadline: cleanupReserve + time.Second,
+			wantSubs: []string{"no match within", "cleanup before the test deadline"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			term, err := vtscreen.New(80, 24, nil)
+			if err != nil {
+				t.Fatalf("create virtual terminal: %v", err)
+			}
+			t.Cleanup(func() { _ = term.Close() })
+
+			cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+			if err := term.Start(cmd); err != nil {
+				t.Fatalf("start noisy child: %v", err)
+			}
+			t.Cleanup(func() {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			})
+
+			session := &liveSession{
+				t: t, term: term, cmd: cmd, budget: time.Minute, screenBudget: time.Minute,
+				deadline: time.Now().Add(c.deadline),
+			}
+			if c.stderr {
+				session.stderrPath = filepath.Join(t.TempDir(), "child-stderr.log")
+			}
+
+			start := time.Now()
+			_, err = session.expectWithinErr("waiting for something that never arrives", vtscreen.ContainsAny("this string never appears"))
+			if elapsed := time.Since(start); elapsed >= 30*time.Second {
+				t.Errorf("the wait took %s; the deadline cap should have ended it well before the minute", elapsed.Round(100*time.Millisecond))
+			}
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			for _, want := range c.wantSubs {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+				}
+			}
+			if c.wantSIGQUIT {
+				_ = cmd.Wait()
+				status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+				if !ok || !status.Signaled() || status.Signal() != syscall.SIGQUIT {
+					t.Errorf("child state = %v, want it ended by the diagnosis's SIGQUIT", cmd.ProcessState)
+				}
+			}
+		})
 	}
 }

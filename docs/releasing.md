@@ -1,74 +1,62 @@
 # Releasing
 
-orbit-launcher ships through three lanes — `develop`, `preview`,
-`main` — mirroring [orbit](https://github.com/tomlawesome/orbit)'s own
-branch-protection model, adapted from container-image promotion to
-binary releases. Nothing is rebuilt between lanes: the exact bytes
-tested on preview are the exact bytes promoted to stable.
+This repo no longer builds or publishes launcher programs. Orbit builds,
+signs and ships the launcher with each Orbit release, pinned to a tag from
+here so the two versions match.
 
-## The lanes
+## What stays here
 
-### `develop` — integration
+- **Source, tags and CI.** Changes reach `dev` by merge request on GitLab.
+  The checks that must pass before a merge are:
+  - `classify`, which spots changes that touch only documentation and lets
+    the heavy checks skip themselves;
+  - `fast`: `gofmt`, `go vet`, `go build`, `shellcheck` and `bats` on the
+    bootstrap script, `staticcheck`, and `go test -race ./...` (unit tests,
+    in-memory TUI tests, and real-terminal tests against the built program,
+    read through Charm's `x/vt` terminal emulator);
+  - `deps`, the dependency and licence policy;
+  - `gitleaks`, the secret scan;
+  - `visual`, screenshot checks, run when the screens, the visual tests or `.gitlab-ci.yml` change;
+  - `live`, a real install. It runs when asked for (a merge-request label
+    or a hand-started pipeline) and when a change moves the pins it
+    installs with.
 
-Feature branches (`codex/issue-N-description`) merge here via PR. Every
-PR runs the full CI suite: `gofmt`, `go vet`, `go build`, `shellcheck`
-on the bootstrap script, `bats` against it, `staticcheck`, planning
-governance, and `go test -race ./...` (unit tests, `teatest`
-in-memory TUI tests, and real-PTY `go-expect` tests against the actual
-compiled binary). CodeQL and the dependency/licence policy check also
-run on every PR.
+  CodeQL runs only on the GitHub mirror.
+- **Version tags.** [`tools/calculateversion`](../tools/calculateversion)
+  reads the highest existing `vMAJOR.MINOR.PATCH` git tag and adds one to
+  the minor number (or, with `--hotfix`, the patch number). Before any tag
+  exists, it starts at `0.1.0`. A tag here marks a source revision Orbit
+  can pin and build from. It does not publish a program itself.
+  The **release:version** button below always takes the minor step: CI has
+  no way to cut a patch (hotfix) tag yet.
 
-### `preview` — release candidate
+## Cutting a tag
 
-A "release train" PR from `develop` merges into `preview`. This runs
-the same CI suite again, then
-[`release-preview.yml`](../.github/workflows/release-preview.yml)
-builds real Linux amd64/arm64 archives with `goreleaser`, attests their
-build provenance, and publishes them as the GitHub Release tagged
-`preview-latest` — a mutable pre-release that always points at the
-newest commit on `preview`. Its version string embeds the exact commit
-SHA it was built from (e.g. `0.1.0-preview.<sha>`), so a preview build
-is always traceable back to source.
+Tags are made by a CI button, never by hand.
 
-`preview-latest` is what [the quickstart](../README.md#quickstart)
-points at before v1.0.0 ships, and what CI itself downloads to sanity
-check the bootstrap script end to end.
+1. Merge what the release needs into `dev` and wait for that `dev`
+   pipeline to go green.
+2. Open that pipeline on GitLab (the button only appears on `dev`
+   pipelines) and press **release:version**. It picks the next version
+   number. It stops if that tag already exists, if a higher tag already
+   exists, or if newer commits have landed on `dev` since. If it stops,
+   use the newest `dev` pipeline instead.
+3. **release:gitlab** runs by itself and creates the annotated tag
+   `v<version>` and its GitLab release at that commit, as whoever pressed
+   the button. GitLab's push mirror carries the tag to GitHub.
+4. In the Orbit repository, on its `dev` branch, move Orbit's pin to the
+   new tag with `scripts/bump-launcher-pin.sh v<version>`.
 
-### `main` — stable
+## What moved to Orbit
 
-A PR from `preview` into `main` carries a lane-specific gate: the
-`Verify tested preview for stable merge` job (only runs when the PR
-targets `main`) downloads the current `preview-latest` release assets
-and checksums them, refusing to pass unless what's being merged is
-what was actually built and shipped as a preview — code can't skip
-the preview lane and land on `main` untested.
+Orbit's own pipeline pins a launcher tag and commit, builds it, signs a
+manifest covering the launcher archives, the image digest and the install
+scripts, and attaches everything to Orbit's releases. Orbit's
+`get-orbit.sh` checks that signature before running the launcher.
 
-Once merged, promotion to a stable, immutable release is a separate,
-deliberate step — see below.
+`scripts/get-orbit-launcher.sh` in this repo downloads nothing any more.
+It points anyone using its old URL at Orbit's installer. See the
+[README](../README.md).
 
-## Promoting a stable release
-
-Promotion never rebuilds anything; it takes the exact archives already
-published as `preview-latest`, verifies their checksums and build
-provenance attestation, confirms the commit they were built from is
-now an ancestor of `main`, and republishes those same bytes under a
-real semantic-version tag (`vX.Y.Z`, read from the binary's own
-`--version` output).
-
-This runs as [`promote.yml`](../.github/workflows/promote.yml), a
-manual `workflow_dispatch` gated on the `production` GitHub
-Environment. That environment requires a reviewer to approve the run —
-this is the one step in the whole pipeline that is deliberately never
-automatic, matching orbit's own model of a human accepting a specific,
-already-tested build before it becomes the thing people install by
-default.
-
-## Version numbers
-
-[`tools/calculateversion`](../tools/calculateversion) reads the
-highest existing stable `vMAJOR.MINOR.PATCH` git tag and increments
-minor (or, with `--hotfix`, patch) for the next release train; before
-any stable tag exists, the baseline is `0.1.0`. `release-preview.yml`
-appends a `-preview.<sha>` suffix to that for pre-release builds. A
-stable release tag is exactly `v<version>` with no suffix, and is only
-ever created by `promote.yml`.
+Background: Orbit issue ai/orbit#1107 and Orbit ADR-0031 made this change
+here (#171). The tag button came with #178.

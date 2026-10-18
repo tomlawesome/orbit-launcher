@@ -4,9 +4,23 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
+
+// setScriptFetchTimeout swaps the shared fetch client for one with a short
+// deadline and returns the restore function.
+func setScriptFetchTimeout(t *testing.T, d time.Duration) func() {
+	t.Helper()
+	prev := scriptFetchClient
+	scriptFetchClient = &http.Client{Timeout: d}
+	return func() { scriptFetchClient = prev }
+}
 
 func TestFetchInstallScript_ReturnsBodyOnSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +96,7 @@ func TestFetchInstallScript_URLOverrideRedirectsAwayFromOrbitMain(t *testing.T) 
 	}))
 	defer srv.Close()
 
-	t.Setenv("ORBIT_LAUNCHER_INSTALL_SCRIPT_URL", srv.URL)
+	t.Setenv(InstallScriptURLEnv, srv.URL)
 
 	body, err := FetchInstallScript(context.Background())
 	if err != nil {
@@ -90,5 +104,181 @@ func TestFetchInstallScript_URLOverrideRedirectsAwayFromOrbitMain(t *testing.T) 
 	}
 	if !strings.Contains(string(body), "from-override") {
 		t.Errorf("body = %q, want the overridden server's content, not orbit's real main branch", body)
+	}
+}
+
+func TestFetchInstallScript_PathOverrideSkipsTheNetworkEntirely(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no HTTP request should be made when " + InstallScriptPathEnv + " is set")
+	}))
+	defer srv.Close()
+
+	t.Setenv(InstallScriptURLEnv, srv.URL)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\necho from-local-file\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv(InstallScriptPathEnv, path)
+
+	body, err := FetchInstallScript(context.Background())
+	if err != nil {
+		t.Fatalf("FetchInstallScript: %v", err)
+	}
+	if !strings.Contains(string(body), "from-local-file") {
+		t.Errorf("body = %q, want the local file's content", body)
+	}
+}
+
+func TestFetchInstallScript_PathOverrideRefusesAMissingFile(t *testing.T) {
+	t.Setenv(InstallScriptPathEnv, filepath.Join(t.TempDir(), "does-not-exist.sh"))
+
+	_, err := FetchInstallScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for a missing " + InstallScriptPathEnv)
+	}
+}
+
+func TestFetchInstallScript_PathOverrideRefusesAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\n"), 0o000); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions don't block reads")
+	}
+	t.Setenv(InstallScriptPathEnv, path)
+
+	_, err := FetchInstallScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an unreadable " + InstallScriptPathEnv)
+	}
+}
+
+func TestFetchInstallScript_PathOverrideRefusesAnEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "install.sh")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv(InstallScriptPathEnv, path)
+
+	_, err := FetchInstallScript(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an empty " + InstallScriptPathEnv)
+	}
+}
+
+func TestFetchInstallScript_UnsetPathKeepsDownloading(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Write([]byte("#!/usr/bin/env bash\necho from-network\n"))
+	}))
+	defer srv.Close()
+
+	t.Setenv(InstallScriptURLEnv, srv.URL)
+
+	body, err := FetchInstallScript(context.Background())
+	if err != nil {
+		t.Fatalf("FetchInstallScript: %v", err)
+	}
+	if !hit {
+		t.Error("expected the launcher to fall back to downloading when the path override is unset")
+	}
+	if !strings.Contains(string(body), "from-network") {
+		t.Errorf("body = %q, want the downloaded content", body)
+	}
+}
+
+// A server that accepts the connection and never answers is what a
+// firewalled or black-holed network looks like from the launcher's side
+// (#147). The fetch must give up on its own: the UI calls it with a
+// background context, so nothing else will.
+func TestFetchInstallScript_GivesUpWhenTheServerNeverAnswers(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	restore := setScriptFetchTimeout(t, 100*time.Millisecond)
+	defer restore()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := fetchInstallScript(context.Background(), srv.URL)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a timeout error, got nil")
+		}
+		if !strings.Contains(err.Error(), "did not answer") {
+			t.Fatalf("error should say the server did not answer, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fetch is still waiting after 2s: it has no deadline of its own")
+	}
+}
+
+func TestFetchInstallScript_RefusesAnUnbuildableURL(t *testing.T) {
+	_, err := fetchInstallScript(context.Background(), "http://bad\x7fhost/install.sh")
+	if err == nil || !strings.Contains(err.Error(), "build request") {
+		t.Fatalf("expected a build-request error, got %v", err)
+	}
+}
+
+// A connection that drops part-way must fail outright: running the first
+// half of install.sh is worse than running none of it.
+func TestFetchInstallScript_TruncatedBodyIsNeverReturned(t *testing.T) {
+	body, err := fetchInstallScript(context.Background(), truncatedBodyServer(t))
+	if err == nil || !strings.Contains(err.Error(), "read install.sh") {
+		t.Fatalf("expected a read error, got %v", err)
+	}
+	if body != nil {
+		t.Errorf("a truncated fetch returned %q; want nothing", body)
+	}
+}
+
+// A refused connection is worded as a fetch failure, not as the timeout
+// sentence: the person needs the real reason.
+func TestFetchInstallScript_RefusedConnectionKeepsTheRealReason(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+
+	_, err := fetchInstallScript(context.Background(), url)
+	if err == nil {
+		t.Fatal("expected an error for a closed server")
+	}
+	if strings.Contains(err.Error(), "did not answer") {
+		t.Errorf("a refused connection was reported as a timeout: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fetch install.sh") {
+		t.Errorf("error should name what failed, got: %v", err)
+	}
+}
+
+// #219: testutil cannot import deploy, so it types the install.sh
+// override's name itself. Were the two to drift apart, CountingScriptSource
+// would count requests nobody sends, and every "nothing was fetched"
+// assertion built on it would pass whatever the code fetched. A fetch
+// with the source in place must reach it.
+func TestCountingScriptSource_IsWhereFetchInstallScriptFetches(t *testing.T) {
+	t.Setenv(InstallScriptPathEnv, "") // a local copy would skip the fetch
+	requests := testutil.CountingScriptSource(t)
+
+	_, err := FetchInstallScript(t.Context())
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("FetchInstallScript made %d request(s) to testutil's counting source, want 1: the override it sets is not the one deploy reads", n)
+	}
+	if err != nil {
+		t.Errorf("FetchInstallScript: %v", err)
 	}
 }
