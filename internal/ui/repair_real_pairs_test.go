@@ -237,7 +237,7 @@ func TestFindingLine_WordsForTheThreeUnwordedClasses(t *testing.T) {
 	words := map[string]string{
 		"configuration-migration-interrupted":  "a configuration change was interrupted",
 		"document-volume-retained-without-key": "document data kept but its encryption key is gone",
-		"database-schema-mismatch":             "migrated by a different Orbit build",
+		"database-schema-mismatch":             "migrated by a different Orbit version",
 	}
 	for class, want := range words {
 		got := ansi.Strip(findingLine(engine.Finding{Class: class, Target: "database", Severity: "warn"}))

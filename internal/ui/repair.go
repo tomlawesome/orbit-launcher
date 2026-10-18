@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -937,7 +940,9 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 	}
 
 	for _, p := range m.planActions {
-		fmt.Fprintln(b, planLine(p))
+		for _, row := range planRows(p, m.width) {
+			fmt.Fprintln(b, row)
+		}
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
@@ -952,25 +957,72 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous())))
 }
 
-// planLine renders one proposed action: the action in plain words and
-// what it resolves, with the backup requirement when the contract
-// demands one. The mutation class is deliberately not repeated — the
-// action words already carry it, and every line must hold inside 80
-// cells (the cell-truth bar). Unknown enum values render verbatim.
-// Plan mode's stdout carries no separate finding lines, so the
-// resolves class is the reader's only pointer at the underlying
-// problem — always shown.
+// planLine renders one proposed action on one row: the action in plain
+// words and what it resolves, with the backup requirement when the
+// contract demands one. The mutation class is deliberately not repeated
+// — the action words already carry it. Unknown enum values render
+// verbatim. Plan mode's stdout carries no separate finding lines, so the
+// resolves class is the reader's only pointer at the underlying problem
+// — always shown. The screen draws it with planRows, which wraps.
 func planLine(p engine.PlanAction) string {
+	return planRows(p, math.MaxInt)[0]
+}
+
+// planRows is planLine laid out for a screen width cells wide: a line
+// too long for the row wraps as wrapWords does, its continuation rows
+// indented under the text after the glyph, so it is never cut at the
+// edge and "backup first" stays on screen. The action words keep their
+// ink on whichever rows they land.
+func planRows(p engine.PlanAction, width int) []string {
 	glyph := style.AccentText.Render(style.SymbolQueued)
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
+	// The glyph and its space take two cells off the row.
+	lines := wrapWords(planText(p), width-2)
+	// The action words lead the text; wrapWords drops only the space at
+	// each break, so each row's ink is what it shares with the action
+	// words not yet drawn (matched, not counted, as an unknown action
+	// comes verbatim and cleaning may change it).
+	ink := actionWords(p.Action)
+	rows := make([]string, len(lines))
+	for i, line := range lines {
+		lead := "  "
+		if i == 0 {
+			lead = glyph + " "
+		}
+		n := 0
+		for n < len(line) && n < len(ink) && line[n] == ink[n] {
+			n++
+		}
+		for n > 0 && n < len(line) && !utf8.RuneStart(line[n]) {
+			n--
+		}
+		rows[i] = lead + style.Ink.Render(line[:n]) + style.Tagline.Render(line[n:])
+		ink = strings.TrimPrefix(ink[n:], " ")
+		if n == 0 {
+			ink = ""
+		}
+	}
+	// Every row is centred on its own, so pad a wrapped line's rows to
+	// one width: their left edges then align and the indent shows.
+	blockWidth := 0
+	for _, row := range rows {
+		blockWidth = max(blockWidth, lipgloss.Width(row))
+	}
+	for i, row := range rows {
+		rows[i] = row + strings.Repeat(" ", blockWidth-lipgloss.Width(row))
+	}
+	return rows
+}
+
+// planText is a plan line's words after its glyph, unstyled.
+func planText(p engine.PlanAction) string {
 	context := planReasonWords(p.Action, p.Resolves)
 	if p.Backup == "required" {
 		context += style.Separator + "backup first"
 	}
-	return glyph + " " + style.Ink.Render(actionWords(p.Action)) +
-		style.Tagline.Render(" — "+context)
+	return actionWords(p.Action) + " — " + context
 }
 
 // manualStepWords is a manual step's guidance without the engine's
@@ -993,6 +1045,8 @@ func planReasonWords(action, class string) string {
 	switch class {
 	case "database-unreachable", "database-credential-mismatch":
 		noun, lead = "database", "the database"
+	case "database-schema-mismatch":
+		noun, lead = "database", "the database was"
 	case "application-unhealthy":
 		noun, lead = "application", "the application"
 	case "stale-container":
@@ -1152,6 +1206,12 @@ func classWords(class string) string {
 		return "unreadable or structurally broken"
 	case "staging-evidence-present":
 		return "an interrupted install left staging behind"
+	case "configuration-migration-interrupted":
+		return "a configuration change was interrupted"
+	case "document-volume-retained-without-key":
+		return "document data kept but its encryption key is gone"
+	case "deployment-version-unsupported":
+		return "no valid recorded Orbit version"
 	case "compose-interpolation-failed":
 		return "compose files don't resolve"
 	case "docker-unavailable":
@@ -1179,6 +1239,8 @@ func classWords(class string) string {
 		return "a migration failed"
 	case "image-identity-mismatch":
 		return "image identity doesn't match the record"
+	case "database-schema-mismatch":
+		return "migrated by a different Orbit version"
 	default:
 		return class
 	}
