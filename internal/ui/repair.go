@@ -941,7 +941,11 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
-			fmt.Fprintln(b, style.Tagline.Render(step))
+			// The engine's guidance is unsized prose with a machine tag
+			// on the end: drop the tag (the plan line above already
+			// names the problem) and wrap the rest, so it is never cut
+			// at the screen's edge (#253).
+			writeWrapped(b, style.Tagline, manualStepWords(step), measure(m.width, proseWidth))
 		}
 	}
 	fmt.Fprintln(b)
@@ -961,12 +965,49 @@ func planLine(p engine.PlanAction) string {
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
-	context := classWords(p.Resolves)
+	context := planReasonWords(p.Action, p.Resolves)
 	if p.Backup == "required" {
 		context += style.Separator + "backup first"
 	}
 	return glyph + " " + style.Ink.Render(actionWords(p.Action)) +
 		style.Tagline.Render(" — "+context)
+}
+
+// manualStepWords is a manual step's guidance without the engine's
+// trailing "(resolves=<class>)" tag, which is protocol, not words.
+func manualStepWords(step string) string {
+	if i := strings.LastIndex(step, "(resolves="); i >= 0 && strings.HasSuffix(step, ")") {
+		step = strings.TrimSpace(step[:i])
+	}
+	return step
+}
+
+// planReasonWords is what a plan line resolves, with its subject named.
+// A finding line puts its target before classWords ("database — can't
+// be reached"); a plan line has none, so a class whose words lack a
+// subject gets one (#253) — unless the action already names it
+// ("rotate database credentials"), where repeating it would only push
+// the line past 80 cells.
+func planReasonWords(action, class string) string {
+	var subject, words string
+	switch class {
+	case "database-unreachable":
+		subject, words = "database", "the database can't be reached"
+	case "database-credential-mismatch":
+		subject, words = "database", "the database rejects the stored credentials"
+	case "application-unhealthy":
+		subject, words = "application", "the application reports unhealthy"
+	case "stale-container":
+		subject, words = "container", "a container runs an older image than configured"
+	case "secret-missing":
+		subject, words = "secret", "a secret is absent or empty"
+	default:
+		return classWords(class)
+	}
+	if strings.Contains(actionWords(action), subject) {
+		return classWords(class)
+	}
+	return words
 }
 
 // actionWords maps plan action classes to plain words.
