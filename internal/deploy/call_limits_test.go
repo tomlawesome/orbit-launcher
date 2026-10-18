@@ -294,7 +294,7 @@ func TestRunConfigCheck_CancelStopsTheChecksChildren(t *testing.T) {
 func TestStandDown_GivesUpAtItsOwnLimitWhenDockerHangs(t *testing.T) {
 	pidFile := hangingDockerOnPath(t)
 	setStandDownTimeout(t, 200*time.Millisecond)
-	dir := t.TempDir()
+	dir := trustedDeployment(t)
 
 	done := make(chan error, 1)
 	go func() { done <- StandDown(context.Background(), dir) }()

@@ -340,7 +340,7 @@ func TestEngineRun_DefaultPrepareStopsWhenCancelled(t *testing.T) {
 	cancel()
 	ready := defaultPrepareEngine(ctx, t.TempDir(), "install")
 	if ready.stream != nil {
-		t.Cleanup(ready.stream.Kill)
+		t.Cleanup(func() { ready.stream.Kill() })
 		t.Fatal("a cancelled preparation still started the engine")
 	}
 	if !errors.Is(ready.err, context.Canceled) {

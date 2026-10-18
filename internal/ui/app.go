@@ -71,6 +71,10 @@ type AppModel struct {
 	// real entry point asks for it, an in-memory teatest run does not.
 	altScreen bool
 
+	// exitNote is a Ctrl-C stop's last word, kept for main to print
+	// once the screen has closed (ExitNote).
+	exitNote string
+
 	// flowSend is how a flow's engine stream reader gets its output
 	// back into the event loop (#159). cmd/orbit-launcher supplies the
 	// running program's Send; a test either supplies its own or gets a
@@ -260,9 +264,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ExitNote is the warning that a Ctrl-C stop ended the installer before
+// it finished undoing its work; empty otherwise.
+func (m AppModel) ExitNote() string { return m.exitNote }
+
 // watchOutcome moves the app forward when a flow's engine run
 // concludes: the shared success screen, or back to the menu.
 func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	// Before the Done check: a stop quits without ever setting Done.
+	if o.ExitNote != "" {
+		m.exitNote = o.ExitNote
+	}
 	if !o.Done {
 		return m, cmd
 	}

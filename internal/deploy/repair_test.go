@@ -124,13 +124,61 @@ func TestRepairCommand_MissingTargetDirectoryIsNoDeployment(t *testing.T) {
 	}
 }
 
-// The deployment is what the env file says it is: without one, a
-// scripts/repair.sh lying around does not make a deployment.
-func TestRepairCommand_ScriptWithoutEnvFileIsNoDeployment(t *testing.T) {
-	dir := t.TempDir()
-	scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o700})
-	if _, err := RepairCommand(dir, RepairPlan); !errors.Is(err, ErrNoDeployment) {
-		t.Fatalf("err = %v, want ErrNoDeployment", err)
+// Owner decision 19a (2026-10-17): when scripts/repair.sh is present and
+// trusted, the script decides whether this is an Orbit directory. The
+// missing env file is exactly what repair diagnoses, so it must not stop
+// the script from running. This reverses the #237 rule that a
+// scripts/repair.sh lying around does not make a deployment; the old test
+// of that name asserted ErrNoDeployment and is replaced by this one.
+func TestRepairCommand_ScriptWithoutEnvFileRunsTheScript(t *testing.T) {
+	const script = "#!/usr/bin/env bash\n"
+	cases := []struct {
+		name    string
+		secrets bool
+	}{
+		{name: "script only"},
+		{name: "script and an empty secrets directory", secrets: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			scriptTree(t, dir, 0o755, testutil.File{Path: "scripts/repair.sh", Body: script, Mode: 0o700})
+			if tc.secrets {
+				if err := os.Mkdir(filepath.Join(dir, ".orbit-secrets"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				chmod(t, filepath.Join(dir, ".orbit-secrets"), 0o700)
+			}
+			requests := testutil.CountingScriptSource(t)
+
+			for _, mode := range []RepairMode{RepairCheck, RepairPlan, RepairExecuteSafe, RepairExecuteDangerous} {
+				cmd, err := RepairCommand(dir, mode)
+				if err != nil {
+					t.Errorf("mode %v: err = %v, want <nil>", mode, err)
+					continue
+				}
+				if cmd == nil {
+					t.Errorf("mode %v: no command returned", mode)
+					continue
+				}
+				want := append([]string{"bash", "scripts/repair.sh"}, strings.Fields(string(mode))...)
+				if strings.Join(cmd.Args, "\x00") != strings.Join(want, "\x00") {
+					t.Errorf("mode %v: args = %v, want %v", mode, cmd.Args, want)
+				}
+				if cmd.Dir != dir {
+					t.Errorf("mode %v: dir = %q, want %q", mode, cmd.Dir, dir)
+				}
+			}
+			if n := requests.Load(); n != 0 {
+				t.Errorf("made %d HTTP requests; it must fetch nothing", n)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, EnvFile)); !os.IsNotExist(err) {
+				t.Errorf("%s was created or is otherwise present (err = %v); nothing may be fabricated", EnvFile, err)
+			}
+			if got, _ := os.ReadFile(filepath.Join(dir, "scripts", "repair.sh")); string(got) != script {
+				t.Errorf("repair.sh was changed: %q", got)
+			}
+		})
 	}
 }
 

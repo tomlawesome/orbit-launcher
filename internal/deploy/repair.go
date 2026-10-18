@@ -22,8 +22,9 @@ import (
 // script's own contract, contract-tested orbit-side).
 
 // ErrNoDeployment means there is no Orbit deployment in the directory
-// at all (no .env-orbit): the caller's cue for the shared no-deployment
-// screen rather than "diagnosis unavailable" (#237).
+// at all (neither .env-orbit nor scripts/repair.sh): the caller's cue
+// for the shared no-deployment screen rather than "diagnosis
+// unavailable" (#237).
 var ErrNoDeployment = errors.New("no Orbit deployment here (no " + EnvFile + ")")
 
 // ErrRepairUnavailable means the deployment has no scripts/repair.sh —
@@ -36,20 +37,29 @@ var ErrRepairUnavailable = errors.New("this deployment has no repair diagnosis (
 const repairScript = "repair.sh"
 
 // RepairCommand builds one repair run against the deployment's own
-// scripts/repair.sh. No deployment in the directory is ErrNoDeployment
-// (checked first, so diagnosis and rotation both get it); an absent
-// script is ErrRepairUnavailable; one on a path RequireTrustedPath
-// refuses is an UntrustedPathError. There is no fallback to any other
-// copy.
+// scripts/repair.sh. An absent script is ErrNoDeployment when there is
+// no .env-orbit either, else ErrRepairUnavailable; one on a path
+// RequireTrustedPath refuses is an UntrustedPathError. There is no
+// fallback to any other copy.
+//
+// A trusted scripts/repair.sh runs even without .env-orbit: the
+// script's own Step 0 is deliberately looser than Detect (any of
+// .env-orbit, docker-compose.yml, .orbit-secrets or installer staging
+// counts), so a deployment that lost its env file is diagnosed and
+// restored rather than refused, and its exit 5 reaches the same
+// no-deployment screen (ui maps engine.ExitNotInstalled).
 func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
 	d, err := Detect(targetDir)
 	if err != nil {
 		return nil, fmt.Errorf("read the deployment: %w", err)
 	}
-	if d == nil {
-		return nil, ErrNoDeployment
-	}
 	if err := requireScript(targetDir, repairScript, ErrRepairUnavailable); err != nil {
+		// No script and no env file is no deployment at all (#237);
+		// no script beside an env file is a deployment too old for
+		// repair. Any other lookup or trust failure is returned as is.
+		if d == nil && errors.Is(err, ErrRepairUnavailable) {
+			return nil, ErrNoDeployment
+		}
 		return nil, err
 	}
 	return BuildRepairCommand(targetDir, mode), nil

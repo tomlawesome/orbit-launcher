@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,10 +75,14 @@ func TestRepairModel_TeaTest_HealthyDiagnosis(t *testing.T) {
 	m.prepareRepair = fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`)
 	tm := newRepairTestModel(t, m, 80, 24)
 
+	// Read the screen, not the byte stream: the renderer skips cells that
+	// did not change, and "nothing will be changed" ends in the same "ed"
+	// at the same column, so the raw stream can lack the whole phrase.
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Diagnosis clear")) &&
-			bytes.Contains(out, []byte("13 checked · 0 skipped")) &&
-			!bytes.Contains(out, []byte("repair actions arrive"))
+		s := screenOf(out, 80, 24)
+		return strings.Contains(s, "Diagnosis clear") &&
+			strings.Contains(s, "13 checked · 0 skipped") &&
+			!strings.Contains(s, "repair actions arrive")
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})

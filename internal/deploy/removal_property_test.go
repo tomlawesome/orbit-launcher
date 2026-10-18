@@ -86,7 +86,7 @@ func isExecCall(call *ast.CallExpr) bool {
 func TestStandDown_NeverPassesTheVolumeFlag(t *testing.T) {
 	callLog := fakeDockerLogging(t)
 
-	if err := StandDown(t.Context(), "/tmp/some-orbit-deployment"); err != nil {
+	if err := StandDown(t.Context(), trustedDeployment(t)); err != nil {
 		t.Fatalf("StandDown: %v", err)
 	}
 

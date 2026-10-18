@@ -76,6 +76,8 @@ type flowOutcome struct {
 	WantsMenu bool
 	URL       string
 	Elapsed   time.Duration
+	// ExitNote is printed by main after the screen closes.
+	ExitNote string
 }
 
 // backToMenu is leaving a flow for the main menu before anything has
@@ -91,6 +93,7 @@ func outcomeOf(r engineRun) flowOutcome {
 		WantsMenu: r.WantsMenu,
 		URL:       r.URL,
 		Elapsed:   r.Elapsed,
+		ExitNote:  r.exitNote,
 	}
 }
 
@@ -179,6 +182,11 @@ type engineRun struct {
 	lastFailed    *engine.Event
 	stderrTail    []string
 	runErr        error
+
+	// exitNote is set only when the launcher killed an installer that
+	// was still undoing its work; main prints it after the screen closes
+	// and exits 1. Empty means a clean stop, or no stop.
+	exitNote string
 
 	// menu is the cursor on whichever post-run screen is showing; each
 	// screen names its own rows (configPromptMenu, failedMenu).
@@ -610,12 +618,35 @@ func (r engineRun) beginStop() (engineRun, tea.Cmd) {
 // quitNow ends the run and the launcher, killing the engine first if
 // force is set (it is a no-op once the engine has been reaped).
 func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
+	killed := false
 	if r.stream != nil && force {
-		r.stream.Kill()
+		killed = r.stream.Kill()
+	}
+	// The alt screen is gone by the time anyone could read this, so the
+	// note rides out on the final model and main prints it. Only a kill
+	// that landed on a live installer earns the note: a second Ctrl-C or
+	// the grace timer can arrive after the installer has already exited
+	// by itself, and that stop was clean. The note is never overwritten:
+	// the killed installer's own DoneMsg can still be handled before the
+	// quit.
+	if killed && r.state == runStopping && r.exitNote == "" {
+		r.exitNote = forcedStopNote(r.action)
 	}
 	r.cfg.close()
 	r.releaseRunFiles()
 	return r, tea.Quit
+}
+
+// forcedStopNote is the owner's wording for a stop whose installer was
+// still undoing its work when the launcher ended it. A stopped update
+// says "before updating again" (decision 21a).
+func forcedStopNote(action deploy.Action) string {
+	again := "installing"
+	if action == deploy.ActionUpdate {
+		again = "updating"
+	}
+	return "the " + string(action) + " was stopped, but Orbit's installer was still undoing its work when the launcher stopped waiting and ended it. " +
+		"The folder and the Docker containers and volumes it created may be half restored — check them before " + again + " again."
 }
 
 // handleMenuKey drives a post-run screen's menu over items: Esc is back

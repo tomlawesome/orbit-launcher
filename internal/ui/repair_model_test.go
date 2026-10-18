@@ -66,7 +66,7 @@ func sleepingStream(t *testing.T) *engine.Stream {
 	if err != nil {
 		t.Fatalf("start sleep: %v", err)
 	}
-	t.Cleanup(s.Kill)
+	t.Cleanup(func() { s.Kill() })
 	return s
 }
 
@@ -1143,6 +1143,68 @@ func TestRepairModel_DeploymentWithoutTheScriptStillNeedsANewerOrbit(t *testing.
 	}
 }
 
+// Owner decision 19a: with a trusted scripts/repair.sh present, a missing
+// .env-orbit is something the script diagnoses, not a reason to show the
+// no-deployment screen.
+func TestRepairModel_ScriptWithoutEnvFileRunsTheDeploymentsScript(t *testing.T) {
+	m := sizedRepair(t) // real default seams
+	requests := deploymentRepair(t, m.targetDir, "#!/usr/bin/env bash\necho \"finding class=managed-file-missing target=environment-file severity=fail\"\necho \"diagnosis result=failed checked=1 skipped=0\"\nexit 4\n")
+	if err := os.Remove(filepath.Join(m.targetDir, deploy.EnvFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := m.Init()()
+	ready, ok := msg.(repairReadyMsg)
+	if !ok {
+		t.Fatalf("Init produced %#v, want a repairReadyMsg", msg)
+	}
+	if ready.stream != nil {
+		t.Cleanup(func() { ready.stream.Kill() })
+	}
+	if ready.err != nil {
+		t.Fatalf("err = %v, want <nil>", ready.err)
+	}
+	if ready.stream == nil {
+		t.Fatal("no stream: the deployment's script was not started")
+	}
+	m, _ = updateAs(t, m, msg)
+	s := screen(m)
+	if m.state == repairNotFound || m.state == repairUnavailable {
+		t.Fatalf("state = %v, want the script to run; screen:\n%s", m.state, s)
+	}
+	for _, wrong := range []string{"No Orbit deployment found", "needs a newer Orbit"} {
+		if strings.Contains(s, wrong) {
+			t.Errorf("screen says %q although the script is present:\n%s", wrong, s)
+		}
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("Repair made %d HTTP requests; it must fetch nothing", n)
+	}
+}
+
+// The credential rotation starts the same script, so it follows the same
+// rule.
+func TestDefaultPrepareRotate_ScriptWithoutEnvFileStartsTheSession(t *testing.T) {
+	dir := t.TempDir()
+	deploymentRepair(t, dir, "#!/usr/bin/env bash\nexit 0\n")
+	if err := os.Remove(filepath.Join(dir, deploy.EnvFile)); err != nil {
+		t.Fatal(err)
+	}
+	stream, stdin, err := defaultPrepareRotate(context.Background(), dir)
+	if stream != nil {
+		t.Cleanup(func() { stream.Kill() })
+	}
+	if stdin != nil {
+		t.Cleanup(func() { stdin.Close() })
+	}
+	if err != nil {
+		t.Fatalf("defaultPrepareRotate: err = %v, want <nil>", err)
+	}
+	if stream == nil || stdin == nil {
+		t.Fatalf("stream = %v, stdin = %v; want both non-nil", stream, stdin)
+	}
+}
+
 // Every way a repair starts goes through the same lookup, so a
 // rotation in an empty directory says the same thing.
 func TestDefaultPrepare_EmptyDirectoryIsNoDeployment(t *testing.T) {
@@ -1150,7 +1212,7 @@ func TestDefaultPrepare_EmptyDirectoryIsNoDeployment(t *testing.T) {
 	dir := t.TempDir()
 	if stream, err := defaultPrepareRepair(context.Background(), dir, deploy.RepairPlan); !errors.Is(err, deploy.ErrNoDeployment) {
 		if stream != nil {
-			t.Cleanup(stream.Kill)
+			t.Cleanup(func() { stream.Kill() })
 		}
 		t.Errorf("defaultPrepareRepair: err = %v, want deploy.ErrNoDeployment", err)
 	}
@@ -1218,7 +1280,7 @@ func TestDefaultPrepareRepair_CancelledBeforeTheStartStartsNothing(t *testing.T)
 	cancel()
 	stream, err := defaultPrepareRepair(ctx, dir, deploy.RepairPlan)
 	if stream != nil {
-		t.Cleanup(stream.Kill)
+		t.Cleanup(func() { stream.Kill() })
 		t.Fatal("a cancelled preparation still started the repair")
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -1234,7 +1296,7 @@ func TestDefaultPrepareRotate_CancelledBeforeTheStartStartsNothing(t *testing.T)
 	cancel()
 	stream, stdin, err := defaultPrepareRotate(ctx, dir)
 	if stream != nil {
-		t.Cleanup(stream.Kill)
+		t.Cleanup(func() { stream.Kill() })
 		if stdin != nil {
 			stdin.Close()
 		}

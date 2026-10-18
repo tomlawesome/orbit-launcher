@@ -274,7 +274,7 @@ func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 			`echo "prompt field=APP_URL kind=url required=true attempt=1"; sleep 30`))
 		if err == nil {
 			started = s
-			t.Cleanup(s.Kill)
+			t.Cleanup(func() { s.Kill() })
 		}
 		return s, stdin, err
 	})
