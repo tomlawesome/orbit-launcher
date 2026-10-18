@@ -178,6 +178,51 @@ func TestConfigCollect_HandoffPreparationFailureReplacesTheStaleRefusal(t *testi
 	}
 }
 
+// #251/#253: same stale refusal and stderr tail, but the guided
+// installer is prepared and RUNS, then exits with an error. The stopped
+// screen shows the handoff's own failure, not the earlier engine failure.
+func TestConfigCollect_FailedHandoffShowsItsOwnResultNotTheEarlierFailure(t *testing.T) {
+	const (
+		handoffErr = "install.sh: exit status 3"
+		refusal    = "configuration-failure"
+		stderrLine = "configure.sh: APP_URL is not set yet"
+	)
+	for action, title := range map[string]string{"install": "Install stopped", "update": "Update stopped"} {
+		t.Run(action, func(t *testing.T) {
+			t.Setenv(requireInConsoleEnv, "")
+			prepared := false
+			r := startedRun(t, action, handoffSeams(&prepared))
+			r, _ = runUpdate(t, r, engineReadyMsg{stream: &engine.Stream{C: make(chan any)}, configTree: t.TempDir()})
+			r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", refusal, "retry")})
+			r, cmd := runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"), StderrTail: []string{stderrLine}}})
+			if r.state != runConfigCollect || cmd == nil {
+				t.Fatalf("setup: state = %v, want the configuration session being prepared", r.state)
+			}
+			r, _ = runUpdate(t, r, cmd())
+			if r.state != runHandoffRunning {
+				t.Fatalf("setup: state = %v, want the terminal handoff; screen:\n%s", r.state, runScreen(r))
+			}
+
+			// Preparation succeeds and the installer runs...
+			r, cmd = runUpdate(t, r, installPreparedMsg{cmd: exec.Command("true"), cleanup: func() error { return nil }})
+			if cmd == nil {
+				t.Fatal("setup: no terminal handoff was started")
+			}
+			// ...then exits with an error.
+			r, _ = runUpdate(t, r, installFinishedMsg{err: errors.New(handoffErr)})
+			s := runScreen(r)
+			if r.state != runFailed || r.Succeeded || !strings.Contains(s, title) || !strings.Contains(s, handoffErr) {
+				t.Fatalf("state = %v, want %q showing the handoff's own failure %q; screen:\n%s", r.state, title, handoffErr, s)
+			}
+			for _, earlier := range []string{refusal, stderrLine} {
+				if strings.Contains(s, earlier) {
+					t.Errorf("the stopped screen shows the earlier %q instead of only the handoff's failure:\n%s", earlier, s)
+				}
+			}
+		})
+	}
+}
+
 func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	s := sleepingStream(t)
