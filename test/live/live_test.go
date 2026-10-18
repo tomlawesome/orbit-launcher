@@ -1029,9 +1029,14 @@ func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
 // does not turn OIDC on.
 func assertLocalAccountsDeployment(t *testing.T, dir string) {
 	t.Helper()
+	// Orbit leaves an empty placeholder here for Local accounts, because
+	// its Compose file names the path either way; only a non-empty file
+	// is a written secret.
 	secret := filepath.Join(dir, deploy.SecretsDir, "oidc-client-secret")
-	if _, err := os.Stat(secret); !os.IsNotExist(err) {
-		t.Errorf("a Local-accounts install left %s (stat err = %v)", secret, err)
+	if info, err := os.Stat(secret); err == nil && info.Size() > 0 {
+		t.Errorf("a Local-accounts install wrote an OIDC client secret to %s (%d bytes)", secret, info.Size())
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Errorf("stat %s: %v", secret, err)
 	}
 	env, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
 	if err != nil {
