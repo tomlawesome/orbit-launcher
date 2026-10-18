@@ -8,7 +8,3 @@ heading.
 ## TestDiagnose_FindsASessionDetachedDescendant (test/live)
 
 - 2026-10-06 · 9e15161 · local, 2 of about 25 runs alongside TestLive_HangDiagnosisProducesAGoroutineDump · fails only when run with the hang-diagnosis test; always passes alone
-
-## TestRepairModel_TeaTest_HealthyDiagnosis (internal/ui)
-
-- 2026-10-18 · 5c056ce · pipeline 2693 / job 37012 `fast` · WaitFor timed out at 5 s with "Diagnosis clear" already drawing; 20 of 20 local runs on the same commit pass
