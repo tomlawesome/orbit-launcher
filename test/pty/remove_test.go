@@ -2,35 +2,46 @@ package pty
 
 import (
 	"testing"
+	"time"
+
+	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
-func TestApp_RealPTY_NavigatingToRemoveShowsTheConfirmScreen(t *testing.T) {
-	binPath := buildBinary(t)
+func TestApp_RealPTY_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
+	// The launcher starts in test/pty, which holds no .env-orbit: there is
+	// no deployment, so Remove stops at its first screen with Menu only
+	// (#205, owner 5a), and Esc is one step back, to the menu (owner 4a).
+	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTY(t, binPath)
+	skipArrival(t, console)
 
-	if _, err := console.ExpectString("Install"); err != nil {
+	if err := console.expectString("Install"); err != nil {
 		t.Fatalf("did not see the menu: %v", err)
 	}
 
 	for i := 0; i < 3; i++ { // Install, Update, Repair, Remove
-		if _, err := console.Send("\x1b[B"); err != nil {
-			t.Fatalf("send Down: %v", err)
-		}
+		console.send("\x1b[B")
 	}
-	if _, err := console.ExpectString("▸ Remove"); err != nil {
+	if err := console.expectString("▸ Remove"); err != nil {
 		t.Fatalf("caret did not reach Remove: %v", err)
 	}
 
-	if _, err := console.Send("\r"); err != nil { // Enter
-		t.Fatalf("send Enter: %v", err)
-	}
-	if _, err := console.ExpectString("This stops Orbit and removes its containers"); err != nil {
-		t.Fatalf("did not reach the Remove confirm screen: %v", err)
+	console.send("\r") // Enter
+	if err := console.expectString("No Orbit deployment found in"); err != nil {
+		t.Fatalf("did not reach the no-deployment Remove screen: %v", err)
 	}
 
-	if _, err := console.Send("\x1b"); err != nil { // Escape cancels
-		t.Fatalf("send Escape: %v", err)
+	// The dead end's one row is Menu (#228), and a stray key does nothing.
+	if err := console.expectString("▸ Menu"); err != nil {
+		t.Fatalf("the no-deployment Remove screen did not offer Menu: %v", err)
+	}
+	console.send("x")
+	console.send("\x1b") // Escape is one step back: the menu
+	if err := console.expectWithin(10*time.Second, vtscreen.ContainsAll("Install", "Update", "Repair")); err != nil {
+		t.Fatalf("Escape did not return to the menu: %v", err)
 	}
 
+	console.send("\x03") // Ctrl-C quits from anywhere
 	waitForExit(t, cmd)
 }

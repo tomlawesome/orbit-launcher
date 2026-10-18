@@ -3,9 +3,13 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"time"
 )
 
 // installScriptURL points at orbit's stable line, not a moving
@@ -22,12 +26,80 @@ const installScriptURL = "https://raw.githubusercontent.com/tomlawesome/orbit/ma
 // script to run.
 const maxInstallScriptBytes = 1 << 20 // 1 MiB
 
+// scriptFetchTimeout bounds the install.sh download. The UI starts these
+// fetches with a background context and shows only the console clock
+// while it waits, so on a network that accepts the connection and never
+// answers the launcher sat there indefinitely (#147). install.sh is a few
+// tens of KB from a CDN: thirty seconds is generous, and past it the
+// person is better served by a failed screen that says so.
+const scriptFetchTimeout = 30 * time.Second
+
+// scriptFetchClient is the client install.sh's fetch goes through — the
+// only script the launcher ever downloads (repair.sh and the configuration
+// tree come from the deployment and from install.sh's handover, #190).
+// http.DefaultClient has no timeout at all.
+var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
+
 // FetchInstallScript downloads the current install.sh from orbit's stable
 // branch. It never touches disk or executes anything — see Install for
 // that — and is deliberately re-fetched every time rather than cached, so
 // a person always installs against the current, real script.
+//
+// ORBIT_LAUNCHER_INSTALL_SCRIPT_URL overrides the source URL. It exists
+// only so CI can run the real install flow against orbit's develop/preview
+// branches to catch drift before it reaches main; a real install never has
+// this set, so it always runs the same stable script a person would get.
+//
+// ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH points at a local install.sh instead
+// and takes priority over both the default URL and the override above: no
+// download happens at all. This is how Orbit's scripts/get-orbit.sh hands
+// the launcher the exact copy it already fetched and verified against
+// Orbit's signed manifest (ADR-0031) — a real install run through that
+// script always has this set, and FetchInstallScript never re-fetches
+// something already checked.
 func FetchInstallScript(ctx context.Context) ([]byte, error) {
-	return fetchInstallScript(ctx, installScriptURL)
+	if path := os.Getenv(InstallScriptPathEnv); path != "" {
+		return readInstallScriptFile(path)
+	}
+	url := installScriptURL
+	if override := os.Getenv(InstallScriptURLEnv); override != "" {
+		url = override
+	}
+	return fetchInstallScript(ctx, url)
+}
+
+// readInstallScriptFile loads install.sh from a local path instead of
+// downloading it. It refuses clearly rather than silently falling back to
+// a download: a caller that set the path is trusting this exact file, not
+// asking for best-effort.
+func readInstallScriptFile(path string) ([]byte, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read install script from %s=%s: %w", InstallScriptPathEnv, path, err)
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("install script at %s=%s is empty", InstallScriptPathEnv, path)
+	}
+	return body, nil
+}
+
+// fetchError words a transport failure for the failed screen. A deadline
+// hit is the one case a person can act on without reading the wrapped
+// error, so it gets its own sentence, naming limit: the time the fetch
+// was actually given (#207).
+func fetchError(what string, err error, limit time.Duration) error {
+	if errors.Is(err, context.DeadlineExceeded) || isClientTimeout(err) {
+		return fmt.Errorf("fetch %s: the server did not answer within %s — check the network and try again", what, limit)
+	}
+	return fmt.Errorf("fetch %s: %w", what, err)
+}
+
+// isClientTimeout recognises http.Client's own Timeout expiring, which it
+// reports as a url.Error with Timeout() true rather than as
+// context.DeadlineExceeded.
+func isClientTimeout(err error) bool {
+	var uerr *url.Error
+	return errors.As(err, &uerr) && uerr.Timeout()
 }
 
 func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {
@@ -36,9 +108,10 @@ func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	limit := limitApplied(ctx, scriptFetchClient.Timeout)
+	resp, err := scriptFetchClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch install.sh: %w", err)
+		return nil, fetchError("install.sh", err, limit)
 	}
 	defer resp.Body.Close()
 
@@ -51,10 +124,10 @@ func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("read install.sh: %w", err)
 	}
 	if len(body) > maxInstallScriptBytes {
-		return nil, fmt.Errorf("install.sh is larger than the %d byte limit; refusing to run an unexpectedly large script", maxInstallScriptBytes)
+		return nil, fmt.Errorf("install.sh is larger than the %d byte limit — refusing to run an unexpectedly large script", maxInstallScriptBytes)
 	}
 	if !bytes.HasPrefix(body, []byte("#!")) {
-		return nil, fmt.Errorf("fetched content does not look like a script (no shebang) — refusing to run it")
+		return nil, errors.New("fetched content does not look like a script (no shebang) — refusing to run it")
 	}
 
 	return body, nil

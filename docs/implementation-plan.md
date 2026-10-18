@@ -1,5 +1,18 @@
 # orbit-launcher implementation plan
 
+> **Historical record, noted 2026-10-05.** This was the original delivery
+> plan and is kept as written. Where it conflicts with the current docs,
+> they win. Superseded: the launcher binary and its bootstrap download
+> (1.1), the update check against GitHub Releases (1.3), the live test on
+> every push to `preview` (3.5), the branch and check set-up and Dependabot
+> (4.1), the preview and promote release pipeline (4.2), the Makefile,
+> `go-expect` and "wordmark in alive-green" lines, the Repair stub in
+> Wave 3, and the "immediate next steps" in section 7. The current
+> release process is in [releasing.md](releasing.md); GitLab and
+> `.gitlab-ci.yml` are the CI gate, and the live test runs when asked for
+> or when a change moves the pins it installs with. The module layout also omits `internal/engine` and `internal/notices`.
+
+
 ## Purpose
 
 orbit-launcher is a standalone, full-screen terminal application for
@@ -142,11 +155,10 @@ much this project's value is in *looking* right, not just working right.
 | Static | `go vet`, `staticcheck`, `golangci-lint`, `gofmt -l` | catch invalid patterns, unsafe code, style defects | first, parallel |
 | Unit | Go `testing` (`go test ./...`) | pure logic: starfield math, profile validation, compose-file selection, version parsing, state-machine transitions | first |
 | Component/message-flow | `charmbracelet/x/exp/teatest` | drive a `tea.Model` with synthetic key messages, assert rendered frames, without a real PTY | first, alongside unit |
-| Black-box PTY (Go's equivalent of `pexpect`) | `github.com/Netflix/go-expect` + `github.com/creack/pty` | spawn the **real compiled binary** under a real pty, send real keystrokes, assert on real terminal output | before merge to `develop` |
-| Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `develop`, gated to changes touching `internal/ui` or `internal/ui/style` |
+| Black-box PTY (Go's equivalent of `pexpect`) | `creack/pty` + Charm's `x/vt` terminal emulator, via `test/internal/vtscreen` (go-expect until #181) | spawn the **real compiled binary** under a real pty inside a virtual terminal, send real keystrokes, assert on the rendered screen | before merge to `dev` |
+| Visual regression | Playwright + `ttyd`/`gotty` (serves a real pty over a websocket) + `xterm.js` | render the actual TUI in a headless browser exactly as a person would see it, screenshot-diff the splash/menu/progress/completion screens | before merge to `dev`, gated to changes touching `internal/ui` or `internal/ui/style` |
 | Compose/deploy integration | Go `testing` + a disposable Docker context | prove profile selection produces a valid, `docker compose config`-verified compose file; prove stand-down actually stops what install started | before preview publication |
-| Real virtualized live install | matrix VM/container jobs, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end, on the Linux distros orbit-launcher actually targets | preview push (authoritative), release acceptance |
-| Multi-distro smoke | GitHub Actions matrix: `ubuntu-latest` plus a Debian container job (see 3.5) | binary actually runs, splash renders, `--version` correct | preview push |
+| Real virtualized live install | `ubuntu-latest` GitHub Actions job, real Docker, real network | prove an actual `curl \| bash` → Install → healthy Orbit deployment works end to end | preview push (authoritative), release acceptance |
 
 ### 3.1 Unit tests
 
@@ -167,12 +179,15 @@ volume.
 
 ### 3.3 Black-box PTY tests — Go's equivalent of pexpect
 
-`go-expect` + `creack/pty` gives the same capability pexpect is known for —
-spawn a real process under a real pty, expect-match on output, send real
-keystrokes — against the **actual compiled binary**, not a mocked model,
-while keeping the whole suite in one toolchain (`go test ./...` runs
-everything, no separate Python environment to provision). This is where
-"does Escape really cancel, does Ctrl-C really restore the terminal" gets
+`creack/pty` with Charm's `x/vt` terminal emulator (go-expect until
+#181; `test/internal/vtscreen`) gives the same
+capability pexpect is known for — spawn a real process under a real pty,
+wait for output, send real keystrokes — reading the screen a virtual
+terminal renders rather than the raw byte stream — against the **actual
+compiled binary**, not a mocked model, while keeping the whole suite in
+one toolchain (`go test ./...` runs everything, no separate Python
+environment to provision). This is where "does Escape really cancel,
+does Ctrl-C really restore the terminal" gets
 proven against the real thing, the same job the bash `script`-based tests
 already do for `orbit`'s existing installer (I have first-hand, very recent
 experience with exactly this category of test being subtle and worth
@@ -209,31 +224,46 @@ orbit-launcher runs *on the Linux server being managed* (SSH in, run it
 there — the same way `orbit`'s current installer is used today), not as a
 cross-platform desktop tool that reaches out to a remote host. It has no
 reason to run on Windows or macOS, because nobody deploys Orbit itself on
-those. Scope is Linux only:
+those. Scope is Linux only.
 
-- **Matrix**: `ubuntu-latest` (GitHub-hosted, Docker preinstalled) plus a
-  containerized Debian job (`debian:12`/`debian:13`, matching `orbit`'s own
-  CI-vs-Ubuntu distro-difference lesson from the #281 investigation —
-  don't assume Ubuntu-only behaviour is universal), running the **actual
-  bootstrap script** end-to-end against the **actual latest build artifact**
-  from that CI run (not a stub) — `curl`-equivalent, `Install` with a real
-  synthetic profile, wait for real health checks, assert the real HTTP
-  endpoint responds, then `Remove` and assert the containers are gone.
+**On a distro matrix, corrected from an earlier draft of this
+section**: a `ubuntu-latest` → `debian:12` container leg was built to
+also cover Debian in CI, matching `orbit`'s own CI-vs-Ubuntu
+distro-difference lesson from the #281 investigation. It was dropped
+(see issue #59, not wanted going forward): Docker-outside-of-Docker
+from inside a nested container hit a structural problem — bind-mounted
+volume paths resolve relative to the wrapper container's own
+filesystem, which the *host* daemon actually creating the containers
+can't see, so `docker compose up` failed before creating anything.
+Real Debian coverage doesn't need a second CI leg fighting
+container-nesting plumbing to prove: the mechanism was verified
+directly on a real Debian host, and via a locally-launched Ubuntu
+container on that same host with paths and networking aligned — a
+faster, cheaper, more direct answer than automating a second CI leg.
+`ubuntu-latest` alone is the CI-automated leg (Docker preinstalled, no
+nesting):
+
+- Runs the **actual bootstrap script** end-to-end against the **actual
+  latest build artifact** from that CI run (not a stub) —
+  `curl`-equivalent, `Install` with a real synthetic profile, wait for
+  real health checks, assert the real HTTP endpoint responds, then
+  `Remove` and assert the containers are gone.
 - Go still cross-compiles Linux `amd64` and `arm64` trivially (arm64
   matters for Raspberry Pi / NAS-class self-hosting, a real segment of
   Orbit's likely audience) — that's a build-target decision (4.2), separate
   from which platforms get live-tested here.
-- **Failure-path proof, not just happy-path**: at least one scenario per
-  wave that kills a dependency mid-install (stop Postgres between health
-  probes) and asserts the Failure screen's stated reason/action is accurate
-  and the rollback claim ("nothing on disk changed") is literally true —
-  same discipline as `orbit`'s negative-authorization-matrix and
+- **Failure-path proof, not just happy-path** (tracked as issue #57,
+  not yet built): at least one scenario that kills a dependency
+  mid-install (stop Postgres between health probes) and asserts the
+  Failure screen's stated reason/action is accurate and the rollback
+  claim ("nothing on disk changed") is literally true — same
+  discipline as `orbit`'s negative-authorization-matrix and
   recoverable-restore acceptance tests.
 
 This layer runs on every push to the protected `preview` branch
 (authoritative, matches `orbit`'s "protected preview push" gate exactly) and
 is available on-demand for pull requests via a label
-(`run-live-matrix`) to avoid burning the full matrix on every commit.
+(`run-live-matrix`) to avoid burning it on every commit.
 
 ### 3.6 Coverage policy
 
@@ -242,6 +272,55 @@ not gated on a global percentage until a measured baseline exists; then
 ratchet (never regress from measured baseline), with stronger expectations
 on `internal/deploy` (the code that touches a person's real containers and
 data) than on `internal/ui` rendering.
+
+**Gated since 2026-10-05 (#169).** The baseline exists now: per-package
+statement coverage, measured with `scripts/coverage.sh -race`, which merges
+the unit tests' counters with those of the compiled launcher run under a
+real pty by `test/pty` (section 3.3), then rounded DOWN to one decimal
+place. Floors live in `.github/coverage-floors.txt` (that file's own header
+has the full rules); `tools/coveragefloor` reads them and `coverage.out` and
+fails the `fast` job in `.gitlab-ci.yml` (and the mirrored step in
+`.github/workflows/ci.yml`) if a package drops below its floor, or if a
+floor names a package the profile no longer has. It is a ratchet, not a
+target: floors are never lowered to make a change pass, only raised,
+deliberately, to lock in a real improvement.
+
+The goal is meaningful coverage, not a number (owner, 2026-10-05): a test
+counts only if it would fail when the behaviour it names breaks, and the
+floors sit wherever that honest coverage lands.
+
+Measured baseline (per-package statement coverage, floor in brackets; two
+runs gave identical figures):
+
+| Package | Coverage | Floor |
+| --- | --- | --- |
+| `cmd/orbit-launcher` | 94.12% | 94.1 |
+| `internal/deploy` | 94.23% (CI) | 94.2 |
+| `internal/engine` | 93.43% | 93.4 |
+| `internal/release` | 100.00% | 100.0 |
+| `internal/ui` | 98.26% | 98.2 |
+| `internal/ui/starfield` | 90.24% | 90.2 |
+| `internal/ui/style` | 100.00% | 100.0 |
+| `tools/calculateversion` | 96.55% | 96.5 |
+| `tools/coveragefloor` | 97.37% | 97.3 |
+| `tools/coveragefloor/floor` | 94.55% | 94.5 |
+| `tools/licencenotices` | 95.56% | 95.5 |
+| `tools/licencenotices/notices` | 96.43% | 96.4 |
+| `tools/licencereview` | 97.37% | 97.3 |
+| `tools/licencereview/review` | 99.32% | 99.3 |
+| `tools/supplychainpolicy` | 98.31% | 98.3 |
+| `tools/supplychainpolicy/policy` | 99.28% | 99.2 |
+| `test/internal/vtscreen` | 93.52% | 93.5 |
+
+`internal/deploy` reads 96.79% as a normal user; CI's `fast` job runs as
+root, where the three tests that force a permission error skip themselves,
+so its floor is the CI figure.
+
+`cmd/orbit-launcher` read 18.75% before the pty runs were counted: most of
+`main.go` builds and runs the full-screen program, which only `test/pty`
+exercises. Other packages under `test/` (black-box and integration tests)
+are outside the file's scope; `test/internal/vtscreen` is the exception,
+being a library with unit tests of its own.
 
 ---
 
@@ -258,24 +337,24 @@ does).
 
 | Branch | Role | Required checks (PR gate) |
 | --- | --- | --- |
-| `develop` | protected integration branch; ordinary issue branches target this | Static and unit checks · Component tests (`teatest`) · Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
-| `preview` | protected release lane; a reviewed merge from `develop` runs the full pipeline once | same PR-gate checks as `develop`, **plus** the full pipeline below runs as a required push-level job |
+| `dev` | protected integration branch; ordinary issue branches target this | Static and unit checks · Component tests (`teatest`) · Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
+| `preview` | protected release lane; a reviewed merge from `dev` runs the full pipeline once | same PR-gate checks as `dev`, **plus** the full pipeline below runs as a required push-level job |
 | `main` | stable; a PR from `preview` verifies (does not rebuild) that the accepted release artifact matches | Static and unit checks · Verify tested preview for stable merge · Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
 | `hotfix/**` | rare, urgent patch path from `main` | Dependency change and licence policy · CodeQL (go) · CodeQL (actions) |
 
 Same ruleset shape as `orbit`'s four rulesets (`deletion` and
 `non_fast_forward` blocked, `required_review_thread_resolution: true`,
-merge-commit only). One deliberate difference from `orbit`: all four
-rulesets here set `required_approving_review_count: 1` (confirmed) —
-`orbit` runs at `0` because its delivery model routes planning authority
-through its own AI-orchestration system; orbit-launcher doesn't have that
-yet, so a human approval is the real gate.
+merge-commit only). All four rulesets set
+`required_approving_review_count: 0`, matching `orbit` — deliberately, not
+as a gap: on a single-account repository the account that opens a pull
+request cannot approve it, so a non-zero count is unsatisfiable rather
+than protective.
 
-**Standing rule, not just for this setting**: any time I'm given
-permission to skip this gate for a specific piece of work, that permission
-covers only that work — it is never read as a standing exception, and the
-required-approval rule applies again on the next PR unless re-authorized
-for that one too.
+**The human gate is explicit owner direction, not a web-UI review.** An
+assistant merges a pull request only when the owner has approved that
+specific change — conversationally, on the issue, or on the PR; the record
+of that direction is the approval. Permission covers only the work it was
+given for and is never read as a standing exception for the next PR.
 
 ### 4.2 Release pipeline (preview push → main → tag)
 
@@ -318,7 +397,10 @@ in the Wave 0 CI skeleton below rather than hand-rolled build scripts.
   point (Go's ecosystem licensing profile is different from npm's — the
   allow-list will need its own pass in Wave 0 rather than a blind copy,
   but the *mechanism*, thresholds and "no PR comment noise, fail the check
-  instead" policy carry over unchanged).
+  instead" policy carry over unchanged). *Superseded 2026-09-05 (#140):
+  the action only ran on GitHub pull requests, so once merges moved to
+  GitLab it never ran again. The `deps` job in `.gitlab-ci.yml` carries
+  the same policy with `govulncheck` and `go-licenses`.*
 - **Repository security settings**: enable secret scanning, secret scanning
   push protection, and Dependabot security updates — the exact three
   `security_and_analysis` settings confirmed already active on `orbit`.
@@ -327,50 +409,34 @@ in the Wave 0 CI skeleton below rather than hand-rolled build scripts.
   worth closing in both repos, flagging separately rather than silently
   fixing `orbit`'s).
 
-### 4.4 Planning governance — adapted, needs your decision
+### 4.4 Planning governance — decided: no attestation machinery (#71)
 
-`orbit` requires every PR touching a curated "protected planning" file list
-(architecture docs, workflows, governance configs) to carry a
-`Planning-Model: Sol Extra High` or `Planning-Model: Human` attestation
-line, enforced by a CI script. The *mechanism* (protected-path list +
-required attestation line + CI enforcement) is worth carrying over — it's a
-genuinely good discipline independent of which specific AI orchestration
-exists behind it. The *authority list* is not, because orbit-launcher has
-no "Sol Extra High" equivalent yet.
+An earlier draft proposed carrying over `orbit`'s protected-path +
+`Planning-Model` attestation mechanism. Since then `orbit` retired that
+mechanism entirely (orbit ADR-0011): for a single-owner project where every
+change lands through a reviewed pull request under branch protection, the
+machinery attested *authorship* rather than verifying *correctness*, and its
+maintenance cost exceeded the risk it retired.
 
-**Proposed for Wave 0, pending your confirmation:**
-```json
-{
-  "planningAuthorities": ["Human"],
-  "acceptedAttestations": ["Planning-Model: Human"],
-  "protectedFiles": [
-    ".github/workflows/*.yml",
-    ".github/planning-governance.json",
-    ".github/dependency-review-config.yml",
-    "docs/implementation-plan.md",
-    "docs/architecture.md",
-    "docs/quality-strategy.md",
-    "docs/releasing.md",
-    "docs/adr/*"
-  ]
-}
-```
-Same `Observability-Impact` PR-body declaration mechanism as `orbit`
-(`changed` with four evidence fields, or `none — <specific reason>`),
-enforced the same way. If later you want to name Claude (or another model)
-as an accepted planning authority for this repo specifically, that's a
-one-line policy change — flagging it as a deliberate future option, not
-assuming it now.
+**Decision (owner-approved in #71):** orbit-launcher does not carry the
+mechanism. The Wave 0 build of it (`tools/checkgovernance`, its CI step,
+`.github/planning-governance.json`, and the PR-template attestation and
+`Observability-Impact` sections) is removed by the PR recording this
+decision; PR review covers operational impact directly. Owner direction per
+change (§4.1) is the sole planning gate. If multi-author governance is ever
+needed, design it against the situation that exists then rather than
+reviving this mechanism.
 
 ---
 
 ## 5. Milestones, epics and delivery waves
 
-Six waves, each a GitHub Milestone, each with a **promotion gate**: the
-exact evidence required before that wave's work is allowed to move from
-`develop` to a `preview` push. Every issue within a wave cites which of the
-waves' acceptance criteria it satisfies, same traceability discipline as
-`orbit`'s requirement-ID citation rule.
+Each wave is a GitLab milestone naming one capability, with a **promotion
+gate**: the exact evidence required before that wave's work is allowed to
+move from `dev` to a `preview` push. A version release is not a wave and
+gets a milestone of its own, holding only its promote issue. Every issue
+within a wave cites which of the waves' acceptance criteria it satisfies,
+same traceability discipline as `orbit`'s requirement-ID citation rule.
 
 ### Epics (span waves, tracked as GitHub labels)
 
@@ -458,7 +524,24 @@ keep working. Two things follow from that:
   not a pinned revision. `install.sh` itself resolves every other asset
   it needs (compose files, `configure.sh`, `configuration.sh`) from the
   exact source revision recorded in the Docker image's own OCI labels,
-  so fetching only this one file is sufficient.
+  so fetching only this one file is sufficient. The one exception is
+  `ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH`: when set, `FetchInstallScript`
+  reads that local file instead of downloading anything. It isn't
+  vendoring — it's how `scripts/get-orbit-launcher.sh` hands over the
+  exact copy it already fetched and verified against Orbit's signed
+  manifest (ADR-0031), so the launcher doesn't re-fetch something
+  already checked. `install.sh` is the only script the launcher ever
+  downloads (#190): the configuration tree reaches it through
+  `ORBIT_LAUNCHER_CONFIG_TREE`, a fresh private (0700) empty directory
+  `BuildInstallCommand` creates for every run and removes with the
+  run's cleanup — on its configuration refusal `install.sh` copies
+  `configure.sh`, its siblings and `.env-orbit.example` into it from
+  the assets it has already verified against the image (ai/orbit#1225)
+  — and Repair runs the deployment's own `scripts/repair.sh`, which
+  `install.sh` placed from the image. Neither runs unless
+  `deploy.RequireTrustedPath` accepts it (#191): real directories and a
+  regular file, no symlinks, nothing world-writable, one owner who is the
+  launcher's user (or any, under root); group-writable is accepted.
 - **No config collection, and no field knowledge at all.** Earlier
   drafts of Install had orbit-launcher collect `APP_URL`/OIDC fields
   itself via Go text inputs and write `.env-orbit` directly, running
@@ -485,8 +568,107 @@ keep working. Two things follow from that:
 Screens from `design/mockups.html` sections 03–08, implemented against
 this: profile selection (Standard only, for now — AI/Full are honest
 "not available yet" stubs); a confirm screen explaining the handoff (no
-config-collection screen at all, per the above); completion/failure
+config-collection screen at all, per the above); then a development
+notice that must be read and acknowledged by typing a phrase before the
+console starts (#175, `design/mockups-v7-notice.html`); completion/failure
 based on `install.sh`'s own exit code.
+
+**v5 mission console (issue #73, layered on top without reversing #51).**
+The engine run now happens *inside* the TUI first: `internal/deploy.
+BuildEngineCommand` stages the same fetched `install.sh` but runs it
+`--plain --install|--update`, session-detached (`Setsid`) with stdout as
+a pipe, so orbit's engine event stream v0 (orbit `docs/engine-events.md`)
+renders natively in `internal/ui/console.go` — framed event log, phase-
+keyed stage bar (no percentage; the fill is the engine's own phase
+progression), elapsed clock. The detachment is what engages the engine's
+documented non-interactive contract: it can never prompt through the
+TUI, and with incomplete configuration it refuses before Compose
+(`reason=configuration-failure`), rolling the target back via its own
+file transaction (verified empirically against both orbit dev and
+main). That refusal is precisely where #51's handoff survives: the flow
+offers "Continue — guided configuration" and hands the real terminal to
+interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
+config field enters Go, ever. Outcomes are keyed off events plus exit
+codes, never scraped prose; a legacy engine (orbit main today) that
+emits no events has its output displayed verbatim and is judged by exit
+code alone, with the guided installer offered from the failure screen.
+Success concludes on `internal/ui/success.go`: the splash's scene with
+the wordmark in alive-green, the deployment URL in the identity slot,
+"Orbit achieved in Nm NNs" from the console's real clock, and
+Get into Orbit / Terminal / Menu. In-console config prompts stay out of
+scope until orbit#297's prompt protocol exists.
+
+**v6 starchart alignment (design/mockups-v6-starchart.html, aligned with
+orbit issue #307's web identity; the owner-locked visual law is recorded
+durably in design/DECISIONS.md — read it before proposing any visual
+change).** Gold (#d8b45a) is the accent —
+mark-when-dormant, caret, hero URL, the binary pair's lead (partner in
+approach-blue #8fb8ff). The wordmark returned to the letter-spaced
+normal-size O R B I T everywhere by owner decision (the v5 half-block
+big text is retired; `style.Wordmark` is canonical again). Identity sits
+tight under the wordmark; menu items centre individually with the caret
+riding left of the selected label; the keybind hint is gone entirely and
+each screen's foot is one centred faint line (splash: launcher + orbit
+versions; success: the achieved time; console: launcher version). Two
+one-shot beats, both colour-ramp/whole-cell honest and skipped by
+NO_ANIMATION: the arrival (Get · Into · Orbit fade at centre; the
+wordmark takes a 2s gold sweep, slides up, and the menu fades in one
+item at a time — any key skips, once per process) and the
+restored-orbit drift (on the success screen the gold body eases to a
+wider orbit with a brief trail). One test-harness consequence,
+discovered by an actual hang: a continuously animating splash never
+goes idle, so go-expect's read timeout cannot fire while the arrival
+plays — every PTY test sends one benign key first (`skipArrival`),
+which the model swallows.
+
+**In-console configuration + repair diagnosis (orbit#297 machine
+prompts, orbit#261 slice 1).** When the engine's configuration refusal
+lands, the flow opens the configuration tree the engine handed over in
+`ORBIT_LAUNCHER_CONFIG_TREE` (configure.sh + siblings +
+.env-orbit.example, copied by install.sh from its image-verified assets,
+ai/orbit#1225; never downloaded, #190), seeds it with the target's
+existing configuration, runs `configure.sh --check`
+to plan, then drives `--init` and `--set-oidc-secret` with
+`ORBIT_CONFIGURE_PROMPTS=machine` — the engine's own prompts, rendered
+as in-console input rows (`internal/ui/configcollect.go`), every answer
+validated engine-side, rejection classes rendered as honest words, the
+secret never echoed. The produced `.env-orbit`/`.orbit-secrets` are
+adopted into the target (install.sh's designed "pre-provisioned
+configuration shape") and the engine re-runs — this time proceeding.
+A legacy configure.sh exits with no protocol line, which is the
+capability signal: the flow falls back to the #51 terminal handoff
+automatically — as it does when install.sh handed over no tree at
+all. Setsid on the configure run is as load-bearing as on the engine
+run — a legacy script would otherwise prompt on /dev/tty through the
+alt screen. Repair stopped being a stub: the launcher runs the
+deployment's own `scripts/repair.sh`, as install.sh placed it from the
+image (absence = "diagnosis needs a newer Orbit", honestly; nothing is
+fetched or written, #190), with `--plan` (orbit#261 slice 3: the
+identical read-only diagnosis plus a classified proposed action per
+warn/fail finding — still zero
+mutation), and renders the plan grammar in honest words: action words,
+the resolves class, `backup first` when the contract demands a
+checkpoint, and the value-free `manual step:` guidance from stderr.
+Plan mode's stdout carries only plan lines plus a `plan result=` line
+(verified against the real script); a repair.sh too old for `--plan`
+rejects it as a usage error and the flow falls back to `--check`'s
+finding/diagnosis rendering — capability by behaviour, as everywhere.
+Every plan line is composed to hold inside 80 cells. Execution
+(slice 4) is adopted too: when the plan proposes safe actions the menu
+offers "Run the safe repairs" — `--execute --safe-only` piped on the
+script's documented unattended path (the person's menu choice is the
+consent that path expects), rendering `execute`/`execution` lines and
+the executor's own full re-diagnosis as the after-picture — and a
+planned `rotate-database-credential` offers the guarded rotation,
+driven in-console via `ORBIT_REPAIR_PROMPTS=machine` (repair's own
+prompt env var) through the typed action word and checkpoint
+passphrase prompts, which is the only non-TTY transport the script's
+never-automatable contract permits. Esc abandons the session; closed
+stdin is the engine's documented zero-mutation abort. The menu never
+offers an action the plan didn't propose. Both engine-facing grammars (`prompt*`, `finding`/`diagnosis`)
+are parsed in `internal/engine` with the same tolerance rules as the
+event stream: unknown trailing fields ignored, unknown enum values
+carried verbatim, prose never misparsed.
 
 **Promotion gate**: black-box PTY suite (3.3) covers cancel-at-every-step
 up to the handoff; a live-matrix install-to-healthy-endpoint scenario
@@ -528,17 +710,79 @@ reversible), then a copy-pasteable, exact, irreversible removal command
 asserts containers/network are gone and the stated file path is exactly
 correct; the "app never runs the destructive command" property test passes.
 
-### Wave 5 — Release hardening & v1 promotion
+What was one phase here, "Release hardening & v1 promotion," is now six
+capability milestones plus a separate release milestone: a milestone has to
+be able to answer whether it's done, and a phase named after a release
+can't.
+
+### Wave 6 — Engine runs are honest
+
+**Goal**: an install, update or repair run always tells the user what's
+actually happening.
+
+**Promotion gate**: every install, update and repair run either streams to
+completion or reports a failure the user can act on. The launcher never
+sits idle while the engine is still working or already finished. Proven by
+the black-box PTY suite (3.3), not only by unit tests.
+
+### Wave 7 — Guided configuration
+
+**Goal**: configuration collection stops asking for things it doesn't need,
+in an order that doesn't make sense.
+
+**Promotion gate**: configuration asks the sign-in question before the
+fields whose relevance depends on the answer, never asks for a value it
+will not use, and re-reads configuration after the engine has changed it.
+Proven on a real terminal.
+
+### Wave 8 — CI charges for the diff it gates
+
+**Goal**: pipeline cost matches what a change could actually affect, not a
+flat price for every merge request.
+
+**Promotion gate**: a documentation-only merge request runs only the jobs
+its own diff could affect. Anything touching code, dependencies, containers
+or CI definitions runs the full set, and an unclassifiable diff runs the
+full set too. Shown on real pipelines both ways.
+
+### Wave 9 — Dependency currency is decided, not drifting
+
+**Goal**: dependency merge requests get a decision, not silence.
+
+**Promotion gate**: no dependency merge request sits red and unexplained.
+The major upgrades are settled either way and recorded, and grouped version
+pins move together with the tools that must match them.
+
+### Wave 10 — Governance close-out
+
+**Goal**: close out what the move to GitLab and the launcher/Orbit
+compatibility work left open.
+
+**Promotion gate**: the move to GitLab has nothing left open, and the
+launcher-and-Orbit compatibility follow-ups are either finished or
+explicitly dropped with the reason recorded.
+
+### Wave 11 — Distribution and self-update
 
 **Goal**: everything needed to point real users at the bootstrap script.
 
-- Wider Linux-distro coverage in the live matrix if warranted (e.g. Fedora,
-  Arch — driven by real usage evidence, not speculative support), update
-  self-check (orbit-launcher checks its own version against the latest
-  release and offers to self-update).
-- Documentation: README quickstart, the bootstrap one-liner, a
-  `docs/releasing.md` for this repo mirroring `orbit`'s.
-- First stable `v1.0.0` promotion through the full pipeline (4.2).
+Closed 2026-10-05 (#24), after #171 moved shipping to Orbit:
+
+- Distributions: the README now claims only what the live matrix tests
+  (Ubuntu). Fedora and Arch moved to v0.5.0 as #183 and #184.
+- Update check: done in #172. The launcher reads Orbit's release
+  manifest and shows a notice. It no longer offers to replace itself:
+  Orbit builds and signs the launcher, and re-running Orbit's installer
+  is the update, so the signature check stays in the path.
+- Documentation: the README quickstart points at Orbit's one-liner, and
+  `docs/releasing.md` describes the release flow since #171.
+
+### v0.4.0 — release
+
+Not a capability and not a wave of work: it holds exactly one issue,
+promoting v0.4.0 to `main` (renamed from v1.0.0 on 2026-10-05: this
+promotion is not the stable release), and requires Waves 6 to 11. No feature work
+goes in it.
 
 **Promotion gate**: a person outside this session (ideally you) runs the
 real one-line bootstrap command on a real machine they own, performs a real
@@ -550,7 +794,7 @@ holds release candidates to.
 
 ## 6. Evidence-for-promotion framework
 
-Every wave's closing PR (the one that merges its last issue into `develop`
+Every wave's closing PR (the one that merges its last issue into `dev`
 and is ready to be included in the next `preview` push) records, in the PR
 body, the same categories `orbit` requires per delivery issue:
 

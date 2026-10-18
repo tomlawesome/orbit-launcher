@@ -1,0 +1,690 @@
+package policy
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// writeWorkflows builds a throwaway repository root containing the given
+// workflow files, so the parser is tested against directories it really reads
+// rather than against strings passed straight to a regexp.
+func writeWorkflows(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestActionRepoStripsTheSubpath(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"actions/checkout", "actions/checkout"},
+		{"github/codeql-action/init", "github/codeql-action"},
+		{"github/codeql-action/analyze", "github/codeql-action"},
+		{"a/b/c/d", "a/b"},
+	} {
+		if got := ActionRepo(c.in); got != c.want {
+			t.Errorf("ActionRepo(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIsSHAAcceptsOnlyFullLowercaseHashes(t *testing.T) {
+	const good = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{good, true},
+		{"v7.0.1", false},
+		{good[:39], false},
+		{good + "0", false},
+		{strings.ToUpper(good), false}, // GitHub writes lowercase; uppercase suggests hand-editing
+		{"", false},
+	} {
+		if got := IsSHA(c.in); got != c.want {
+			t.Errorf("IsSHA(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCollectPinsReadsRefAndVersionComment(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"ci.yml": `
+jobs:
+  a:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+`})
+	pins, err := CollectPins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pins) != 2 {
+		t.Fatalf("got %d pins, want 2", len(pins))
+	}
+	if pins[0].Ref != "3d3c42e5aac5ba805825da76410c181273ba90b1" || pins[0].Comment != "v7.0.1" {
+		t.Errorf("first pin parsed as ref=%q comment=%q", pins[0].Ref, pins[0].Comment)
+	}
+	if pins[1].Action != "github/codeql-action" || pins[1].Full != "github/codeql-action/init" {
+		t.Errorf("subpath pin parsed as action=%q full=%q", pins[1].Action, pins[1].Full)
+	}
+	if pins[0].File != "ci.yml" || pins[0].Line != 5 {
+		t.Errorf("location parsed as %s:%d, want ci.yml:5", pins[0].File, pins[0].Line)
+	}
+}
+
+func TestCollectPinsSkipsLocalCompositeActions(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"ci.yml": `
+      - uses: ./.github/actions/setup
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+`})
+	pins, err := CollectPins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pins) != 1 || pins[0].Action != "actions/checkout" {
+		t.Fatalf("local composite action was not skipped: %+v", pins)
+	}
+}
+
+// A parser that returns nothing would let every check above pass while proving
+// nothing, so finding no workflows or no pins is an error rather than an empty
+// result.
+func TestCollectPinsRefusesToPassVacuously(t *testing.T) {
+	if _, err := CollectPins(writeWorkflows(t, map[string]string{})); err == nil {
+		t.Error("an empty workflows directory returned no error")
+	}
+	root := writeWorkflows(t, map[string]string{"ci.yml": "jobs:\n  a:\n    steps:\n      - run: echo hi\n"})
+	if _, err := CollectPins(root); err == nil {
+		t.Error("workflows with no `uses:` lines returned no error")
+	}
+	if _, err := CollectPins(t.TempDir()); err == nil {
+		t.Error("a missing workflows directory returned no error")
+	}
+}
+
+func TestDerivedActionsDeduplicatesSubpathsAndSorts(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"a.yml": `
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+`})
+	pins, err := CollectPins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := DerivedActions(pins)
+	if len(got) != 2 {
+		t.Fatalf("got %d actions, want 2 (codeql's two subpaths are one repository)", len(got))
+	}
+	if got[0].Name != "actions/checkout" || got[1].Name != "github/codeql-action" {
+		t.Errorf("actions are not sorted by name: %q then %q", got[0].Name, got[1].Name)
+	}
+	if got[1].Version != "v4.37.9" || got[1].Commit != "cdf488f595d80d6e07e03d4674febd5ab45fa938" {
+		t.Errorf("codeql entry derived as %+v", got[1])
+	}
+}
+
+// writeGitlabPin gives a fixture repository the .gitlab-ci.yml half of the
+// gitleaks pin, quoted as the real file quotes it. GitleaksPin reads both
+// hosts since #216 (SU-8), so a fixture with only secret-scan.yml is a
+// repository whose GitLab pin has vanished.
+func writeGitlabPin(t *testing.T, root, version, sum string) {
+	t.Helper()
+	body := "variables:\n  GITLEAKS_VERSION: \"" + version + "\"\n  GITLEAKS_SHA256: " + sum + "\n"
+	if err := os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGitleaksPinReadsTheEnvBlock(t *testing.T) {
+	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+	root := writeWorkflows(t, map[string]string{"secret-scan.yml": `
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: ` + digest + `
+`})
+	writeGitlabPin(t, root, "8.30.1", digest)
+	version, sha, err := GitleaksPin(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "8.30.1" || sha != digest {
+		t.Errorf("parsed version=%q sha=%q", version, sha)
+	}
+}
+
+// A second line setting the same key to another value is a pin that differs
+// from itself; reading only the first would hide the other (#216, SU-8).
+func TestGitleaksPinRefusesAKeySetTwiceToDifferentValues(t *testing.T) {
+	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+	const other = "0000000000000000000000000000000000000000000000000000000000000000"
+	for _, c := range []struct{ name, extra, want string }{
+		{"version", "      GITLEAKS_VERSION: 8.31.0\n", "sets GITLEAKS_VERSION twice"},
+		{"digest", "      GITLEAKS_SHA256: " + other + "\n", "sets GITLEAKS_SHA256 twice"},
+		{"the same value twice is not a conflict", "      GITLEAKS_VERSION: \"8.30.1\"\n", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := writeWorkflows(t, map[string]string{"secret-scan.yml": "    env:\n" +
+				"      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + digest + "\n" + c.extra})
+			writeGitlabPin(t, root, "8.30.1", digest)
+			_, _, err := GitleaksPin(root)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("GitleaksPin = %v, want the agreeing copies accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("GitleaksPin = %v, want an error containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestGitleaksPinIgnoresATrailingComment(t *testing.T) {
+	const digest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+	root := writeWorkflows(t, map[string]string{"secret-scan.yml": "    env:\n" +
+		"      GITLEAKS_VERSION: \"8.30.1\" # bumped with .gitlab-ci.yml\n" +
+		"      GITLEAKS_SHA256: " + digest + "\n"})
+	writeGitlabPin(t, root, "8.30.1", digest)
+	version, sum, err := GitleaksPin(root)
+	if err != nil || version != "8.30.1" || sum != digest {
+		t.Fatalf("GitleaksPin = %q, %q, %v; want 8.30.1 and the digest", version, sum, err)
+	}
+}
+
+func TestGitleaksPinFailsWithoutTheGitLabPipeline(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"secret-scan.yml": secretScanPin})
+	_, _, err := GitleaksPin(root)
+	if err == nil || !strings.Contains(err.Error(), ".gitlab-ci.yml") {
+		t.Fatalf("GitleaksPin = %v, want an error naming .gitlab-ci.yml", err)
+	}
+}
+
+const secretScanPin = "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb\n"
+
+func TestGitleaksPinFailsWhenTheWorkflowStopsPinning(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"secret-scan.yml": "    env:\n      GITLEAKS_VERSION: 8.30.1\n"})
+	if _, _, err := GitleaksPin(root); err == nil {
+		t.Error("a missing GITLEAKS_SHA256 returned no error; the digest could vanish unnoticed")
+	}
+}
+
+// TestCollectPinsReadsTheInlineListForm covers `- uses:` written on the dash
+// line. Both forms are valid YAML and GitHub runs both, so a parser that knew
+// only the block form would quietly ignore an unpinned action written the
+// other way — a hole in exactly the check this package exists to provide.
+func TestCollectPinsReadsTheInlineListForm(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"ci.yml": "" +
+		"      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n" +
+		"      - name: block form\n" +
+		"        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0\n"})
+	pins, err := CollectPins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pins) != 2 {
+		t.Fatalf("got %d pins, want 2 — both the inline and block forms must be seen", len(pins))
+	}
+	if pins[0].Action != "actions/checkout" || pins[1].Action != "actions/setup-go" {
+		t.Errorf("parsed %q and %q", pins[0].Action, pins[1].Action)
+	}
+}
+
+const (
+	checkoutSHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	setupGoSHA  = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+)
+
+// goodPins and goodPolicy are a matching pair. Each case below breaks exactly
+// one thing about them, so a case that fails to produce a problem is a rule
+// that does not fire.
+func goodPins() []Pin {
+	return []Pin{
+		{Action: "actions/checkout", Full: "actions/checkout", Ref: checkoutSHA, Comment: "v7.0.1", File: "ci.yml", Line: 10},
+		{Action: "actions/setup-go", Full: "actions/setup-go", Ref: setupGoSHA, Comment: "v7.0.0", File: "ci.yml", Line: 14},
+	}
+}
+
+func goodPolicy() Policy {
+	return Policy{
+		SchemaVersion: SchemaVersion,
+		Actions: []Action{
+			{Name: "actions/checkout", Version: "v7.0.1", Commit: checkoutSHA, License: "MIT", UpdateOwner: "maintainers"},
+			{Name: "actions/setup-go", Version: "v7.0.0", Commit: setupGoSHA, License: "MIT", UpdateOwner: "maintainers"},
+		},
+		Exceptions: []Exception{},
+	}
+}
+
+func TestVerifyPinsAcceptsAMatchingPair(t *testing.T) {
+	if problems := VerifyPins(goodPins(), goodPolicy()); len(problems) != 0 {
+		t.Fatalf("a matching policy reported problems: %v", problems)
+	}
+}
+
+// TestVerifyPinsCatches is the standing proof that each rule fires. These were
+// originally run by hand against the real repository, which proved them once;
+// as cases they are proved on every run.
+func TestVerifyPinsCatches(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		pins    func([]Pin) []Pin
+		policy  func(Policy) Policy
+		wantSub string
+	}{
+		{
+			name:    "a floating tag instead of a SHA",
+			pins:    func(p []Pin) []Pin { p[0].Ref = "v7.0.1"; return p },
+			wantSub: "not a 40-character commit SHA",
+		},
+		{
+			name:    "a pin with no version comment",
+			pins:    func(p []Pin) []Pin { p[0].Comment = ""; return p },
+			wantSub: "no `# vX.Y.Z` comment",
+		},
+		{
+			name:    "an action used in CI but absent from the policy",
+			policy:  func(pol Policy) Policy { pol.Actions = pol.Actions[:1]; return pol },
+			wantSub: "not recorded in the policy",
+		},
+		{
+			name:    "a bumped pin the policy was not regenerated for",
+			pins:    func(p []Pin) []Pin { p[1].Ref = "1111111111111111111111111111111111111111"; return p },
+			wantSub: "but the policy records",
+		},
+		{
+			name:    "a bumped version comment the policy was not regenerated for",
+			pins:    func(p []Pin) []Pin { p[1].Comment = "v7.1.0"; return p },
+			wantSub: "the policy records version",
+		},
+		{
+			name: "a policy entry no workflow uses",
+			policy: func(pol Policy) Policy {
+				pol.Actions = append(pol.Actions, Action{Name: "actions/stale", License: "MIT", UpdateOwner: "x"})
+				return pol
+			},
+			wantSub: "which no workflow uses",
+		},
+		{
+			name:    "an entry with no licence",
+			policy:  func(pol Policy) Policy { pol.Actions[0].License = ""; return pol },
+			wantSub: "records no licence",
+		},
+		{
+			name:    "an entry with no update owner",
+			policy:  func(pol Policy) Policy { pol.Actions[0].UpdateOwner = ""; return pol },
+			wantSub: "records no update owner",
+		},
+		{
+			name: "a tool with no licence",
+			policy: func(pol Policy) Policy {
+				pol.Tools = append(pol.Tools, Tool{Name: "gitleaks", UpdateOwner: "x"})
+				return pol
+			},
+			wantSub: "tool gitleaks records no licence",
+		},
+		{
+			name: "an exception with no reason",
+			policy: func(pol Policy) Policy {
+				pol.Exceptions = append(pol.Exceptions, Exception{Name: "actions/checkout", Reason: "  "})
+				return pol
+			},
+			wantSub: "records no reason",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pins, pol := goodPins(), goodPolicy()
+			if c.pins != nil {
+				pins = c.pins(pins)
+			}
+			if c.policy != nil {
+				pol = c.policy(pol)
+			}
+			problems := VerifyPins(pins, pol)
+			if len(problems) == 0 {
+				t.Fatalf("no problem reported for %s; the rule does not fire", c.name)
+			}
+			var joined string
+			for _, p := range problems {
+				joined += p.String() + "\n"
+			}
+			if !strings.Contains(joined, c.wantSub) {
+				t.Errorf("problems did not mention %q:\n%s", c.wantSub, joined)
+			}
+		})
+	}
+}
+
+// A recorded exception suppresses the "not recorded" complaint — that is what
+// an exception is for — but must not suppress the SHA rule, which is the one
+// thing no exception should buy.
+func TestExceptionExcusesTheRecordButNotAFloatingTag(t *testing.T) {
+	pol := goodPolicy()
+	pol.Actions = pol.Actions[:1]
+	pol.Exceptions = []Exception{{Name: "actions/setup-go", Reason: "vendored fork, reviewed 2026-09-01"}}
+
+	if problems := VerifyPins(goodPins(), pol); len(problems) != 0 {
+		t.Fatalf("an excepted action still reported problems: %v", problems)
+	}
+
+	pins := goodPins()
+	pins[1].Ref = "v7.0.0"
+	problems := VerifyPins(pins, pol)
+	if len(problems) == 0 {
+		t.Fatal("an exception silenced the commit-SHA rule; no exception should buy that")
+	}
+}
+
+func TestWithoutExceptionsDropsOnlyTheNamedActions(t *testing.T) {
+	actions := []Action{{Name: "a/one"}, {Name: "b/two"}, {Name: "c/three"}, {Name: "d/four"}}
+	got := WithoutExceptions(actions, []Exception{{Name: "b/two"}, {Name: "d/four"}, {Name: "z/unused"}})
+	if len(got) != 2 || got[0].Name != "a/one" || got[1].Name != "c/three" {
+		t.Errorf("WithoutExceptions = %+v, want a/one then c/three", got)
+	}
+	if len(actions) != 4 || actions[1].Name != "b/two" {
+		t.Errorf("the input was modified: %+v", actions)
+	}
+
+	all := WithoutExceptions(actions, nil)
+	if len(all) != len(actions) {
+		t.Fatalf("with no exceptions, got %d actions, want %d", len(all), len(actions))
+	}
+	all[0].Name = "changed"
+	if actions[0].Name != "a/one" {
+		t.Error("the result shares the input's backing array; it must be a new slice")
+	}
+}
+
+func TestProblemStringOmitsLocationWhenThereIsNone(t *testing.T) {
+	withFile := Problem{File: "ci.yml", Line: 12, Msg: "boom"}
+	if got := withFile.String(); got != "ci.yml:12: boom" {
+		t.Errorf("String() = %q", got)
+	}
+	if got := (Problem{Msg: "boom"}).String(); got != "boom" {
+		t.Errorf("String() = %q, want no location prefix", got)
+	}
+}
+
+// Only .yml and .yaml files are workflows. A README or a subdirectory beside
+// them must not be parsed, or a `uses:` line quoted in prose would count.
+func TestCollectPinsReadsOnlyWorkflowFiles(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{
+		"ci.yml":    "      - uses: actions/checkout@" + checkoutSHA + " # v7.0.1\n",
+		"lint.yaml": "      - uses: actions/setup-go@" + setupGoSHA + " # v7.0.0\n",
+		"README.md": "      - uses: actions/unpinned@v1\n",
+	})
+	sub := filepath.Join(root, ".github", "workflows", "nested.yml")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pins, err := CollectPins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range pins {
+		got = append(got, p.Action)
+	}
+	if strings.Join(got, ",") != "actions/checkout,actions/setup-go" {
+		t.Errorf("pins came from %v, want only the .yml and .yaml files", got)
+	}
+}
+
+func TestCollectPinsReportsAnUnreadableWorkflow(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"ci.yml": "      - uses: actions/checkout@" + checkoutSHA + "\n"})
+	broken := filepath.Join(root, ".github", "workflows", "broken.yml")
+	if err := os.Symlink(filepath.Join(root, "missing"), broken); err != nil {
+		t.Fatal(err)
+	}
+	_, err := CollectPins(root)
+	if err == nil || !strings.Contains(err.Error(), "broken.yml") {
+		t.Fatalf("CollectPins = %v, want an error naming broken.yml", err)
+	}
+}
+
+func TestGitleaksPinFailsWithoutSecretScanWorkflow(t *testing.T) {
+	root := writeWorkflows(t, map[string]string{"ci.yml": ""})
+	_, _, err := GitleaksPin(root)
+	if err == nil || !strings.Contains(err.Error(), "secret-scan.yml") {
+		t.Fatalf("GitleaksPin = %v, want an error naming secret-scan.yml", err)
+	}
+}
+
+func TestVerifyPinsCatchesAToolWithNoUpdateOwner(t *testing.T) {
+	pol := goodPolicy()
+	pol.Tools = []Tool{{Name: "gitleaks", License: "MIT"}}
+	problems := VerifyPins(goodPins(), pol)
+	if len(problems) != 1 || problems[0].String() != "tool gitleaks records no update owner." {
+		t.Errorf("problems = %v, want only the missing tool owner", problems)
+	}
+}
+
+// writePolicy writes p to root as the committed policy file.
+func writePolicy(t *testing.T, root string, p Policy) {
+	t.Helper()
+	body, err := Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRaw(t, root, string(body))
+}
+
+func writeRaw(t *testing.T, root, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, PolicyPath), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarshalIsIndentedJSONEndingInANewline(t *testing.T) {
+	body, err := Marshal(Policy{SchemaVersion: SchemaVersion, Comment: []string{"hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"schemaVersion\": 2,\n  \"_comment\": [\n    \"hi\"\n  ],\n" +
+		"  \"actions\": null,\n  \"tools\": null,\n  \"exceptions\": null\n}\n"
+	if string(body) != want {
+		t.Errorf("Marshal =\n%s\nwant\n%s", body, want)
+	}
+}
+
+func TestLoadRoundTripsWhatMarshalWrites(t *testing.T) {
+	root := writeWorkflows(t, nil)
+	want := goodPolicy()
+	want.Comment = []string{"generated"}
+	want.Tools = []Tool{{Name: "gitleaks", Version: "8.30.1", SHA256: "abc", License: "MIT", UpdateOwner: "x"}}
+	writePolicy(t, root, want)
+
+	got, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := Marshal(got)
+	b, _ := Marshal(want)
+	if string(a) != string(b) {
+		t.Errorf("Load returned\n%s\nwant\n%s", a, b)
+	}
+}
+
+func TestLoadRefusesAMissingInvalidOrOtherSchemaPolicy(t *testing.T) {
+	for _, c := range []struct {
+		name, body, wantSub string
+	}{
+		{"missing", "", "reading the supply-chain policy"},
+		{"not JSON", "{not json", "not valid JSON"},
+		{"older schema", `{"schemaVersion": 1}`, "schemaVersion is 1, this tool understands 2"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := writeWorkflows(t, nil)
+			if c.body != "" {
+				writeRaw(t, root, c.body)
+			}
+			_, err := Load(root)
+			if err == nil || !strings.Contains(err.Error(), c.wantSub) {
+				t.Errorf("Load = %v, want an error containing %q", err, c.wantSub)
+			}
+			// -write tells "absent" and "older schema" apart from an
+			// unreadable file by these, so they are part of the contract.
+			var schemaErr *SchemaError
+			switch c.name {
+			case "missing":
+				if !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("Load = %v, want it to wrap fs.ErrNotExist", err)
+				}
+			case "older schema":
+				if !errors.As(err, &schemaErr) || schemaErr.Got != 1 || schemaErr.Want != 2 {
+					t.Errorf("Load = %#v, want a *SchemaError{Got: 1, Want: 2}", err)
+				}
+			default:
+				if errors.Is(err, fs.ErrNotExist) || errors.As(err, &schemaErr) {
+					t.Errorf("Load = %v, an invalid file must be neither absent nor an older schema", err)
+				}
+			}
+		})
+	}
+}
+
+const gitleaksDigest = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+// goodRepo builds a repository whose workflows and committed policy agree,
+// including the gitleaks pin, so each Verify case can break one thing.
+func goodRepo(t *testing.T) (string, Policy) {
+	t.Helper()
+	root := writeWorkflows(t, map[string]string{
+		"ci.yml": "" +
+			"      - uses: actions/checkout@" + checkoutSHA + " # v7.0.1\n" +
+			"      - uses: actions/setup-go@" + setupGoSHA + " # v7.0.0\n",
+		"secret-scan.yml": "    env:\n      GITLEAKS_VERSION: 8.30.1\n      GITLEAKS_SHA256: " + gitleaksDigest + "\n",
+	})
+	writeGitlabPin(t, root, "8.30.1", gitleaksDigest)
+	pol := goodPolicy()
+	pol.Tools = []Tool{{Name: "gitleaks", Version: "8.30.1", SHA256: gitleaksDigest, License: "MIT", UpdateOwner: "x"}}
+	writePolicy(t, root, pol)
+	return root, pol
+}
+
+func TestVerifyAcceptsARepositoryThatAgreesWithItsPolicy(t *testing.T) {
+	root, _ := goodRepo(t)
+	problems, err := Verify(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 0 {
+		t.Errorf("a matching repository reported problems: %v", problems)
+	}
+}
+
+func TestVerifyIncludesThePinRules(t *testing.T) {
+	root, pol := goodRepo(t)
+	pol.Actions = pol.Actions[:1]
+	writePolicy(t, root, pol)
+	problems, err := Verify(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0].String(), "actions/setup-go is used in CI but not recorded") {
+		t.Errorf("problems = %v, want the unrecorded setup-go pin", problems)
+	}
+}
+
+func TestVerifyCatchesGitleaksDrift(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		tools   func([]Tool) []Tool
+		wantSub []string
+	}{
+		{
+			name:    "no gitleaks entry",
+			tools:   func([]Tool) []Tool { return nil },
+			wantSub: []string{"records no gitleaks entry"},
+		},
+		{
+			name:    "a stale version",
+			tools:   func(ts []Tool) []Tool { ts[0].Version = "8.29.0"; return ts },
+			wantSub: []string{"pins gitleaks 8.30.1 but the policy records 8.29.0"},
+		},
+		{
+			name:    "a stale digest",
+			tools:   func(ts []Tool) []Tool { ts[0].SHA256 = "0000"; return ts },
+			wantSub: []string{"pins gitleaks digest " + gitleaksDigest + " but the policy records 0000"},
+		},
+		{
+			name: "both stale",
+			tools: func(ts []Tool) []Tool {
+				ts[0].Version, ts[0].SHA256 = "8.29.0", "0000"
+				return ts
+			},
+			wantSub: []string{"policy records 8.29.0", "policy records 0000"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root, pol := goodRepo(t)
+			pol.Tools = c.tools(pol.Tools)
+			writePolicy(t, root, pol)
+			problems, err := Verify(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(problems) != len(c.wantSub) {
+				t.Fatalf("got %d problems %v, want %d", len(problems), problems, len(c.wantSub))
+			}
+			for i, sub := range c.wantSub {
+				if !strings.Contains(problems[i].String(), sub) {
+					t.Errorf("problem %d = %q, want it to contain %q", i, problems[i], sub)
+				}
+			}
+		})
+	}
+}
+
+// Failing to read the repository is an error, not a problem list: a list
+// would read as "the policy disagrees" when the truth is "nothing was checked".
+func TestVerifyReturnsAnErrorWhenTheRepositoryCannotBeRead(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		breakIt func(t *testing.T, root string)
+		wantSub string
+	}{
+		{"no workflows", func(t *testing.T, root string) {
+			if err := os.RemoveAll(filepath.Join(root, workflowsDir)); err != nil {
+				t.Fatal(err)
+			}
+		}, "reading"},
+		{"no policy", func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, PolicyPath)); err != nil {
+				t.Fatal(err)
+			}
+		}, "reading the supply-chain policy"},
+		{"secret scan stops pinning", func(t *testing.T, root string) {
+			if err := os.WriteFile(filepath.Join(root, secretScan), []byte("    env: {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, "no longer sets GITLEAKS_VERSION"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root, _ := goodRepo(t)
+			c.breakIt(t, root)
+			problems, err := Verify(root)
+			if err == nil || !strings.Contains(err.Error(), c.wantSub) {
+				t.Errorf("Verify = %v, %v; want an error containing %q", problems, err, c.wantSub)
+			}
+			if problems != nil {
+				t.Errorf("Verify returned problems %v alongside an error", problems)
+			}
+		})
+	}
+}
