@@ -4,10 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // fakeEngineScript is a stand-in install.sh that speaks engine event
@@ -29,17 +31,6 @@ sleep 1
 printf 'APP_URL=https://mail.example.com\nORBIT_IMAGE=ghcr.io/tomlawesome/orbit@sha256:abc\n' > .env-orbit
 echo "phase=complete component=installer state=completed reason=deployment-ready action=complete elapsed=1s"
 exit 0
-`
-
-// fakeRefusalScript is the engine's documented non-interactive
-// configuration refusal: a failed configuration event, guidance on
-// stderr, exit 1, target untouched.
-const fakeRefusalScript = `#!/usr/bin/env bash
-echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
-sleep 0.05
-echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
-echo "Orbit installer: configuration fields requiring attention: APP_URL OIDC_ISSUER." >&2
-exit 1
 `
 
 func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, *exec.Cmd) {
@@ -143,29 +134,42 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 	}
 }
 
-func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
+// expectNoRemovedConfigScreen fails if the screen now showing is the one
+// the engine's configuration stop used to land on (#251): the stop goes
+// straight into guided configuration.
+func expectNoRemovedConfigScreen(t *testing.T, console *vtConsole) {
+	t.Helper()
+	screen := vtscreen.Screen(console.term)
+	for _, gone := range []string{"The engine stopped before touching anything", "Continue — guided configuration"} {
+		if strings.Contains(screen, gone) {
+			t.Errorf("the removed configuration screen is shown (%q):\n%s", gone, screen)
+		}
+	}
+}
+
+func TestConsole_RealPTY_ConfigurationRefusalGoesStraightIntoGuidedConfiguration(t *testing.T) {
 	// Parallel: each run waits out the development notice's real
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
 	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	console, cmd := startConsolePTY(t, binPath, dir, launcher.ServeScript(t, fakeRefusalScript))
+	console, cmd := startConsolePTY(t, binPath, dir, launcher.ServeScript(t, handsOverTree(fakeConfigAwareEngine, fakeMachineConfigure)))
 
 	driveToInstallNow(t, console)
 
-	if err := console.expectString("Orbit needs your configuration"); err != nil {
-		t.Fatalf("expected the styled configuration prompt: %v", err)
+	// No key press: the refusal lands on the guided session's first
+	// screen.
+	if err := console.expectString("How will people sign in?"); err != nil {
+		t.Fatalf("expected guided configuration straight after the refusal: %v", err)
 	}
-	if err := console.expectString("Continue — guided configuration"); err != nil {
-		t.Fatalf("expected the handoff option: %v", err)
-	}
+	expectNoRemovedConfigScreen(t, console)
 
 	// Escape returns to the menu (the refusal rolled the target back;
 	// nothing was changed), and Ctrl-C quits cleanly.
 	console.send("\x1b")
 	if err := console.expectString("▸ Install"); err != nil {
-		t.Fatalf("expected the splash again after Menu: %v", err)
+		t.Fatalf("expected the splash again after Esc: %v", err)
 	}
 	console.send("\x03")
 	waitForExit(t, cmd)

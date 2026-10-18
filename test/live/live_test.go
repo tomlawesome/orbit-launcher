@@ -274,7 +274,7 @@ func (s *liveSession) runStarted() {
 	s.t.Helper()
 	const what = "expected the mission console"
 	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
-		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Install stopped")); err != nil {
+		"Contacting the engine", "ORBIT · Install", "How will people sign in?", "Install stopped")); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
@@ -1125,13 +1125,19 @@ func openGuidedConfiguration(session *liveSession) {
 	// The piped, terminal-less first attempt cannot prompt, so on a
 	// fresh target it ends in the engine's non-interactive
 	// configuration refusal (target rolled back). A contract-era
-	// engine (orbit develop) reports it as an event and lands on
-	// the styled configuration prompt; a legacy engine (orbit main)
-	// reports nothing and lands on the failure screen. Both
-	// screens' default option leads to the guided configuration.
-	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
-	sendLine("") // Continue — guided configuration / Open the guided installer
+	// engine (orbit develop) reports it as an event and the launcher
+	// goes straight into guided configuration, to the sign-in question,
+	// with no key pressed (#251); a legacy engine (orbit main) reports
+	// nothing and lands on the failure screen, whose default option
+	// leads to the guided configuration.
+	screen := session.expectWithin("expected the sign-in question or failure screen after the piped attempt",
+		vtscreen.ContainsAny("How will people sign in?", "Install stopped"))
+	if strings.Contains(screen, "The engine stopped before touching anything") || strings.Contains(screen, "Continue — guided configuration") {
+		session.t.Fatalf("the removed configuration screen is shown. Screen:\n%s", screen)
+	}
+	if !strings.Contains(screen, "How will people sign in?") {
+		sendLine("") // Open the guided installer
+	}
 }
 
 // waitHealthy waits for the deployed app to answer 200 on :3000.

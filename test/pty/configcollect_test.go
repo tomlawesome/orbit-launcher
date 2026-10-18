@@ -158,15 +158,11 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	}
 	send := console.send
 
-	// The refusal, then Continue into the in-console prompts.
-	must("Orbit needs your configuration")
-	must("Continue — guided configuration")
-	send("\r")
-
 	// The sign-in-mode screen (issue #154), asked before --init ever
 	// runs. This journey drives the full OIDC path, so pick SSO —
 	// down to the second row, then choose it.
 	must("How will people sign in?")
+	expectNoRemovedConfigScreen(t, console)
 	must("Local accounts")
 	send("\x1b[B")
 	send("\r")
@@ -280,13 +276,11 @@ func TestConfig_RealPTY_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 	}
 	send := console.send
 
-	must("Orbit needs your configuration")
-	must("Continue — guided configuration")
-	send("\r")
-
-	// The sign-in-mode screen: accept the default (Local accounts) with
-	// no arrow press at all.
+	// The refusal goes straight into guided configuration, the sign-in-mode
+	// screen first: accept the default (Local accounts) with no arrow press
+	// at all.
 	must("How will people sign in?")
+	expectNoRemovedConfigScreen(t, console)
 	must("Local accounts")
 	send("\r")
 

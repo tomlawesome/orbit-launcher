@@ -108,12 +108,9 @@ func TestConfig_CIShapedPTY_RetriedRunReachesSuccess(t *testing.T) {
 
 	driveToInstallNow(t, console)
 
-	must("Orbit needs your configuration")
-	must("Continue — guided configuration")
-	send("\r")
-
 	// The sign-in-mode screen (issue #154); the default is fine here.
 	must("How will people sign in?")
+	expectNoRemovedConfigScreen(t, console)
 	send("\r")
 
 	must("Public Orbit origin")

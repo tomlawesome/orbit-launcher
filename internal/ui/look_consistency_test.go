@@ -363,31 +363,32 @@ func TestLookOutcomeMark_RemoveDoneOpensOnTheSuccessMark(t *testing.T) {
 	}
 }
 
-// C6: one title, one colour. "Orbit needs your configuration" is shown
-// first by the engine's stop and then by the collection session; both
-// keep the amber mark, because the person is still inside the stop.
-func TestLookOutcomeMark_ConfigurationTitleIsAmberOnBothScreens(t *testing.T) {
-	const title = "Orbit needs your configuration"
+// C6: one colour. The engine's configuration stop no longer has a screen
+// of its own (#251): the guided session is the first thing a person sees,
+// and its field screens keep the amber mark, because they are still inside
+// the stop. The removed screen's own words are never shown.
+func TestLookOutcomeMark_ConfigurationSessionKeepsTheAmberMark(t *testing.T) {
+	const oldScreen = "The engine stopped before touching anything"
 	amber := style.DegradedText.Render(style.SymbolMark)
 
-	t.Run("the stop", func(t *testing.T) {
-		m, s := newTestInstallModel(engineRunSeams{prepareEngine: fakeEngine(nil, configRefusalStream()...)})
+	t.Run("straight in from the stop", func(t *testing.T) {
+		m, s := newTestInstallModel(engineRunSeams{
+			prepareEngine: fakeEngine(nil, configRefusalStream()...),
+			prepareConfig: planned(true, false),
+		})
 		m, cmd := startInstallRun(t, m)
 		m = drive(t, m, cmd, s)
-		if m.run.state != runConfigPrompt {
-			t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
+		if m.run.state != runConfigSignInMode {
+			t.Fatalf("run state = %v, want the guided session's first screen", m.run.state)
 		}
-		if !strings.Contains(screen(m), title) {
-			t.Fatalf("not on the configuration stop:\n%s", screen(m))
-		}
-		if !strings.Contains(m.View().Content, amber) {
-			t.Error("the mark is not amber (style.DegradedText)")
+		if strings.Contains(screen(m), oldScreen) {
+			t.Fatalf("the removed configuration screen is shown:\n%s", screen(m))
 		}
 	})
 	t.Run("the collection session", func(t *testing.T) {
 		r := collectingRun(t, engineRunSeams{})
-		if !strings.Contains(runScreen(r), title) {
-			t.Fatalf("not on the collection screen:\n%s", runScreen(r))
+		if strings.Contains(runScreen(r), oldScreen) {
+			t.Fatalf("the removed configuration screen is shown:\n%s", runScreen(r))
 		}
 		if !strings.Contains(r.view(80, 26), amber) {
 			t.Error("the mark is not amber (style.DegradedText); the stop before it was")

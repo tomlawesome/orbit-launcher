@@ -95,7 +95,14 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 
 func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
-	r.state = runConfigPrompt // the session was cancelled
+	s := sleepingStream(t)
+	r.cfg.stream = s
+	r.cfg.stdin = &recordingStdin{}
+	r, _ = r.update(key(tea.KeyEsc)) // the session was cancelled: back to the menu
+	if !r.Done || !r.WantsMenu {
+		t.Fatalf("Done=%v WantsMenu=%v after Esc, want back to the menu", r.Done, r.WantsMenu)
+	}
+	state := r.state
 	for _, msg := range []tea.Msg{
 		configStepMsg{err: errors.New("late")},
 		configAdoptedMsg{err: errors.New("late")},
@@ -103,8 +110,8 @@ func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {
 	} {
 		var cmd tea.Cmd
 		r, cmd = r.update(msg)
-		if cmd != nil || r.state != runConfigPrompt {
-			t.Fatalf("%T after cancel changed the run: state = %v", msg, r.state)
+		if cmd != nil || r.state != state || r.state == runFailed || !r.Done || !r.WantsMenu || r.Succeeded {
+			t.Fatalf("%T after cancel changed the run: state = %v Done=%v WantsMenu=%v Succeeded=%v", msg, r.state, r.Done, r.WantsMenu, r.Succeeded)
 		}
 	}
 }

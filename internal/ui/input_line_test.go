@@ -285,7 +285,7 @@ func TestInputLine_NothingReachesTheEngineUntilEnter(t *testing.T) {
 
 // Esc stays with each caller: the shared line must not swallow it, and
 // typed text does not change what it does. Passed already; it guards
-// the merge. Configuration kills the stream and leaves the session,
+// the merge. Configuration kills the stream and goes to the menu,
 // rotation closes stdin and waits for the engine, the notice goes back
 // to the confirm screen.
 func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
@@ -317,7 +317,7 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 		}
 	})
 
-	t.Run("configuration kills the stream and leaves the session", func(t *testing.T) {
+	t.Run("configuration kills the stream and goes to the menu", func(t *testing.T) {
 		r := collectingRun(t, engineRunSeams{})
 		s := sleepingStream(t)
 		stdin := &recordingStdin{}
@@ -326,8 +326,8 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=OIDC_CLIENT_ID kind=text required=true attempt=1"}})
 		r, _ = r.update(runeKey('a'))
 		r, _ = r.update(key(tea.KeyEsc))
-		if r.state != runConfigPrompt {
-			t.Fatalf("state = %v, want runConfigPrompt (the session was cancelled)", r.state)
+		if !r.Done || !r.WantsMenu {
+			t.Fatalf("Done=%v WantsMenu=%v, want the main menu (the session was cancelled)", r.Done, r.WantsMenu)
 		}
 		awaitEnd(t, s)
 		if stdin.String() != "" {

@@ -193,56 +193,6 @@ func TestEngineRun_SuccessReadsTheURLFromTheRealDeployment(t *testing.T) {
 	}
 }
 
-func TestEngineRun_ConfigurationPromptMenu(t *testing.T) {
-	refused := func(t *testing.T) engineRun {
-		r := startedRun(t, "update", engineRunSeams{})
-		r.state = runStreaming
-		r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", "configuration-failure", "retry")})
-		r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1")}})
-		if r.state != runConfigPrompt {
-			t.Fatalf("state = %v, want runConfigPrompt", r.state)
-		}
-		if s := runScreen(r); !strings.Contains(s, "then the update resumes") {
-			t.Fatalf("prompt should name the action that resumes:\n%s", s)
-		}
-		return r
-	}
-
-	t.Run("Menu", func(t *testing.T) {
-		r := refused(t)
-		r, _ = runUpdate(t, r, key(tea.KeyDown))
-		r, _ = runUpdate(t, r, key(tea.KeyEnter))
-		if !r.Done || !r.WantsMenu {
-			t.Fatalf("Done=%v WantsMenu=%v", r.Done, r.WantsMenu)
-		}
-	})
-	t.Run("Exit via wrap", func(t *testing.T) {
-		r := refused(t)
-		r, _ = runUpdate(t, r, key(tea.KeyUp))
-		if !strings.Contains(runScreen(r), "▸ Exit") {
-			t.Fatalf("Up from the top should wrap to Exit:\n%s", runScreen(r))
-		}
-		_, cmd := runUpdate(t, r, key(tea.KeyEnter))
-		if !isQuit(cmd) {
-			t.Fatal("Exit did not quit")
-		}
-	})
-	t.Run("Esc", func(t *testing.T) {
-		r := refused(t)
-		r, _ = runUpdate(t, r, key(tea.KeyEsc))
-		if !r.Done || !r.WantsMenu {
-			t.Fatal("Esc did not return to the menu")
-		}
-	})
-	t.Run("unbound key", func(t *testing.T) {
-		r := refused(t)
-		r, cmd := runUpdate(t, r, runeKey('z'))
-		if cmd != nil || r.Done || r.menu.sel != 0 || r.state != runConfigPrompt {
-			t.Fatal("an unbound key changed the prompt")
-		}
-	})
-}
-
 func TestEngineRun_FailedMenuExitQuits(t *testing.T) {
 	r := startedRun(t, "install", engineRunSeams{})
 	r, _ = runUpdate(t, r, engineReadyMsg{err: errors.New("boom")})

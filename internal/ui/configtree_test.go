@@ -105,9 +105,11 @@ func TestDefaultPrepareConfig_Failures(t *testing.T) {
 }
 
 // refusedRunWithTree is an engine run whose engine handed over tree and
-// then refused for missing configuration. cleaned counts the run's
-// cleanup calls.
-func refusedRunWithTree(t *testing.T, seams engineRunSeams, tree string, cleaned *int) engineRun {
+// then refused for missing configuration, and so went straight into the
+// guided session (#251): it returns the run in runConfigCollect and the
+// command that prepares the session. cleaned counts the run's cleanup
+// calls.
+func refusedRunWithTree(t *testing.T, seams engineRunSeams, tree string, cleaned *int) (engineRun, tea.Cmd) {
 	t.Helper()
 	r := startedRun(t, "install", seams)
 	r, _ = runUpdate(t, r, engineReadyMsg{
@@ -116,11 +118,14 @@ func refusedRunWithTree(t *testing.T, seams engineRunSeams, tree string, cleaned
 		cleanup:    func() error { *cleaned++; return nil },
 	})
 	r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", "configuration-failure", "retry")})
-	r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1}})
-	if r.state != runConfigPrompt {
-		t.Fatalf("state = %v, want the configuration prompt", r.state)
+	r, cmd := runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{Err: errors.New("exit status 1"), ExitCode: 1}})
+	if r.state != runConfigCollect {
+		t.Fatalf("state = %v, want the configuration session (no key press needed)", r.state)
 	}
-	return r
+	if cmd == nil {
+		t.Fatal("the configuration stop started no session preparation")
+	}
+	return r, cmd
 }
 
 // The engine's tree survives its refusal — the run's cleanup waits for
@@ -129,7 +134,7 @@ func TestEngineRun_ConfigSessionRunsInTheTreeTheEngineHandedOver(t *testing.T) {
 	tree := t.TempDir()
 	var gotTree string
 	cleaned := 0
-	r := refusedRunWithTree(t, engineRunSeams{
+	r, cmd := refusedRunWithTree(t, engineRunSeams{
 		prepareConfig: func(_ context.Context, _ string, configTree string) configPlanMsg {
 			gotTree = configTree
 			return configPlanMsg{err: errors.New("stop here")}
@@ -140,10 +145,6 @@ func TestEngineRun_ConfigSessionRunsInTheTreeTheEngineHandedOver(t *testing.T) {
 		t.Fatal("the run's cleanup removed the configure tree before the session could use it")
 	}
 
-	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // Continue — guided configuration
-	if r.state != runConfigCollect {
-		t.Fatalf("state = %v, want the configuration session", r.state)
-	}
 	r, _ = runUpdate(t, r, cmd())
 	if gotTree != tree {
 		t.Fatalf("configuration prepared in %q, want the engine's tree %q", gotTree, tree)
@@ -165,8 +166,7 @@ func TestEngineRun_NoTreeFromTheEngineFallsBackToTheHandoff(t *testing.T) {
 	requests := countingScriptSource(t)
 	prepared := false
 	cleaned := 0
-	r := refusedRunWithTree(t, handoffSeams(&prepared), t.TempDir(), &cleaned) // empty: an install.sh without ai/orbit#1225
-	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	r, cmd := refusedRunWithTree(t, handoffSeams(&prepared), t.TempDir(), &cleaned) // empty: an install.sh without ai/orbit#1225
 	r, cmd = runUpdate(t, r, cmd())
 	if r.state != runHandoffRunning {
 		t.Fatalf("state = %v, want the terminal handoff", r.state)
@@ -180,26 +180,23 @@ func TestEngineRun_NoTreeFromTheEngineFallsBackToTheHandoff(t *testing.T) {
 	}
 }
 
-// Cancelling the session keeps the tree for another attempt; leaving
-// the refusal for the menu releases it.
-func TestEngineRun_TreeOutlivesACancelledSessionAndGoesWithTheRun(t *testing.T) {
+// Esc in the session goes to the main menu and releases the run's files
+// then, exactly once — what the old Menu and Exit choices did (#251).
+func TestEngineRun_EscInTheSessionReleasesTheRunsTree(t *testing.T) {
 	cleaned := 0
-	r := refusedRunWithTree(t, engineRunSeams{
+	r, cmd := refusedRunWithTree(t, engineRunSeams{
 		prepareConfig: planned(true, false),
 	}, t.TempDir(), &cleaned)
-	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	r, _ = runUpdate(t, r, cmd())
 	if r.state != runConfigSignInMode {
 		t.Fatalf("state = %v, want the sign-in-mode screen", r.state)
 	}
-	r, _ = r.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if r.state != runConfigPrompt || cleaned != 0 {
-		t.Fatalf("state = %v cleaned = %d; a cancelled session must keep the run's tree", r.state, cleaned)
+	if cleaned != 0 {
+		t.Fatalf("run cleanup ran %d times before Esc; the session still needs the tree", cleaned)
 	}
-	r.menu.sel = 1 // Menu
-	r, _ = r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !r.Done || !r.WantsMenu {
-		t.Fatalf("Done=%v WantsMenu=%v, want back to the menu", r.Done, r.WantsMenu)
+	r, _ = r.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !r.Done || !r.WantsMenu || r.Succeeded {
+		t.Fatalf("Done=%v WantsMenu=%v Succeeded=%v, want back to the menu", r.Done, r.WantsMenu, r.Succeeded)
 	}
 	if cleaned != 1 {
 		t.Fatalf("run cleanup ran %d times on leaving, want once", cleaned)
@@ -210,10 +207,9 @@ func TestEngineRun_TreeOutlivesACancelledSessionAndGoesWithTheRun(t *testing.T) 
 // refused run's is released first.
 func TestEngineRun_RetryReleasesTheRefusedRunsTree(t *testing.T) {
 	cleaned := 0
-	r := refusedRunWithTree(t, engineRunSeams{
+	r, _ := refusedRunWithTree(t, engineRunSeams{
 		prepareConfig: planned(true, false),
 	}, t.TempDir(), &cleaned)
-	r.state = runConfigCollect
 	r, _ = runUpdate(t, r, configAdoptedMsg{})
 	if r.state != runPreparing {
 		t.Fatalf("state = %v, want the retried engine preparing", r.state)
@@ -223,12 +219,16 @@ func TestEngineRun_RetryReleasesTheRefusedRunsTree(t *testing.T) {
 	}
 }
 
-func TestEngineRun_CtrlCOnTheRefusalReleasesTheTree(t *testing.T) {
+func TestEngineRun_CtrlCInTheSessionReleasesTheTree(t *testing.T) {
 	cleaned := 0
-	r := refusedRunWithTree(t, engineRunSeams{}, t.TempDir(), &cleaned)
-	_, cmd := r.handleKey(ctrlC())
+	r, cmd := refusedRunWithTree(t, engineRunSeams{prepareConfig: planned(true, false)}, t.TempDir(), &cleaned)
+	r, _ = runUpdate(t, r, cmd())
+	if r.state != runConfigSignInMode {
+		t.Fatalf("state = %v, want the sign-in-mode screen", r.state)
+	}
+	_, cmd = r.handleKey(ctrlC())
 	if !isQuit(cmd) {
-		t.Fatal("Ctrl+C on the refusal did not quit")
+		t.Fatal("Ctrl+C in the session did not quit")
 	}
 	if cleaned != 1 {
 		t.Fatalf("run cleanup ran %d times on Ctrl+C, want once", cleaned)
@@ -247,8 +247,7 @@ func TestEngineRun_UntrustedConfigTreeStopsOnTheFailureScreen(t *testing.T) {
 	}
 	prepared := false
 	cleaned := 0
-	r := refusedRunWithTree(t, handoffSeams(&prepared), tree, &cleaned) // real prepareConfig
-	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	r, cmd := refusedRunWithTree(t, handoffSeams(&prepared), tree, &cleaned) // real prepareConfig
 	r, _ = runUpdate(t, r, cmd())
 	if r.state != runFailed {
 		t.Fatalf("state = %v, want the failure screen", r.state)
@@ -276,8 +275,7 @@ func TestEngineRun_StrictModeWithAnEmptyRealTreeRefusesTheHandoff(t *testing.T) 
 	t.Setenv(requireInConsoleEnv, "1")
 	prepared := false
 	cleaned := 0
-	r := refusedRunWithTree(t, handoffSeams(&prepared), t.TempDir(), &cleaned) // real prepareConfig
-	r, cmd := r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	r, cmd := refusedRunWithTree(t, handoffSeams(&prepared), t.TempDir(), &cleaned) // real prepareConfig
 	r, _ = runUpdate(t, r, cmd())
 	if r.state != runFailed {
 		t.Fatalf("state = %v, want the failure screen", r.state)
