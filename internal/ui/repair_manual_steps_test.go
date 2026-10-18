@@ -220,3 +220,55 @@ func TestPlanLine_NamesWhatItIsAbout(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanLine_EveryLineFitsIn80Columns (review F5): every plan line
+// the other tests know stays within 80 cells: each action and reason
+// pair in a fixture (with its own mutation and backup), each action word
+// against the reason TestPlanLine_ActionWords uses, and the manual action
+// against each reason TestPlanLine_NamesWhatItIsAbout uses.
+func TestPlanLine_EveryLineFitsIn80Columns(t *testing.T) {
+	known := []engine.PlanAction{
+		// Fixtures across the package's tests.
+		{Action: "fix-permissions", Resolves: "managed-file-permissions", Mutation: "reversible", Backup: "not-required"},
+		{Action: "fix-permissions", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
+		{Action: "manual", Resolves: "database-unreachable", Mutation: "none", Backup: "not-required"},
+		{Action: "manual", Resolves: "volume-retained-without-credentials", Mutation: "none", Backup: "not-required"},
+		{Action: "manual", Resolves: "secret-stale", Mutation: "none", Backup: "required"},
+		{Action: "regenerate-secret", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
+		{Action: "rerun-configuration", Resolves: "configuration-incomplete", Mutation: "none", Backup: "not-required"},
+		{Action: "restart-services", Resolves: "stale-container", Mutation: "reversible", Backup: "not-required"},
+		{Action: "rotate-database-credential", Resolves: "database-credential-mismatch", Mutation: "credential-rotation", Backup: "required"},
+	}
+	for _, a := range []string{
+		"fix-permissions", "rerun-configuration", "restore-transaction",
+		"rotate-database-credential", "regenerate-secret", "restart-services", "manual",
+	} {
+		known = append(known, engine.PlanAction{Action: a, Resolves: "migration-failed", Backup: "not-required"})
+	}
+	for _, c := range []string{
+		"database-unreachable", "database-credential-mismatch", "application-unhealthy",
+		"stale-container", "secret-missing",
+	} {
+		known = append(known, engine.PlanAction{Action: "manual", Resolves: c, Mutation: "none", Backup: "not-required"})
+	}
+
+	for _, p := range known {
+		got := ansi.Strip(planLine(p))
+		if w := lipgloss.Width(got); w > 80 {
+			t.Errorf("%d cells, want at most 80: action=%s resolves=%s mutation=%s backup=%s: %q", w, p.Action, p.Resolves, p.Mutation, p.Backup, got)
+		}
+	}
+}
+
+// The line found too wide still says what it is about once shortened.
+func TestPlanLine_RestartForAStaleContainerFitsAndSaysWhatItIsAbout(t *testing.T) {
+	got := ansi.Strip(planLine(engine.PlanAction{Action: "restart-services", Resolves: "stale-container", Mutation: "reversible", Backup: "not-required"}))
+	if w := lipgloss.Width(got); w > 80 {
+		t.Errorf("the restart line for a stale container is %d cells, want at most 80: %q", w, got)
+	}
+	for _, want := range []string{"restart Orbit's services", "container"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the restart line for a stale container reads %q, which lacks %q", got, want)
+		}
+	}
+}

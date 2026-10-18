@@ -17,6 +17,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,7 +53,13 @@ type straightFlow struct {
 	model   tea.Model
 	loop    *flowLoop
 	cleaned atomic.Int32 // the run's own cleanup (the engine's files)
+	// engineStarts counts the engine runs this flow asked for. Past
+	// maxEngineStarts the engine fails to prepare, so a flow that keeps
+	// retrying stops instead of looping for ever.
+	engineStarts atomic.Int32
 }
+
+const maxEngineStarts = 4
 
 func (f *straightFlow) screen() string { return screen(f.model) }
 
@@ -95,6 +102,9 @@ func startStraightFlow(t *testing.T, name string, seams engineRunSeams) *straigh
 	t.Helper()
 	f := &straightFlow{t: t, name: name}
 	seams.prepareEngine = func(context.Context, string, string) (*engine.Stream, func() error, error) {
+		if f.engineStarts.Add(1) > maxEngineStarts {
+			return nil, nil, errors.New("test bound: the engine was started too many times")
+		}
 		msgs := configRefusalStream()
 		ch := make(chan any, len(msgs))
 		for _, m := range msgs {
@@ -464,5 +474,368 @@ func TestStraightIn_AnEngineFailureThatIsNotAConfigurationRefusalStillShowsTheFa
 			}
 			notShowingRemovedScreen(t, s)
 		})
+	}
+}
+
+// --- 5: a second refusal after configuration (review F1) -------------------------
+
+// stillIncomplete is the failure screen's sentence when the engine
+// refuses for configuration again after guided configuration.
+const stillIncomplete = "Orbit still says the configuration is incomplete."
+
+// countedPlan is planned() with a count of how many guided-configuration
+// sessions were prepared.
+func countedPlan(needInit, needSecret bool, sessions *atomic.Int32) prepareConfigFunc {
+	inner := planned(needInit, needSecret)
+	return func(ctx context.Context, dir, tree string) configPlanMsg {
+		sessions.Add(1)
+		return inner(ctx, dir, tree)
+	}
+}
+
+func countedAdopt(adopted *atomic.Int32) func(string, string) error {
+	return func(string, string) error { adopted.Add(1); return nil }
+}
+
+// expectStillIncomplete fails unless the flow is on the failure screen
+// with the second-refusal sentence and the usual menu.
+func expectStillIncomplete(t *testing.T, f *straightFlow) {
+	t.Helper()
+	s := f.screen()
+	if f.runState() != runFailed {
+		t.Fatalf("run state = %v, want the failure screen:\n%s", f.runState(), s)
+	}
+	if want := f.name + " stopped"; !strings.Contains(s, want) {
+		t.Errorf("the failure screen is not titled %q:\n%s", want, s)
+	}
+	if !strings.Contains(s, stillIncomplete) {
+		t.Errorf("the failure screen lacks %q:\n%s", stillIncomplete, s)
+	}
+	if got := screenLabels(s); len(got) != 3 || got[0] != "Open the guided installer" || got[1] != "Menu" || got[2] != "Exit" {
+		t.Errorf("failure rows = %q, want the usual three", got)
+	}
+	if strings.Contains(s, "How will people sign in?") {
+		t.Errorf("guided configuration started again:\n%s", s)
+	}
+	if f.outcome().Done {
+		t.Errorf("the flow finished on its own: %+v", f.outcome())
+	}
+}
+
+// Guided configuration found nothing left to collect, adopted and
+// retried; the retry refused for configuration again. One retry, then
+// the failure screen: no second session, no third engine run.
+func TestStraightIn_ASecondRefusalAfterNothingToCollectShowsTheFailureScreen(t *testing.T) {
+	for _, name := range straightInFlows {
+		t.Run(name, func(t *testing.T) {
+			var sessions, adopted atomic.Int32
+			f := startStraightFlow(t, name, engineRunSeams{
+				prepareConfig: countedPlan(false, false, &sessions),
+				adoptConfig:   countedAdopt(&adopted),
+				startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+			})
+			expectStillIncomplete(t, f)
+			if n := sessions.Load(); n != 1 {
+				t.Errorf("guided configuration was prepared %d times, want once", n)
+			}
+			if n := adopted.Load(); n != 1 {
+				t.Errorf("the configuration was adopted %d times, want once", n)
+			}
+			if n := f.engineStarts.Load(); n != 2 {
+				t.Errorf("the engine ran %d times, want twice (the first run and one retry)", n)
+			}
+		})
+	}
+}
+
+// The same rule after a session where the person answered fields.
+func TestStraightIn_ASecondRefusalAfterAnsweredFieldsShowsTheFailureScreen(t *testing.T) {
+	for _, name := range straightInFlows {
+		t.Run(name, func(t *testing.T) {
+			var sessions, adopted atomic.Int32
+			f := startStraightFlow(t, name, engineRunSeams{
+				prepareConfig: countedPlan(true, false, &sessions),
+				adoptConfig:   countedAdopt(&adopted),
+				recheckConfig: secretNotOwed,
+				startConfig:   scriptedConfig(machineInitScriptLocal, machineSecretScript),
+			})
+			if !strings.Contains(f.screen(), "How will people sign in?") {
+				t.Fatalf("the first refusal did not go straight into guided configuration:\n%s", f.screen())
+			}
+			f.press(key(tea.KeyEnter)) // Local accounts
+			if !strings.Contains(f.screen(), "Public Orbit origin") {
+				t.Fatalf("the first field never arrived:\n%s", f.screen())
+			}
+			f.typeLine("https://orbit.example.test")
+
+			expectStillIncomplete(t, f)
+			if n := sessions.Load(); n != 1 {
+				t.Errorf("guided configuration was prepared %d times, want once", n)
+			}
+			if n := adopted.Load(); n != 1 {
+				t.Errorf("the configuration was adopted %d times, want once", n)
+			}
+			if n := f.engineStarts.Load(); n != 2 {
+				t.Errorf("the engine ran %d times, want twice (the first run and one retry)", n)
+			}
+		})
+	}
+}
+
+// A fresh start of the flow begins clean: its first refusal goes
+// straight into guided configuration again, with the same seams.
+func TestStraightIn_AFreshStartAfterTheSecondRefusalGoesStraightInAgain(t *testing.T) {
+	for _, name := range straightInFlows {
+		t.Run(name, func(t *testing.T) {
+			var sessions, adopted atomic.Int32
+			seams := engineRunSeams{
+				prepareConfig: countedPlan(false, false, &sessions),
+				adoptConfig:   countedAdopt(&adopted),
+				startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+			}
+			first := startStraightFlow(t, name, seams)
+			expectStillIncomplete(t, first)
+
+			second := startStraightFlow(t, name, seams)
+			if n := sessions.Load(); n != 2 {
+				t.Errorf("guided configuration was prepared %d times over two starts, want twice (once per start)", n)
+			}
+			if n := adopted.Load(); n != 2 {
+				t.Errorf("the configuration was adopted %d times over two starts, want twice", n)
+			}
+			if n := second.engineStarts.Load(); n != 2 {
+				t.Errorf("the fresh start ran the engine %d times, want twice (its first run and one retry)", n)
+			}
+			expectStillIncomplete(t, second)
+		})
+	}
+}
+
+// --- 6: Esc while guided configuration is still starting (review F2) -------------
+
+// closeTrackingStdin is a configuration process's stdin that records,
+// safely across goroutines, whether it was closed.
+type closeTrackingStdin struct{ closed atomic.Bool }
+
+func (c *closeTrackingStdin) Write(p []byte) (int, error) { return len(p), nil }
+func (c *closeTrackingStdin) Close() error                { c.closed.Store(true); return nil }
+
+// gate holds a seam until the test opens it, or until a fallback timer
+// does so a seam called inside Update cannot hang the test.
+type gate struct {
+	ch       chan struct{}
+	once     sync.Once
+	fallback atomic.Bool
+}
+
+func newGate() *gate {
+	g := &gate{ch: make(chan struct{})}
+	time.AfterFunc(3*time.Second, func() { g.once.Do(func() { g.fallback.Store(true); close(g.ch) }) })
+	return g
+}
+
+func (g *gate) open()          { g.once.Do(func() { close(g.ch) }) }
+func (g *gate) wait()          { <-g.ch }
+func (g *gate) timedOut() bool { return g.fallback.Load() }
+
+func waitCount(t *testing.T, n *atomic.Int32, what string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for n.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n.Load() == 0 {
+		t.Fatalf("%s never happened", what)
+	}
+}
+
+// Esc while the plan is being prepared leaves for the menu; the plan that
+// arrives afterwards has its cleanup run, and nothing else changes.
+func TestStraightIn_EscWhileThePlanIsPreparedCleansUpTheLatePlan(t *testing.T) {
+	for _, name := range straightInFlows {
+		t.Run(name, func(t *testing.T) {
+			var planCleaned atomic.Int32
+			hold := newGate()
+			late := countingPlan(true, false, &planCleaned)
+			cfg := &recordedConfig{inner: scriptedConfig(machineInitScript, machineSecretScript)}
+			f := startStraightFlow(t, name, engineRunSeams{
+				prepareConfig: func(ctx context.Context, dir, tree string) configPlanMsg {
+					hold.wait()
+					return late(ctx, dir, tree)
+				},
+				startConfig: cfg.start,
+			})
+			if hold.timedOut() {
+				t.Fatal("setup: the plan was prepared inside Update, so there is no preparing phase")
+			}
+			if s := f.screen(); strings.Contains(s, "How will people sign in?") {
+				t.Fatalf("setup: the plan is already on screen:\n%s", s)
+			}
+
+			f.press(key(tea.KeyEsc))
+			if o := f.outcome(); !leftForMenu(o) {
+				t.Fatalf("outcome after Esc = %+v, want back to the main menu", o)
+			}
+			afterEsc := f.screen()
+
+			hold.open()
+			f.loop.settle(nil)
+
+			waitCount(t, &planCleaned, "the late plan's cleanup")
+			if o := f.outcome(); !leftForMenu(o) {
+				t.Errorf("the late plan changed the outcome to %+v, want still back to the main menu", o)
+			}
+			if s := f.screen(); s != afterEsc {
+				t.Errorf("the late plan changed the screen:\nafter Esc:\n%s\nnow:\n%s", afterEsc, s)
+			}
+			if len(cfg.streams) != 0 {
+				t.Error("a configuration process was started after Esc")
+			}
+		})
+	}
+}
+
+// Esc while the configuration process is being started leaves for the
+// menu; the process that arrives afterwards is killed and its stdin
+// closed, and nothing else changes.
+func TestStraightIn_EscWhileTheProcessStartsKillsTheLateProcess(t *testing.T) {
+	for _, name := range straightInFlows {
+		t.Run(name, func(t *testing.T) {
+			var planCleaned atomic.Int32
+			hold := newGate()
+			proc := sleepingStream(t)
+			stdin := &closeTrackingStdin{}
+			var starts atomic.Int32
+			f := startStraightFlow(t, name, engineRunSeams{
+				prepareConfig: countingPlan(true, false, &planCleaned),
+				startConfig: func(string, deploy.ConfigStep, deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+					starts.Add(1)
+					hold.wait()
+					return proc, stdin, nil
+				},
+			})
+			if !strings.Contains(f.screen(), "How will people sign in?") {
+				t.Fatalf("not on the sign-in question:\n%s", f.screen())
+			}
+			f.press(key(tea.KeyEnter)) // Local accounts: the process starts
+			if hold.timedOut() {
+				t.Fatal("setup: the process was started inside Update, so there is no starting phase")
+			}
+			if starts.Load() != 1 {
+				t.Fatalf("setup: the configuration process was asked for %d times, want once", starts.Load())
+			}
+
+			f.press(key(tea.KeyEsc))
+			if o := f.outcome(); !leftForMenu(o) {
+				t.Fatalf("outcome after Esc = %+v, want back to the main menu", o)
+			}
+			afterEsc := f.screen()
+
+			hold.open()
+			f.loop.settle(nil)
+
+			waitStopped(t, proc)
+			deadline := time.Now().Add(3 * time.Second)
+			for !stdin.closed.Load() && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !stdin.closed.Load() {
+				t.Error("the late process's stdin was never closed")
+			}
+			if o := f.outcome(); !leftForMenu(o) {
+				t.Errorf("the late process changed the outcome to %+v, want still back to the main menu", o)
+			}
+			if s := f.screen(); s != afterEsc {
+				t.Errorf("the late process changed the screen:\nafter Esc:\n%s\nnow:\n%s", afterEsc, s)
+			}
+		})
+	}
+}
+
+// --- 7: the give-up reason names only a field still being asked (review F3) ------
+
+// acceptThenFailScript accepts the origin and exits with an error, no
+// abort line.
+const acceptThenFailScript = `
+echo "prompt field=APP_URL kind=url required=true attempt=1"
+read -r a
+echo "prompt-accept field=APP_URL"
+exit 1`
+
+// acceptTwoThenFailScript accepts the origin and the issuer, then exits
+// with an error, no abort line.
+const acceptTwoThenFailScript = `
+echo "prompt field=APP_URL kind=url required=true attempt=1"
+read -r a
+echo "prompt-accept field=APP_URL"
+echo "prompt field=OIDC_ISSUER kind=url required=true attempt=1"
+read -r a
+echo "prompt-accept field=OIDC_ISSUER"
+exit 1`
+
+// openPromptThenFailScript exits with an error while its prompt is still
+// open, no abort line.
+const openPromptThenFailScript = `
+echo "prompt field=APP_URL kind=url required=true attempt=1"
+exit 1`
+
+const stoppedBeforeFinished = "Orbit's setup stopped before the configuration was finished."
+
+func TestStraightIn_TheGiveUpReasonNamesOnlyAFieldStillBeingAsked(t *testing.T) {
+	cases := []struct {
+		name    string
+		script  string
+		sso     bool
+		answers []string
+		// field is the field the reason must name ("" for the reason
+		// with no field); never lists fields it must not name.
+		field string
+		never []string
+	}{
+		{"accepted the only answer, then failed", acceptThenFailScript, false, []string{"https://orbit.example.test"}, "", []string{"APP_URL"}},
+		{"accepted two answers, then failed", acceptTwoThenFailScript, true, []string{"https://orbit.example.test", "https://accounts.example.test"}, "", []string{"APP_URL", "OIDC_ISSUER"}},
+		// The cases it guards: a field still being asked is named.
+		{"open prompt, no abort line", openPromptThenFailScript, false, nil, "APP_URL", nil},
+		{"abort line after an accepted field", giveUpLaterScript, true, []string{"https://orbit.example.test"}, "OIDC_ISSUER", []string{"APP_URL"}},
+	}
+	for _, name := range straightInFlows {
+		for _, c := range cases {
+			t.Run(name+" "+c.name, func(t *testing.T) {
+				f := startStraightFlow(t, name, engineRunSeams{
+					prepareConfig: planned(true, false),
+					startConfig:   scriptedConfig(c.script, machineSecretScript),
+				})
+				if c.sso {
+					f.press(key(tea.KeyDown))
+				}
+				f.press(key(tea.KeyEnter)) // sign-in mode
+				for _, a := range c.answers {
+					f.typeLine(a)
+				}
+
+				s := f.screen()
+				if f.runState() != runFailed {
+					t.Fatalf("run state = %v, want the failure screen:\n%s", f.runState(), s)
+				}
+				if want := name + " stopped"; !strings.Contains(s, want) {
+					t.Errorf("the failure screen is not titled %q:\n%s", want, s)
+				}
+				if c.field == "" {
+					if !strings.Contains(s, stoppedBeforeFinished) {
+						t.Errorf("the failure screen lacks the reason %q:\n%s", stoppedBeforeFinished, s)
+					}
+					if strings.Contains(s, "stopped asking for") {
+						t.Errorf("the reason names a field although the engine accepted every answer:\n%s", s)
+					}
+				} else if want := "Orbit's setup stopped asking for " + labelOf(c.field) + "."; !strings.Contains(s, want) {
+					t.Errorf("the failure screen lacks the reason %q:\n%s", want, s)
+				}
+				for _, accepted := range c.never {
+					if bad := "stopped asking for " + labelOf(accepted); strings.Contains(s, bad) {
+						t.Errorf("the reason names %s, which the engine accepted:\n%s", accepted, s)
+					}
+				}
+			})
+		}
 	}
 }

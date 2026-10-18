@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
@@ -463,5 +464,119 @@ func TestInputCursor_NoticeHomeEndScrollWhileCtrlAEAndArrowsEdit(t *testing.T) {
 	m = typeText(t, m, "X")
 	if got := m.notice.typed.String(); got != "abXc" {
 		t.Fatalf("typing after the moves left %q, want %q", got, "abXc")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A line wider than its row (review F4).
+// ---------------------------------------------------------------------------
+
+// wideText is wider than any field's row at 80 columns and ends in three
+// characters that appear nowhere else in it.
+var wideText = strings.Repeat("abcdefghij", 10) + "xyz"
+
+// cursorRowWidth is the width in cells of the screen row carrying the
+// cursor.
+func cursorRowWidth(t *testing.T, scr string) int {
+	t.Helper()
+	for _, line := range strings.Split(scr, "\n") {
+		if strings.Contains(line, "▏") {
+			return lipgloss.Width(line)
+		}
+	}
+	t.Fatalf("no row of the screen carries the cursor:\n%s", scr)
+	return 0
+}
+
+// With the cursor three characters before the end of a line wider than
+// the row, those three characters are drawn after the cursor, and the
+// text before it is the text that really precedes it.
+func TestInputCursor_WideLineShowsTheTextAfterTheCursor(t *testing.T) {
+	everyField(t, func(t *testing.T, rig cursorRig) {
+		rig.typeRunes(wideText)
+		rig.keys(leftKey, leftKey, leftKey)
+
+		scr := rig.screen()
+		before, after := cursorRowParts(t, scr)
+		if after != "xyz" {
+			t.Errorf("three Lefts on a wide line: the row reads %q▏%q, want the three trailing characters %q after the cursor", before, after, "xyz")
+		}
+		if before == "" || !strings.HasSuffix(wideText[:len(wideText)-3], before) {
+			t.Errorf("three Lefts on a wide line: the text before the cursor reads %q, want the end of %q", before, wideText[:len(wideText)-3])
+		}
+		if w := cursorRowWidth(t, scr); w > 80 {
+			t.Errorf("the input row is %d cells wide, more than the 80-column screen:\n%s", w, scr)
+		}
+	})
+}
+
+// With the cursor at the start of a wide line, the start of the line is
+// drawn after the cursor.
+func TestInputCursor_WideLineAtTheStartShowsTheStart(t *testing.T) {
+	everyField(t, func(t *testing.T, rig cursorRig) {
+		rig.typeRunes(wideText)
+		rig.press(ctrlA)
+
+		scr := rig.screen()
+		before, after := cursorRowParts(t, scr)
+		if before != "" || after == "" || !strings.HasPrefix(wideText, after) {
+			t.Errorf("Ctrl+A on a wide line: the row reads %q▏%q, want nothing before the cursor and the start of the line after it", before, after)
+		}
+		if w := cursorRowWidth(t, scr); w > 80 {
+			t.Errorf("the input row is %d cells wide, more than the 80-column screen:\n%s", w, scr)
+		}
+	})
+}
+
+// The case it guards: a cursor at the end of a wide line draws the end of
+// the line before the cursor and nothing after it, and coming back to
+// the end after moving draws exactly the same screen.
+func TestInputCursor_WideLineWithTheCursorAtTheEndDrawsAsBefore(t *testing.T) {
+	everyField(t, func(t *testing.T, rig cursorRig) {
+		rig.typeRunes(wideText)
+		atEnd := rig.screen()
+		before, after := cursorRowParts(t, atEnd)
+		if after != "" || !strings.HasSuffix(before, "xyz") || !strings.HasSuffix(wideText, before) {
+			t.Fatalf("cursor at the end of a wide line: the row reads %q▏%q, want the end of the line before the cursor and nothing after it", before, after)
+		}
+		if w := cursorRowWidth(t, atEnd); w > 80 {
+			t.Errorf("the input row is %d cells wide, more than the 80-column screen:\n%s", w, atEnd)
+		}
+
+		rig.keys(leftKey, leftKey, leftKey, rightKey, rightKey, rightKey)
+		if scr := rig.screen(); scr != atEnd {
+			t.Errorf("back at the end after three Lefts and three Rights the screen differs:\nat the end:\n%s\nnow:\n%s", atEnd, scr)
+		}
+	})
+}
+
+// A secret field with a wide answer still shows nothing, and moving the
+// cursor changes nothing on screen.
+func TestInputCursor_WideSecretShowsNothingAndNeverMovesTheCursor(t *testing.T) {
+	for _, name := range []string{"rotation", "configuration"} {
+		t.Run(name, func(t *testing.T) {
+			p := pasteRigs(t, secretPrompt)[name]
+			rig := asCursorRig(p)
+			rig.typeRunes(wideText)
+			atEnd := rig.screen()
+			for _, leak := range []string{"abcdefghij", "xyz", "hij"} {
+				if strings.Contains(atEnd, leak) {
+					t.Fatalf("the secret prompt shows %q:\n%s", leak, atEnd)
+				}
+			}
+			for _, mv := range []struct {
+				name string
+				k    tea.KeyPressMsg
+			}{{"Left", leftKey}, {"Left", leftKey}, {"Left", leftKey}, {"Home", homeKey}, {"Ctrl+E", ctrlE}} {
+				rig.press(mv.k)
+				if scr := rig.screen(); scr != atEnd {
+					t.Fatalf("%s changed the screen of a wide secret prompt:\nbefore:\n%s\nafter:\n%s", mv.name, atEnd, scr)
+				}
+			}
+			rig.press(key(tea.KeyEnter))
+			if got := p.sent(); got != wideText+"\n" {
+				t.Fatalf("Enter sent %q, want the whole wide answer", got)
+			}
+		})
 	}
 }
