@@ -122,8 +122,10 @@ func requireTrustedConfigDirs(dir string) error {
 
 // orbitScripts are the scripts in a deployment's scripts/ directory that
 // source one another: trusting one of them means trusting all that are
-// there.
-var orbitScripts = []string{"configure.sh", "installer-ui.sh", "repair.sh"}
+// there. configuration.sh and engine-check.sh stay on the list for
+// deployments from before Orbit 5e9b1233, whose configure.sh still runs
+// them; newer deployments lack them and are unaffected.
+var orbitScripts = []string{"configure.sh", "configuration.sh", "installer-ui.sh", "engine-check.sh", "repair.sh"}
 
 // requireTrustedScripts is RequireTrustedPath for scripts/<name>, plus
 // each sibling it may source that is present, plus orbitImageFile when

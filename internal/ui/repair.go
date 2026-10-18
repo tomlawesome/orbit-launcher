@@ -919,30 +919,81 @@ func (m RepairModel) viewDiagnosis() string {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
 	}
 
-	m.writePlan(&b, result)
+	steps, after := m.planParts(result)
+	var tail strings.Builder
+	for _, row := range after {
+		fmt.Fprintln(&tail, row)
+	}
+	fmt.Fprintln(&tail)
+	m.menu.over(m.planMenu()).write(&tail)
 
-	fmt.Fprintln(&b)
-	m.menu.over(m.planMenu()).write(&b)
+	// The steps take whatever rows the rest leaves, so a short terminal
+	// never pushes the summary and menu off the bottom. The last row is
+	// left to the sky, as on every scene screen.
+	room := math.MaxInt
+	if m.height > 0 {
+		room = m.height - 1 - strings.Count(b.String(), "\n") - strings.Count(tail.String(), "\n")
+	}
+	m.writeSteps(&b, steps, room)
+	b.WriteString(tail.String())
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
-// writePlan renders the proposed plan (orbit#261 slice 3): what the
+// writeSteps writes the plan's steps into room rows: all of them when
+// they fit, otherwise as many whole steps as fit and then one row
+// saying how many are not shown.
+func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) {
+	total := 0
+	for _, step := range steps {
+		total += len(step)
+	}
+	if total <= room {
+		for _, step := range steps {
+			for _, row := range step {
+				fmt.Fprintln(b, row)
+			}
+		}
+		return
+	}
+	shown := len(steps)
+	var more []string
+	for {
+		more = wrapWords(fmt.Sprintf("and %d more — make the terminal taller to see them", len(steps)-shown), measure(m.width, proseWidth))
+		used := len(more)
+		for _, step := range steps[:shown] {
+			used += len(step)
+		}
+		if used <= room || shown == 0 {
+			break
+		}
+		shown--
+	}
+	for _, step := range steps[:shown] {
+		for _, row := range step {
+			fmt.Fprintln(b, row)
+		}
+	}
+	for _, row := range more {
+		fmt.Fprintln(b, style.Tagline.Render(row))
+	}
+}
+
+// planParts lays out the proposed plan (orbit#261 slice 3): what the
 // engine would do, classified — and the plain truth that nothing has
-// run yet.
-func (m *RepairModel) writePlan(b *strings.Builder, result string) {
+// run yet. steps holds each plan line and manual step as its screen
+// rows; after is the rows that follow them, which are always shown.
+func (m *RepairModel) planParts(result string) (steps [][]string, after []string) {
 	if len(m.planActions) == 0 {
 		// No plan lines: healthy, a --check fallback run, or nothing
 		// plannable. Keep the honest note whenever something's wrong.
 		if result != engine.ResultHealthy {
-			fmt.Fprintln(b, style.Tagline.Render("repair actions arrive with a later Orbit release"))
+			after = append(after, style.Tagline.Render("repair actions arrive with a later Orbit release"))
 		}
-		return
+		return nil, after
 	}
 
 	for _, p := range m.planActions {
-		for _, row := range planRows(p, m.width) {
-			fmt.Fprintln(b, row)
-		}
+		steps = append(steps, planRows(p, m.width))
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
@@ -950,11 +1001,18 @@ func (m *RepairModel) writePlan(b *strings.Builder, result string) {
 			// on the end: drop the tag (the plan line above already
 			// names the problem) and wrap the rest, so it is never cut
 			// at the screen's edge (#253).
-			writeWrapped(b, style.Tagline, manualStepWords(step), measure(m.width, proseWidth))
+			lines := wrapWords(manualStepWords(step), measure(m.width, proseWidth))
+			if len(lines) == 0 {
+				lines = []string{""}
+			}
+			rows := make([]string, len(lines))
+			for i, line := range lines {
+				rows[i] = style.Tagline.Render(line)
+			}
+			steps = append(steps, rows)
 		}
 	}
-	fmt.Fprintln(b)
-	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous())))
+	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
 }
 
 // planLine renders one proposed action on one row: the action in plain
@@ -1058,6 +1116,11 @@ func planReasonWords(action, class string) string {
 		}
 	case "secret-missing":
 		noun, lead = "secret", "a secret is"
+	case "managed-file-missing", "managed-file-symlink":
+		noun, lead = "managed file", "a managed file"
+		if class == "managed-file-missing" {
+			lead += " is"
+		}
 	default:
 		return classWords(class)
 	}
@@ -1229,6 +1292,10 @@ func classWords(class string) string {
 		return "can't be reached"
 	case "database-credential-mismatch":
 		return "rejects the stored credentials"
+	case "database-credential-unverifiable":
+		// Orbit's application restarts faster than repair can read the
+		// credential it presents, so nothing was compared.
+		return "password couldn't be checked: the application restarts too fast"
 	case "stale-container":
 		return "running an older image than configured"
 	case "application-unhealthy":
