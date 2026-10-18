@@ -638,10 +638,15 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 }
 
 // forcedStopNote is the owner's wording for a stop whose installer was
-// still undoing its work when the launcher ended it.
+// still undoing its work when the launcher ended it. A stopped update
+// says "before updating again" (decision 21a).
 func forcedStopNote(action deploy.Action) string {
+	again := "installing"
+	if action == deploy.ActionUpdate {
+		again = "updating"
+	}
 	return "the " + string(action) + " was stopped, but Orbit's installer was still undoing its work when the launcher stopped waiting and ended it. " +
-		"The folder and the Docker containers and volumes it created may be half restored — check them before installing again."
+		"The folder and the Docker containers and volumes it created may be half restored — check them before " + again + " again."
 }
 
 // handleMenuKey drives a post-run screen's menu over items: Esc is back
