@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
 	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
@@ -88,6 +89,10 @@ type liveSession struct {
 	// deadline is go test's own -timeout deadline, from t.Deadline; zero
 	// means there is none. Every wait ends cleanupReserve before it.
 	deadline time.Time
+	// signIn is the answer acceptMenusUntil gives an M7 installer's own
+	// sign-in question, set by chooseSSO or chooseLocalAccounts so the
+	// two never disagree; empty means "oidc", as before #246.
+	signIn string
 }
 
 // healthClient bounds each request to the deployed app, so one that never
@@ -284,6 +289,19 @@ func (s *liveSession) chooseSSO() {
 	s.mustSoon("Local accounts")
 	s.send("\x1b[B") // Down to Single sign-on (SSO)
 	s.send("\r")
+	s.signIn = "oidc"
+}
+
+// chooseLocalAccounts answers the same question with its default row,
+// Local accounts, the way test/pty's local sign-in journey does: no
+// arrow press, so --init runs with ORBIT_CONFIGURE_AUTH_MODE=local and
+// asks for APP_URL only (#246).
+func (s *liveSession) chooseLocalAccounts() {
+	s.t.Helper()
+	s.mustSoon("How will people sign in?")
+	s.mustSoon("Local accounts")
+	s.send("\r")
+	s.signIn = "local"
 }
 
 // choose selects a top-level menu row by its digit rather than by counting
@@ -737,10 +755,11 @@ func recordScreens(t *testing.T, term *vtscreen.Terminal, path string) {
 // One question is not a menu: an M7 installer (orbit !908, ADR-0023 §1)
 // opens the guided configuration by asking "Sign in with local accounts
 // only, or also with an identity provider? [local/oidc] (default:
-// local)". Enter there would pick local-only, and the OIDC prompts this
-// suite drives next would never come, so it is answered "oidc" — the
-// flow every assertion below was written for. A pre-M7 installer never
-// asks, and never matches.
+// local)". Enter there would pick local-only, and the OIDC prompts the
+// SSO journeys drive next would never come, so it is answered with the
+// mode the launcher's own sign-in screen was given (liveSession.signIn),
+// "oidc" unless the Local-accounts journey chose otherwise. A pre-M7
+// installer never asks, and never matches.
 //
 // stopScreenReasonPattern matches the installer's own reason line on its
 // failure screen, e.g. "Orbit installer: Could not fetch
@@ -799,7 +818,11 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		}
 		acted = result
 		if strings.Contains(result, signInModeMarker) {
-			session.send("oidc\r")
+			answer := session.signIn
+			if answer == "" {
+				answer = "oidc"
+			}
+			session.send(answer + "\r")
 			continue
 		}
 		session.send("\r")
@@ -965,6 +988,63 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	})
 }
 
+// TestLive_InstallLocalAccountsThenRemove is #246: the same Install and
+// Remove as the SSO journey above, but choosing Local accounts. Orbit's
+// v0.3.0 preview refused that path's prepared directory (a lone
+// .env-orbit, no oidc-client-secret) as not a recognisable deployment,
+// and both SSO journeys write the secret, so neither could catch it.
+func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	binPath := binaryPath(t)
+	dir := t.TempDir()
+	// Isolated by its own project name, same as the SSO journey.
+	t.Cleanup(func() { dockerComposeDown(t, dir) })
+
+	appURL := fmt.Sprintf("https://orbit-live-local-%d.internal", time.Now().UnixNano())
+
+	installed := t.Run("Install", func(t *testing.T) {
+		session := startLive(t, binPath, dir)
+		installLocalThroughConsole(t, session, appURL, "Get into Orbit")
+		waitHealthy(t, session)
+		quitFromSuccess(session)
+		assertLocalAccountsDeployment(t, dir)
+	})
+
+	t.Run("Remove", func(t *testing.T) {
+		if !installed {
+			t.Skip("Install failed; nothing to remove")
+		}
+		removeAndAssertCleanup(t, binPath, dir, appURL)
+	})
+}
+
+// assertLocalAccountsDeployment proves the install in dir is the
+// Local-accounts one: no OIDC client secret was written, and .env-orbit
+// does not turn OIDC on.
+func assertLocalAccountsDeployment(t *testing.T, dir string) {
+	t.Helper()
+	secret := filepath.Join(dir, deploy.SecretsDir, "oidc-client-secret")
+	if _, err := os.Stat(secret); !os.IsNotExist(err) {
+		t.Errorf("a Local-accounts install left %s (stat err = %v)", secret, err)
+	}
+	env, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
+	if err != nil {
+		t.Fatalf("read .env-orbit: %v", err)
+	}
+	for _, line := range strings.Split(string(env), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(key) == "ORBIT_AUTH_OIDC" && strings.Trim(strings.TrimSpace(value), `"'`) == "true" {
+			t.Errorf(".env-orbit turns OIDC on for a Local-accounts install: %q", line)
+		}
+	}
+}
+
 // installThroughConsole drives a fresh Install from the splash through the
 // in-console configuration, answering with appURL, the test issuer,
 // clientID and secret, then accepts install.sh's menus until target shows:
@@ -973,25 +1053,7 @@ func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID,
 	t.Helper()
 	sendLine := func(s string) { session.send(s + "\r") }
 
-	session.mustSoon("Install")
-	session.choose("Install") // by digit, not by trusting the preselection
-	session.mustSoon("Choose a deployment profile")
-	sendLine("") // Standard selected by default
-	session.mustSoon("Ready to install")
-	sendLine("") // confirm — the development notice opens first (#175)
-	session.passNotice()
-	session.runStarted() // the mission console's piped engine run starts
-
-	// The piped, terminal-less first attempt cannot prompt, so on a
-	// fresh target it ends in the engine's non-interactive
-	// configuration refusal (target rolled back). A contract-era
-	// engine (orbit develop) reports it as an event and lands on
-	// the styled configuration prompt; a legacy engine (orbit main)
-	// reports nothing and lands on the failure screen. Both
-	// screens' default option leads to the guided configuration.
-	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
-	sendLine("") // Continue — guided configuration / Open the guided installer
+	openGuidedConfiguration(session)
 	session.chooseSSO()
 
 	// Strict mode is on, so the only guided configuration available
@@ -1024,6 +1086,47 @@ func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID,
 	// waits on it until the budget runs out and the held port is never even
 	// tried (#151).
 	acceptMenusUntil(t, session, target)
+}
+
+// installLocalThroughConsole is installThroughConsole for Local accounts
+// (#246): the same Install up to the sign-in question, then the default
+// row, APP_URL as the only answer, and install.sh's menus accepted until
+// target shows.
+func installLocalThroughConsole(t *testing.T, session *liveSession, appURL, target string) {
+	t.Helper()
+	openGuidedConfiguration(session)
+	session.chooseLocalAccounts()
+	acceptMenusUntil(t, session, inConsolePromptMarker)
+	session.send(appURL + "\r")
+	acceptMenusUntil(t, session, target)
+}
+
+// openGuidedConfiguration drives a fresh Install from the splash to the
+// launcher's sign-in question: past the development notice, through the
+// piped attempt's configuration refusal, into the guided configuration.
+func openGuidedConfiguration(session *liveSession) {
+	session.t.Helper()
+	sendLine := func(s string) { session.send(s + "\r") }
+
+	session.mustSoon("Install")
+	session.choose("Install") // by digit, not by trusting the preselection
+	session.mustSoon("Choose a deployment profile")
+	sendLine("") // Standard selected by default
+	session.mustSoon("Ready to install")
+	sendLine("") // confirm — the development notice opens first (#175)
+	session.passNotice()
+	session.runStarted() // the mission console's piped engine run starts
+
+	// The piped, terminal-less first attempt cannot prompt, so on a
+	// fresh target it ends in the engine's non-interactive
+	// configuration refusal (target rolled back). A contract-era
+	// engine (orbit develop) reports it as an event and lands on
+	// the styled configuration prompt; a legacy engine (orbit main)
+	// reports nothing and lands on the failure screen. Both
+	// screens' default option leads to the guided configuration.
+	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
+		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
+	sendLine("") // Continue — guided configuration / Open the guided installer
 }
 
 // waitHealthy waits for the deployed app to answer 200 on :3000.
