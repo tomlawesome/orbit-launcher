@@ -414,6 +414,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.cleanup = nil
 		}
 		if msg.err != nil {
+			// The handoff's own result, not the failure it answered.
+			r.lastFailed = nil
+			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
 			return r, nil

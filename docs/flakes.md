@@ -12,3 +12,4 @@ heading.
 ## TestAppModel_UnreadableEnvScreensHoldAtEveryWidth (internal/ui)
 
 - 2026-10-18 · 62a7419 · local, full `go test ./internal/ui/` · a background star drawn between "permission" and "denied" broke the text check; passed 3 of 3 alone
+- 2026-10-18 · ed55c6e · local, full `go test ./internal/ui/` · same test failed at unreadable_env_test.go:109; unchanged code
