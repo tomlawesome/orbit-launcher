@@ -393,6 +393,10 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case installPreparedMsg:
 		if msg.err != nil {
+			// The preparation's own error, not an earlier refusal the
+			// handoff was meant to answer.
+			r.lastFailed = nil
+			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
 			return r, nil

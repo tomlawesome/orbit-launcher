@@ -947,7 +947,9 @@ func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) 
 	for _, step := range steps {
 		total += len(step)
 	}
-	if total <= room {
+	// With no steps there is nothing to count as "more", however
+	// little room the findings left.
+	if total <= room || len(steps) == 0 {
 		for _, step := range steps {
 			for _, row := range step {
 				fmt.Fprintln(b, row)
