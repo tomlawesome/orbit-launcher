@@ -49,6 +49,72 @@ var realPlanPairs = []realPlanPair{
 	{"docker-unavailable", "manual"},
 	{"unrelated-resource-present", "manual"},
 	{"database-unreachable", "manual"},
+	{"database-credential-unverifiable", "manual"},
+}
+
+// orbitClassOrder is Orbit's repair.sh class_order at dev 7264f015, in
+// its order, with each class's plan action from the same file's
+// action_for_class map (manual where the map has no entry).
+// secret-missing has no entry: resolve_secret_missing_action picks
+// regenerate-secret or manual, so both appear in realPlanPairs.
+var orbitClassOrder = []realPlanPair{
+	{"not-orbit-directory", "manual"},
+	{"managed-file-missing", "manual"},
+	{"managed-file-symlink", "manual"},
+	{"managed-file-permissions", "fix-permissions"},
+	{"secrets-directory-invalid", "fix-permissions"},
+	{"secret-missing", "regenerate-secret|manual"},
+	{"secret-permissions", "fix-permissions"},
+	{"configuration-incomplete", "rerun-configuration"},
+	{"configuration-invalid", "rerun-configuration"},
+	{"configuration-migration-interrupted", "restore-transaction"},
+	{"deployment-version-unsupported", "manual"},
+	{"staging-evidence-present", "restore-transaction"},
+	{"compose-interpolation-failed", "manual"},
+	{"docker-unavailable", "manual"},
+	{"container-foreign-owner", "manual"},
+	{"volume-retained-without-credentials", "rotate-database-credential"},
+	{"document-volume-retained-without-key", "manual"},
+	{"unrelated-resource-present", "manual"},
+	{"database-unreachable", "manual"},
+	{"database-credential-mismatch", "rotate-database-credential"},
+	{"database-credential-unverifiable", "manual"},
+	{"stale-container", "restart-services"},
+	{"image-identity-mismatch", "manual"},
+	{"application-unhealthy", "restart-services"},
+	{"database-schema-mismatch", "manual"},
+	{"migration-failed", "manual"},
+}
+
+// TestRealPlanPairs_HoldEveryClassInOrbitsClassOrder (v0.4.2 audit A2):
+// the pair list the "no raw code" and 80-column tests walk holds every
+// class Orbit's repair.sh can plan, each with the action Orbit gives it,
+// and nothing Orbit does not send.
+func TestRealPlanPairs_HoldEveryClassInOrbitsClassOrder(t *testing.T) {
+	actions := map[string][]string{}
+	for _, p := range realPlanPairs {
+		actions[p.class] = append(actions[p.class], p.action)
+	}
+	inOrbit := map[string]bool{}
+	for _, o := range orbitClassOrder {
+		inOrbit[o.class] = true
+		got := strings.Join(actions[o.class], "|")
+		if got == "" {
+			t.Errorf("class %q is in Orbit's class_order but not in realPlanPairs", o.class)
+			continue
+		}
+		if got != o.action {
+			t.Errorf("class %q is paired with %q in realPlanPairs, Orbit plans %q", o.class, got, o.action)
+		}
+	}
+	for class := range actions {
+		if !inOrbit[class] {
+			t.Errorf("realPlanPairs holds %q, which is not in Orbit's class_order", class)
+		}
+	}
+	if n := len(realClasses()); n != len(orbitClassOrder) {
+		t.Errorf("realPlanPairs holds %d classes, Orbit's class_order %d", n, len(orbitClassOrder))
+	}
 }
 
 // realBackup is the backup value Orbit sends with an action: required
@@ -244,5 +310,24 @@ func TestFindingLine_WordsForTheThreeUnwordedClasses(t *testing.T) {
 		if !strings.HasSuffix(got, "database — "+want) {
 			t.Errorf("class %q renders %q, want it to end %q", class, got, "database — "+want)
 		}
+	}
+}
+
+// TestFindingLine_WordsForDatabaseCredentialUnverifiable (v0.4.2 audit
+// A2): the class Orbit reports when the application restarts too fast
+// for repair to read the credential it presents reads in words, on the
+// finding line and on its manual plan line.
+func TestFindingLine_WordsForDatabaseCredentialUnverifiable(t *testing.T) {
+	const want = "password couldn't be checked: the application restarts too fast"
+	got := ansi.Strip(findingLine(engine.Finding{Class: "database-credential-unverifiable", Target: "database", Severity: "fail"}))
+	if !strings.HasSuffix(got, "database — "+want) {
+		t.Errorf("the finding renders %q, want it to end %q", got, "database — "+want)
+	}
+	plan := ansi.Strip(planLine(realPlanPair{"database-credential-unverifiable", "manual"}.planAction()))
+	if !strings.Contains(plan, want) {
+		t.Errorf("the manual plan line reads %q, want it to say %q", plan, want)
+	}
+	if strings.Contains(plan, "database-credential-unverifiable") {
+		t.Errorf("the manual plan line shows the raw class: %q", plan)
 	}
 }

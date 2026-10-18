@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -519,6 +520,82 @@ func TestAppModel_EscCancelsSignInModeToTheMainMenu(t *testing.T) {
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
 	wait("Repair", "Remove") // the main menu
+
+	tm.Send(ctrlC())
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// TestAppModel_EscWhileConfigurationStartsStopsTheLateProcess (v0.4.2
+// audit A6): in the real app, Esc while the guided configuration
+// process is still being started leaves for the main menu at once; the
+// process that arrives afterwards reaches the app, not the run it was
+// started for, and must still be stopped, its stdin closed, and the
+// session's staged configuration and the run's files removed.
+func TestAppModel_EscWhileConfigurationStartsStopsTheLateProcess(t *testing.T) {
+	var runCleaned, planCleaned, engineStarts, starts atomic.Int32
+	hold := newGate()
+	proc := sleepingStream(t) // a real process, killable, that runs for a minute
+	stdin := &closeTrackingStdin{}
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			if engineStarts.Add(1) > 1 {
+				return nil, nil, errors.New("test bound: the engine was started again")
+			}
+			msgs := configRefusalStream()
+			ch := make(chan any, len(msgs))
+			for _, m := range msgs {
+				ch <- m
+			}
+			close(ch)
+			return &engine.Stream{C: ch}, func() error { runCleaned.Add(1); return nil }, nil
+		},
+		prepareConfig: countingPlan(true, false, &planCleaned),
+		startConfig: func(string, deploy.ConfigStep, deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+			starts.Add(1)
+			hold.wait()
+			return proc, stdin, nil
+		},
+		detect: fakeDetect("https://orbit.example.test"),
+	})
+
+	wait := func(wants ...string) {
+		t.Helper()
+		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+			for _, want := range wants {
+				if !bytes.Contains(out, []byte(want)) {
+					return false
+				}
+			}
+			return true
+		}, teatest.WithDuration(10*time.Second))
+	}
+
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Local accounts: the process starts
+	waitCount(t, &starts, "the configuration process start")
+	if hold.timedOut() {
+		t.Fatal("setup: the process start was released before Esc, so there is no starting phase")
+	}
+
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
+	wait("Repair", "Remove") // the main menu, drawn after Esc
+
+	hold.open() // the process arrives, after the run was left
+	waitStopped(t, proc)
+	deadline := time.Now().Add(3 * time.Second)
+	for !stdin.closed.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !stdin.closed.Load() {
+		t.Error("the late process's stdin was never closed")
+	}
+	waitCount(t, &planCleaned, "the session's staged configuration cleanup")
+	waitCount(t, &runCleaned, "the run's files cleanup")
+	if n := engineStarts.Load(); n != 1 {
+		t.Errorf("the engine was started %d times, want once", n)
+	}
 
 	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {

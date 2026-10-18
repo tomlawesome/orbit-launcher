@@ -81,16 +81,53 @@ func TestConfigCollect_RecheckFailureFallsBackToTheHandoff(t *testing.T) {
 	}
 }
 
+// v0.4.2 audit A4: the run reached the session through the engine's
+// configuration refusal, so it still carries that event and the
+// engine's stderr tail. When adopting the collected configuration then
+// fails, the stopped screen shows the adoption error, not the earlier
+// refusal or its tail.
 func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
-	r := collectingRun(t, engineRunSeams{})
-	r, cmd := r.update(configAdoptedMsg{err: errors.New("configuration session left no .env-orbit")})
-	if cmd != nil {
-		t.Fatal("a failed adoption must not retry the engine")
+	const (
+		adoptErr   = "cannot write .env-orbit: permission denied"
+		refusal    = "configuration-failure"
+		stderrLine = "configure.sh: APP_URL is not set yet"
+	)
+	for action, title := range map[string]string{"install": "Install stopped", "update": "Update stopped"} {
+		t.Run(action, func(t *testing.T) {
+			r := startedRun(t, action, engineRunSeams{prepareConfig: planned(true, false)})
+			r.state = runStreaming
+			r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", refusal, "retry")})
+			r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"), StderrTail: []string{stderrLine}}})
+			if r.state != runConfigCollect {
+				t.Fatalf("setup: state = %v, want the configuration session", r.state)
+			}
+
+			r, cmd := r.update(configAdoptedMsg{err: errors.New(adoptErr)})
+			if cmd != nil {
+				t.Fatal("a failed adoption must not retry the engine")
+			}
+			s := runScreen(r)
+			if r.state != runFailed || !strings.Contains(s, title) || !strings.Contains(s, adoptErr) {
+				t.Fatalf("state = %v, want %q showing the adoption error %q; screen:\n%s", r.state, title, adoptErr, s)
+			}
+			for _, earlier := range []string{refusal, stderrLine} {
+				if strings.Contains(s, earlier) {
+					t.Errorf("the stopped screen shows the earlier %q instead of only the adoption error:\n%s", earlier, s)
+				}
+			}
+		})
 	}
-	s := runScreen(r)
-	if r.state != runFailed || !strings.Contains(s, "Install stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
-		t.Fatalf("state = %v, screen:\n%s", r.state, s)
-	}
+	t.Run("session only", func(t *testing.T) {
+		r := collectingRun(t, engineRunSeams{})
+		r, cmd := r.update(configAdoptedMsg{err: errors.New("configuration session left no .env-orbit")})
+		if cmd != nil {
+			t.Fatal("a failed adoption must not retry the engine")
+		}
+		s := runScreen(r)
+		if r.state != runFailed || !strings.Contains(s, "Install stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
+			t.Fatalf("state = %v, screen:\n%s", r.state, s)
+		}
+	})
 }
 
 func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {

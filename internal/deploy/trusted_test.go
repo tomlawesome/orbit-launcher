@@ -416,33 +416,71 @@ func TestOpenConfigTree_RefusesAnUntrustedSibling(t *testing.T) {
 	}
 }
 
-// #204: Orbit deleted scripts/configuration.sh, so it is no longer one
-// of the scripts whose trust is checked. A stray one left in a tree —
-// even a symlink — is not a reason to refuse it.
-func TestTrustCheck_StrayConfigurationScriptIsNotOrbits(t *testing.T) {
-	t.Run("repair", func(t *testing.T) {
-		dir := trustedDeployment(t)
-		symlinkSibling(t, dir, "configuration.sh")
-		cmd, err := RepairCommand(dir, RepairPlan)
-		if err != nil {
-			t.Fatalf("RepairCommand refused a stray configuration.sh: %v", err)
+// v0.4.2 audit A1: deployments from before Orbit 5e9b1233 still carry
+// scripts/configuration.sh and scripts/engine-check.sh, and the scripts
+// that run source them, so they are still checked whenever present. A
+// symlinked or world-writable one is refused with the usual
+// untrusted-path error naming it; a trusted copy is accepted.
+func TestTrustCheck_RetiredScriptsAreStillCheckedWhenPresent(t *testing.T) {
+	entries := map[string]struct {
+		tree func(t *testing.T) string
+		open func(dir string) error
+	}{
+		"repair": {
+			tree: trustedDeployment,
+			open: func(dir string) error {
+				_, err := RepairCommand(dir, RepairPlan)
+				return err
+			},
+		},
+		"configure tree": {
+			tree: handedOverTree,
+			open: func(dir string) error {
+				endSession, err := OpenConfigTree(dir)
+				if err == nil && endSession != nil {
+					endSession()
+				}
+				return err
+			},
+		},
+	}
+	faults := map[string]func(t *testing.T, dir, name string){
+		"symlinked": symlinkSibling,
+		"world-writable": func(t *testing.T, dir, name string) {
+			path := filepath.Join(dir, "scripts", name)
+			if err := os.WriteFile(path, []byte("#!/bin/bash\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			chmod(t, path, 0o666)
+		},
+	}
+	for _, script := range []string{"configuration.sh", "engine-check.sh"} {
+		for entryName, entry := range entries {
+			for faultName, fault := range faults {
+				t.Run(script+"/"+entryName+"/"+faultName, func(t *testing.T) {
+					dir := entry.tree(t)
+					fault(t, dir, script)
+					err := entry.open(dir)
+					var untrusted *UntrustedPathError
+					if !errors.As(err, &untrusted) || filepath.Base(untrusted.Path) != script {
+						t.Fatalf("err = %v, want an *UntrustedPathError naming %s", err, script)
+					}
+				})
+			}
+			// The case the refusal guards: a trusted copy is not refused.
+			t.Run(script+"/"+entryName+"/trusted", func(t *testing.T) {
+				dir := entry.tree(t)
+				path := filepath.Join(dir, "scripts", script)
+				if err := os.WriteFile(path, []byte("#!/bin/bash\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				chmod(t, path, 0o600)
+				if err := entry.open(dir); err != nil {
+					t.Fatalf("a trusted %s was refused: %v", script, err)
+				}
+			})
 		}
-		if cmd == nil {
-			t.Fatal("RepairCommand returned no command")
-		}
-	})
-	t.Run("configure tree", func(t *testing.T) {
-		tree := handedOverTree(t)
-		symlinkSibling(t, tree, "configuration.sh")
-		endSession, err := OpenConfigTree(tree)
-		if err != nil {
-			t.Fatalf("OpenConfigTree refused a stray configuration.sh: %v", err)
-		}
-		if endSession == nil {
-			t.Fatal("OpenConfigTree returned no endSession")
-		}
-		endSession()
-	})
+	}
 }
 
 // orbitImageTree is a handed-over configure tree with an .orbit-image
