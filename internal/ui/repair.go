@@ -989,25 +989,23 @@ func manualStepWords(step string) string {
 // ("rotate database credentials"), where repeating it would only push
 // the line past 80 cells.
 func planReasonWords(action, class string) string {
-	var subject, words string
+	var noun, lead string
 	switch class {
-	case "database-unreachable":
-		subject, words = "database", "the database can't be reached"
-	case "database-credential-mismatch":
-		subject, words = "database", "the database rejects the stored credentials"
+	case "database-unreachable", "database-credential-mismatch":
+		noun, lead = "database", "the database"
 	case "application-unhealthy":
-		subject, words = "application", "the application reports unhealthy"
+		noun, lead = "application", "the application"
 	case "stale-container":
-		subject, words = "container", "a container runs an older image than configured"
+		noun, lead = "container", "a container is"
 	case "secret-missing":
-		subject, words = "secret", "a secret is absent or empty"
+		noun, lead = "secret", "a secret is"
 	default:
 		return classWords(class)
 	}
-	if strings.Contains(actionWords(action), subject) {
+	if strings.Contains(actionWords(action), noun) {
 		return classWords(class)
 	}
-	return words
+	return lead + " " + classWords(class)
 }
 
 // actionWords maps plan action classes to plain words.
