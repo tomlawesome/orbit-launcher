@@ -47,6 +47,15 @@ Tags are made by a CI button, never by hand.
 4. In the Orbit repository, on its `dev` branch, move Orbit's pin to the
    new tag with `scripts/bump-launcher-pin.sh v<version>`.
 
+### v0.4.1, the one tag made by hand
+
+v0.4.1 needed a patch tag, which the button cannot make, and the v0.4.0
+tag stays where it is because Orbit pins it. So, once only (#163), the
+owner made it by hand on GitLab's **New tag** page: an annotated tag
+`v0.4.1` at `main`'s promotion commit (`90ad87b`), after `dev` →
+`preview` → `main` had all passed `live`. The push mirror carried it to
+GitHub. Patch tags from v0.4.2 on come from a CI button instead (#264).
+
 ## What moved to Orbit
 
 Orbit's own pipeline pins a launcher tag and commit, builds it, signs a
