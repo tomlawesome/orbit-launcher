@@ -54,7 +54,8 @@ tag stays where it is because Orbit pins it. So, once only (#163), the
 owner made it by hand on GitLab's **New tag** page: an annotated tag
 `v0.4.1` at `main`'s promotion commit (`90ad87b`), after `dev` →
 `preview` → `main` had all passed `live`. The push mirror carried it to
-GitHub. Patch tags from v0.4.2 on come from a CI button instead (#264).
+GitHub. Patch tags from v0.4.2 on are planned to come from a CI button
+instead (#264); that button does not exist yet.
 
 ## What moved to Orbit
 
