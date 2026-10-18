@@ -8,6 +8,7 @@ package ui
 // "can't be reached").
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -502,5 +503,39 @@ func TestRepairScreen_ManyManualStepsAllShowOnATallTerminal(t *testing.T) {
 	}
 	if got := screenLabels(s); strings.Join(got, ",") != "Menu,Exit" {
 		t.Errorf("menu rows = %q, want Menu and Exit:\n%s", got, s)
+	}
+}
+
+// TestRepairScreen_NoPlanNeverShowsAndZeroMore (#253): with an old
+// repair.sh that rejects --plan, Repair falls back to --check and has
+// findings but no plan steps. However many findings overfill an 80x24
+// terminal, "and N more" appears only when N is at least 1.
+func TestRepairScreen_NoPlanNeverShowsAndZeroMore(t *testing.T) {
+	const cols, rows = 80, 24
+	for n := 1; n <= 40; n++ {
+		m := NewRepairModel(t.TempDir(), "v0.6.0")
+		m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: cols, Height: rows})
+		// The old script rejects --plan (exit 2): the flow reruns --check.
+		m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitUsage, Err: errors.New("exit status 2")})
+
+		lines := make([]string, 0, n+1)
+		for k := 0; k < n; k++ {
+			class := realPlanPairs[k%len(realPlanPairs)].class
+			lines = append(lines, fmt.Sprintf("finding class=%s target=target%02d severity=fail", class, k))
+		}
+		lines = append(lines, fmt.Sprintf("diagnosis result=failed checked=%d skipped=0", n))
+		m = repairLines(t, m, lines...)
+		m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4, Err: errors.New("exit status 4")})
+
+		s := screen(m)
+		flat := strings.Join(skyWords(s), " ")
+		if strings.Contains(flat, "and 0 more") {
+			t.Errorf("%d findings at %dx%d: an \"and 0 more\" row is drawn:\n%s", n, cols, rows, s)
+		}
+		for _, f := range regexp.MustCompile(`and (\d+) more`).FindAllStringSubmatch(flat, -1) {
+			if got, _ := strconv.Atoi(f[1]); got < 1 {
+				t.Errorf("%d findings at %dx%d: row says \"and %d more\":\n%s", n, cols, rows, got, s)
+			}
+		}
 	}
 }

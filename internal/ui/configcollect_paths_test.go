@@ -130,6 +130,54 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 	})
 }
 
+// #251/#253: the run reached the configuration session through the
+// engine's refusal, so it carries that event and the engine's stderr
+// tail. When the session cannot start (no tree was handed over) the run
+// falls back to the terminal handoff; if preparing that installer then
+// fails, the stopped screen shows the preparation error, not the earlier
+// refusal or its tail.
+func TestConfigCollect_HandoffPreparationFailureReplacesTheStaleRefusal(t *testing.T) {
+	const (
+		prepareErr = "stage install.sh: disk full"
+		refusal    = "configuration-failure"
+		stderrLine = "configure.sh: APP_URL is not set yet"
+	)
+	for action, title := range map[string]string{"install": "Install stopped", "update": "Update stopped"} {
+		t.Run(action, func(t *testing.T) {
+			t.Setenv(requireInConsoleEnv, "")
+			// The engine handed over no configuration tree, so the
+			// session cannot be prepared (as in
+			// TestEngineRun_NoTreeFromTheEngineFallsBackToTheHandoff).
+			prepared := false
+			r := startedRun(t, action, handoffSeams(&prepared))
+			r, _ = runUpdate(t, r, engineReadyMsg{stream: &engine.Stream{C: make(chan any)}, configTree: t.TempDir()})
+			r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", refusal, "retry")})
+			r, cmd := runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"), StderrTail: []string{stderrLine}}})
+			if r.state != runConfigCollect || cmd == nil {
+				t.Fatalf("setup: state = %v, want the configuration session being prepared", r.state)
+			}
+			r, _ = runUpdate(t, r, cmd())
+			if r.state != runHandoffRunning {
+				t.Fatalf("setup: state = %v, want the terminal handoff; screen:\n%s", r.state, runScreen(r))
+			}
+
+			r, cmd = runUpdate(t, r, installPreparedMsg{err: errors.New(prepareErr)})
+			if cmd != nil {
+				t.Fatal("a failed preparation must not start the handoff")
+			}
+			s := runScreen(r)
+			if r.state != runFailed || !strings.Contains(s, title) || !strings.Contains(s, prepareErr) {
+				t.Fatalf("state = %v, want %q showing the preparation error %q; screen:\n%s", r.state, title, prepareErr, s)
+			}
+			for _, earlier := range []string{refusal, stderrLine} {
+				if strings.Contains(s, earlier) {
+					t.Errorf("the stopped screen shows the earlier %q instead of only the preparation error:\n%s", earlier, s)
+				}
+			}
+		})
+	}
+}
+
 func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {
 	r := collectingRun(t, engineRunSeams{})
 	s := sleepingStream(t)
