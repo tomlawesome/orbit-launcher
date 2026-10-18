@@ -25,6 +25,11 @@ const (
 	SecretsDir = ".orbit-secrets"
 )
 
+// orbitImageFile names the Orbit image configure.sh pulls and runs its
+// configuration engine in, at the root beside EnvFile. Choosing what
+// runs makes it as sensitive as the scripts themselves.
+const orbitImageFile = ".orbit-image"
+
 // scriptsDir is where a deployment, and a configuration tree shaped like
 // one, keep orbit's scripts.
 const scriptsDir = "scripts"
