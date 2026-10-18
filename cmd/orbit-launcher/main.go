@@ -95,12 +95,12 @@ func startApp(stdout, stderr io.Writer) int {
 	// A Ctrl-C stop's note can only be read once the alternate screen
 	// is gone, so it is printed here rather than by the TUI. It starts
 	// on a line of its own: keys typed before the launcher took the
-	// terminal were echoed onto the normal screen, where it lands.
+	// terminal were echoed onto the normal screen, where it lands. A
+	// non-empty note means a stop outlived its grace: say so and exit 1.
+	// A clean stop prints nothing and exits 0 (decision 20a).
 	if app, ok := final.(ui.AppModel); ok {
 		if note := app.ExitNote(); note != "" {
 			fmt.Fprintln(stderr, "\norbit-launcher:", note)
-		}
-		if app.StopForced() {
 			return 1
 		}
 	}

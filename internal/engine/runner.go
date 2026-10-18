@@ -215,18 +215,23 @@ func (s *Stream) Terminate() {
 // Kill ends the engine at once (SIGKILL) — the whole process group,
 // and the process itself in case it is not a group leader. Idempotent,
 // and sends nothing once the process has been reaped (see Terminate).
-func (s *Stream) Kill() {
-	s.killOnce.Do(func() { s.signal(syscall.SIGKILL, true) })
+// Reports whether the signal reached a process that had not yet been
+// reaped, so a caller can tell a kill that ended the engine from one
+// that found it already gone.
+func (s *Stream) Kill() bool {
+	var sent bool
+	s.killOnce.Do(func() { sent = s.signal(syscall.SIGKILL, true) })
+	return sent
 }
 
-func (s *Stream) signal(sig syscall.Signal, alsoProcess bool) {
+func (s *Stream) signal(sig syscall.Signal, alsoProcess bool) bool {
 	if s.cmd == nil || s.cmd.Process == nil {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reaped {
-		return
+		return false
 	}
 	// Negative pid addresses the process group the engine leads.
 	// Best effort: the process may already be gone.
@@ -234,4 +239,5 @@ func (s *Stream) signal(sig syscall.Signal, alsoProcess bool) {
 	if alsoProcess {
 		_ = s.cmd.Process.Kill()
 	}
+	return true
 }

@@ -76,10 +76,8 @@ type flowOutcome struct {
 	WantsMenu bool
 	URL       string
 	Elapsed   time.Duration
-	// ExitNote is printed by main after the screen closes; StopForced
-	// marks it as a stop that outlived its grace, which exits 1.
-	ExitNote   string
-	StopForced bool
+	// ExitNote is printed by main after the screen closes.
+	ExitNote string
 }
 
 // backToMenu is leaving a flow for the main menu before anything has
@@ -90,13 +88,12 @@ var backToMenu = flowOutcome{Done: true, WantsMenu: true}
 
 func outcomeOf(r engineRun) flowOutcome {
 	return flowOutcome{
-		Done:       r.Done,
-		Succeeded:  r.Succeeded,
-		WantsMenu:  r.WantsMenu,
-		URL:        r.URL,
-		Elapsed:    r.Elapsed,
-		ExitNote:   r.exitNote,
-		StopForced: r.stopForced,
+		Done:      r.Done,
+		Succeeded: r.Succeeded,
+		WantsMenu: r.WantsMenu,
+		URL:       r.URL,
+		Elapsed:   r.Elapsed,
+		ExitNote:  r.exitNote,
 	}
 }
 
@@ -186,11 +183,10 @@ type engineRun struct {
 	stderrTail    []string
 	runErr        error
 
-	// exitNote is what a Ctrl-C stop leaves to say once the launcher has
-	// exited; stopForced is set when the launcher ended the installer
-	// before it finished undoing its work.
-	exitNote   string
-	stopForced bool
+	// exitNote is set only when the launcher killed an installer that
+	// was still undoing its work; main prints it after the screen closes
+	// and exits 1. Empty means a clean stop, or no stop.
+	exitNote string
 
 	// menu is the cursor on whichever post-run screen is showing; each
 	// screen names its own rows (configPromptMenu, failedMenu).
@@ -362,10 +358,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
-		if done, ok := msg.msg.(engine.DoneMsg); ok && r.state == runStopping {
+		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
 			// The installer finished its own stop. Whatever it exited
 			// with, the operator asked for this: not a failure.
-			r.stderrTail = done.StderrTail
 			return r.quitNow(false)
 		}
 		return r.handleStream(msg.msg)
@@ -623,20 +618,19 @@ func (r engineRun) beginStop() (engineRun, tea.Cmd) {
 // quitNow ends the run and the launcher, killing the engine first if
 // force is set (it is a no-op once the engine has been reaped).
 func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
+	killed := false
 	if r.stream != nil && force {
-		r.stream.Kill()
+		killed = r.stream.Kill()
 	}
 	// The alt screen is gone by the time anyone could read this, so the
-	// note rides out on the final model and main prints it. A forced
-	// note stays put: the killed installer's DoneMsg can still arrive
-	// before the quit does.
-	if r.state == runStopping && !r.stopForced {
-		if force {
-			r.exitNote = forcedStopNote(r.action)
-			r.stopForced = true
-		} else {
-			r.exitNote = strings.Join(r.stderrTail, "\n")
-		}
+	// note rides out on the final model and main prints it. Only a kill
+	// that landed on a live installer earns the note: a second Ctrl-C or
+	// the grace timer can arrive after the installer has already exited
+	// by itself, and that stop was clean. The note is never overwritten:
+	// the killed installer's own DoneMsg can still be handled before the
+	// quit.
+	if killed && r.state == runStopping && r.exitNote == "" {
+		r.exitNote = forcedStopNote(r.action)
 	}
 	r.cfg.close()
 	r.releaseRunFiles()

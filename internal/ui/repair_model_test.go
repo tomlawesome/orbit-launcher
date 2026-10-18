@@ -66,7 +66,7 @@ func sleepingStream(t *testing.T) *engine.Stream {
 	if err != nil {
 		t.Fatalf("start sleep: %v", err)
 	}
-	t.Cleanup(s.Kill)
+	t.Cleanup(func() { s.Kill() })
 	return s
 }
 
@@ -1159,7 +1159,7 @@ func TestRepairModel_ScriptWithoutEnvFileRunsTheDeploymentsScript(t *testing.T) 
 		t.Fatalf("Init produced %#v, want a repairReadyMsg", msg)
 	}
 	if ready.stream != nil {
-		t.Cleanup(ready.stream.Kill)
+		t.Cleanup(func() { ready.stream.Kill() })
 	}
 	if ready.err != nil {
 		t.Fatalf("err = %v, want <nil>", ready.err)
@@ -1192,7 +1192,7 @@ func TestDefaultPrepareRotate_ScriptWithoutEnvFileStartsTheSession(t *testing.T)
 	}
 	stream, stdin, err := defaultPrepareRotate(context.Background(), dir)
 	if stream != nil {
-		t.Cleanup(stream.Kill)
+		t.Cleanup(func() { stream.Kill() })
 	}
 	if stdin != nil {
 		t.Cleanup(func() { stdin.Close() })
@@ -1212,7 +1212,7 @@ func TestDefaultPrepare_EmptyDirectoryIsNoDeployment(t *testing.T) {
 	dir := t.TempDir()
 	if stream, err := defaultPrepareRepair(context.Background(), dir, deploy.RepairPlan); !errors.Is(err, deploy.ErrNoDeployment) {
 		if stream != nil {
-			t.Cleanup(stream.Kill)
+			t.Cleanup(func() { stream.Kill() })
 		}
 		t.Errorf("defaultPrepareRepair: err = %v, want deploy.ErrNoDeployment", err)
 	}
@@ -1280,7 +1280,7 @@ func TestDefaultPrepareRepair_CancelledBeforeTheStartStartsNothing(t *testing.T)
 	cancel()
 	stream, err := defaultPrepareRepair(ctx, dir, deploy.RepairPlan)
 	if stream != nil {
-		t.Cleanup(stream.Kill)
+		t.Cleanup(func() { stream.Kill() })
 		t.Fatal("a cancelled preparation still started the repair")
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -1296,7 +1296,7 @@ func TestDefaultPrepareRotate_CancelledBeforeTheStartStartsNothing(t *testing.T)
 	cancel()
 	stream, stdin, err := defaultPrepareRotate(ctx, dir)
 	if stream != nil {
-		t.Cleanup(stream.Kill)
+		t.Cleanup(func() { stream.Kill() })
 		if stdin != nil {
 			stdin.Close()
 		}
