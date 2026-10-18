@@ -360,7 +360,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.RawLineMsg:
 		// A prompt-abort exits through the engine's refusal path;
-		// DoneMsg routes back to the refusal menu.
+		// DoneMsg routes to the failure screen.
 		r.cfg.session, _ = r.cfg.session.applyLine(m.Text)
 		return r, nil
 
@@ -387,9 +387,14 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 			// configure.sh. The terminal handoff is the honest path.
 			return r.fallbackToHandoff(fallbackLegacyEngine)
 		}
-		// The engine aborted (rejections exhausted or input closed) —
-		// back to the refusal menu; the person decides what's next.
-		r.state = runConfigPrompt
+		// The engine gave up (rejections exhausted or input closed):
+		// the failure screen says on which field. configure.sh's own
+		// output can carry answers, so none of it is ever shown.
+		r.releaseRunFiles()
+		r.lastFailed = nil
+		r.stderrTail = nil
+		r.runErr = errors.New(r.cfg.session.giveUpWords(r.cfg.origin))
+		r.state = runFailed
 		r.menu = menu{}
 		return r, nil
 	}
@@ -422,17 +427,27 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	return r.start(r.width, r.height)
 }
 
+// cancelConfigToMenu is Esc anywhere in the session: the configuration
+// process is stopped, the run's files released, and the run left for
+// the main menu. runLeft takes it out of runConfigCollect, so whatever
+// the stopped process still delivers belongs to nothing.
+func (r engineRun) cancelConfigToMenu() (engineRun, tea.Cmd) {
+	r.cfg.close()
+	r.releaseRunFiles()
+	r.state = runLeft
+	r.Done = true
+	r.WantsMenu = true
+	return r, nil
+}
+
 // handleConfigSignInModeKey drives the sign-in-mode screen (issue #154):
 // up/down move the highlight between the two rows, enter chooses it and
 // starts --init with that mode, esc cancels the whole session back to
-// the refusal menu — the same cancel handleConfigKey gives the rest of
+// the main menu — the same cancel handleConfigKey gives the rest of
 // this session.
 func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		r.cfg.close()
-		r.state = runConfigPrompt
-		r.menu = menu{}
-		return r, nil
+		return r.cancelConfigToMenu()
 	}
 	var chosen string
 	r.cfg.signIn, chosen = r.cfg.signIn.over(configSignInLabels()).update(msg)
@@ -449,13 +464,10 @@ func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, te
 
 // handleConfigKey is the typing surface (promptSession.key: typing,
 // and Enter submits the answer line); esc cancels the whole session
-// back to the refusal menu.
+// back to the main menu.
 func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		r.cfg.close()
-		r.state = runConfigPrompt
-		r.menu = menu{}
-		return r, nil
+		return r.cancelConfigToMenu()
 	}
 	var field, answer string
 	r.cfg.session, field, answer = r.cfg.session.key(msg, r.cfg.stdin)

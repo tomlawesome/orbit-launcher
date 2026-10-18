@@ -20,6 +20,9 @@ import (
 type promptSession struct {
 	prompt *engine.Prompt // non-nil while one answer is being typed
 	reason string         // honest words for the last rejection
+	// last and aborted name the field last asked for and the one the
+	// engine gave up on (its prompt-abort line); "" until they happen.
+	last, aborted string
 	// sawPrompt records that the engine spoke the protocol at all:
 	// configuration tells a legacy configure.sh apart by its absence.
 	sawPrompt bool
@@ -37,6 +40,7 @@ func (s promptSession) applyLine(text string) (_ promptSession, ok bool) {
 	case engine.Prompt:
 		prompt := p
 		s.prompt = &prompt
+		s.last = p.Field
 		s.sawPrompt = true
 		s.input = inputLine{}
 	case engine.PromptReject:
@@ -48,6 +52,7 @@ func (s promptSession) applyLine(text string) (_ promptSession, ok bool) {
 	case engine.PromptAbort:
 		// The engine gives up (third rejection or closed input) and
 		// exits through its refusal path.
+		s.aborted = p.Field
 		s.prompt = nil
 	}
 	return s, true
@@ -136,4 +141,26 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	if p.Attempt > 1 {
 		fmt.Fprintln(b, style.Tagline.Render(fmt.Sprintf("attempt %d of %d", p.Attempt, engine.PromptMaxAttempts)))
 	}
+}
+
+// giveUpWords is the failure screen's reason when the engine gave up: the
+// field it stopped asking for (the abort line's, else the last one asked)
+// and, if it had rejected an answer, the rejection's words on a row
+// of their own. origin is as
+// for view.
+func (s promptSession) giveUpWords(origin string) string {
+	field := s.aborted
+	if field == "" {
+		field = s.last
+	}
+	if field == "" {
+		return "Orbit's setup stopped before the configuration was finished."
+	}
+	label, _, _ := promptWords(field, origin)
+	words := "Orbit's setup stopped asking for " + label + "."
+	if s.reason != "" {
+		// Its own row, so wrapping never splits the reason.
+		words += "\nLast answer: " + s.reason
+	}
+	return words
 }

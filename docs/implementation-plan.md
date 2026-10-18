@@ -586,8 +586,10 @@ TUI, and with incomplete configuration it refuses before Compose
 (`reason=configuration-failure`), rolling the target back via its own
 file transaction (verified empirically against both orbit dev and
 main). That refusal is precisely where #51's handoff survives: the flow
-offers "Continue — guided configuration" and hands the real terminal to
-interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
+goes straight into guided configuration (Esc returns to the main menu; an
+engine give-up shows the stopped screen), and the real terminal is handed to
+interactive `install.sh` via the same `tea.ExecProcess` mechanism only when
+in-console configuration is unavailable. No
 config field enters Go, ever. Outcomes are keyed off events plus exit
 codes, never scraped prose; a legacy engine (orbit main today) that
 emits no events has its output displayed verbatim and is judged by exit
