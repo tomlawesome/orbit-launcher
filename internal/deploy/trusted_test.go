@@ -386,7 +386,7 @@ func symlinkSibling(t *testing.T, dir, name string) {
 // repair.sh and configure.sh source their siblings in scripts/, so a
 // trusted script next to an untrusted sibling is still refused.
 func TestRepairCommand_RefusesAnUntrustedSibling(t *testing.T) {
-	for _, sibling := range []string{"configure.sh", "configuration.sh", "installer-ui.sh", "engine-check.sh"} {
+	for _, sibling := range []string{"configure.sh", "installer-ui.sh"} {
 		t.Run(sibling, func(t *testing.T) {
 			dir := trustedDeployment(t)
 			symlinkSibling(t, dir, sibling)
@@ -400,15 +400,205 @@ func TestRepairCommand_RefusesAnUntrustedSibling(t *testing.T) {
 }
 
 func TestOpenConfigTree_RefusesAnUntrustedSibling(t *testing.T) {
-	tree := handedOverTree(t)
-	if err := os.Remove(filepath.Join(tree, "scripts", "configuration.sh")); err != nil {
+	for _, sibling := range []string{"installer-ui.sh", "repair.sh"} {
+		t.Run(sibling, func(t *testing.T) {
+			tree := handedOverTree(t)
+			if err := os.Remove(filepath.Join(tree, "scripts", sibling)); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			symlinkSibling(t, tree, sibling)
+			_, err := OpenConfigTree(tree)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) || filepath.Base(untrusted.Path) != sibling {
+				t.Fatalf("err = %v, want a refusal naming %s", err, sibling)
+			}
+		})
+	}
+}
+
+// #204: Orbit deleted scripts/configuration.sh, so it is no longer one
+// of the scripts whose trust is checked. A stray one left in a tree —
+// even a symlink — is not a reason to refuse it.
+func TestTrustCheck_StrayConfigurationScriptIsNotOrbits(t *testing.T) {
+	t.Run("repair", func(t *testing.T) {
+		dir := trustedDeployment(t)
+		symlinkSibling(t, dir, "configuration.sh")
+		cmd, err := RepairCommand(dir, RepairPlan)
+		if err != nil {
+			t.Fatalf("RepairCommand refused a stray configuration.sh: %v", err)
+		}
+		if cmd == nil {
+			t.Fatal("RepairCommand returned no command")
+		}
+	})
+	t.Run("configure tree", func(t *testing.T) {
+		tree := handedOverTree(t)
+		symlinkSibling(t, tree, "configuration.sh")
+		endSession, err := OpenConfigTree(tree)
+		if err != nil {
+			t.Fatalf("OpenConfigTree refused a stray configuration.sh: %v", err)
+		}
+		if endSession == nil {
+			t.Fatal("OpenConfigTree returned no endSession")
+		}
+		endSession()
+	})
+}
+
+// orbitImageTree is a handed-over configure tree with an .orbit-image
+// pin at its root, written with mode exactly.
+func orbitImageTree(t *testing.T, mode os.FileMode) (tree, image string) {
+	t.Helper()
+	tree = handedOverTree(t)
+	image = filepath.Join(tree, ".orbit-image")
+	writeTestFile(t, image, "ghcr.io/tomlawesome/orbit@sha256:abc\n", mode)
+	return tree, image
+}
+
+// #204: configure.sh reads the first line of .orbit-image to pick the
+// image it pulls and runs, so a present .orbit-image passes the same
+// checks as the tree's scripts; an absent one is fine (older trees).
+func TestOpenConfigTree_ChecksOrbitImage(t *testing.T) {
+	accepted := map[string]func(t *testing.T) string{
+		"absent": func(t *testing.T) string { return handedOverTree(t) },
+		"owner-only": func(t *testing.T) string {
+			tree, _ := orbitImageTree(t, 0o600)
+			return tree
+		},
+		"world-readable": func(t *testing.T) string {
+			tree, _ := orbitImageTree(t, 0o644)
+			return tree
+		},
+		"group-writable, as the scripts may be": func(t *testing.T) string {
+			tree, _ := orbitImageTree(t, 0o664)
+			return tree
+		},
+	}
+	for name, prepare := range accepted {
+		t.Run("accepted: "+name, func(t *testing.T) {
+			endSession, err := OpenConfigTree(prepare(t))
+			if err != nil {
+				t.Fatalf("OpenConfigTree: %v", err)
+			}
+			if endSession == nil {
+				t.Fatal("OpenConfigTree returned no endSession")
+			}
+			endSession()
+		})
+	}
+
+	refused := []struct {
+		name    string
+		prepare func(t *testing.T) (tree, image string)
+		reason  string
+	}{
+		{
+			name: "symbolic link",
+			prepare: func(t *testing.T) (string, string) {
+				tree := handedOverTree(t)
+				elsewhere := filepath.Join(t.TempDir(), "orbit-image")
+				writeTestFile(t, elsewhere, "ghcr.io/attacker/orbit:latest\n", 0o644)
+				image := filepath.Join(tree, ".orbit-image")
+				if err := os.Symlink(elsewhere, image); err != nil {
+					t.Fatal(err)
+				}
+				return tree, image
+			},
+			reason: "symbolic link",
+		},
+		{
+			name: "world-writable",
+			prepare: func(t *testing.T) (string, string) {
+				return orbitImageTree(t, 0o666)
+			},
+			reason: "writable by everyone",
+		},
+		{
+			name: "not a regular file",
+			prepare: func(t *testing.T) (string, string) {
+				tree := handedOverTree(t)
+				image := filepath.Join(tree, ".orbit-image")
+				if err := syscall.Mkfifo(image, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return tree, image
+			},
+			reason: "not a regular file",
+		},
+	}
+	for _, tc := range refused {
+		t.Run("refused: "+tc.name, func(t *testing.T) {
+			tree, image := tc.prepare(t)
+			endSession, err := OpenConfigTree(tree)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) {
+				if endSession != nil {
+					endSession()
+				}
+				t.Fatalf("err = %v, want an *UntrustedPathError naming %s", err, image)
+			}
+			if endSession != nil {
+				t.Error("a refused tree returned a session")
+			}
+			if untrusted.Path != image {
+				t.Errorf("refusal names %q, want %q", untrusted.Path, image)
+			}
+			if !strings.Contains(err.Error(), image) {
+				t.Errorf("err = %q does not name %s", err, image)
+			}
+			if !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("err = %q, want the reason %q", err, tc.reason)
+			}
+		})
+	}
+}
+
+// The owner check on .orbit-image needs a second uid, which only root
+// can create files for.
+func TestOpenConfigTree_RefusesAnOrbitImageAnotherUserOwns(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown a file to another user; the owner checks run where the suite runs as root")
+	}
+	const nobody = 65534
+	tree, image := orbitImageTree(t, 0o644)
+	if err := os.Lchown(image, nobody, nobody); err != nil {
 		t.Fatal(err)
 	}
-	symlinkSibling(t, tree, "configuration.sh")
 	_, err := OpenConfigTree(tree)
 	var untrusted *UntrustedPathError
-	if !errors.As(err, &untrusted) || filepath.Base(untrusted.Path) != "configuration.sh" {
-		t.Fatalf("err = %v, want a refusal naming configuration.sh", err)
+	if !errors.As(err, &untrusted) || untrusted.Path != image || !strings.Contains(err.Error(), "owned by uid") {
+		t.Fatalf("err = %v, want an owner mismatch refusal naming %s", err, image)
+	}
+}
+
+// #204: the end of a configure session removes what the session
+// collected (.env-orbit, .orbit-secrets) and nothing else: the
+// .orbit-image pin and the scripts stay for a second attempt.
+func TestOpenConfigTree_EndSessionKeepsOrbitImage(t *testing.T) {
+	tree, image := orbitImageTree(t, 0o600)
+	endSession, err := OpenConfigTree(tree)
+	if err != nil {
+		t.Fatalf("OpenConfigTree: %v", err)
+	}
+	writeTestFile(t, filepath.Join(tree, ".env-orbit"), "APP_URL=x\n", 0o600)
+	writeTestFile(t, filepath.Join(tree, ".orbit-secrets", "oidc-client-secret"), "s\n", 0o600)
+	endSession()
+	for _, gone := range []string{".env-orbit", ".orbit-secrets"} {
+		if _, err := os.Lstat(filepath.Join(tree, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s survived the end of the session", gone)
+		}
+	}
+	got, err := os.ReadFile(image)
+	if err != nil {
+		t.Fatalf(".orbit-image was removed with the session: %v", err)
+	}
+	if string(got) != "ghcr.io/tomlawesome/orbit@sha256:abc\n" {
+		t.Errorf(".orbit-image changed at the end of the session: %q", got)
+	}
+	for _, kept := range []string{"scripts/configure.sh", "scripts/installer-ui.sh", ".env-orbit.example"} {
+		if _, err := os.Lstat(filepath.Join(tree, kept)); err != nil {
+			t.Errorf("%s was removed with the session: %v", kept, err)
+		}
 	}
 }
 
