@@ -111,10 +111,6 @@ func folderOtherScreens() []folderScreen {
 	}
 }
 
-func folderAllScreens() []folderScreen {
-	return append([]folderScreen{folderInstallScreen()}, folderOtherScreens()...)
-}
-
 // folderRowsOf is the screen's rows with the sky and the caret trimmed
 // off the ends (a star is never part of a sentence).
 func folderRowsOf(s string) []string {
