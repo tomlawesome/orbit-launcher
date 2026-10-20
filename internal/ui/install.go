@@ -454,8 +454,8 @@ func (m InstallModel) viewProfile() string {
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
-	fmt.Fprintln(&b, style.MutedText.Render("Documents, Agent and Full need local-model configuration that"))
-	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
+	fmt.Fprintln(&b, style.MutedText.Render("Documents, Agent and Full aren't wired into this"))
+	fmt.Fprintln(&b, style.MutedText.Render("installer yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())

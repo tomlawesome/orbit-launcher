@@ -60,7 +60,7 @@ func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 		m, _ := newTestInstallModel(engineRunSeams{})
 		m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // Documents
 		s := screen(m)
-		for _, want := range []string{"This profile isn't available yet", "local-model configuration", "▸ Back"} {
+		for _, want := range []string{"This profile isn't available yet", "wired into this", "▸ Back"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("unavailable screen lacks %q:\n%s", want, s)
 			}
