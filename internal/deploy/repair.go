@@ -49,6 +49,11 @@ const repairScript = "repair.sh"
 // restored rather than refused, and its exit 5 reaches the same
 // no-deployment screen (ui maps engine.ExitNotInstalled).
 func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
+	// repair.sh runs Compose with these files, so they need the same
+	// trust as the script. Checked before Detect opens .env-orbit.
+	if err := requireTrustedDeploymentFiles(targetDir); err != nil {
+		return nil, err
+	}
 	d, err := Detect(targetDir)
 	if err != nil {
 		return nil, fmt.Errorf("read the deployment: %w", err)

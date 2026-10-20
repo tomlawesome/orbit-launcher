@@ -120,6 +120,30 @@ func requireTrustedConfigDirs(dir string) error {
 	return err
 }
 
+// composeFiles are the Compose files at a deployment's root that
+// repair.sh hands to docker compose.
+var composeFiles = []string{"docker-compose.yml", "docker-compose.override.yml"}
+
+// requireTrustedDeploymentFiles checks, when present, the deployment
+// files that decide what Repair runs: the directory and .orbit-secrets,
+// EnvFile and composeFiles. A path that doesn't exist, or is a plain
+// file, has nothing in it to trust: reading it reports that.
+func requireTrustedDeploymentFiles(dir string) error {
+	info, err := os.Lstat(dir)
+	if os.IsNotExist(err) || (err == nil && info.Mode().IsRegular()) {
+		return nil
+	}
+	if err := requireTrustedConfigDirs(dir); err != nil {
+		return err
+	}
+	for _, rel := range append([]string{EnvFile}, composeFiles...) {
+		if err := requireTrustedIfPresent(dir, rel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // orbitScripts are the scripts in a deployment's scripts/ directory that
 // source one another: trusting one of them means trusting all that are
 // there. configuration.sh and engine-check.sh stay on the list for
