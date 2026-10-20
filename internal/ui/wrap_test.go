@@ -86,3 +86,44 @@ func TestWrapWords(t *testing.T) {
 		t.Errorf("wrapWords(empty) = %q, want nothing", got)
 	}
 }
+
+// dashPath is a folder path of exactly n characters, made of short
+// segments so that it is one word to wrapHard.
+func dashPath(n int) string {
+	p := ""
+	for i := 0; len(p) < n; i++ {
+		p += "/srv/containers/mail/orbit-production-data"[:min(n-len(p), 41)]
+	}
+	return p
+}
+
+func TestWrapHard_LoneDash_TheDashAfterACutPathNeverStandsAloneOnARow(t *testing.T) {
+	const limit, edge, maxRows = 56, 76, 4
+	for _, n := range []int{80, 81, 82, 83} {
+		path := dashPath(n)
+		text := "volumes are still on disk at " + path + " —"
+		rows := wrapHard(text, limit, edge, maxRows)
+		for i, r := range rows {
+			if strings.TrimSpace(r) == "—" {
+				t.Errorf("path of %d: row %d is the dash alone: %q", n, i, rows)
+			}
+			if w := lipgloss.Width(r); w > limit {
+				t.Errorf("path of %d: row %d is %d cells, over %d: %q", n, i, w, limit, r)
+			}
+		}
+		last := rows[len(rows)-1]
+		if !strings.HasSuffix(last, " —") {
+			t.Errorf("path of %d: last row %q does not end in \" —\"", n, last)
+			continue
+		}
+		if tail := strings.TrimSuffix(last, " —"); tail == "" || strings.HasSuffix(tail, " ") {
+			t.Errorf("path of %d: last row %q holds no path before the dash", n, last)
+		}
+		// Read-back, asserted exactly: the only breaks the layout may add
+		// inside the path are cuts, which lose nothing, so joining the rows
+		// with no separator must equal the text with its spaces removed.
+		if got, want := strings.Join(rows, ""), strings.ReplaceAll(text, " ", ""); strings.ReplaceAll(got, " ", "") != want {
+			t.Errorf("path of %d: rows read back %q, want %q", n, got, want)
+		}
+	}
+}

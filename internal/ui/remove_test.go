@@ -262,3 +262,30 @@ func TestRemoveModel_InitAsksForTheInstallDate(t *testing.T) {
 		t.Errorf("the lookup was asked about %+v, want this deployment", seen)
 	}
 }
+
+// A long folder cut across rows leaves the dash after it with the path's
+// tail, never alone on a row of its own (#275).
+func TestRemoveModel_DoneScreen_LoneDash_NoRowHoldsOnlyTheDash(t *testing.T) {
+	d := &deploy.Deployment{TargetDir: dashPath(82), AppURL: "https://mail.example.com"}
+	m := NewRemoveModel(d)
+	m.standDown = func(context.Context, string) error { return nil }
+	m.clipboard = io.Discard
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(RemoveModel)
+	updated, cmd := m.Update(key(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("confirming ran nothing")
+	}
+	m = updated.(RemoveModel)
+	updated, _ = m.Update(cmd())
+	m = updated.(RemoveModel)
+	if m.state != removeStateDone {
+		t.Fatalf("state = %v, want removeStateDone", m.state)
+	}
+	s := screen(m)
+	for _, row := range folderRowsOf(s) {
+		if strings.TrimSpace(row) == "—" {
+			t.Errorf("a row holds only the dash:\n%s", s)
+		}
+	}
+}
