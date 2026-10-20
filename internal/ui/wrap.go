@@ -93,6 +93,16 @@ func wrapShellCommand(words []string, limit int) []string {
 	return lines
 }
 
+// endCut keeps text to one row of at most limit cells, ending in "…"
+// when anything is cut, as wrapHard's last row does (#271 decision 3).
+// A limit of 0 means no cut.
+func endCut(text string, limit int) string {
+	if limit <= 0 || lipgloss.Width(text) <= limit {
+		return text
+	}
+	return xansi.Truncate(text, limit-1, "") + "…"
+}
+
 // escapedQuote is how shellQuote writes an apostrophe inside a quoted
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`
