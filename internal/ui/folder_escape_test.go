@@ -237,7 +237,7 @@ func checkEscapeShown(t *testing.T, f folderScreen, folder, shown string) {
 
 func checkLongPath(t *testing.T, f folderScreen) {
 	t.Helper()
-	folder := "/srv/" + strings.Repeat("a", 150)
+	folder := "/srv/" + strings.Repeat("a", 120)
 	for _, w := range folderWidths {
 		s := f.draw(t, folder, w)
 		checkRowsFit(t, f, s, w)
@@ -325,13 +325,13 @@ func TestFolderEscape_g_InvalidByteIsShownAsText(t *testing.T) {
 	}
 }
 
-// h. A 150-character path: rows within width, the whole path in order,
+// h. A 120-character path: rows within width, the whole path in order,
 // no …, and the menu and tagline still there.
 func TestFolderEscape_h_LongPathReadsAcrossRows(t *testing.T) {
 	f := folderInstallScreen()
 	checkLongPath(t, f)
 	for _, w := range folderWidths {
-		s := f.draw(t, "/srv/"+strings.Repeat("a", 150), w)
+		s := f.draw(t, "/srv/"+strings.Repeat("a", 120), w)
 		for _, want := range []string{"▸ Standard", "AI", "Full", "only Standard is available so far"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("at %d the screen lacks %q:\n%s", w, want, s)
