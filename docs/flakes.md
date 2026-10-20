@@ -9,11 +9,6 @@ heading.
 
 - 2026-10-06 · 9e15161 · local, 2 of about 25 runs alongside TestLive_HangDiagnosisProducesAGoroutineDump · fails only when run with the hang-diagnosis test; always passes alone
 
-## TestAppModel_UnreadableEnvScreensHoldAtEveryWidth (internal/ui)
-
-- 2026-10-18 · 62a7419 · local, full `go test ./internal/ui/` · a background star drawn between "permission" and "denied" broke the text check; passed 3 of 3 alone
-- 2026-10-18 · ed55c6e · local, full `go test ./internal/ui/` · same test failed at unreadable_env_test.go:109; unchanged code
-
 ## Unidentified internal/ui failure
 
-- 2026-10-20 · 86a3b52 (plus comment-only edits) · local, full `go test ./internal/ui/` · failed once, output not kept; passed 6 of 6 reruns. Possibly the star-in-text flake above (#270)
+- 2026-10-20 · 86a3b52 (plus comment-only edits) · local, full `go test ./internal/ui/` · failed once, output not kept; passed 6 of 6 reruns. Possibly a star drawn inside a line of text, which #270 fixed (that flake's heading was removed: 10 of 10 runs passed after the fix)
