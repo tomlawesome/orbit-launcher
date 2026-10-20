@@ -124,7 +124,7 @@ func ev(phase, component, state, reason, action string) engine.EventMsg {
 // grammar tests read (#228); screenLabels picks these out of a screen.
 var rowLabels = map[string]bool{
 	"Install": true, "Update": true, "Repair": true, "Remove": true,
-	"Install now": true, "Update Orbit": true, "Stand down Orbit": true,
+	"Update Orbit": true, "Stand down Orbit": true,
 	"Continue anyway": true, "Open the guided installer": true,
 	"Get into Orbit": true, "Copy command": true, "Copy command · copied": true,
 	"Cancel": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,

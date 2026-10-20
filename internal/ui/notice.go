@@ -10,8 +10,8 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
-// This file is the development notice (#175): the screen between "Ready
-// to install" and the mission console that says, in the owner's own
+// This file is the development notice (#175): the screen between the
+// profile choice (#248) and the mission console that says, in the owner's own
 // words, what Orbit is and is not, and asks for a typed acknowledgement
 // before an install starts. The copy, emphasis, countdown, phrase and
 // layout were approved in design/mockups-v7-notice.html; its
@@ -107,7 +107,7 @@ const (
 
 // noticeTickMsg redraws the countdown. It carries the start of the
 // notice that armed it, so a chain left over from an earlier visit
-// (Back, then Install now again) is recognised and dropped.
+// (Back, then Standard again) is recognised and dropped.
 type noticeTickMsg struct{ start time.Time }
 
 func noticeTick(start time.Time) tea.Cmd {

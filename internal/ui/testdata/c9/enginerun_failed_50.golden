@@ -4,7 +4,7 @@
                                                   
                                                   
                                                   
-                [38;2;248;113;113m✗[m [1;38;2;231;233;238mInstall stopped[m[38;2;143;184;255m●[m           [38;2;216;180;90m●[m    
+                [38;2;248;113;113m✗[m [1;38;2;231;233;238mInstall stopped[m            [38;2;216;180;90m●[m    
                    [38;2;74;84;104m.[m                              
   [38;2;248;113;113mFetching deployment assets[m[38;2;74;84;104m — Cannot connect to[m  
                [38;2;74;84;104mthe Docker daemon at[m               

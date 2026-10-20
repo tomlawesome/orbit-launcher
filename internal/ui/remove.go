@@ -295,11 +295,17 @@ func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "This stops Orbit and removes its containers")
 
-	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt, measure(m.width, proseWidth))))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.MutedText.Render("Your mail, documents, and configuration are not deleted"))
-	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))
-	fmt.Fprintln(&b, style.MutedText.Render("shows exactly how to remove them if you choose to."))
+	// Each hand-broken line wraps on its own, so it stays one row where
+	// it fits and breaks at spaces where it does not.
+	for _, line := range []string{
+		"Your mail, documents, and configuration are not deleted",
+		"by this step — they stay on disk, and the next screen",
+		"shows exactly how to remove them if you choose to.",
+	} {
+		writeWrapped(&b, style.MutedText, line, measure(m.width, proseWidth))
+	}
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -314,20 +320,33 @@ func (m RemoveModel) viewDone() string {
 	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolMark), "Orbit has been stood down")
 
 	targetDir := m.deployment.TargetDir
-	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
-	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth))
-	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
+	prose := measure(m.width, proseWidth)
+	writeWrapped(&b, style.MutedText, "Containers and networks are stopped. Your files and data", prose)
+	// The path is the one word here whose length and characters nobody
+	// chose, so it is escaped for the terminal and cut across rows.
+	for _, row := range wrapHard("volumes are still on disk at "+targetDir+" —", prose, m.width-4, folderRows) {
+		fmt.Fprintln(&b, style.MutedText.Render(row))
+	}
+	writeWrapped(&b, style.MutedText, "nothing has been deleted.", prose)
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
+	writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
 
 	// The command is over 100 cells for a short path, and the box adds
 	// four; a terminal cuts whatever is wider than it, and the cut end is
 	// the half that deletes everything. Wrapped, it reads whole at 80
-	// columns and still runs as typed; Copy command keeps the one-line
-	// form. Both are laid out from the same words.
-	words, _ := deploy.RemovalCommandWords(targetDir)
-	lines := wrapShellCommand(words, m.width-4)
+	// columns, and a word wider than the box is cut across rows (#271).
+	// The box's outside edge is the console's, width-4: four cells for
+	// its frame, so the text gets width-8. Both are laid out from the
+	// same words: the box shows them escaped for the terminal, measured
+	// after escaping, so a folder with control characters reads
+	// differently from what runs; Copy command keeps the raw one-line
+	// form, which is the one to run.
+	raw, _ := deploy.RemovalCommandWords(targetDir)
+	words := make([]string, len(raw))
+	for i, w := range raw {
+		words[i] = visibleText(w)
+	}
+	lines := wrapShellCommand(words, m.width-8)
 	boxW := 0
 	for _, l := range lines {
 		boxW = max(boxW, lipgloss.Width(l))
@@ -335,8 +354,8 @@ func (m RemoveModel) viewDone() string {
 	for _, l := range drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines) {
 		fmt.Fprintln(&b, l)
 	}
-	fmt.Fprintln(&b, style.DegradedText.Render("this deletes all mail, documents, and configuration —"))
-	fmt.Fprintln(&b, style.DegradedText.Render("it cannot be undone"))
+	writeWrapped(&b, style.DegradedText, "this deletes all mail, documents, and configuration —", prose)
+	writeWrapped(&b, style.DegradedText, "it cannot be undone", prose)
 	fmt.Fprintln(&b)
 
 	// The copy row says so once it has copied; the menu's own label,
@@ -355,7 +374,7 @@ func (m RemoveModel) viewFailed() string {
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), measure(m.width, errorWidth))
+		writeWrapped(&b, style.Tagline, visibleLines(m.standDownErr.Error()), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)

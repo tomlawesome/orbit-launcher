@@ -241,7 +241,7 @@ func (s *liveSession) send(str string) {
 
 // noticeWait outlasts the development notice's 70 s countdown (#175). The
 // binary keeps its full countdown -- nothing outside it can shorten an
-// approved gate -- so a run through Install now waits it out, exactly as
+// approved gate -- so a run through Standard waits it out, exactly as
 // test/pty does.
 const noticeWait = 72 * time.Second
 
@@ -260,7 +260,7 @@ func (s *liveSession) passNotice() {
 }
 
 // runStarted waits, under screenBudget, for the mission console to say the
-// engine run has begun. It sits in each test right after Install now, not
+// engine run has begun. It sits in each test right after Standard, not
 // inside passNotice, so a run stuck before the console -- a notice that
 // never lets go, as on pipeline 2063 -- fails in screenBudget instead of
 // in the 600 s engine wait that follows (#166).
@@ -1116,10 +1116,8 @@ func openGuidedConfiguration(session *liveSession) {
 	session.mustSoon("Install")
 	session.choose("Install") // by digit, not by trusting the preselection
 	session.mustSoon("Choose a deployment profile")
-	sendLine("") // Standard selected by default
-	session.mustSoon("Ready to install")
-	sendLine("") // confirm — the development notice opens first (#175)
-	session.passNotice()
+	sendLine("")         // Standard selected by default
+	session.passNotice() // Standard opens the development notice (#175, #248)
 	session.runStarted() // the mission console's piped engine run starts
 
 	// The piped, terminal-less first attempt cannot prompt, so on a

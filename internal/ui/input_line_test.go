@@ -287,14 +287,14 @@ func TestInputLine_NothingReachesTheEngineUntilEnter(t *testing.T) {
 // typed text does not change what it does. Passed already; it guards
 // the merge. Configuration kills the stream and goes to the menu,
 // rotation closes stdin and waits for the engine, the notice goes back
-// to the confirm screen.
+// to the profile screen.
 func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
-	t.Run("notice goes back to confirm", func(t *testing.T) {
+	t.Run("notice goes back to the profile screen", func(t *testing.T) {
 		m := awakeNotice(t, engineRunSeams{})
 		m = typeText(t, m, "I've")
 		m, _ = updateAs(t, m, key(tea.KeyEsc))
-		if m.state != installStateConfirm {
-			t.Fatalf("state = %v, want installStateConfirm", m.state)
+		if m.state != installStateProfile {
+			t.Fatalf("state = %v, want installStateProfile", m.state)
 		}
 	})
 

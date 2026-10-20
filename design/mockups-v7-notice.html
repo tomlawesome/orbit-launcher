@@ -38,6 +38,7 @@
 
 <h1>orbit-launcher · v7 — the development notice · #175</h1>
 <div class="sub">
+  <i>Partly superseded (2026-10-20, #248): the confirm screen named below is gone; Standard on the profile screen opens the notice, and Back returns there.</i><br>
   One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
   Three things gate the install: the prose has been on screen to its last line, a 70-second timer has run
   out, and the person has typed <b>I've read this and I understand</b> into a text box. The timer, the
@@ -107,7 +108,8 @@
   <div class="term scene" id="scene-d"><pre class="cells" id="n-d" role="img"
     aria-label="Both gates passed, the box awake with the example text inside and no cursor, the caret on Go back."></pre></div>
   <div class="cap">Where the caret rests until the person types: the box is awake but not focused, so the
-    example phrase stays and there is no cursor. <kbd>↓</kbd> from the box returns here; <kbd>↵</kbd> goes back to Ready to install, exactly as <kbd>esc</kbd> does at any moment.</div>
+    example phrase stays and there is no cursor. <kbd>↓</kbd> from the box returns here; <kbd>↵</kbd> goes back to Ready to install, exactly as <kbd>esc</kbd> does at any moment.
+    <i>Note (2026-10-20, #248): the Ready to install screen is gone; this now goes back to the profile screen.</i></div>
 </section>
 
 <section>
@@ -171,6 +173,9 @@
     back; in the field it submits (see 8); a quick triple <kbd>↵</kbd> from the confirm screen lands
     back on Ready to install, never in an install. <b><kbd>esc</kbd> is Go back at any moment</b>:
     one step, to Ready to install, the same step the confirm screen's own <kbd>esc</kbd> takes.</p>
+  <p><i>Note (2026-10-20, #248): the Ready to install screen was dropped. Standard on the profile
+    screen now opens this notice directly, and <kbd>esc</kbd> or <kbd>↵</kbd> on Go back returns to the
+    profile screen with Standard still selected. The lines above describe the earlier flow.</i></p>
 
   <h3>5 · 80×26, and tall</h3>
   <p>The approved copy wraps to <b>thirty-nine rows</b> at the 56-column measure (nine paragraphs,

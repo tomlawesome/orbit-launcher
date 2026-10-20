@@ -7,10 +7,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
+
+// secretMaskWidth is how many bullets a secret prompt's mask shows.
+const secretMaskWidth = 8
 
 // promptSession is one machine-prompt session (#211): the engine asks
 // for a field, the person types an answer, the engine rejects, accepts
@@ -111,28 +115,53 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 
 	label, hint, notes := promptWords(p.Field, origin)
 	fmt.Fprintln(b, style.Ink.Render(label))
+	// The hint and each note wrap at spaces to the screen's width, as
+	// other prose does (#269); an unsized screen (width 0) prints them
+	// whole. wrapWords keeps a word wider than the screen whole (a long
+	// example URL), so it is cut at the screen's edge here; a URL that
+	// fits stays on one line.
+	prose := func(ink lipgloss.Style, text string) {
+		if width <= 0 {
+			fmt.Fprintln(b, ink.Render(text))
+			return
+		}
+		for _, row := range wrapWords(text, measure(width, errorWidth)) {
+			for _, part := range strings.Split(xansi.Hardwrap(row, width, true), "\n") {
+				fmt.Fprintln(b, ink.Render(part))
+			}
+		}
+	}
 	if hint != "" {
-		fmt.Fprintln(b, style.Tagline.Render(hint))
+		prose(style.Tagline, hint)
 	}
 	for _, note := range notes {
-		fmt.Fprintln(b, style.MutedText.Render(note))
+		prose(style.MutedText, note)
 	}
 	fmt.Fprintln(b)
 
-	// The input row. A secret is never echoed — not even its length.
+	// The input row. A secret is never echoed — not even its length: once
+	// the answer holds anything the row shows a fixed mask of eight
+	// bullets, however long the answer is (#252).
 	caret := style.MenuCaret.Render(style.SymbolSelected) + " "
 	cursor := style.AccentText.Render(style.SymbolCursor)
 	// Nor, for a secret, where the cursor sits (#258): it stays drawn
-	// at the start, wherever the editing keys have moved it.
+	// in one place (after the mask, if any), wherever the editing keys
+	// have moved it.
 	var before, after string
+	inkBefore := style.Ink
 	switch {
-	case p.Kind == "secret": // both stay empty
+	case p.Kind == "secret":
+		// after stays empty, so the cursor stays drawn after the mask.
+		if !s.input.empty() {
+			before = strings.Repeat(style.SymbolMasked, secretMaskWidth)
+			inkBefore = style.MutedText
+		}
 	case width > 0:
 		before, after = s.input.around(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
 	default:
 		before, after = s.input.around(lipgloss.Width(s.input.String()))
 	}
-	row := caret + style.Ink.Render(before) + cursor
+	row := caret + inkBefore.Render(before) + cursor
 	if after != "" { // a cursor at the end draws the row byte for byte as before
 		row += style.Ink.Render(after)
 	}

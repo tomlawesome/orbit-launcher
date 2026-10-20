@@ -25,15 +25,14 @@ func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 // openNotice builds an install model at width×height on a fake clock and
-// takes it to the notice: Standard, then Install now.
+// takes it to the notice: Enter on Standard.
 func openNotice(t *testing.T, width, height int, seams engineRunSeams) (InstallModel, *fakeClock, tea.Cmd) {
 	t.Helper()
 	clock := newFakeClock()
 	seams.now = clock.now
 	m, _ := newTestInstallModel(seams)
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: height})
-	m, _ = updateAs(t, m, key(tea.KeyEnter)) // Standard -> confirm
-	updated, cmd := m.Update(key(tea.KeyEnter))
+	updated, cmd := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	if m.state != installStateNotice {
 		t.Fatalf("state = %v, want installStateNotice", m.state)
@@ -89,18 +88,18 @@ func TestNotice_InstallNowOpensTheNoticeAndStartsNoEngine(t *testing.T) {
 		t.Errorf("tick start = %v, want the notice's %v", msg.start, m.notice.start)
 	}
 	if engineCalled {
-		t.Error("Install now must open the notice, not start the engine")
+		t.Error("Standard must open the notice, not start the engine")
 	}
 }
 
-func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
+func TestNotice_EscAndGoBackReturnToProfileAndReentryIsFresh(t *testing.T) {
 	t.Parallel()
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
 	first := m.notice.start
 
 	m, _ = updateAs(t, m, key(tea.KeyEsc))
-	if m.state != installStateConfirm || m.confirm.sel != 0 {
-		t.Fatalf("Esc: state = %v, confirm.sel = %d; want confirm with Install now selected", m.state, m.confirm.sel)
+	if m.state != installStateProfile || m.profile.sel != 0 {
+		t.Fatalf("Esc: state = %v, profile.sel = %d; want the profile screen with Standard selected", m.state, m.profile.sel)
 	}
 
 	clock.advance(30 * time.Second)
@@ -126,8 +125,8 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 	}
 
 	m, _ = updateAs(t, m, key(tea.KeyEnter)) // the caret starts on Back
-	if m.state != installStateConfirm {
-		t.Errorf("Enter on Back: state = %v, want installStateConfirm", m.state)
+	if m.state != installStateProfile {
+		t.Errorf("Enter on Back: state = %v, want installStateProfile", m.state)
 	}
 }
 
@@ -435,8 +434,6 @@ func TestNotice_TeaTest_PassesTheNoticeAt80x26(t *testing.T) {
 	}
 
 	wait("Choose a deployment profile")
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	wait("Ready to install")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	passNotice(t, tm)
 	wait("Install — Standard")

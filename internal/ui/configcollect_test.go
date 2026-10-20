@@ -156,8 +156,6 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("Choose a deployment profile")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	wait("Ready to install")
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	passNotice(t, tm)
 	// The engine's configuration stop goes straight into guided
 	// configuration (#251): there is no screen to wait for here, so each

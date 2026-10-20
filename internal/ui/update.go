@@ -200,9 +200,9 @@ func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Pull the latest Orbit and update this deployment")
 
-	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt, measure(m.width, proseWidth))))
 	if image := m.deploymentImage(); image != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(image))
+		fmt.Fprintln(&b, style.Tagline.Render(visibleText(image)))
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))

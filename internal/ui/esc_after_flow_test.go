@@ -189,6 +189,11 @@ type appFinished struct {
 func appOnRemoveScreen(t *testing.T, standDownErr error) AppModel {
 	t.Helper()
 	m := leaveApp(t)
+	// The path is incidental: a short one keeps the removal command's
+	// words fitting the box whole at 80x24 (#271 criterion r).
+	short := shortTempDir(t)
+	writeEnv(t, short, "APP_URL=https://mail.example.test\n")
+	m.targetDir = short
 	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // Remove
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	m = drive(t, m, cmd)
@@ -238,13 +243,11 @@ func appOnInstallSuccess(t *testing.T) AppModel {
 
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install
 	m = drive(t, m, cmd)
-	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Standard profile
+	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Standard profile -> the notice
 	m = drive(t, m, cmd)
-	if s := screen(m); !strings.Contains(s, "Ready to install") {
-		t.Fatalf("not on Install's confirm screen:\n%s", s)
+	if s := screen(m); !strings.Contains(s, "A note before you install") {
+		t.Fatalf("not on Install's notice:\n%s", s)
 	}
-	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Install now -> the notice
-	m = drive(t, m, cmd)
 	m, cmd = updateAs(t, m, key(tea.KeyEnd), tea.KeyPressMsg{Text: noticePhrase}, key(tea.KeyEnter))
 	m = drive(t, m, cmd, queue)
 	if m.state != appStateSuccess {
