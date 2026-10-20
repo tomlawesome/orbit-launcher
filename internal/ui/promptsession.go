@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -114,11 +115,27 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 
 	label, hint, notes := promptWords(p.Field, origin)
 	fmt.Fprintln(b, style.Ink.Render(label))
+	// The hint and each note wrap at spaces to the screen's width, as
+	// other prose does (#269); an unsized screen (width 0) prints them
+	// whole. wrapWords keeps a word wider than the screen whole (a long
+	// example URL), so it is cut at the screen's edge here; a URL that
+	// fits stays on one line.
+	prose := func(ink lipgloss.Style, text string) {
+		if width <= 0 {
+			fmt.Fprintln(b, ink.Render(text))
+			return
+		}
+		for _, row := range wrapWords(text, measure(width, errorWidth)) {
+			for _, part := range strings.Split(xansi.Hardwrap(row, width, true), "\n") {
+				fmt.Fprintln(b, ink.Render(part))
+			}
+		}
+	}
 	if hint != "" {
-		fmt.Fprintln(b, style.Tagline.Render(hint))
+		prose(style.Tagline, hint)
 	}
 	for _, note := range notes {
-		fmt.Fprintln(b, style.MutedText.Render(note))
+		prose(style.MutedText, note)
 	}
 	fmt.Fprintln(b)
 
