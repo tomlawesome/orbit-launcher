@@ -1,29 +1,29 @@
                                                 [38;2;74;84;104m.[m                                                                    [38;2;74;84;104m.[m  
-                                                                                                                        
                                               [38;2;74;222;128m⟡[m [1;38;2;231;233;238mOrbit has been stood down[m                                               
                                                                                                                         
-                          [38;2;74;84;104m✦[m     [38;2;124;134;153mContainers and networks are stopped. Your files and data[m                                
-                                 [38;2;74;84;104m.[m [38;2;124;134;153mvolumes are still on disk at /srv/containers/mail[m                                    
-               [38;2;74;84;104m·[m                        [38;2;124;134;153mstack/orbit production/with several/long[m     [38;2;143;184;255m●[m                 [38;2;216;180;90m●[m               [38;2;74;84;104m·[m
-                     [38;2;74;84;104m·[m                 [38;2;124;134;153mdirectories/under the data volume/orbit —[m                   [38;2;74;84;104m·[m                    
-                                               [38;2;124;134;153mnothing has been deleted.[m                                                
-                                                                                                                        
-                                 [38;2;74;84;104mto fully remove Orbit from this machine, copy and run[m        [38;2;74;84;104m·[m                         
-[38;2;28;36;52m╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[m
-[38;2;28;36;52m│[m docker compose \                                                                                                                  [38;2;28;36;52m│[m
-[38;2;28;36;52m│[m   --project-directory '/srv/containers/mail stack/orbit production/with several/long directories/under the data volume/orbit' \   [38;2;28;36;52m│[m
-[38;2;28;36;52m│[m   --env-file '/srv/containers/mail stack/orbit production/with several/long directories/under the data volume/orbit/.env-orbit' \ [38;2;28;36;52m│[m
-[38;2;28;36;52m│[m   down -v \                                                                                                                       [38;2;28;36;52m│[m
-[38;2;28;36;52m│[m   && sudo rm \                                                                                                                    [38;2;28;36;52m│[m
-[38;2;28;36;52m│[m   -rf '/srv/containers/mail stack/orbit production/with several/long directories/under the data volume/orbit'                     [38;2;28;36;52m│[m
-[38;2;28;36;52m╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[m
+                                [38;2;124;134;153mContainers and networks are stopped. Your files and data[m                                
+                          [38;2;74;84;104m✦[m        [38;2;124;134;153mvolumes are still on disk at /srv/containers/mail[m                                    
+                                 [38;2;74;84;104m.[m      [38;2;124;134;153mstack/orbit production/with several/long[m                                        
+               [38;2;74;84;104m·[m                       [38;2;124;134;153mdirectories/under the data volume/orbit —[m     [38;2;143;184;255m●[m                 [38;2;216;180;90m●[m               [38;2;74;84;104m·[m
+                     [38;2;74;84;104m·[m                         [38;2;124;134;153mnothing has been deleted.[m                           [38;2;74;84;104m·[m                    
+                                              [38;2;74;84;104m✦[m                                                                         
+                                 [38;2;74;84;104mto fully remove Orbit from this machine, copy and run[m                                  
+  [38;2;28;36;52m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[m  
+  [38;2;28;36;52m│[m docker compose \                                                                                                 [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   --project-directory '/srv/containers/mail stack/orbit production/with several/long directories/under the dat'\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 'a volume/orbit' \                                                                                               [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   --env-file '/srv/containers/mail stack/orbit production/with several/long directories/under the data volume/'\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 'orbit/.env-orbit' \                                                                                             [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   down -v \                                                                                                      [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   && sudo rm \                                                                                                   [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   -rf '/srv/containers/mail stack/orbit production/with several/long directories/under the data volume/orbit'    [38;2;28;36;52m│[m  
+  [38;2;28;36;52m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[m  
                                  [38;2;251;146;60mthis deletes all mail, documents, and configuration —[m                                  
-                                                  [38;2;251;146;60mit cannot be undone[m                                                   
-                                              [38;2;74;84;104m·[m         [38;2;74;84;104m✦[m             [38;2;74;84;104m·[m                                                 
-                                                [38;2;74;84;104m✦[m   [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command[m                                                      
-                   [38;2;203;213;225m●[m    [38;2;251;113;133m·[m                                 [38;2;124;134;153mMenu[m                                     [38;2;74;84;104m·[m                    
+                                              [38;2;74;84;104m·[m   [38;2;251;146;60mit cannot be undone[m [38;2;74;84;104m·[m                                                 
+                                                [38;2;74;84;104m✦[m                                                                       
+                   [38;2;203;213;225m●[m    [38;2;251;113;133m·[m                           [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command[m                                 [38;2;74;84;104m·[m                    
+                                                          [38;2;124;134;153mMenu[m                                                          
                                                           [38;2;124;134;153mExit[m                                                          
-                                                                                                                        
                                                      [38;2;74;84;104m··[m                                                                 
                                                                                                                         
                                                                                                                         

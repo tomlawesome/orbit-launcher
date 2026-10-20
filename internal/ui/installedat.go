@@ -6,6 +6,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -52,11 +54,18 @@ func deploymentIdentity(d *deploy.Deployment) string {
 
 // identityLine is the confirm screens' one line of deployment identity:
 // deploymentIdentity, and the install date only when Docker has said
-// what it is.
-func identityLine(d *deploy.Deployment, installedAt time.Time) string {
+// what it is. It is always one row of at most limit cells (0 means no
+// limit): a host too wide for the row is cut on grapheme clusters and
+// ends in "…", and the date stays whole, since the host is only that
+// wide when its settings file is corrupt (#271).
+func identityLine(d *deploy.Deployment, installedAt time.Time, limit int) string {
 	identity := deploymentIdentity(d)
+	suffix := ""
 	if d != nil && !installedAt.IsZero() {
-		identity += style.Separator + "installed " + installedAt.Format("2006-01-02")
+		suffix = style.Separator + "installed " + installedAt.Format("2006-01-02")
 	}
-	return identity
+	if limit > 0 && lipgloss.Width(identity+suffix) > limit {
+		identity = xansi.Truncate(identity, max(limit-lipgloss.Width(suffix)-1, 0), "") + "…"
+	}
+	return identity + suffix
 }

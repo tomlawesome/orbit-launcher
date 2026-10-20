@@ -36,10 +36,12 @@ func measure(width, limit int) int {
 // "&&" always starts its own line, and continuation lines are indented
 // two cells (design/mockups.html §11). A command that fits is one line.
 //
-// Breaks fall only between the words, never inside a quoted path, and
-// an option stays with its value ("--env-file /opt/orbit/.env-orbit") so
-// no line ends on a flag waiting for its argument. A single word wider
-// than limit is still placed whole — a path that long cannot be helped.
+// Breaks fall between the words, and an option stays with its value
+// ("--env-file /opt/orbit/.env-orbit") so no line ends on a flag waiting
+// for its argument. A unit wider than limit starts a row of its own and
+// is cut across rows the way a POSIX shell is written across lines
+// (§2.2.1: a backslash-newline continues a line; §2.2.2: adjacent quoted
+// strings join into one word; see cutUnit). The next unit starts a fresh row.
 func wrapShellCommand(words []string, limit int) []string {
 	if cmd := strings.Join(words, " "); lipgloss.Width(cmd) <= limit {
 		return []string{cmd}
@@ -48,11 +50,13 @@ func wrapShellCommand(words []string, limit int) []string {
 	const indent, cont = "  ", " \\"
 	var lines []string
 	line := ""
+	sealed := false // line is a cut unit's last fragment: the next unit starts a fresh row
 	flush := func() {
 		if line != "" {
 			lines = append(lines, line+cont)
 			line = indent
 		}
+		sealed = false
 	}
 	for _, u := range units {
 		if u == "&&" {
@@ -61,6 +65,18 @@ func wrapShellCommand(words []string, limit int) []string {
 				line = indent
 			}
 			line += u
+			continue
+		}
+		if sealed {
+			flush()
+		}
+		if lipgloss.Width(indent+u)+len(cont) > limit {
+			if line != "" && line != indent {
+				flush()
+			}
+			rows, last := cutUnit(u, limit)
+			lines = append(lines, rows...)
+			line, sealed = last, true
 			continue
 		}
 		if line != "" && line != indent && lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit {
@@ -75,6 +91,73 @@ func wrapShellCommand(words []string, limit int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// escapedQuote is how shellQuote writes an apostrophe inside a quoted
+// word: close the quote, a backslash-quote, reopen the quote.
+const escapedQuote = `'\''`
+
+// cutUnit cuts a unit too wide for one row (an option with its value, or
+// a word) into rows that read back as it. It returns every row but the
+// last, each ending in a backslash that continues the line, and the last
+// fragment, which the caller continues as it does any row. The first row
+// has the two-cell indent and carries the option; the rest start flush
+// left. A cut inside a single-quoted word closes the quote and reopens
+// it: a row ends in `'\` and the next starts with `'`. A cut inside a
+// bare word ends the row in a backslash glued to the text. A cut falls
+// between grapheme clusters, never leaves an empty fragment, and never
+// falls beside or inside an escaped apostrophe. A unit with no place to
+// cut is returned whole.
+func cutUnit(u string, limit int) (rows []string, last string) {
+	const indent, cont = "  ", " \\"
+	lead := ""
+	if strings.HasPrefix(u, "-") {
+		if i := strings.IndexByte(u, ' '); i >= 0 {
+			lead, u = u[:i+1], u[i+1:]
+		}
+	}
+	open, closing := "", ""
+	if len(u) >= 2 && u[0] == '\'' && u[len(u)-1] == '\'' {
+		open, closing, u = "'", "'", u[1:len(u)-1]
+	}
+	var atoms []string
+	for rest := u; rest != ""; {
+		a := escapedQuote
+		if !strings.HasPrefix(rest, a) {
+			a, _ = xansi.FirstGraphemeCluster(rest, xansi.GraphemeWidth)
+		}
+		atoms = append(atoms, a)
+		rest = rest[len(a):]
+	}
+	width := func(as []string) int { return lipgloss.Width(strings.Join(as, "")) }
+	canCut := func(as []string, n int) bool {
+		return n > 0 && n < len(as) && as[n-1] != escapedQuote && as[n] != escapedQuote
+	}
+	head := indent + lead
+	for len(atoms) > 0 {
+		room := limit - lipgloss.Width(head) - len(open) - len(closing)
+		if width(atoms) <= room-len(cont) {
+			break
+		}
+		n, w := 0, 0
+		for n < len(atoms)-1 && w+lipgloss.Width(atoms[n]) <= room-1 {
+			w += lipgloss.Width(atoms[n])
+			n++
+		}
+		for n > 0 && !canCut(atoms, n) {
+			n--
+		}
+		if n == 0 { // nothing fits: the first fragment runs on to the next place a cut may fall
+			for n = 1; n < len(atoms) && !canCut(atoms, n); n++ {
+			}
+			if n == len(atoms) { // nowhere to cut
+				break
+			}
+		}
+		rows = append(rows, head+open+strings.Join(atoms[:n], "")+closing+"\\")
+		atoms, head = atoms[n:], ""
+	}
+	return rows, head + open + strings.Join(atoms, "") + closing
 }
 
 // commandUnits groups a command's words into the pieces a line may end

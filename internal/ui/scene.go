@@ -71,7 +71,8 @@ func nextFrame(frame int) int { return (frame + 1) % len(style.SpinnerFrames) }
 // viewNoDeployment is the one "nothing here" screen Update, Remove and
 // Repair share (#229): block header, gold mark, the title naming the
 // directory that was looked at (wrapped, since nobody chose its length),
-// the flow's own body lines, then the dead end's one row (#228). The
+// the flow's own body lines (each wrapped on its own), then the dead
+// end's one row (#228). The
 // directory is untrusted text, so wrapHard escapes it for the terminal:
 // a CR or LF in it would otherwise forge a row.
 func viewNoDeployment(star starfield.Model, width, height int, dir string, body ...string) string {
@@ -79,7 +80,7 @@ func viewNoDeployment(star starfield.Model, width, height int, dir string, body 
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
 		wrapHard("No Orbit deployment found in "+dir, measure(width, proseWidth), width-4, folderRows)...)
 	for _, line := range body {
-		fmt.Fprintln(&b, style.MutedText.Render(line))
+		writeWrapped(&b, style.MutedText, line, measure(width, proseWidth))
 	}
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
