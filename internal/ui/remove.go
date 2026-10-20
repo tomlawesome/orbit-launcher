@@ -328,8 +328,14 @@ func (m RemoveModel) viewDone() string {
 	// four; a terminal cuts whatever is wider than it, and the cut end is
 	// the half that deletes everything. Wrapped, it reads whole at 80
 	// columns and still runs as typed; Copy command keeps the one-line
-	// form. Both are laid out from the same words.
-	words, _ := deploy.RemovalCommandWords(targetDir)
+	// form. Both are laid out from the same words. The box shows the
+	// words escaped for the terminal, measured after escaping, while
+	// Copy command keeps them raw.
+	raw, _ := deploy.RemovalCommandWords(targetDir)
+	words := make([]string, len(raw))
+	for i, w := range raw {
+		words[i] = visibleText(w)
+	}
 	lines := wrapShellCommand(words, m.width-4)
 	boxW := 0
 	for _, l := range lines {
