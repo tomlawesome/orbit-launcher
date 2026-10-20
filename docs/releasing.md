@@ -48,7 +48,8 @@ Tags are made by a CI button, never by hand.
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. GitLab's push mirror carries the
    tag to GitHub. Tagging jobs run one at a time, so a second press
-   (either button, same commit) stops with "already tagged" -- at
+   on the same commit stops: "already tagged" after the other button, or
+   "already exists on the remote" after the same button again. It stops at
    `release:gitlab:*` if both presses were close together, otherwise at
    the button. The next tag goes on the next commit.
 4. In the Orbit repository, on its `dev` branch, move Orbit's pin to the
