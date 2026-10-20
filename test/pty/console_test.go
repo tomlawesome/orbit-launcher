@@ -49,7 +49,9 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, 
 }
 
 // driveToInstallNow walks splash -> profile -> Standard, which opens the
-// notice (#248).
+// notice (#248), then passes the notice (passNotice): it waits out the
+// 20 s countdown, types the phrase and confirms. It does not stop with
+// the notice open.
 func driveToInstallNow(t *testing.T, console *vtConsole) {
 	t.Helper()
 	must := func(s string) {

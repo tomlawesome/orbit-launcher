@@ -7,12 +7,19 @@ package ui
 // testdata/c9; they must keep rendering byte for byte. A difference
 // here is a defect in the change, never a reason to refresh a file.
 //
-// One deliberate exception: #248 dropped the "Ready to install" screen, so
-// install_confirm_* were deleted and install_profile_* added (the profile
-// screen now names the folder). #252 moved prompt_secret_* (the mask) and
-// #269 moved prompt_*_40 (hints and notes wrap). #270 blanked the one sky
-// cell beside text in console_bar_50_*, enginerun_failed_*, install_profile_50,
-// install_stale_volume and remove_done_*. Nothing else moved.
+// Later, deliberate changes have moved goldens, and only those: #231
+// itself moved the console bar (console_bar_*_none, _phase11, _rollback);
+// #238 added the unreadable-settings screens (remove_unreadable_*); #253
+// moved repair_diagnosis (the manual steps wrap); #248 dropped the "Ready
+// to install" screen, so install_confirm_* were deleted and
+// install_profile_* added (the profile screen now names the folder). #252
+// moved prompt_secret_* (the mask) and #269 moved prompt_*_40 (hints and
+// notes wrap). #270 blanked the one sky cell beside text in
+// console_bar_50_*, enginerun_failed_*, install_profile_50,
+// install_stale_volume and remove_done_*. #271 moved remove_done_50/80/120
+// and remove_notfound_50 (Remove screens stay inside the screen edge).
+// Any other difference is a regression to look at, never a file to
+// re-record.
 
 import (
 	"errors"
