@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orbit-launcher — v8 mockups: profile table, notice scrolling, degraded reasons, repair services (#247 #249 #254 #255)</title>
+<style>
+  body{background:#060b1c;color:#e7e9ee;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+       margin:0;padding:48px 24px 120px;display:flex;flex-direction:column;align-items:center;}
+  h1{font-size:15px;letter-spacing:.22em;text-transform:uppercase;color:#d8b45a;font-weight:600;text-align:center}
+  .sub{font-size:12px;color:#7c8699;max-width:78ch;text-align:center;line-height:1.7;margin-bottom:40px}
+  .sub b{color:#e7e9ee;font-weight:600}
+  .layout{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap;justify-content:center;max-width:1360px}
+  .frames{display:flex;flex-direction:column;gap:0}
+  section{margin-bottom:56px}
+  section>h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#4a5468;
+             border-bottom:1px solid #14203e;padding-bottom:8px;margin:0 0 16px}
+  section>h2 span{color:#d8b45a}
+  .term{background:#05070d;border:1px solid #14203e;border-radius:8px;padding:10px 8px;width:fit-content;
+        box-shadow:0 18px 60px rgba(0,0,0,.5);margin-bottom:22px}
+  .cap{font-size:11px;color:#4a5468;margin:6px 2px 0;letter-spacing:.05em;max-width:72ch;line-height:1.6}
+  .cap b{color:#7c8699;font-weight:600}
+  pre.cells{margin:0;font-size:12px;line-height:15px;letter-spacing:0}
+  pre.cells span{display:inline-block;width:7.2px;overflow:visible;text-align:center;
+                 font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
+  .panel{font-size:12.5px;color:#7c8699;line-height:1.75;width:380px;max-width:100%;
+         border:1px solid #14203e;border-radius:8px;padding:14px 20px 18px;position:sticky;top:24px}
+  .panel h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#d8b45a;margin:0 0 10px;font-weight:600}
+  .panel h3{font-size:12px;color:#e7e9ee;margin:16px 0 4px;font-weight:600}
+  .panel p{margin:0 0 6px}
+  .panel b{color:#e7e9ee;font-weight:600}
+  footer{font-size:11px;color:#4a5468;max-width:78ch;text-align:center;line-height:1.7;margin-top:24px}
+</style>
+</head>
+<body>
+
+<h1>orbit-launcher · v8 — status words and lists · #247 #249 #254 #255</h1>
+<div class="sub">
+  Four screens, each one proposal. Cell-truth renders at the sizes the app is tested at (80×26 the house minimum,
+  50 columns the narrow floor), colours from <code>internal/ui/style/style.go</code>, every glyph one the app already
+  draws except the scroll track's <b>│ ┃</b> and the hint's <b>↓</b>. The sky is still here; in the app it moves as
+  it always has. Nothing here is approved yet.
+</div>
+
+<div class="layout">
+<div class="frames">
+
+<section>
+  <h2><span>a</span> #247 — the deployment profile as a table, 80×26</h2>
+  <div class="term"><pre class="cells" id="s-a" role="img" aria-label="Profile screen at 80 by 26: a four-row table of profiles with name, what it adds and availability columns, Standard selected"></pre></div>
+  <div class="cap">Four profiles (Orbit's <code>standard</code>, <code>processing</code>, <code>ai</code>, <code>full</code>), one row each,
+    three columns: the name, what the profile adds, and whether it can be installed today. The block is centred as a unit;
+    columns share a left edge. The caret rides two cells left of the name, as on every menu. Rows that cannot be installed
+    are faint, and say so in their own row — the "only Standard is available so far" line below the menu goes. A memory column
+    waits for figures Orbit's documentation does not yet give.</div>
+
+  <h2><span>b</span> #247 — the same at 50 columns</h2>
+  <div class="term"><pre class="cells" id="s-b" role="img" aria-label="Profile screen at 50 by 26: each profile takes two rows, its name and availability, then what it adds"></pre></div>
+  <div class="cap">Under 68 columns the table has no room for its middle column, so each profile takes two rows: name and
+    availability, then what it adds beneath, indented to the name. Same words, same colours, nothing cut.</div>
+</section>
+
+<section>
+  <h2><span>c</span> #249 — the notice shows there is more, and how to get there, 80×26</h2>
+  <div class="term"><pre class="cells" id="s-c" role="img" aria-label="Notice screen at 80 by 26 with a scroll track to the right of the prose and a hint row saying more below, press down or scroll the mouse wheel"></pre></div>
+  <div class="cap">Two additions, this screen only. <b>A scroll track</b> in the prose block's right gutter: a faint <code>│</code> per prose row,
+    with a <code>┃</code> thumb in the muted ink whose length and position are the viewport's share of the whole notice. <b>A hint row</b>, the
+    last row of the viewport, in the muted ink: <i>more below · press ↓ or scroll the mouse wheel</i>. Both name only inputs that work here.
+    The last visible prose row still steps down to faint, as today.</div>
+
+  <h2><span>d</span> #249 — the end has been seen</h2>
+  <div class="term"><pre class="cells" id="s-d" role="img" aria-label="Notice screen at 80 by 26 scrolled to the end: the thumb sits at the bottom of the track and the hint row is blank"></pre></div>
+  <div class="cap">Once the whole notice has been on screen the hint row goes blank, the way the countdown does when its gate is passed;
+    the track stays, thumb at the bottom, so the person still sees where they are.</div>
+</section>
+
+<section>
+  <h2><span>e</span> #254 — the splash says what is wrong, 80×26</h2>
+  <div class="term"><pre class="cells" id="s-e" role="img" aria-label="Splash at 80 by 26: the identity block reads orbit.example.com, degraded · not responding, 2 of 3 services running, with Repair preselected"></pre></div>
+  <div class="cap">The status word keeps its place and colour; the reason joins it on the same row after the house separator:
+    <b>degraded · not responding</b>. One more row beneath, in the muted ink, when the launcher can ask Docker: <b>2 of 3 services running</b>.
+    Repair is already preselected on a degraded deployment; the caret is the pointer, so no sentence says "go to Repair".</div>
+
+  <h2><span>f</span> #254 — the launcher could not tell</h2>
+  <div class="term"><pre class="cells" id="s-f" role="img" aria-label="Splash at 80 by 26: degraded · could not check, and no services row"></pre></div>
+  <div class="cap">The reason is one of five words the probe can actually tell apart: <b>not responding</b> (refused or timed out),
+    <b>address not found</b> (no DNS answer), <b>server error</b> (a 5xx reply), <b>certificate rejected</b> (TLS), and
+    <b>could not check</b> for anything else. The services row appears only when Docker answered; a count is never guessed.</div>
+</section>
+
+<section>
+  <h2><span>g</span> #255 — Repair opens with the services and their states, 80×26</h2>
+  <div class="term"><pre class="cells" id="s-g" role="img" aria-label="Repair diagnosis at 80 by 26: a services block lists orbit-app running, orbit-db running, orbit-clamav running, orbit-tika restarting, orbit-ollama missing, then the findings and plan as today"></pre></div>
+  <div class="cap">A <b>services</b> block above the findings: every service the deployment's profile expects, one row each, in Compose order.
+    Three glyphs, three colours: <code>✓</code> running (green), <code>!</code> faulted (amber: starting, restarting, stopped, unhealthy — the
+    state word says which), <code>✗</code> missing (red: no container exists). Names are the container names, because that is what
+    <code>docker ps</code> shows. The list is read-only.</div>
+
+  <h2><span>h</span> #255 — a short terminal, 80×20</h2>
+  <div class="term"><pre class="cells" id="s-h" role="img" aria-label="Repair diagnosis at 80 by 20: the running services collapse to one row, 3 running, and the faulted and missing rows stay"></pre></div>
+  <div class="cap">When the full list and the plan will not both fit, the running services collapse to one row — <b>✓ 3 running</b> — and
+    every faulted or missing service keeps its row. What is wrong is never the part that gets hidden.</div>
+</section>
+
+</div>
+
+<aside class="panel">
+  <h2>The calls</h2>
+  <h3>#247 table</h3>
+  <p>Columns: name · what it adds · availability. Block centred as a unit, columns aligned — a deliberate exception to "menu items
+     centre individually", because the owner asked to compare the options. Unavailable rows faint, each saying <i>not yet</i>.
+     Narrow terminals stack each row in two. Memory column deferred until Orbit publishes figures.</p>
+  <h3>#249 scrolling</h3>
+  <p>Track in the right gutter + one hint row at the viewport's foot. The hint is the one key hint in the app, allowed here by
+     the owner's own instruction (2026-10-17); it names ↓ and the mouse wheel only, both of which scroll this screen. Blank
+     once the end has been seen.</p>
+  <h3>#254 reasons</h3>
+  <p><i>degraded · reason</i> on the status row, reason from one of five words the probe can tell apart. A services count row
+     only when Docker answered. "Could not check" when the launcher does not know.</p>
+  <h3>#255 services</h3>
+  <p>Expected set = app, db, clamav always; tika for <code>processing</code> and <code>full</code>; ollama for <code>ai</code>
+     and <code>full</code> (from <code>COMPOSE_PROFILES</code> in <code>.env-orbit</code>). State from <code>docker compose ps -a</code>
+     for the folder's project. Running rows collapse first when the screen is short.</p>
+</aside>
+</div>
+
+<footer>Static renders; the app animates the sky and the countdown at 10 fps in whole-cell steps. Review against these cells only.</footer>
+
+<script>
+function esc(ch){return ch==="<"?"&lt;":ch==="&"?"&amp;":ch;}
+function mkScreen(id,W,H){
+  const el=document.getElementById(id); if(!el) return null;
+  const S={el:el,W:W,H:H,buf:[]};
+  for(let r=0;r<H;r++)S.buf.push(new Array(W).fill(null));
+  S.put=function(r,c,ch,f,o){ if(r<0||r>=H||c<0||c>=W)return; S.buf[r][c]=Object.assign({c:ch,f:f,k:1},o||{}); };
+  S.sky=function(r,c,ch,f){ if(r<0||r>=H||c<0||c>=W)return; S.buf[r][c]={c:ch,f:f,k:0}; };
+  S.str=function(r,c,s,f,o){const a=[...s];for(let i=0;i<a.length;i++)if(a[i]!==" ")S.put(r,c+i,a[i],f,o);};
+  S.segs=function(r,c,segs){segs.forEach(function(g){S.str(r,c,g.t,g.f,g.b?{b:1}:undefined);c+=[...g.t].length;});};
+  S.centre=function(r,segs){let w=0;segs.forEach(function(g){w+=[...g.t].length;});S.segs(r,Math.floor((W-w)/2),segs);};
+  S.render=function(){
+    // as compositeScene does: a content row covers the sky from one cell
+    // before its first character to one cell after its last (#270)
+    for(let r=0;r<H;r++){let lo=W,hi=-1;for(let c=0;c<W;c++){const x=S.buf[r][c];if(x&&x.k){if(c<lo)lo=c;if(c>hi)hi=c;}}
+      if(hi>=0)for(let c=Math.max(lo-1,0);c<=Math.min(hi+1,W-1);c++){const x=S.buf[r][c];if(x&&!x.k)S.buf[r][c]=null;}}
+    let h="";
+    for(let r=0;r<H;r++){for(let c=0;c<W;c++){const x=S.buf[r][c];
+      h+=x?'<span style="color:'+x.f+(x.b?";font-weight:700":"")+'">'+esc(x.c)+"</span>":"<span> </span>";}
+      h+="\n";}
+    S.el.innerHTML=h;
+  };
+  return S;
+}
+// a still sky: the same glyph vocabulary as the app's starfield, fixed positions
+function sky(S){
+  const pts=[[0,57,"."],[4,31,"."],[6,39,"⟡"],[6,56,"●"],[6,68,"●"],[7,23,"✦"],[8,8,"·"],[9,68,"·"],[13,17,"·"],[13,25,"·"],[13,27,"✦"],
+             [20,29,"·"],[20,31,"✦"],[20,37,"✦"],[20,70,"·"],[23,13,"●"],[23,16,"·"],[23,35,"·"],[25,10,"."],[18,62,"·"],[21,74,"."]];
+  pts.forEach(function(p){
+    const ch=p[2];
+    let col=FAINT;
+    if(ch==="⟡")col=GOLD; else if(ch==="●")col=(p[1]===56?"#8fb8ff":p[1]===68?GOLD:"#cbd5e1");
+    if(p[0]<S.H&&p[1]<S.W)S.sky(p[0],p[1],ch,col);
+  });
+}
+const TEXT="#e7e9ee", MUTED="#7c8699", FAINT="#4a5468", GOLD="#d8b45a", AMBER="#fb923c", GREEN="#4ade80", RED="#f87171", BORDER="#1c2434", SOFT="#151b28";
+
+// ---- #247 profile table -----------------------------------------------------
+const PROFILES=[
+  ["Standard","mail, documents, calendar",true],
+  ["Documents","adds text extraction from attachments",false],
+  ["Agent","adds a local model for search & suggestions",false],
+  ["Full","documents extraction and the local model together",false]];
+function profileScreen(id,W,H,sel){
+  const S=mkScreen(id,W,H); sky(S);
+  const top=Math.floor((H-(W>=68?13:17))/2);
+  S.centre(top,[{t:"⟡",f:GOLD}]);
+  S.centre(top+2,[{t:"Choose a deployment profile",f:TEXT,b:1}]);
+  S.centre(top+4,[{t:"Orbit installs into /srv/orbit",f:TEXT}]);
+  let r=top+6;
+  if(W>=68){
+    const w1=10,w2=44,w3=9, left=Math.floor((W-(2+w1+1+w2+1+w3))/2);
+    PROFILES.forEach(function(p,i){
+      const on=p[2], chosen=i===sel;
+      const ink=chosen?TEXT:(on?MUTED:FAINT);
+      if(chosen)S.put(r,left,"▸",GOLD);
+      S.str(r,left+2,p[0],ink);
+      S.str(r,left+2+w1+1,p[1],ink);
+      S.str(r,left+2+w1+1+w2+1,on?"available":"not yet",on?(chosen?TEXT:MUTED):FAINT);
+      r++;
+    });
+  } else {
+    const left=Math.floor((W-46)/2);
+    PROFILES.forEach(function(p,i){
+      const on=p[2], chosen=i===sel;
+      const ink=chosen?TEXT:(on?MUTED:FAINT);
+      if(chosen)S.put(r,left,"▸",GOLD);
+      S.segs(r,left+2,[{t:p[0],f:ink},{t:" · ",f:FAINT},{t:on?"available":"not yet",f:on?MUTED:FAINT}]);
+      S.str(r+1,left+2,p[1],on?MUTED:FAINT);
+      r+=2;
+      if(i<PROFILES.length-1)r++;
+    });
+  }
+  S.render();
+}
+profileScreen("s-a",80,26,0);
+profileScreen("s-b",50,26,0);
+
+// ---- #249 notice ------------------------------------------------------------
+const PARAS=[
+  "I designed Orbit. Claude, an AI model, wrote the code.",
+  "I'm a mechatronics engineer by trade, not a professional software engineer. I built Orbit for myself, because keeping track of so many life admin tasks is hard. I've released it under the GNU AGPL v3.0 so anyone can use it for free.",
+  "If you find it useful, that's great. Please understand though that you use it at your own risk: it comes with no warranty, and there's no one on call to support it.",
+  "Everything Orbit stores stays on your own machine, and backing it up is up to you.",
+  "Because Orbit is in alpha, upgrading it is not guaranteed to keep your data. Always back up before you upgrade.",
+  "Orbit sends no data or telemetry about you or your installation anywhere. It does reach the internet for a few things, and sends none of your data when it does.",
+  "I've poured significant effort and resources into trying to make it as robust and secure as I can, but you should not trust that it is safe to expose to the internet.",
+  "Never expose Orbit directly to the internet. Keep it on your own network, and reach it from outside through a VPN back to that network.",
+  "If you find a security problem, please report it privately on GitHub at github.com/tomlawesome/orbit/security, not in a public issue."];
+function wrap(s,w){const out=[];let line="";s.split(" ").forEach(function(word){if(line&&(line+" "+word).length>w){out.push(line);line=word;}else line=line?line+" "+word:word;});if(line)out.push(line);return out;}
+function noticeScreen(id,W,H,offset,atEnd){
+  const S=mkScreen(id,W,H); sky(S);
+  const measure=56, gutter=2, blockW=measure+2*gutter, left=Math.floor((W-blockW)/2)+gutter;
+  const rows=[]; PARAS.forEach(function(p,i){ if(i)rows.push(""); wrap(p,measure).forEach(function(l){rows.push(l);}); });
+  const viewport=H-6-8;           // header 6, pinned 8
+  const proseRows=viewport-1;     // the last viewport row is the hint row
+  const maxOff=rows.length-proseRows; if(atEnd)offset=maxOff;
+  let r=1;
+  S.centre(r,[{t:"⟡",f:AMBER}]); r+=2;
+  S.centre(r,[{t:"A note before you install",f:TEXT,b:1}]); r++;
+  S.centre(r,[{t:"Project state: ",f:MUTED},{t:"alpha",f:AMBER}]); r+=2;
+  const trackCol=left+measure+1;
+  const thumbLen=Math.max(1,Math.round(proseRows*proseRows/rows.length));
+  const thumbTop=Math.round(offset/maxOff*(proseRows-thumbLen));
+  for(let i=0;i<proseRows;i++){
+    const line=rows[offset+i]||"";
+    const faded=(i===proseRows-1&&!atEnd)||(i===0&&offset>0);
+    S.str(r+i,left,line,faded?FAINT:MUTED);
+    S.put(r+i,trackCol,(i>=thumbTop&&i<thumbTop+thumbLen)?"┃":"│",(i>=thumbTop&&i<thumbTop+thumbLen)?MUTED:BORDER);
+  }
+  r+=proseRows;
+  if(!atEnd)S.segs(r,left,[{t:"more below · press ",f:MUTED},{t:"↓",f:TEXT},{t:" or scroll the mouse wheel",f:MUTED}]);
+  r++;
+  // pinned: countdown, prompt, box, feedback, Back
+  const cells=measure-6, fill=atEnd?cells:Math.floor(cells*0.35);
+  for(let x=0;x<cells;x++)S.put(r,left+x,"─",x<fill?GOLD:SOFT);
+  if(!atEnd)S.str(r,left+cells+2,"0:13",FAINT); r++;
+  S.segs(r,left,[{t:"To install, type  ",f:atEnd?MUTED:FAINT},{t:"I've read this and I understand",f:atEnd?TEXT:MUTED}]); r++;
+  const bx=left+2, boxW=measure-2, bc=atEnd?FAINT:BORDER;
+  S.put(r,bx,"╭",bc);for(let x=1;x<boxW-1;x++)S.put(r,bx+x,"─",bc);S.put(r,bx+boxW-1,"╮",bc); r++;
+  S.put(r,bx,"│",bc);S.put(r,bx+boxW-1,"│",bc);S.str(r,bx+2,"I've read this and I understand",FAINT); r++;
+  S.put(r,bx,"╰",bc);for(let x=1;x<boxW-1;x++)S.put(r,bx+x,"─",bc);S.put(r,bx+boxW-1,"╯",bc); r+=2;
+  S.put(r,left,"▸",GOLD); S.str(r,left+2,"Back",TEXT);
+  S.render();
+}
+noticeScreen("s-c",80,26,6,false);
+noticeScreen("s-d",80,26,0,true);
+
+// ---- #254 splash ------------------------------------------------------------
+function splashScreen(id,W,H,reason,services){
+  const S=mkScreen(id,W,H); sky(S);
+  const n=services?12:11, top=Math.floor((H-n)/2); let r=top;
+  S.centre(r,[{t:"⟡",f:AMBER}]); r+=2;
+  S.centre(r,[{t:"O R B I T",f:TEXT,b:1}]); r++;
+  S.centre(r,[{t:"orbit.example.com",f:MUTED}]); r++;
+  S.centre(r,[{t:"degraded",f:AMBER},{t:" · ",f:FAINT},{t:reason,f:AMBER}]); r++;
+  if(services){S.centre(r,[{t:services,f:MUTED}]); r++;}
+  r++;
+  ["Install","Update","Repair","Remove","Exit"].forEach(function(m,i){
+    if(i===3)r++;
+    const sel=m==="Repair";
+    const w=[...m].length, c=Math.floor((W-w)/2);
+    if(sel)S.put(r,c-2,"▸",GOLD);
+    S.str(r,c,m,sel?TEXT:MUTED); r++;
+  });
+  S.centre(H-1,[{t:"orbit-launcher v0.4.3 · orbit v0.3.1",f:FAINT}]);
+  S.render();
+}
+splashScreen("s-e",80,26,"not responding","2 of 3 services running");
+splashScreen("s-f",80,26,"could not check",null);
+
+// ---- #255 repair ------------------------------------------------------------
+const SERVICES=[["orbit-app","running","ok"],["orbit-db","running","ok"],["orbit-clamav","running","ok"],["orbit-tika","restarting","warn"],["orbit-ollama","missing","fail"]];
+function repairScreen(id,W,H,collapse){
+  const S=mkScreen(id,W,H); sky(S);
+  const left=Math.floor((W-30)/2);
+  let r=H===26?3:1;
+  S.centre(r,[{t:"⟡",f:AMBER},{t:" Repairs proposed",f:TEXT,b:1}]); r+=2;
+  S.str(r,left,"services",FAINT); r++;
+  const rows=collapse?[["3 running","","okcount"]].concat(SERVICES.filter(function(s){return s[2]!=="ok";})):SERVICES;
+  rows.forEach(function(s){
+    const g=s[2]==="ok"||s[2]==="okcount"?["✓",GREEN]:s[2]==="warn"?["!",AMBER]:["✗",RED];
+    S.put(r,left,g[0],g[1]);
+    if(s[2]==="okcount"){S.str(r,left+2,s[0],MUTED);}
+    else{S.str(r,left+2,s[0],TEXT);S.str(r,left+2+14,s[1],s[2]==="ok"?MUTED:g[1]);}
+    r++;
+  });
+  r++;
+  S.centre(r,[{t:"✗ ",f:RED},{t:"docker-compose.yml",f:TEXT},{t:" — absent or empty",f:FAINT}]); r++;
+  S.centre(r,[{t:"! ",f:AMBER},{t:".env-orbit",f:TEXT},{t:" — secret-stale",f:FAINT}]); r+=2;
+  S.centre(r,[{t:"12 checked · 1 skipped",f:FAINT}]); r++;
+  S.centre(r,[{t:"· restore safe permissions — a secret is absent or empty",f:MUTED}]); r++;
+  S.centre(r,[{t:"· needs your hands — secret-stale · backup first",f:MUTED}]); r+=2;
+  S.centre(r,[{t:"a safe plan is ready — pick a repair below to run it",f:FAINT}]); r+=2;
+  ["Run the safe repairs","Menu","Exit"].forEach(function(m,i){
+    const w=[...m].length, c=Math.floor((W-w)/2);
+    if(i===0)S.put(r,c-2,"▸",GOLD);
+    S.str(r,c,m,i===0?TEXT:MUTED); r++;
+  });
+  S.render();
+}
+repairScreen("s-g",80,26,false);
+repairScreen("s-h",80,20,true);
+</script>
+</body>
+</html>
