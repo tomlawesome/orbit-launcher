@@ -544,8 +544,11 @@ live:
       # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path; with
       # a preview channel that now fails, so prove it on a stable one.
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+      # The full ref, so a tag with the same name as the branch cannot answer
+      # (#273). The files endpoint accepts refs/heads/<branch>.
+      gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
       gitlab_orbit_url() {
-        printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
+        printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$gitlab_orbit_ref"
       }
       orbit_source="${ORBIT_FILES_SOURCE:-auto}"
       if [ "$orbit_source" = "auto" ]; then
@@ -613,6 +616,9 @@ live:
           head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${ORBIT_BRANCH}"; exit 1; }
         done
         head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${ORBIT_BRANCH}"; exit 1; }
+        # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+        # these two stay on the plain branch name; the pair is verified below
+        # against the cosign.pub fetched by full ref above (#273).
         curl --fail --silent --show-error --location \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json \

@@ -7,8 +7,8 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198, #241 and #264 make on purpose, listed in
-// changedBy216, changedBy198, changedBy241 and changedBy264.
+// the ones #216, #198, #241, #273 and #264 make on purpose, listed in
+// changedBy216, changedBy198, changedBy241, changedBy273 and changedBy264.
 package supplychain
 
 import (
@@ -576,8 +576,43 @@ echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 	},
 }
 
+// What #273 changes on purpose: the live job asks ai/orbit's files endpoint
+// for the branch by its full ref, so a tag of the same name cannot answer, and
+// says why the two artifact reads stay on the plain name. Same form and the
+// same exactly-once rule as changedBy216; these apply after #241's.
+var changedBy273 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the files lookups name the branch by its full ref
+		jobs: []string{"live"},
+		old: `gitlab_orbit_url() {
+  printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
+}`,
+		new: `# The full ref, so a tag with the same name as the branch cannot answer
+# (#273). The files endpoint accepts refs/heads/<branch>.
+gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
+gitlab_orbit_url() {
+  printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$gitlab_orbit_ref"
+}`,
+	},
+	{ // the artifact reads cannot take a full ref
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+		new: `  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched by full ref above (#273).
+  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #264 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -589,6 +624,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	}(nil), changedBy216...)
 	all = append(all, changedBy198...)
 	all = append(all, changedBy241...)
+	all = append(all, changedBy273...)
 	all = append(all, changedBy264...)
 	for _, r := range all {
 		applies := false
