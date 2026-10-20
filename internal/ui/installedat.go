@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"net/url"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -49,7 +50,21 @@ func deploymentIdentity(d *deploy.Deployment) string {
 	if u, err := url.Parse(d.AppURL); err == nil && u.Host != "" {
 		return visibleText(u.Host)
 	}
-	return visibleText(d.AppURL)
+	// Unparseable (a control character does that): take the host by hand,
+	// so a user:password part or a path never reaches the screen (#267
+	// FR3-2). The scheme goes, then everything from the first /, ? or #,
+	// then everything up to the last @.
+	host := d.AppURL
+	if _, rest, ok := strings.Cut(host, "://"); ok {
+		host = rest
+	}
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.LastIndexByte(host, '@'); i >= 0 {
+		host = host[i+1:]
+	}
+	return visibleText(host)
 }
 
 // identityLine is the confirm screens' one line of deployment identity:
