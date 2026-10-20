@@ -49,7 +49,9 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, 
 }
 
 // driveToInstallNow walks splash -> profile -> Standard, which opens the
-// notice (#248).
+// notice (#248), then passes the notice (passNotice): it waits out the
+// 20 s countdown, types the phrase and confirms. It does not stop with
+// the notice open.
 func driveToInstallNow(t *testing.T, console *vtConsole) {
 	t.Helper()
 	must := func(s string) {
@@ -67,9 +69,9 @@ func driveToInstallNow(t *testing.T, console *vtConsole) {
 }
 
 // noticeWait outlasts the development notice's countdown (#175). The
-// binary keeps its full 70 s — nothing outside it can shorten an
+// binary keeps its full 20 s (#250) — nothing outside it can shorten an
 // approved gate — so a run through Standard waits it out.
-const noticeWait = 72 * time.Second
+const noticeWait = 22 * time.Second
 
 // passNotice gets past the development notice the way a person does:
 // End shows the whole notice, the countdown runs out, the phrase is

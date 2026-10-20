@@ -21,9 +21,11 @@ import (
 // supplies the clock and the duration, and only wires keys and ticks.
 
 const (
-	// noticeDefaultDuration is the reading countdown: 257 words at 238
-	// words a minute is 64.8 s, rounded up to the next ten.
-	noticeDefaultDuration = 70 * time.Second
+	// noticeDefaultDuration is the reading countdown: a flat 20 s the
+	// owner chose (2026-10-17, #250), not a reading-speed estimate, so it
+	// stays 20 s when the notice's words change. The other gate, the
+	// whole notice on screen, is unchanged.
+	noticeDefaultDuration = 20 * time.Second
 
 	// noticeTickInterval redraws the countdown. The sky's own tick chain
 	// stops under ORBIT_LAUNCHER_NO_ANIMATION and the countdown is not a

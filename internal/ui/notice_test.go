@@ -111,8 +111,8 @@ func TestNotice_EscAndGoBackReturnToProfileAndReentryIsFresh(t *testing.T) {
 	if !m.notice.start.Equal(clock.now()) || m.notice.start.Equal(first) {
 		t.Errorf("re-entry start = %v, want a fresh start at %v", m.notice.start, clock.now())
 	}
-	if !strings.Contains(screen(m), "1:10") {
-		t.Error("re-entry must restart the countdown at 1:10")
+	if !strings.Contains(screen(m), "0:20") {
+		t.Error("re-entry must restart the countdown at 0:20")
 	}
 	if tick, ok := cmd().(noticeTickMsg); !ok || !tick.start.Equal(m.notice.start) {
 		t.Errorf("re-entry tick = %#v, want one carrying the new start", tick)
@@ -191,7 +191,7 @@ func TestNotice_WrapsTheApprovedCopy(t *testing.T) {
 func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
 	view := screen(m)
-	for _, want := range []string{noticeTitle, "Project state: alpha", "1:10", "Back", "To install, type  " + noticePhrase} {
+	for _, want := range []string{noticeTitle, "Project state: alpha", "0:20", "Back", "To install, type  " + noticePhrase} {
 		if !strings.Contains(view, want) {
 			t.Errorf("first view lacks %q", want)
 		}
@@ -215,9 +215,9 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Fatal("End must show the end and open the scroll gate")
 	}
 
-	clock.advance(69 * time.Second)
+	clock.advance(19 * time.Second)
 	if !strings.Contains(screen(m), "0:01") {
-		t.Error("at 69 s the countdown must read 0:01")
+		t.Error("at 19 s the countdown must read 0:01")
 	}
 	m, _ = updateAs(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusBack || !m.notice.typed.empty() {
@@ -228,7 +228,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	block := strings.Split(m.notice.view(m.now(), m.noticeDur()), "\n")
 	countdown := block[noticeHeaderRows+len(m.notice.layout().rows)]
 	if strings.TrimSpace(ansi.Strip(countdown)) != "" {
-		t.Errorf("at 70 s the countdown row must be blank, got %q", ansi.Strip(countdown))
+		t.Errorf("at 20 s the countdown row must be blank, got %q", ansi.Strip(countdown))
 	}
 	m, _ = updateAs(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I" {

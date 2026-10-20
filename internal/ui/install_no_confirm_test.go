@@ -174,7 +174,7 @@ func TestNoConfirm_EnterOnStandardOpensTheNoticeAtItsStartWithoutTouchingTheEngi
 	})
 	m, cmd := noConfirmNotice(t, m)
 	s := screen(m)
-	for _, want := range []string{"A note before you install", noticeTitle, "1:10"} {
+	for _, want := range []string{"A note before you install", noticeTitle, "0:20"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("notice lacks %q:\n%s", want, s)
 		}
@@ -281,8 +281,8 @@ func TestNoConfirm_EscAndBackOnTheNoticeLandOnTheProfileScreenAndReentryIsFresh(
 			if !m.notice.start.Equal(clock.now()) || m.notice.start.Equal(first) {
 				t.Errorf("re-entry start = %v, want a fresh start at %v", m.notice.start, clock.now())
 			}
-			if !strings.Contains(screen(m), "1:10") {
-				t.Errorf("re-entry must restart the countdown at 1:10:\n%s", screen(m))
+			if !strings.Contains(screen(m), "0:20") {
+				t.Errorf("re-entry must restart the countdown at 0:20:\n%s", screen(m))
 			}
 			if m.notice.endSeen || m.notice.offset != 0 || !m.notice.typed.empty() {
 				t.Errorf("re-entry must close the scroll gate and reset the scroll and box (endSeen=%v offset=%d typed=%q)",

@@ -200,13 +200,18 @@ func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Pull the latest Orbit and update this deployment")
 
-	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt, measure(m.width, proseWidth))))
+	prose := measure(m.width, proseWidth)
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt, prose)))
 	if image := m.deploymentImage(); image != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(visibleText(image)))
+		fmt.Fprintln(&b, style.Tagline.Render(endCut(visibleText(image), prose)))
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))
-	fmt.Fprintln(&b, style.MutedText.Render("Your existing configuration is preserved. Nothing is deleted."))
+	// Each line wraps on its own, as Remove's do (#271), but at the
+	// screen's edge rather than proseWidth: the second line is 60 cells
+	// and stays one row from 64 columns up, as it always has (#274).
+	edge := measure(m.width, m.width)
+	writeWrapped(&b, style.MutedText, "The update runs inside the mission console, right here.", edge)
+	writeWrapped(&b, style.MutedText, "Your existing configuration is preserved. Nothing is deleted.", edge)
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())

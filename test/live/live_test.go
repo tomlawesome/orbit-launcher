@@ -239,11 +239,11 @@ func (s *liveSession) send(str string) {
 	vtscreen.Send(s.term, str)
 }
 
-// noticeWait outlasts the development notice's 70 s countdown (#175). The
+// noticeWait outlasts the development notice's 20 s countdown (#175, #250). The
 // binary keeps its full countdown -- nothing outside it can shorten an
 // approved gate -- so a run through Standard waits it out, exactly as
 // test/pty does.
-const noticeWait = 72 * time.Second
+const noticeWait = 22 * time.Second
 
 // passNotice gets past the development notice the way a person does: End
 // shows the whole notice, the countdown runs out, the phrase is typed and
