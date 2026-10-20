@@ -31,8 +31,8 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   checksum line (#216).
 - GitHub workflow failures are advisory; they never block a GitLab merge. Change
   a check on both hosts together.
-- Only the owner presses `release:version`, which cuts the release tag
-  (`docs/releasing.md`).
+- Only the owner presses `release:patch` or `release:minor` (on `main`
+  pipelines), which cut the release tag (`docs/releasing.md`).
 - A green `go test` without running the TUI is not verified. Say plainly what
   could not be exercised here.
 

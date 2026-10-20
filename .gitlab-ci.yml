@@ -7,7 +7,7 @@
 # running the same commands against the same pinned tool versions, so a
 # finding on one host means the same thing on the other. GitHub still runs
 # its workflows on the mirrored push as a second opinion; nothing here
-# publishes or promotes, except the release button below (#178), which the
+# publishes or promotes, except the release buttons below (#178, #264), which the
 # owner presses to cut a version tag.
 #
 # The mirror is set up in the GitLab project settings, not in this file. Its
@@ -825,52 +825,60 @@ renovate:
       fi
       renovate
 
-# --- Release: the version-tag button (#178) ----------------------------------
+# --- Release: the version-tag buttons (#178, #264) ---------------------------
 #
 # Since #171 nothing here publishes a binary, but Orbit pins launcher tags,
-# so a tag is still how a launcher version is cut. These two jobs are
-# gauntlet's release:version / release:gitlab pair: a manual button on a dev
-# pipeline that tags that commit, so nobody creates a v* tag by hand.
+# so a tag is still how a launcher version is cut. These are gauntlet's
+# release:version / release:gitlab pair, twice over: a manual button on a
+# main pipeline that tags that commit, so nobody creates a v* tag by hand.
+# release:patch takes the hotfix (patch) step, release:minor the ordinary
+# (minor) one. One click on either is all it takes; each has its own
+# follow-on job, and the shared work lives in the two hidden templates.
 #
-# release:version works out the next minor version with
-# tools/calculateversion and refuses unless that tag does not exist yet,
-# sorts above every tag already cut, and the commit is still the tip of dev
+# The button works out the next version with tools/calculateversion and
+# refuses unless that tag does not exist yet, sorts above every tag already
+# cut, and the commit is still the tip of main
 # (scripts/ci/release-tag-check.sh, tested by
 # scripts/test/release-tag-check.bats). It has no `needs:`, so the button is
-# not playable until every earlier stage has passed. release:gitlab then
+# not playable until every earlier stage has passed. The follow-on job then
 # creates the annotated tag and its GitLab release with release-cli, acting
 # with the rights of whoever pressed the button. Tag pipelines run nothing
 # (workflow: above); GitLab's push mirror carries the tag to GitHub.
-release:version:
+.release_version:
   stage: release
   image:
     <<: *pull_if_not_present
     name: $GO_IMAGE
   interruptible: false
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
       when: manual
       # A manual job is allow_failure by default; forcing it false would
-      # leave every dev pipeline reading "blocked" for a tag nobody intends
+      # leave every main pipeline reading "blocked" for a tag nobody intends
       # to cut yet.
       allow_failure: true
   cache: []
+  # RELEASE_BUMP, set by each button, is `patch` or `minor`.
   script:
     - |
       set -eu
       # calculateversion reads local tags; a CI clone may not hold them all.
       git fetch --quiet --force --tags origin
-      version="$(go run ./tools/calculateversion)"
+      case "$RELEASE_BUMP" in
+        patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
+        minor) version="$(go run ./tools/calculateversion)" ;;
+        *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+      esac
       remote_tags="$(git ls-remote --tags origin)"
-      dev_sha="$(git ls-remote origin refs/heads/dev | cut -f1)"
-      bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" "$dev_sha" "$CI_COMMIT_SHA" > release.env
+      tip_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+      bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env
       cat release.env
   artifacts:
     reports:
       dotenv: release.env
     expire_in: 90 days
 
-release:gitlab:
+.release_gitlab:
   stage: release
   # The same pin as gauntlet's release:gitlab, by tag and digest, because
   # this job creates the tag. release-cli is published only on GitLab's own
@@ -880,10 +888,7 @@ release:gitlab:
     name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
   interruptible: false
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
-  needs:
-    - job: release:version
-      artifacts: true
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
   cache: []
   script:
     - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
@@ -897,3 +902,25 @@ release:gitlab:
 
       This repo publishes no binaries (#171): Orbit builds, signs and ships
       the launcher alongside itself.
+
+release:patch:
+  extends: .release_version
+  variables:
+    RELEASE_BUMP: patch
+
+release:minor:
+  extends: .release_version
+  variables:
+    RELEASE_BUMP: minor
+
+release:gitlab:patch:
+  extends: .release_gitlab
+  needs:
+    - job: release:patch
+      artifacts: true
+
+release:gitlab:minor:
+  extends: .release_gitlab
+  needs:
+    - job: release:minor
+      artifacts: true

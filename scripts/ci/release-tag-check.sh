@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Checks release:version needs before it is safe to cut a tag (#178).
+# Checks the release buttons (release:patch, release:minor) need before it is
+# safe to cut a tag (#178, #264).
 # Ported from gauntlet's scripts/release-version-check.sh; here the version
 # comes from tools/calculateversion rather than a tracked VERSION file.
 #
@@ -9,31 +10,34 @@ set -euo pipefail
 #   2. Its tag does not exist yet, and it sorts above every v* tag already
 #      cut -- calculateversion reads local tags, so this is checked again
 #      against the remote, which is the one that counts.
-#   3. The commit being tagged is the current tip of dev, so an old
-#      pipeline's button can never tag a commit dev has moved past.
+#   3. The commit being tagged is the current tip of BRANCH (main in CI), so
+#      an old pipeline's button can never tag a commit the branch has moved
+#      past.
 #
 # Pure string logic, no network calls, so scripts/test/release-tag-check.bats
 # can feed it canned input offline.
 #
 # Usage:
-#   release-tag-check.sh VERSION REMOTE_TAGS DEV_SHA COMMIT_SHA
+#   release-tag-check.sh VERSION REMOTE_TAGS BRANCH TIP_SHA COMMIT_SHA
 #
 #   VERSION      tools/calculateversion's output, e.g. "0.3.0"
 #   REMOTE_TAGS  output of `git ls-remote --tags origin` (may be empty)
-#   DEV_SHA      sha of origin/dev, from `git ls-remote origin refs/heads/dev`
+#   BRANCH       the branch the tag is cut from, "main"; named in messages
+#   TIP_SHA      sha of origin/BRANCH, from `git ls-remote origin refs/heads/BRANCH`
 #   COMMIT_SHA   the commit being tagged, $CI_COMMIT_SHA
 #
 # On success prints "RELEASE_TAG=v<VERSION>" and exits 0.
 
-if [ "$#" -ne 4 ]; then
-  echo "usage: release-tag-check.sh VERSION REMOTE_TAGS DEV_SHA COMMIT_SHA" >&2
+if [ "$#" -ne 5 ]; then
+  echo "usage: release-tag-check.sh VERSION REMOTE_TAGS BRANCH TIP_SHA COMMIT_SHA" >&2
   exit 1
 fi
 
 version="$1"
 remote_tags="$2"
-dev_sha="$3"
-commit_sha="$4"
+branch="$3"
+tip_sha="$4"
+commit_sha="$5"
 
 num='(0|[1-9][0-9]*)'
 if ! [[ "$version" =~ ^${num}\.${num}\.${num}$ ]]; then
@@ -59,8 +63,8 @@ if [ -n "$existing_versions" ]; then
   fi
 fi
 
-if [ -z "$dev_sha" ] || [ "$commit_sha" != "$dev_sha" ]; then
-  echo "commit $commit_sha is not the current tip of dev (${dev_sha:-unknown}) -- press the button on the newest dev pipeline." >&2
+if [ -z "$tip_sha" ] || [ "$commit_sha" != "$tip_sha" ]; then
+  echo "commit $commit_sha is not the current tip of $branch (${tip_sha:-unknown}) -- press the button on the newest $branch pipeline." >&2
   exit 1
 fi
 
