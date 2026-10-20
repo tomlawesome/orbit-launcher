@@ -325,6 +325,8 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 				// is enough to tell this apart from a missing tree.
 				reason = fmt.Sprintf("%s (%d)", fallbackUnfixable, len(msg.plan.unfixable))
 			}
+			// Stored first so close runs the plan's cleanup (#266).
+			r.cfg.plan = msg.plan
 			r.cfg.close()
 			return r.fallbackToHandoff(reason)
 		}
