@@ -305,7 +305,7 @@ func TestMenuGrammar_DeadEndsBackOutAndNothingQuits(t *testing.T) {
 }
 
 // C3: the notice's retreat row is Back, not Go back, and it lands where
-// Esc lands: the confirm screen.
+// Esc lands: the profile screen (#248).
 func TestMenuGrammar_NoticeRowIsBackAndLandsWhereEscLands(t *testing.T) {
 	m, _, _ := openNotice(t, 80, 26, engineRunSeams{})
 	if got := screenLabels(screen(m)); !slices.Equal(got, []string{"Back"}) {

@@ -48,7 +48,8 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, 
 	return console, cmd
 }
 
-// driveToInstallNow walks splash -> profile -> confirm and confirms.
+// driveToInstallNow walks splash -> profile -> Standard, which opens the
+// notice (#248).
 func driveToInstallNow(t *testing.T, console *vtConsole) {
 	t.Helper()
 	must := func(s string) {

@@ -10,8 +10,8 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
-// This file is the development notice (#175): the screen between "Ready
-// to install" and the mission console that says, in the owner's own
+// This file is the development notice (#175): the screen between the
+// profile choice (#248) and the mission console that says, in the owner's own
 // words, what Orbit is and is not, and asks for a typed acknowledgement
 // before an install starts. The copy, emphasis, countdown, phrase and
 // layout were approved in design/mockups-v7-notice.html; its

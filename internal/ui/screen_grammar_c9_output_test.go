@@ -9,7 +9,8 @@ package ui
 //
 // One deliberate exception: #248 dropped the "Ready to install" screen, so
 // install_confirm_* were deleted and install_profile_* added (the profile
-// screen now names the folder). Nothing else moved.
+// screen now names the folder). #252 moved prompt_secret_* (the mask) and
+// #269 moved prompt_*_40 (hints and notes wrap). Nothing else moved.
 
 import (
 	"errors"
