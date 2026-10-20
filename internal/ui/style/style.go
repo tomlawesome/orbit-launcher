@@ -54,6 +54,9 @@ const (
 	SymbolWarn = "!"
 	// SymbolCursor is the text-input cursor drawn after typed text.
 	SymbolCursor = "▏"
+	// SymbolMasked is one bullet of the fixed mask a secret prompt shows
+	// once its answer holds anything (#252).
+	SymbolMasked = "●"
 )
 
 // SpinnerFrames are the in-progress glyph's animation frames, one per
