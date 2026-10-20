@@ -52,7 +52,11 @@ type folderScreen struct {
 	// folder, so the width and control-character checks may cover every
 	// row; otherwise they cover the sentence's rows.
 	wholeScreen bool
-	draw        func(t *testing.T, folder string, width int) string
+	// fitSentenceOnly holds only the sentence's rows to the screen width:
+	// another line on the screen overflows at 50 columns for its own
+	// reason (#271).
+	fitSentenceOnly bool
+	draw            func(t *testing.T, folder string, width int) string
 }
 
 func folderInstallScreen() folderScreen {
@@ -69,7 +73,7 @@ func folderInstallScreen() folderScreen {
 func folderOtherScreens() []folderScreen {
 	return []folderScreen{
 		{
-			name: "no deployment", lead: "No Orbit deployment found in", wholeScreen: true,
+			name: "no deployment", lead: "No Orbit deployment found in", wholeScreen: true, fitSentenceOnly: true,
 			draw: func(t *testing.T, folder string, width int) string {
 				body := []string{"Remove acts only on a deployment the launcher has found."}
 				return ansi.Strip(viewNoDeployment(newSky(width, folderHeight), width, folderHeight, folder, body...))
@@ -116,9 +120,32 @@ func folderAllScreens() []folderScreen {
 func folderRowsOf(s string) []string {
 	rows := strings.Split(s, "\n")
 	for i, r := range rows {
-		rows[i] = strings.Trim(r, " ▸.·✦●⟡")
+		rows[i] = trimSky(r)
 	}
 	return rows
+}
+
+// trimSky removes sky glyphs from both ends of a row, but only a glyph a
+// space separates from the rest (#270 keeps stars off the text), so the
+// text's own "." — as in ".env-orbit" at a row break — stays.
+func trimSky(r string) string {
+	const sky = "▸.·✦●⟡"
+	r = strings.TrimSpace(r)
+	for {
+		before := r
+		if i := strings.LastIndex(r, " "); i >= 0 && strings.Contains(sky, r[i+1:]) && r[i+1:] != "" {
+			r = strings.TrimSpace(r[:i])
+		}
+		if i := strings.Index(r, " "); i > 0 && strings.Contains(sky, r[:i]) {
+			r = strings.TrimSpace(r[i+1:])
+		}
+		if len(r) > 0 && !strings.Contains(r, " ") && strings.Trim(r, sky) == "" {
+			r = ""
+		}
+		if r == before {
+			return r
+		}
+	}
 }
 
 // sentence is the rows of the folder sentence: the row that starts with
@@ -181,7 +208,7 @@ func checkReadsInOrder(t *testing.T, f folderScreen, s, text string, width int) 
 func checkRowsFit(t *testing.T, f folderScreen, s string, width int) {
 	t.Helper()
 	rows := strings.Split(s, "\n")
-	if !f.wholeScreen {
+	if !f.wholeScreen || f.fitSentenceOnly {
 		rows = f.sentence(s, folderRows+1)
 	}
 	for _, r := range rows {
@@ -399,7 +426,7 @@ func TestVisibleText_NonGraphicRunesAreShownAsTheirGoEscape(t *testing.T) {
 // k. wrapHard.
 func TestWrapHard_CutsALongWordAcrossRowsWithoutLosingAnything(t *testing.T) {
 	in := "/srv/" + strings.Repeat("a", 100)
-	rows := wrapHard(in, 46, 4)
+	rows := wrapHard(in, 46, 46, 4)
 	if len(rows) == 0 || len(rows) > 4 {
 		t.Fatalf("wrapHard gave %d rows, want 1 to 4: %q", len(rows), rows)
 	}
@@ -414,7 +441,7 @@ func TestWrapHard_CutsALongWordAcrossRowsWithoutLosingAnything(t *testing.T) {
 }
 
 func TestWrapHard_MaxRowsKeepsOneRowEndingInAnEllipsis(t *testing.T) {
-	rows := wrapHard("/srv/"+strings.Repeat("a", 100), 46, 1)
+	rows := wrapHard("/srv/"+strings.Repeat("a", 100), 46, 46, 1)
 	if len(rows) != 1 {
 		t.Fatalf("wrapHard with maxRows 1 gave %d rows: %q", len(rows), rows)
 	}
@@ -427,13 +454,18 @@ func TestWrapHard_MaxRowsKeepsOneRowEndingInAnEllipsis(t *testing.T) {
 }
 
 func TestWrapHard_ShowsEscapesAndKeepsAnExactFitWhole(t *testing.T) {
-	if got := wrapHard("/opt/a\rb", 46, 4); len(got) != 1 || got[0] != `/opt/a\rb` {
+	if got := wrapHard("/opt/a\rb", 46, 46, 4); len(got) != 1 || got[0] != `/opt/a\rb` {
 		t.Errorf("wrapHard escaped = %q, want [%q]", got, `/opt/a\rb`)
 	}
 	in := "/srv/" + strings.Repeat("a", 100) // 105 cells: three rows of 46 at most
-	rows := wrapHard(in, 46, 3)
+	rows := wrapHard(in, 46, 46, 3)
 	if strings.Join(rows, "") != in {
 		t.Errorf("a path that fits in maxRows was cut: %q", rows)
+	}
+	// Wider than the prose width but within the screen: one row, whole.
+	whole := "/srv/" + strings.Repeat("a", 60)
+	if got := wrapHard(whole, 56, 76, 4); len(got) != 1 || got[0] != whole {
+		t.Errorf("a path that fits the screen was cut: %q", got)
 	}
 }
 
