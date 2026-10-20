@@ -3,10 +3,12 @@ package deploy
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
@@ -1059,5 +1061,255 @@ func TestImportTargetConfig_RefusesAWorldWritableSecret(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(tree, ".orbit-secrets", "oidc-client-secret")); !os.IsNotExist(err) {
 		t.Error("the untrusted secret was imported")
+	}
+}
+
+// repairDecidesWhatRuns names the deployment files that decide what
+// repair.sh runs or reads: the configuration, its secrets directory and
+// the Compose files. Repair's command checks each one when present.
+var repairDecidesWhatRuns = []struct {
+	name  string
+	isDir bool
+}{
+	{name: ".env-orbit"},
+	{name: ".orbit-secrets", isDir: true},
+	{name: "docker-compose.yml"},
+	{name: "docker-compose.override.yml"},
+}
+
+var repairModes = []RepairMode{RepairCheck, RepairPlan, RepairExecuteSafe, RepairExecuteDangerous}
+
+// putFile replaces whatever is at path with a regular file of the given
+// mode, so the same helper serves .env-orbit, which trustedDeployment
+// already wrote.
+func putFile(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, path, "services: {}\n", mode)
+}
+
+// putDir replaces whatever is at path with a directory of the given mode.
+func putDir(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	chmod(t, path, mode)
+}
+
+// repairCommandOrHang runs RepairCommand but fails instead of hanging when
+// it opens a FIFO that has no writer; the FIFO is then given a writer so
+// the stuck call can finish.
+func repairCommandOrHang(t *testing.T, dir string, mode RepairMode, fifo string) (*exec.Cmd, error) {
+	t.Helper()
+	type result struct {
+		cmd *exec.Cmd
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		c, e := RepairCommand(dir, mode)
+		done <- result{c, e}
+	}()
+	select {
+	case r := <-done:
+		return r.cmd, r.err
+	case <-time.After(5 * time.Second):
+		if fifo != "" {
+			if w, werr := os.OpenFile(fifo, os.O_WRONLY, 0); werr == nil {
+				w.Close()
+			}
+		}
+		t.Fatalf("RepairCommand hung opening %s before refusing it", fifo)
+		return nil, nil
+	}
+}
+
+// Spec D1 of #253 (and #204): the files that decide what repair.sh runs
+// pass the same checks as the Orbit scripts before Repair runs, in every
+// mode; absent ones are fine.
+func TestRepairCommand_ChecksTheFilesThatDecideWhatRuns(t *testing.T) {
+	for _, target := range repairDecidesWhatRuns {
+		t.Run(target.name, func(t *testing.T) {
+			place := func(t *testing.T, dir string, mode os.FileMode) string {
+				path := filepath.Join(dir, target.name)
+				if target.isDir {
+					putDir(t, path, mode)
+				} else {
+					putFile(t, path, mode)
+				}
+				return path
+			}
+
+			accepted := map[string]func(t *testing.T) string{
+				"absent": func(t *testing.T) string {
+					dir := trustedDeployment(t)
+					if err := os.RemoveAll(filepath.Join(dir, target.name)); err != nil {
+						t.Fatal(err)
+					}
+					return dir
+				},
+				"owner-only": func(t *testing.T) string {
+					dir := trustedDeployment(t)
+					if target.isDir {
+						place(t, dir, 0o700)
+					} else {
+						place(t, dir, 0o600)
+					}
+					return dir
+				},
+				"world-readable": func(t *testing.T) string {
+					dir := trustedDeployment(t)
+					if target.isDir {
+						place(t, dir, 0o755)
+					} else {
+						place(t, dir, 0o644)
+					}
+					return dir
+				},
+			}
+			for name, prepare := range accepted {
+				t.Run("accepted: "+name, func(t *testing.T) {
+					dir := prepare(t)
+					for _, mode := range repairModes {
+						cmd, err := RepairCommand(dir, mode)
+						if err != nil {
+							t.Fatalf("mode %v: RepairCommand: %v", mode, err)
+						}
+						if cmd == nil {
+							t.Fatalf("mode %v: RepairCommand returned no command", mode)
+						}
+					}
+				})
+			}
+
+			refused := []struct {
+				name    string
+				prepare func(t *testing.T) (dir, fifo string)
+			}{
+				{
+					name: "symbolic link",
+					prepare: func(t *testing.T) (string, string) {
+						dir := trustedDeployment(t)
+						path := filepath.Join(dir, target.name)
+						if err := os.RemoveAll(path); err != nil {
+							t.Fatal(err)
+						}
+						elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+						if target.isDir {
+							putDir(t, elsewhere, 0o700)
+						} else {
+							writeTestFile(t, elsewhere, "services: {}\n", 0o600)
+						}
+						if err := os.Symlink(elsewhere, path); err != nil {
+							t.Fatal(err)
+						}
+						return dir, ""
+					},
+				},
+				{
+					name: "world-writable",
+					prepare: func(t *testing.T) (string, string) {
+						dir := trustedDeployment(t)
+						if target.isDir {
+							place(t, dir, 0o777)
+						} else {
+							place(t, dir, 0o666)
+						}
+						return dir, ""
+					},
+				},
+			}
+			if target.isDir {
+				refused = append(refused, struct {
+					name    string
+					prepare func(t *testing.T) (dir, fifo string)
+				}{
+					name: "not a directory",
+					prepare: func(t *testing.T) (string, string) {
+						dir := trustedDeployment(t)
+						path := filepath.Join(dir, target.name)
+						if err := os.RemoveAll(path); err != nil {
+							t.Fatal(err)
+						}
+						writeTestFile(t, path, "not a directory\n", 0o600)
+						return dir, ""
+					},
+				})
+			} else {
+				refused = append(refused, struct {
+					name    string
+					prepare func(t *testing.T) (dir, fifo string)
+				}{
+					name: "not a regular file",
+					prepare: func(t *testing.T) (string, string) {
+						dir := trustedDeployment(t)
+						path := filepath.Join(dir, target.name)
+						if err := os.RemoveAll(path); err != nil {
+							t.Fatal(err)
+						}
+						if err := syscall.Mkfifo(path, 0o600); err != nil {
+							t.Fatal(err)
+						}
+						return dir, path
+					},
+				})
+			}
+			for _, tc := range refused {
+				t.Run("refused: "+tc.name, func(t *testing.T) {
+					dir, fifo := tc.prepare(t)
+					want := filepath.Join(dir, target.name)
+					for _, mode := range repairModes {
+						cmd, err := repairCommandOrHang(t, dir, mode, fifo)
+						var untrusted *UntrustedPathError
+						if !errors.As(err, &untrusted) {
+							t.Fatalf("mode %v: err = %v, want an *UntrustedPathError naming %s", mode, err, want)
+						}
+						if cmd != nil {
+							t.Errorf("mode %v: a refused deployment returned a command", mode)
+						}
+						if untrusted.Path != want {
+							t.Errorf("mode %v: refusal names %q, want %q", mode, untrusted.Path, want)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// The owner check on these files needs a second uid, which only root can
+// create files for.
+func TestRepairCommand_RefusesAFileThatDecidesWhatRunsAnotherUserOwns(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown a file to another user; the owner checks run where the suite runs as root")
+	}
+	const nobody = 65534
+	for _, target := range repairDecidesWhatRuns {
+		t.Run(target.name, func(t *testing.T) {
+			dir := trustedDeployment(t)
+			path := filepath.Join(dir, target.name)
+			if target.isDir {
+				putDir(t, path, 0o755)
+			} else {
+				putFile(t, path, 0o644)
+			}
+			if err := os.Lchown(path, nobody, nobody); err != nil {
+				t.Fatal(err)
+			}
+			cmd, err := RepairCommand(dir, RepairPlan)
+			var untrusted *UntrustedPathError
+			if !errors.As(err, &untrusted) || untrusted.Path != path || !strings.Contains(err.Error(), "owned by uid") {
+				t.Fatalf("err = %v, want an owner mismatch refusal naming %s", err, path)
+			}
+			if cmd != nil {
+				t.Error("a refused deployment returned a command")
+			}
+		})
 	}
 }
