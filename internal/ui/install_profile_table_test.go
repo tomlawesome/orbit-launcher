@@ -16,7 +16,7 @@ var profileTableRows = []profileRow{
 	{"Standard", "mail, documents, calendar", "available"},
 	{"Documents", "adds text extraction from attachments", "not yet"},
 	{"Agent", "adds a local model for search & suggestions", "not yet"},
-	{"Full", "documents extraction and the local model together", "not yet"},
+	{"Full", "documents extraction and the local model", "not yet"},
 }
 
 func profileScreenRows(t *testing.T, w int) [][]rune {
