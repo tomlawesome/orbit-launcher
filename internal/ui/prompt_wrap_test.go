@@ -22,6 +22,10 @@ package ui
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -31,10 +35,17 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 )
 
-// Every field promptWords knows (configcollect.go), listed by name so a
-// field added later without being listed here does not silently drop out
-// of the check: add it to this list.
-var promptWrapFields = []string{
+// Every field promptWords knows (configcollect.go). There is no registry:
+// promptWords is a switch on the field name, so the list is read from that
+// switch's case labels in the source (promptWordsFields). A field added to
+// the switch is therefore rendered by every test below with no edit here.
+var promptWrapFields = promptWordsFields()
+
+// promptWrapFieldFloor is the set of fields known when this test was
+// written. TestPromptWrap_FieldListCoversPromptWords fails if the list read
+// from the source lacks one, so a change that breaks the reading (or
+// removes a case) cannot quietly shrink what the tests cover.
+var promptWrapFieldFloor = []string{
 	"APP_URL",
 	"OIDC_ISSUER",
 	"OIDC_CLIENT_ID",
@@ -43,6 +54,70 @@ var promptWrapFields = []string{
 	"checkpoint-passphrase",
 	"checkpoint-passphrase-confirm",
 	"safe-batch",
+}
+
+// promptWordsFields returns the string case labels of the switch in
+// promptWords, parsed from configcollect.go. The default clause has no
+// label and is skipped. It panics if the source cannot be read or the
+// function is not shaped as expected, which fails the whole package's
+// tests loudly rather than testing fewer fields.
+func promptWordsFields() []string {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "configcollect.go", nil, 0)
+	if err != nil {
+		panic("prompt_wrap_test: cannot parse configcollect.go: " + err.Error())
+	}
+	var fields []string
+	found := false
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "promptWords" || fn.Recv != nil {
+			continue
+		}
+		found = true
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			sw, ok := n.(*ast.SwitchStmt)
+			if !ok {
+				return true
+			}
+			for _, st := range sw.Body.List {
+				cc, ok := st.(*ast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, e := range cc.List {
+					lit, ok := e.(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						panic("prompt_wrap_test: promptWords has a non-literal case label")
+					}
+					v, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						panic("prompt_wrap_test: " + err.Error())
+					}
+					fields = append(fields, v)
+				}
+			}
+			return false
+		})
+	}
+	if !found {
+		panic("prompt_wrap_test: promptWords not found in configcollect.go")
+	}
+	return fields
+}
+
+// The list the tests render must contain every field the floor names, so
+// the code still has them and the reading of the source still works.
+func TestPromptWrap_FieldListCoversPromptWords(t *testing.T) {
+	have := map[string]bool{}
+	for _, f := range promptWrapFields {
+		have[f] = true
+	}
+	for _, f := range promptWrapFieldFloor {
+		if !have[f] {
+			t.Errorf("field %q is not in the list read from promptWords; the prompt-wrap tests would skip it", f)
+		}
+	}
 }
 
 var (
