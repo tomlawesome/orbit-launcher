@@ -71,11 +71,13 @@ func nextFrame(frame int) int { return (frame + 1) % len(style.SpinnerFrames) }
 // viewNoDeployment is the one "nothing here" screen Update, Remove and
 // Repair share (#229): block header, gold mark, the title naming the
 // directory that was looked at (wrapped, since nobody chose its length),
-// the flow's own body lines, then the dead end's one row (#228).
+// the flow's own body lines, then the dead end's one row (#228). The
+// directory is untrusted text, so wrapHard escapes it for the terminal:
+// a CR or LF in it would otherwise forge a row.
 func viewNoDeployment(star starfield.Model, width, height int, dir string, body ...string) string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		wrapWords("No Orbit deployment found in "+dir, measure(width, proseWidth))...)
+		wrapHard("No Orbit deployment found in "+dir, measure(width, proseWidth), folderRows)...)
 	for _, line := range body {
 		fmt.Fprintln(&b, style.MutedText.Render(line))
 	}
@@ -94,7 +96,8 @@ func viewUnreadableDeployment(star starfield.Model, width, height int, dir strin
 	var b strings.Builder
 	glyph := style.ErrorText.Render(style.SymbolFailure)
 	// The glyph and its space take two cells off the title's measure.
-	for i, line := range wrapWords("Couldn't read "+deploy.EnvFile+" in "+dir, measure(width, proseWidth)-2) {
+	// The directory is escaped and cut, as on the screen above.
+	for i, line := range wrapHard("Couldn't read "+deploy.EnvFile+" in "+dir, measure(width, proseWidth)-2, folderRows) {
 		lead := "  "
 		if i == 0 {
 			lead = glyph + " "

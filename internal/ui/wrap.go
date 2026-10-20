@@ -2,10 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 )
@@ -203,4 +206,84 @@ func writeWrapped(b *strings.Builder, ink lipgloss.Style, text string, limit int
 	for _, line := range lines {
 		fmt.Fprintln(b, ink.Render(line))
 	}
+}
+
+// folderRows is the most rows a folder's sentence takes, so a huge path
+// never pushes a screen's menu off a 24-row terminal.
+const folderRows = 4
+
+// visibleText shows text nobody vetted, such as a folder name, as the
+// terminal should draw it: every rune that is not graphic is written as
+// its Go escape (\r, \n, \t, \x1b, \u202e, \xff for an invalid
+// byte), so a CR or LF cannot forge or add a row, an escape sequence
+// cannot restyle the screen, and a bidi override cannot reorder it.
+// Printable text, spaces and non-ASCII letters stay as they are.
+func visibleText(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case unicode.IsGraphic(r):
+			b.WriteRune(r)
+		default:
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+		}
+		i += n
+	}
+	return b.String()
+}
+
+// wrapHard lays out a sentence holding untrusted text (a folder name) in
+// at most maxRows rows of at most limit cells. The text is visibleText'd
+// first, then packed at runs of spaces as a terminal would: a word that
+// fits joins the row, one that does not starts a new row, and one wider
+// than limit joins the row and is cut on grapheme clusters, so the whole
+// path reads across rows. Rows past maxRows are dropped, the last kept
+// one ending in "…".
+func wrapHard(text string, limit, maxRows int) []string {
+	text = visibleText(text)
+	var rows []string
+	row, rowW := "", 0
+	for rest := text; rest != ""; {
+		end := strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsSpace(r) })
+		if end < 0 {
+			break // trailing spaces
+		}
+		gap := rest[:end]
+		rest = rest[end:]
+		end = strings.IndexFunc(rest, unicode.IsSpace)
+		if end < 0 {
+			end = len(rest)
+		}
+		word := rest[:end]
+		rest = rest[end:]
+
+		if row == "" {
+			gap = ""
+		}
+		w := lipgloss.Width(gap + word)
+		switch {
+		case rowW+w <= limit:
+			row, rowW = row+gap+word, rowW+w
+		case lipgloss.Width(word) <= limit:
+			rows = append(rows, row)
+			row, rowW = word, lipgloss.Width(word)
+		default:
+			parts := strings.Split(xansi.Hardwrap(row+gap+word, limit, true), "\n")
+			rows = append(rows, parts[:len(parts)-1]...)
+			row = parts[len(parts)-1]
+			rowW = lipgloss.Width(row)
+		}
+	}
+	if row != "" {
+		rows = append(rows, row)
+	}
+	if maxRows > 0 && len(rows) > maxRows {
+		rows = rows[:maxRows]
+		rows[maxRows-1] = xansi.Truncate(rows[maxRows-1], limit-1, "") + "…"
+	}
+	return rows
 }

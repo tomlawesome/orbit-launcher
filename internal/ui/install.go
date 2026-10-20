@@ -415,9 +415,12 @@ func (m InstallModel) viewStaleVolume() string {
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
-	// The folder is the one word here whose length nobody chose, so it
-	// wraps rather than being cut (#248).
-	writeWrapped(&b, style.Ink, "Orbit installs into "+m.targetDir, measure(m.width, proseWidth))
+	// The folder is the one word here whose length and characters nobody
+	// chose: it is escaped so a CR or LF in it cannot forge a row, and
+	// cut across rows rather than off the screen's edge (#248).
+	for _, row := range wrapHard("Orbit installs into "+m.targetDir, measure(m.width, proseWidth), folderRows) {
+		fmt.Fprintln(&b, style.Ink.Render(row))
+	}
 	fmt.Fprintln(&b)
 	m.profile.write(&b)
 	fmt.Fprintln(&b)

@@ -315,8 +315,11 @@ func (m RemoveModel) viewDone() string {
 
 	targetDir := m.deployment.TargetDir
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
-	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth))
+	// The path is the one word here whose length and characters nobody
+	// chose, so it is escaped for the terminal and cut across rows.
+	for _, row := range wrapHard("volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth), folderRows) {
+		fmt.Fprintln(&b, style.MutedText.Render(row))
+	}
 	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
