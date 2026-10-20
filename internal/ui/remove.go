@@ -327,10 +327,10 @@ func (m RemoveModel) viewDone() string {
 	// The command is over 100 cells for a short path, and the box adds
 	// four; a terminal cuts whatever is wider than it, and the cut end is
 	// the half that deletes everything. Wrapped, it reads whole at 80
-	// columns and still runs as typed; Copy command keeps the one-line
-	// form. Both are laid out from the same words. The box shows the
-	// words escaped for the terminal, measured after escaping, while
-	// Copy command keeps them raw.
+	// columns. Both are laid out from the same words: the box shows them
+	// escaped for the terminal, measured after escaping, so a folder with
+	// control characters reads differently from what runs; Copy command
+	// keeps the raw one-line form, which is the one to run.
 	raw, _ := deploy.RemovalCommandWords(targetDir)
 	words := make([]string, len(raw))
 	for i, w := range raw {
