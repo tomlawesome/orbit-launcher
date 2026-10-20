@@ -140,7 +140,7 @@ func TestIdentityEscape_EmptyAndMissingKeepTheirWords(t *testing.T) {
 	if got := deploymentIdentity(d); got != "deployment detected" {
 		t.Errorf("deploymentIdentity(empty AppURL) = %q", got)
 	}
-	if got := identityLine(nil, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)); got != "no deployment details found" {
+	if got := identityLine(nil, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), 0); got != "no deployment details found" {
 		t.Errorf("identityLine(nil) = %q", got)
 	}
 }

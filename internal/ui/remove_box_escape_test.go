@@ -194,7 +194,7 @@ func TestRemoveBox_E_PlainFolderBoxIsUnchanged(t *testing.T) {
 	const folder = "/opt/orbit"
 	words := removalWords(t, folder)
 	for _, width := range []int{80, 120} {
-		want := wrapShellCommand(words, width-4)
+		want := wrapShellCommand(words, width-8)
 		got := boxInside(t, screen(removeDoneModel(t, folder, width, &bytes.Buffer{})))
 		if len(got) != len(want) {
 			t.Fatalf("width %d: box has %d rows %q, want %d rows %q", width, len(got), got, len(want), want)
