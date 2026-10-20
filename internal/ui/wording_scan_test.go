@@ -209,10 +209,11 @@ func TestWording_ProfileRowsAndVolumeLineUseOneSpaceDot(t *testing.T) {
 	}
 
 	m, _ := newTestInstallModel(engineRunSeams{})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 50, Height: 30}) // the stacked rows carry the dot
 	check("profile rows", screen(m),
-		"Standard · mail, documents, calendar",
-		"AI · adds a local model for search & suggestions",
-		"Full · AI features plus every optional service")
+		"Standard · available",
+		"Agent · not yet",
+		"Full · not yet")
 
 	v := NewInstallModel("/opt/orbit", "v0.1.0")
 	v.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "old-tree_orbit-db-data", Project: "old-tree"})

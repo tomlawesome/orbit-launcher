@@ -18,6 +18,7 @@ package ui
 // console_bar_50_*, enginerun_failed_*, install_profile_50,
 // install_stale_volume and remove_done_*. #271 moved remove_done_50/80/120
 // and remove_notfound_50 (Remove screens stay inside the screen edge).
+// #247 made the profile screen a table: install_profile_50/80/120 moved.
 // Any other difference is a regression to look at, never a file to
 // re-record.
 

@@ -216,14 +216,14 @@ func TestTwoRowConfirmScreensToggleWithEitherArrow(t *testing.T) {
 func TestInstallProfileMenuWrapsOverAllRows(t *testing.T) {
 	m := profileInstall(t)
 	seen := []string{}
-	for _, want := range []string{"▸ AI", "▸ Full", "▸ Standard"} {
+	for _, want := range []string{"▸ Documents", "▸ Agent", "▸ Full", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyDown))
 		if !strings.Contains(screen(m), want) {
 			t.Fatalf("Down did not reach %q (visited %v):\n%s", want, seen, screen(m))
 		}
 		seen = append(seen, want)
 	}
-	for _, want := range []string{"▸ Full", "▸ AI", "▸ Standard"} {
+	for _, want := range []string{"▸ Full", "▸ Agent", "▸ Documents", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyUp))
 		if !strings.Contains(screen(m), want) {
 			t.Fatalf("Up did not reach %q:\n%s", want, screen(m))

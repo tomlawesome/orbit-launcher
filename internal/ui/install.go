@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -118,15 +119,38 @@ func NewInstallModel(targetDir, version string) InstallModel {
 	}
 }
 
-// The profile screen's rows. Only Standard is wired; AI and Full lead to
-// the honest dead end.
-const installStandard = "Standard" + style.Separator + "mail, documents, calendar"
+// The profile screen's rows (#247). Only Standard is wired; Documents
+// (Orbit's "processing" profile, until #260), Agent and Full lead to the
+// honest dead end. The menu holds the names; the table draws the rest.
+const installStandard = "Standard"
 
-var installProfiles = []string{
-	installStandard,
-	"AI" + style.Separator + "adds a local model for search & suggestions",
-	"Full" + style.Separator + "AI features plus every optional service",
+type installProfile struct{ name, adds, avail string }
+
+var installProfileTable = []installProfile{
+	{installStandard, "mail, documents, calendar", "available"},
+	{"Documents", "adds text extraction from attachments", "not yet"},
+	{"Agent", "adds a local model for search & suggestions", "not yet"},
+	{"Full", "documents extraction and the local model", "not yet"},
 }
+
+var installProfiles = func() []string {
+	names := make([]string, len(installProfileTable))
+	for i, p := range installProfileTable {
+		names[i] = p.name
+	}
+	return names
+}()
+
+// Table geometry at width >= installTableMin: two cells of caret column,
+// the name column, a space, the adds column, a space, the availability
+// column.
+const (
+	installNameCol  = 10
+	installAddsCol  = 44
+	installAvailCol = 9
+	installTableW   = 2 + installNameCol + 1 + installAddsCol + 1 + installAvailCol
+	installTableMin = installTableW + 1
+)
 
 var (
 	installVolumeRows = []string{"Continue anyway", "Cancel"}
@@ -423,16 +447,14 @@ func (m InstallModel) viewProfile() string {
 		fmt.Fprintln(&b, style.Ink.Render(row))
 	}
 	fmt.Fprintln(&b)
-	m.profile.write(&b)
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
+	m.writeProfileTable(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
-	fmt.Fprintln(&b, style.MutedText.Render("AI and Full need local-model configuration that"))
+	fmt.Fprintln(&b, style.MutedText.Render("Documents, Agent and Full need local-model configuration that"))
 	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
@@ -442,4 +464,51 @@ func (m InstallModel) viewUnavailableProfile() string {
 // viewNotice is the development notice (#175, notice.go) over the sky.
 func (m InstallModel) viewNotice() string {
 	return skyBlock(m.star, m.width, m.height, m.notice.view(m.now(), m.noticeDur()))
+}
+
+// writeProfileTable draws the profile choice as a table at 68 columns and
+// over, and as two rows per profile below. Every row is padded to the
+// block's width so the sky's per-line centring keeps the block one unit.
+func (m InstallModel) writeProfileTable(b *strings.Builder) {
+	pad := func(styled string, used, w int) string {
+		return styled + strings.Repeat(" ", max(0, w-used))
+	}
+	caret := func(sel bool) string {
+		if sel {
+			return style.MenuCaret.Render(style.SymbolSelected) + " "
+		}
+		return "  "
+	}
+	rowStyle := func(i int, p installProfile) lipgloss.Style {
+		switch {
+		case i == m.profile.sel:
+			return style.Ink
+		case p.avail == "available":
+			return style.MutedText
+		}
+		return style.Tagline
+	}
+	if m.width >= installTableMin {
+		for i, p := range installProfileTable {
+			st := rowStyle(i, p)
+			line := caret(i == m.profile.sel) +
+				pad(st.Render(p.name), len(p.name), installNameCol) + " " +
+				pad(st.Render(p.adds), len([]rune(p.adds)), installAddsCol) + " " +
+				pad(st.Render(p.avail), len(p.avail), installAvailCol)
+			fmt.Fprintln(b, line)
+		}
+		return
+	}
+	w := measure(m.width, proseWidth)
+	for i, p := range installProfileTable {
+		if i > 0 {
+			fmt.Fprintln(b, pad("", 0, w))
+		}
+		st := rowStyle(i, p)
+		head := p.name + style.Separator + p.avail
+		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
+		for _, r := range wrapWords(p.adds, w-2) {
+			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
+		}
+	}
 }
