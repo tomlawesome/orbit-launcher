@@ -837,13 +837,20 @@ renovate:
 #
 # The button works out the next version with tools/calculateversion and
 # refuses unless that tag does not exist yet, sorts above every tag already
-# cut, and the commit is still the tip of main
-# (scripts/ci/release-tag-check.sh, tested by
+# cut, the commit carries no v* tag yet (one tag per commit), and it is
+# still the tip of main (scripts/ci/release-tag-check.sh, tested by
 # scripts/test/release-tag-check.bats). It has no `needs:`, so the button is
 # not playable until every earlier stage has passed. The follow-on job then
 # creates the annotated tag and its GitLab release with release-cli, acting
 # with the rights of whoever pressed the button. Tag pipelines run nothing
 # (workflow: above); GitLab's push mirror carries the tag to GitHub.
+#
+# Two presses close together (either button, or one twice) would both pass
+# the check before either tag exists, and could cut two tags on one commit,
+# a lower version possibly landing after a higher one. So the follow-on jobs
+# share `resource_group: release`, which lets only one run at a time, and
+# each runs the check again while it holds that lock, just before
+# release-cli writes the tag; the second finds the first's tag and stops.
 .release_version:
   stage: release
   image:
@@ -871,7 +878,7 @@ renovate:
       esac
       remote_tags="$(git ls-remote --tags origin)"
       tip_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
-      bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env
+      sh scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env
       cat release.env
   artifacts:
     reports:
@@ -889,8 +896,10 @@ renovate:
   interruptible: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+  resource_group: release
   cache: []
   script:
+    - sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
     - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG

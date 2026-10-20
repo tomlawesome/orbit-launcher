@@ -41,12 +41,16 @@ Tags are made by a CI button, never by hand.
    minor, e.g. 0.4.1 to 0.4.2) or **release:minor** (e.g. 0.4.1 to
    0.5.0). One press is all it takes. The button picks the next version
    number. It stops if that tag already exists, if a higher tag already
-   exists, or if newer commits have landed on `main` since. If it stops,
-   use the newest `main` pipeline instead.
+   exists, if this commit already has a tag, or if newer commits have
+   landed on `main` since. If it stops, use the newest `main` pipeline
+   instead.
 3. **release:gitlab:patch** or **release:gitlab:minor** runs by itself and
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. GitLab's push mirror carries the
-   tag to GitHub.
+   tag to GitHub. Tagging jobs run one at a time, so a second press
+   (either button, same commit) stops with "already tagged" -- at
+   `release:gitlab:*` if both presses were close together, otherwise at
+   the button. The next tag goes on the next commit.
 4. In the Orbit repository, on its `dev` branch, move Orbit's pin to the
    new tag with `scripts/bump-launcher-pin.sh v<version>`.
 

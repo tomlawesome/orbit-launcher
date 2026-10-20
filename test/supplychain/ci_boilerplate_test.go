@@ -558,6 +558,22 @@ esac`,
 		old:  `bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" "$dev_sha" "$CI_COMMIT_SHA" > release.env`,
 		new:  `bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env`,
 	},
+	{ // the check is POSIX sh, so the release-cli image can run it too
+		jobs: []string{"release:patch", "release:minor"},
+		old:  `bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env`,
+		new:  `sh scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env`,
+	},
+	{ // tagging runs one job at a time
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		key:  "resource_group",
+		new:  `"release"`,
+	},
+	{ // and re-checks under that lock, just before release-cli writes the tag
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		old:  `echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
+		new: `sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
+echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
+	},
 }
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
@@ -610,17 +626,22 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 
 // The four release jobs share their work through two hidden templates (#264):
 // the version script and the release-cli job body are each written once, and
-// each button differs from the other only in RELEASE_BUMP.
+// each button differs from the other only in RELEASE_BUMP. The check runs
+// once in each template, with sh: the button's, and the tagging job's again
+// under `resource_group: release`, so two presses cannot both tag.
 func TestReleaseJobsShareTheirBodies(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
-	for _, needle := range []string{
-		"release-tag-check.sh",
-		"calculateversion -hotfix",
-		"registry.gitlab.com/gitlab-org/release-cli",
-		"tag_name:",
+	for needle, want := range map[string]int{
+		"release-tag-check.sh":                       2,
+		"sh scripts/ci/release-tag-check.sh":         2,
+		"bash scripts/ci/release-tag-check.sh":       0,
+		"resource_group:":                            1,
+		"calculateversion -hotfix":                   1,
+		"registry.gitlab.com/gitlab-org/release-cli": 1,
+		"tag_name:": 1,
 	} {
-		if n := countLinesContaining(ci, needle); n != 1 {
-			t.Errorf("%q is written on %d lines of .gitlab-ci.yml; want exactly 1, inside a release template (#264)", needle, n)
+		if n := countLinesContaining(ci, needle); n != want {
+			t.Errorf("%q is written on %d lines of .gitlab-ci.yml; want exactly %d, inside a release template (#264)", needle, n, want)
 		}
 	}
 	doc := loadCI(t, ci)
@@ -650,6 +671,21 @@ func TestReleaseJobsShareTheirBodies(t *testing.T) {
 		}
 		if strings.Contains(e.Keys["rules"].dump(), `"when"`) {
 			t.Errorf("%s must run by itself once its button has passed, not be a second button", follow)
+		}
+		if rg := e.Keys["resource_group"]; rg == nil || rg.dump() != `"release"` {
+			t.Errorf("%s has no `resource_group: release`; tagging must run one job at a time (#264)", follow)
+		}
+		if first, _, _ := strings.Cut(e.Script, "\n"); !strings.HasPrefix(first, "sh scripts/ci/release-tag-check.sh ") {
+			t.Errorf("%s does not re-run the tag check first, under its lock; first line is %q (#264)", follow, first)
+		}
+	}
+	for job := range bump {
+		e, err := doc.effectiveJob(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Keys["resource_group"] != nil {
+			t.Errorf("%s has a resource_group; only the tagging jobs take the lock (#264)", job)
 		}
 	}
 }

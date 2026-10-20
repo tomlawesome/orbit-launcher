@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Checks the release buttons (release:patch, release:minor) need before it is
 # safe to cut a tag (#178, #264).
@@ -10,12 +10,15 @@ set -euo pipefail
 #   2. Its tag does not exist yet, and it sorts above every v* tag already
 #      cut -- calculateversion reads local tags, so this is checked again
 #      against the remote, which is the one that counts.
-#   3. The commit being tagged is the current tip of BRANCH (main in CI), so
+#   3. The commit being tagged carries no v* tag yet: one tag per commit, so
+#      a second press of either button on the same pipeline cuts nothing.
+#   4. The commit being tagged is the current tip of BRANCH (main in CI), so
 #      an old pipeline's button can never tag a commit the branch has moved
 #      past.
 #
 # Pure string logic, no network calls, so scripts/test/release-tag-check.bats
-# can feed it canned input offline.
+# can feed it canned input offline. POSIX sh, not bash: the tagging job runs
+# it again in the release-cli image, which has no bash.
 #
 # Usage:
 #   release-tag-check.sh VERSION REMOTE_TAGS BRANCH TIP_SHA COMMIT_SHA
@@ -40,7 +43,10 @@ tip_sha="$4"
 commit_sha="$5"
 
 num='(0|[1-9][0-9]*)'
-if ! [[ "$version" =~ ^${num}\.${num}\.${num}$ ]]; then
+nl='
+'
+case "$version" in *"$nl"*) version_ok=false ;; *) version_ok=true ;; esac
+if [ "$version_ok" = false ] || ! printf '%s' "$version" | grep -qE "^${num}\.${num}\.${num}$"; then
   echo "the next version came out as '$version', not a semantic version (X.Y.Z)" >&2
   exit 1
 fi
@@ -61,6 +67,33 @@ if [ -n "$existing_versions" ]; then
     echo "$tag does not sort above the newest tag already cut ($highest)." >&2
     exit 1
   fi
+fi
+
+# An annotated tag shows twice in ls-remote: the plain line holds the tag
+# object's sha, the peeled `^{}` line the commit it points at. A lightweight
+# tag has only the plain line, holding the commit. So a tag's commit is its
+# peeled sha when it has one, its plain sha otherwise.
+already_tagged="$(printf '%s\n' "$remote_tags" | awk -v commit="$commit_sha" '
+  {
+    name = $2
+    if (substr(name, 1, 10) != "refs/tags/") next
+    name = substr(name, 11)
+    peeled = 0
+    if (length(name) > 3 && substr(name, length(name) - 2) == "^{}") {
+      name = substr(name, 1, length(name) - 3)
+      peeled = 1
+    }
+    if (name !~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) next
+    if (peeled) peeled_sha[name] = $1; else plain_sha[name] = $1
+  }
+  END {
+    for (name in plain_sha) if (!(name in peeled_sha) && plain_sha[name] == commit) print name
+    for (name in peeled_sha) if (peeled_sha[name] == commit) print name
+  }' | sort -V | tail -n 1)"
+
+if [ -n "$already_tagged" ]; then
+  echo "commit $commit_sha is already tagged $already_tagged -- one tag per commit; nothing to cut. To cut another version, land a new commit on $branch first." >&2
+  exit 1
 fi
 
 if [ -z "$tip_sha" ] || [ "$commit_sha" != "$tip_sha" ]; then
