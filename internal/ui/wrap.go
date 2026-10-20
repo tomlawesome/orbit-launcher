@@ -237,13 +237,14 @@ func visibleText(s string) string {
 }
 
 // wrapHard lays out a sentence holding untrusted text (a folder name) in
-// at most maxRows rows of at most limit cells. The text is visibleText'd
-// first, then packed at runs of spaces as a terminal would: a word that
-// fits joins the row, one that does not starts a new row, and one wider
-// than limit joins the row and is cut on grapheme clusters, so the whole
-// path reads across rows. Rows past maxRows are dropped, the last kept
-// one ending in "…".
-func wrapHard(text string, limit, maxRows int) []string {
+// at most maxRows rows. The text is visibleText'd first, then wrapped at
+// runs of spaces to limit cells (the prose width). A word wider than
+// limit that still fits edge (the screen's text area) gets a row of its
+// own, whole, since what fits the terminal is never cut. A word wider
+// than edge joins the row and is cut at limit on grapheme clusters, so
+// the whole path reads across rows. Rows past maxRows are dropped, the
+// last kept one ending in "…".
+func wrapHard(text string, limit, edge, maxRows int) []string {
 	text = visibleText(text)
 	var rows []string
 	row, rowW := "", 0
@@ -271,6 +272,12 @@ func wrapHard(text string, limit, maxRows int) []string {
 		case lipgloss.Width(word) <= limit:
 			rows = append(rows, row)
 			row, rowW = word, lipgloss.Width(word)
+		case lipgloss.Width(word) <= edge:
+			if row != "" {
+				rows = append(rows, row)
+			}
+			rows = append(rows, word)
+			row, rowW = "", 0
 		default:
 			parts := strings.Split(xansi.Hardwrap(row+gap+word, limit, true), "\n")
 			rows = append(rows, parts[:len(parts)-1]...)

@@ -77,7 +77,7 @@ func nextFrame(frame int) int { return (frame + 1) % len(style.SpinnerFrames) }
 func viewNoDeployment(star starfield.Model, width, height int, dir string, body ...string) string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		wrapHard("No Orbit deployment found in "+dir, measure(width, proseWidth), folderRows)...)
+		wrapHard("No Orbit deployment found in "+dir, measure(width, proseWidth), width-4, folderRows)...)
 	for _, line := range body {
 		fmt.Fprintln(&b, style.MutedText.Render(line))
 	}
@@ -97,7 +97,7 @@ func viewUnreadableDeployment(star starfield.Model, width, height int, dir strin
 	glyph := style.ErrorText.Render(style.SymbolFailure)
 	// The glyph and its space take two cells off the title's measure.
 	// The directory is escaped and cut, as on the screen above.
-	for i, line := range wrapHard("Couldn't read "+deploy.EnvFile+" in "+dir, measure(width, proseWidth)-2, folderRows) {
+	for i, line := range wrapHard("Couldn't read "+deploy.EnvFile+" in "+dir, measure(width, proseWidth)-2, width-4-2, folderRows) {
 		lead := "  "
 		if i == 0 {
 			lead = glyph + " "

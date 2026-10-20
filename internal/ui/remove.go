@@ -317,7 +317,7 @@ func (m RemoveModel) viewDone() string {
 	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
 	// The path is the one word here whose length and characters nobody
 	// chose, so it is escaped for the terminal and cut across rows.
-	for _, row := range wrapHard("volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth), folderRows) {
+	for _, row := range wrapHard("volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth), m.width-4, folderRows) {
 		fmt.Fprintln(&b, style.MutedText.Render(row))
 	}
 	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))

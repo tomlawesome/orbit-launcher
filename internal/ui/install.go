@@ -418,7 +418,7 @@ func (m InstallModel) viewProfile() string {
 	// The folder is the one word here whose length and characters nobody
 	// chose: it is escaped so a CR or LF in it cannot forge a row, and
 	// cut across rows rather than off the screen's edge (#248).
-	for _, row := range wrapHard("Orbit installs into "+m.targetDir, measure(m.width, proseWidth), folderRows) {
+	for _, row := range wrapHard("Orbit installs into "+m.targetDir, measure(m.width, proseWidth), m.width-4, folderRows) {
 		fmt.Fprintln(&b, style.Ink.Render(row))
 	}
 	fmt.Fprintln(&b)
