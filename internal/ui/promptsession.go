@@ -12,6 +12,9 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
+// secretMaskWidth is how many bullets a secret prompt's mask shows.
+const secretMaskWidth = 8
+
 // promptSession is one machine-prompt session (#211): the engine asks
 // for a field, the person types an answer, the engine rejects, accepts
 // or gives up. In-console configuration and Repair's credential
@@ -119,20 +122,29 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	}
 	fmt.Fprintln(b)
 
-	// The input row. A secret is never echoed — not even its length.
+	// The input row. A secret is never echoed — not even its length: once
+	// the answer holds anything the row shows a fixed mask of eight
+	// bullets, however long the answer is (#252).
 	caret := style.MenuCaret.Render(style.SymbolSelected) + " "
 	cursor := style.AccentText.Render(style.SymbolCursor)
 	// Nor, for a secret, where the cursor sits (#258): it stays drawn
-	// at the start, wherever the editing keys have moved it.
+	// in one place (after the mask, if any), wherever the editing keys
+	// have moved it.
 	var before, after string
+	inkBefore := style.Ink
 	switch {
-	case p.Kind == "secret": // both stay empty
+	case p.Kind == "secret":
+		// after stays empty, so the cursor stays drawn after the mask.
+		if !s.input.empty() {
+			before = strings.Repeat(style.SymbolMasked, secretMaskWidth)
+			inkBefore = style.MutedText
+		}
 	case width > 0:
 		before, after = s.input.around(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
 	default:
 		before, after = s.input.around(lipgloss.Width(s.input.String()))
 	}
-	row := caret + style.Ink.Render(before) + cursor
+	row := caret + inkBefore.Render(before) + cursor
 	if after != "" { // a cursor at the end draws the row byte for byte as before
 		row += style.Ink.Render(after)
 	}
