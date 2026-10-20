@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 // BuildInstallCommand stages script (install.sh's content) to a temp
@@ -35,6 +37,9 @@ import (
 // field name or validation rule; the handoff runs install.sh exactly
 // as if a person had run `curl -fsSL .../install.sh | bash` themselves.
 func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanup func() error, err error) {
+	if err := checkFolder(targetDir); err != nil {
+		return nil, nil, err
+	}
 	scriptPath, env, cleanup, err := stageInstall(script)
 	if err != nil {
 		return nil, nil, err
@@ -43,6 +48,21 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	cmd.Dir = targetDir
 	cmd.Env = env
 	return cmd, cleanup, nil
+}
+
+// checkFolder refuses a folder whose name holds a control character
+// (#272): such a name can disturb the engine's --plain output and what
+// the screens show, so nothing runs in it. The rune is named as its Go
+// escape, never raw. Format runes such as U+202E are not refused; the
+// screens show them escaped.
+func checkFolder(dir string) error {
+	for _, r := range dir {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("the folder name holds a control character (%s), so nothing runs there: choose another folder",
+				strings.Trim(strconv.QuoteRune(r), "'"))
+		}
+	}
+	return nil
 }
 
 // stageInstall writes script to a temp file and makes the run's private
@@ -129,6 +149,9 @@ func BuildEngineCommand(script []byte, targetDir string, action Action) (cmd *ex
 	case ActionInstall, ActionUpdate, ActionRepair:
 	default:
 		return nil, nil, fmt.Errorf("unknown engine action %q", action)
+	}
+	if err := checkFolder(targetDir); err != nil {
+		return nil, nil, err
 	}
 
 	scriptPath, env, cleanup, err := stageInstall(script)
