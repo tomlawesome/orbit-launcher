@@ -304,7 +304,10 @@ func TestStarGap_SkyBlockKeepsAClearCellAnySeedAnyTick(t *testing.T) {
 				star := starfield.New(w, 30, seed)
 				for f := 0; f < 60; f++ {
 					bareSky := star
+					// No stars and no planets: planets are drawn from the size, not
+					// from Stars, and must not count as text.
 					bareSky.Stars = nil
+					bareSky.Width, bareSky.Height = 0, 0
 					touch, broken := sgGaps(ansi.Strip(skyBlock(star, w, 30, content)), ansi.Strip(skyBlock(bareSky, w, 30, content)))
 					if len(broken) > 0 {
 						t.Fatalf("the star-free drawing is not the same screen, first: %s", broken[0])
