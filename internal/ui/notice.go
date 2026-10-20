@@ -280,15 +280,15 @@ func (n noticeModel) handleKey(msg tea.KeyPressMsg, now func() time.Time, d time
 		return n.scrollBy(n.page()), noticeStay
 	}
 	// The rest is typing (inputLine). Typing is what claims the box,
-	// and is ignored while either gate is open; erasing edits only a
-	// focused box.
+	// and is ignored while either gate is open; erasing and moving the
+	// cursor edit only a focused box.
 	switch typed, edit := n.typed.edit(msg); edit {
 	case lineTyped:
 		if awake() {
 			n.focus = noticeFocusField
 			n.typed = typed
 		}
-	case lineErased:
+	case lineErased, lineMoved:
 		if n.focus == noticeFocusField {
 			n.typed = typed
 		}
@@ -492,8 +492,11 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	phrase := []rune(noticePhrase)
 	switch {
 	case focused && !n.typed.empty():
-		shown := n.typed.tail(inner - 1) // the tail, so the cursor stays visible
-		content = textStyle.Render(shown) + style.AccentText.Render(style.SymbolCursor)
+		before, after := n.typed.around(inner - 1) // the part around the cursor, so it stays visible
+		content = textStyle.Render(before) + style.AccentText.Render(style.SymbolCursor)
+		if after != "" { // a cursor at the end draws the box byte for byte as before
+			content += textStyle.Render(after)
+		}
 	case focused:
 		example := phrase[:min(len(phrase), inner-1)]
 		content = style.AccentText.Render(style.SymbolCursor) + faintStyle.Render(string(example))

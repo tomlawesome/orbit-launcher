@@ -42,7 +42,6 @@ type engineRunState int
 const (
 	runPreparing engineRunState = iota
 	runStreaming
-	runConfigPrompt
 	runConfigSignInMode
 	runConfigCollect
 	runHandoffRunning
@@ -51,6 +50,9 @@ const (
 	// runStopping is Ctrl-C mid-run: the engine has been asked to stop
 	// and the launcher waits, bounded by stopGrace, for its own rollback.
 	runStopping
+	// runLeft is a configuration session cancelled with Esc: the run is
+	// on its way to the main menu and draws nothing more.
+	runLeft
 )
 
 // stopGrace is how long a Ctrl-C mid-run waits for the installer to undo
@@ -129,6 +131,12 @@ var errNoEngineSender = errors.New("the launcher couldn't read the engine's outp
 // that closed before its DoneMsg.
 var errEngineStoppedEarly = errors.New("the engine stopped without reporting how the run finished")
 
+// errStillIncomplete is the failure when the engine refuses for
+// configuration again on the retry that followed guided configuration.
+//
+//lint:ignore ST1005 shown as a whole sentence on the failure screen
+var errStillIncomplete = errors.New("Orbit still says the configuration is incomplete.")
+
 // streamWrap names the owning flow's messages for what the engine
 // stream reader sees: one message from the stream, and the stream's
 // end (reason is nil for an ordinary close). ended is handed the
@@ -177,6 +185,12 @@ type engineRun struct {
 	// runConfigCollect.
 	cfg configCollect
 
+	// retriedAfterConfig is set once guided configuration has led to an
+	// engine retry in this run. A retry that refuses for configuration
+	// again goes to the failure screen rather than round the same
+	// session for ever; a fresh start from the menu is a new run.
+	retriedAfterConfig bool
+
 	// Outcome evidence, gathered from events and the exit code.
 	configRefused bool
 	lastFailed    *engine.Event
@@ -189,7 +203,7 @@ type engineRun struct {
 	exitNote string
 
 	// menu is the cursor on whichever post-run screen is showing; each
-	// screen names its own rows (configPromptMenu, failedMenu).
+	// screen names its own rows (failedMenu).
 	menu menu
 
 	// Done/Succeeded/WantsMenu are read by the owning flow model and
@@ -379,6 +393,10 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case installPreparedMsg:
 		if msg.err != nil {
+			// The preparation's own error, not an earlier refusal the
+			// handoff was meant to answer.
+			r.lastFailed = nil
+			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
 			return r, nil
@@ -396,6 +414,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 			r.cleanup = nil
 		}
 		if msg.err != nil {
+			// The handoff's own result, not the failure it answered.
+			r.lastFailed = nil
+			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
 			return r, nil
@@ -441,15 +462,24 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			return r.succeed()
 		}
 		r.runErr = m.Err
+		if r.configRefused && r.retriedAfterConfig {
+			// Guided configuration already ran and the engine still
+			// refuses: another session would ask the same again.
+			r.releaseRunFiles()
+			// The refusal event would otherwise be shown instead.
+			r.lastFailed = nil
+			r.runErr = errStillIncomplete
+			r.state = runFailed
+			r.menu = menu{}
+			return r, nil
+		}
 		if r.configRefused {
 			// The engine's documented configuration-required refusal:
 			// the target was rolled back, and the fix is the guided
-			// configuration — in-console from the configuration tree the
-			// engine just handed over, which is why the run's files
-			// are kept until that is over.
-			r.state = runConfigPrompt
-			r.menu = menu{}
-			return r, nil
+			// configuration, which starts at once — in-console from the
+			// configuration tree the engine just handed over, which is
+			// why the run's files are kept until that is over.
+			return r.beginConfigCollect()
 		}
 		r.state = runFailed
 		r.menu = menu{}
@@ -562,22 +592,6 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	case runConfigCollect:
 		return r.handleConfigKey(msg)
 
-	case runConfigPrompt:
-		return r.handleMenuKey(msg, configPromptMenu, func(label string) (engineRun, tea.Cmd) {
-			switch label {
-			case "Continue — guided configuration":
-				return r.beginConfigCollect()
-			case "Menu":
-				r.releaseRunFiles()
-				r.Done = true
-				r.WantsMenu = true
-				return r, nil
-			default: // Exit
-				r.releaseRunFiles()
-				return r, tea.Quit
-			}
-		})
-
 	case runFailed:
 		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
 			switch label {
@@ -667,13 +681,11 @@ func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose fun
 	return choose(chosen)
 }
 
-// Both post-run screens offer the same three exits, in the same order:
-// forward into the real interactive installer, back to the menu, or
-// out. On the failure screen the forward option matters most for a
-// legacy engine (orbit main today), which reports no telemetry — its
-// non-interactive refusal is indistinguishable from any other exit 1,
-// and the honest remedy is the same guided installer.
-var configPromptMenu = []string{"Continue — guided configuration", "Menu", "Exit"}
+// The failure screen offers three exits, in this order: forward into
+// the real interactive installer, back to the menu, or out. The forward
+// option matters most for a legacy engine (orbit main today), which
+// reports no telemetry — its non-interactive refusal is indistinguishable
+// from any other exit 1, and the honest remedy is the guided installer.
 var failedMenu = []string{"Open the guided installer", "Menu", "Exit"}
 
 // view renders whichever screen the run is on.
@@ -687,8 +699,6 @@ func (r engineRun) view(width, height int) string {
 	case runStopping:
 		return skyBlock(r.console.sky, width, height,
 			workingLine(r.console.spinner, "stopping the "+string(r.action), "the installer is undoing what it started — a few seconds"))
-	case runConfigPrompt:
-		return r.viewConfigPrompt(width, height)
 	case runConfigSignInMode:
 		return r.viewConfigSignInMode(width, height)
 	case runConfigCollect:
@@ -699,18 +709,6 @@ func (r engineRun) view(width, height int) string {
 		return r.viewFailed(width, height)
 	}
 	return ""
-}
-
-func (r engineRun) viewConfigPrompt(width, height int) string {
-	var b strings.Builder
-	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
-	fmt.Fprintln(&b, style.MutedText.Render("The engine stopped before touching anything: some settings"))
-	fmt.Fprintln(&b, style.MutedText.Render("only you can provide. Continue to fill them in right here —"))
-	fmt.Fprintln(&b, style.MutedText.Render("every answer is checked by Orbit's own setup, which takes"))
-	fmt.Fprintln(&b, style.MutedText.Render("the terminal itself only if it has to — then the "+string(r.action)+" resumes."))
-	fmt.Fprintln(&b)
-	r.menu.over(configPromptMenu).write(&b)
-	return skyBlock(r.console.sky, width, height, b.String())
 }
 
 func (r engineRun) viewFailed(width, height int) string {

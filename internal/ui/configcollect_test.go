@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,7 +159,9 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	wait("Ready to install")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	passNotice(t, tm)
-	wait("Orbit needs your configuration")
+	// The engine's configuration stop goes straight into guided
+	// configuration (#251): there is no screen to wait for here, so each
+	// journey waits for its own first guided screen.
 	return tm
 }
 
@@ -192,9 +195,8 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	// Continue — guided configuration (in-console), then the sign-in-mode
-	// screen: this journey drives the full OIDC path, so pick the SSO row.
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Straight into guided configuration, the sign-in-mode screen first:
+	// this journey drives the full OIDC path, so pick the SSO row.
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -262,7 +264,6 @@ func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -322,7 +323,6 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -364,7 +364,6 @@ func TestAppModel_SecretInputIsNeverEchoed(t *testing.T) {
 		detect:        fakeDetect("https://orbit.example.test"),
 	})
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("OIDC client secret"))
 	}, teatest.WithDuration(10*time.Second))
@@ -406,10 +405,9 @@ func TestAppModel_LegacyConfigureFallsBackToHandoff(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
-	// Continue: the sign-in-mode screen appears first (default: local),
-	// then the legacy script exits with no protocol line, and the flow
-	// falls back to the terminal handoff automatically.
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// The sign-in-mode screen appears first (default: local), then the
+	// legacy script exits with no protocol line, and the flow falls back
+	// to the terminal handoff automatically.
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("How will people sign in?"))
 	}, teatest.WithDuration(10*time.Second))
@@ -426,7 +424,10 @@ func TestAppModel_LegacyConfigureFallsBackToHandoff(t *testing.T) {
 	}
 }
 
-func TestAppModel_ConfigAbortReturnsToRefusalMenu(t *testing.T) {
+// The engine giving up mid-session lands on the failure screen, naming
+// the field it stopped asking for (#251) — not on a menu that offers the
+// same session again.
+func TestAppModel_ConfigGiveUpShowsTheFailureScreen(t *testing.T) {
 	tm := startConfigJourney(t, engineRunSeams{
 		prepareEngine: engineTwice(),
 		prepareConfig: planned(true, false),
@@ -441,19 +442,18 @@ func TestAppModel_ConfigAbortReturnsToRefusalMenu(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // default: local
 	wait("Public Orbit origin")
 
 	// Three rejected answers exhaust the engine's patience: abort, and
-	// the refusal menu returns rather than pretending anything worked.
+	// the failure screen says so rather than pretending anything worked.
 	for i := 0; i < 3; i++ {
 		tm.Type("nope")
 		tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 		time.Sleep(100 * time.Millisecond)
 	}
-	wait("Continue — guided configuration")
+	wait("Install stopped")
 
 	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
@@ -461,7 +461,7 @@ func TestAppModel_ConfigAbortReturnsToRefusalMenu(t *testing.T) {
 	}
 }
 
-func TestAppModel_EscCancelsConfigCollectToRefusalMenu(t *testing.T) {
+func TestAppModel_EscCancelsConfigCollectToTheMainMenu(t *testing.T) {
 	tm := startConfigJourney(t, engineRunSeams{
 		prepareEngine: engineTwice(),
 		prepareConfig: planned(true, false),
@@ -469,19 +469,23 @@ func TestAppModel_EscCancelsConfigCollectToRefusalMenu(t *testing.T) {
 		detect:        fakeDetect("https://orbit.example.test"),
 	})
 
-	wait := func(want string) {
+	wait := func(wants ...string) {
 		t.Helper()
 		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-			return bytes.Contains(out, []byte(want))
+			for _, want := range wants {
+				if !bytes.Contains(out, []byte(want)) {
+					return false
+				}
+			}
+			return true
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // default: local
 	wait("Public Orbit origin")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
-	wait("Continue — guided configuration")
+	wait("Repair", "Remove") // the main menu
 
 	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
@@ -489,11 +493,11 @@ func TestAppModel_EscCancelsConfigCollectToRefusalMenu(t *testing.T) {
 	}
 }
 
-// TestAppModel_EscCancelsSignInModeToRefusalMenu: esc at the sign-in-mode
+// TestAppModel_EscCancelsSignInModeToTheMainMenu: esc at the sign-in-mode
 // screen itself — before any step has started — must cancel the same
-// way esc does everywhere else in this session, back to the refusal
-// menu (issue #154).
-func TestAppModel_EscCancelsSignInModeToRefusalMenu(t *testing.T) {
+// way esc does everywhere else in this session, back to the main menu
+// (issues #154, #251).
+func TestAppModel_EscCancelsSignInModeToTheMainMenu(t *testing.T) {
 	tm := startConfigJourney(t, engineRunSeams{
 		prepareEngine: engineTwice(),
 		prepareConfig: planned(true, false),
@@ -501,17 +505,97 @@ func TestAppModel_EscCancelsSignInModeToRefusalMenu(t *testing.T) {
 		detect:        fakeDetect("https://orbit.example.test"),
 	})
 
-	wait := func(want string) {
+	wait := func(wants ...string) {
 		t.Helper()
 		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-			return bytes.Contains(out, []byte(want))
+			for _, want := range wants {
+				if !bytes.Contains(out, []byte(want)) {
+					return false
+				}
+			}
+			return true
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("How will people sign in?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
-	wait("Continue — guided configuration")
+	wait("Repair", "Remove") // the main menu
+
+	tm.Send(ctrlC())
+	if err := tm.Quit(); err != nil {
+		t.Fatalf("model did not quit cleanly: %v", err)
+	}
+}
+
+// TestAppModel_EscWhileConfigurationStartsStopsTheLateProcess (v0.4.2
+// audit A6): in the real app, Esc while the guided configuration
+// process is still being started leaves for the main menu at once; the
+// process that arrives afterwards reaches the app, not the run it was
+// started for, and must still be stopped, its stdin closed, and the
+// session's staged configuration and the run's files removed.
+func TestAppModel_EscWhileConfigurationStartsStopsTheLateProcess(t *testing.T) {
+	var runCleaned, planCleaned, engineStarts, starts atomic.Int32
+	hold := newGate()
+	proc := sleepingStream(t) // a real process, killable, that runs for a minute
+	stdin := &closeTrackingStdin{}
+	tm := startConfigJourney(t, engineRunSeams{
+		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
+			if engineStarts.Add(1) > 1 {
+				return nil, nil, errors.New("test bound: the engine was started again")
+			}
+			msgs := configRefusalStream()
+			ch := make(chan any, len(msgs))
+			for _, m := range msgs {
+				ch <- m
+			}
+			close(ch)
+			return &engine.Stream{C: ch}, func() error { runCleaned.Add(1); return nil }, nil
+		},
+		prepareConfig: countingPlan(true, false, &planCleaned),
+		startConfig: func(string, deploy.ConfigStep, deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
+			starts.Add(1)
+			hold.wait()
+			return proc, stdin, nil
+		},
+		detect: fakeDetect("https://orbit.example.test"),
+	})
+
+	wait := func(wants ...string) {
+		t.Helper()
+		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+			for _, want := range wants {
+				if !bytes.Contains(out, []byte(want)) {
+					return false
+				}
+			}
+			return true
+		}, teatest.WithDuration(10*time.Second))
+	}
+
+	wait("How will people sign in?")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Local accounts: the process starts
+	waitCount(t, &starts, "the configuration process start")
+	if hold.timedOut() {
+		t.Fatal("setup: the process start was released before Esc, so there is no starting phase")
+	}
+
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc})
+	wait("Repair", "Remove") // the main menu, drawn after Esc
+
+	hold.open() // the process arrives, after the run was left
+	waitStopped(t, proc)
+	deadline := time.Now().Add(3 * time.Second)
+	for !stdin.closed.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !stdin.closed.Load() {
+		t.Error("the late process's stdin was never closed")
+	}
+	waitCount(t, &planCleaned, "the session's staged configuration cleanup")
+	waitCount(t, &runCleaned, "the run's files cleanup")
+	if n := engineStarts.Load(); n != 1 {
+		t.Errorf("the engine was started %d times, want once", n)
+	}
 
 	tm.Send(ctrlC())
 	if err := tm.Quit(); err != nil {
@@ -543,7 +627,6 @@ func TestAppModel_UnfixableFieldsFallBackToHandoff(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	select {
 	case <-handoffRan:
 	case <-time.After(10 * time.Second):
@@ -583,7 +666,6 @@ func TestAppModel_StrictModeRefusesTheHandoffFallback(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("terminal handoff refused"))
 	}, teatest.WithDuration(10*time.Second))
@@ -673,14 +755,14 @@ func TestConfigCollect_OnlyAPPURLIsRemembered(t *testing.T) {
 	r := engineRun{cfg: configCollect{stdin: nopWriteCloser{&stdin}}}
 
 	r.cfg.session.prompt = &engine.Prompt{Field: "OIDC_CLIENT_SECRET", Kind: "secret"}
-	r.cfg.session.input = inputLine{[]rune("hunter2")}
+	r.cfg.session.input = inputLine{runes: []rune("hunter2")}
 	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "" {
 		t.Errorf("a secret was remembered as the origin: %q", r.cfg.origin)
 	}
 
 	r.cfg.session.prompt = &engine.Prompt{Field: "APP_URL", Kind: "url"}
-	r.cfg.session.input = inputLine{[]rune("https://orbit.example.com")}
+	r.cfg.session.input = inputLine{runes: []rune("https://orbit.example.com")}
 	r, _ = r.handleConfigKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r.cfg.origin != "https://orbit.example.com" {
 		t.Errorf("APP_URL was not remembered: %q", r.cfg.origin)
@@ -795,16 +877,16 @@ func TestConfigSignInMode_EnterStartsInitWithChosenMode(t *testing.T) {
 }
 
 // TestConfigSignInMode_EscCancelsAndCleansUp: esc releases the staged
-// tree and returns to the refusal menu, same as the rest of this
-// session's cancel.
+// tree and goes to the main menu, same as the rest of this session's
+// cancel (#251).
 func TestConfigSignInMode_EscCancelsAndCleansUp(t *testing.T) {
 	cleaned := false
 	r := signInModeRun()
 	r.cfg.plan = configPlan{needInit: true, cleanup: func() { cleaned = true }}
 
 	r, _ = r.handleConfigSignInModeKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if r.state != runConfigPrompt {
-		t.Errorf("state = %v, want runConfigPrompt", r.state)
+	if !r.Done || !r.WantsMenu || r.Succeeded {
+		t.Errorf("Done=%v WantsMenu=%v Succeeded=%v, want back to the main menu", r.Done, r.WantsMenu, r.Succeeded)
 	}
 	if !cleaned {
 		t.Error("the staged tree was not cleaned up on cancel")
@@ -842,7 +924,6 @@ func TestAppModel_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 		}, teatest.WithDuration(10*time.Second))
 	}
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	wait("How will people sign in?", "Local accounts")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // default: local, no arrow press
 	wait("Public Orbit origin")

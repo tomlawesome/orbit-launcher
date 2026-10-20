@@ -522,7 +522,7 @@ keep working. Two things follow from that:
   current `install.sh` fresh from orbit's stable branch at the moment
   Install or Update is confirmed — not a copy checked into this repo,
   not a pinned revision. `install.sh` itself resolves every other asset
-  it needs (compose files, `configure.sh`, `configuration.sh`) from the
+  it needs (compose files, `configure.sh`, `.orbit-image`) from the
   exact source revision recorded in the Docker image's own OCI labels,
   so fetching only this one file is sufficient. The one exception is
   `ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH`: when set, `FetchInstallScript`
@@ -586,8 +586,10 @@ TUI, and with incomplete configuration it refuses before Compose
 (`reason=configuration-failure`), rolling the target back via its own
 file transaction (verified empirically against both orbit dev and
 main). That refusal is precisely where #51's handoff survives: the flow
-offers "Continue — guided configuration" and hands the real terminal to
-interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
+goes straight into guided configuration (Esc returns to the main menu; an
+engine give-up shows the stopped screen), and the real terminal is handed to
+interactive `install.sh` via the same `tea.ExecProcess` mechanism only when
+in-console configuration is unavailable. No
 config field enters Go, ever. Outcomes are keyed off events plus exit
 codes, never scraped prose; a legacy engine (orbit main today) that
 emits no events has its output displayed verbatim and is judged by exit

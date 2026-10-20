@@ -534,7 +534,7 @@ func TestEngineRun_CtrlCOutsideAStopLeavesNoExitNote(t *testing.T) {
 		r, _ = runUpdate(t, r, engineStreamEndedMsg{})
 		return r
 	}
-	configPrompt := func(t *testing.T) engineRun {
+	configSession := func(t *testing.T) engineRun {
 		r := startedRun(t, "update", engineRunSeams{})
 		r.state = runStreaming
 		r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("configuration", "configuration", "failed", "configuration-failure", "retry")})
@@ -547,7 +547,7 @@ func TestEngineRun_CtrlCOutsideAStopLeavesNoExitNote(t *testing.T) {
 		state engineRunState
 	}{
 		{"failed", failed, runFailed},
-		{"configuration prompt", configPrompt, runConfigPrompt},
+		{"configuration session", configSession, runConfigCollect},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := c.build(t)

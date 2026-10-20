@@ -233,7 +233,7 @@ func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
 	}
 }
 
-func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
+func TestInstallModel_ConfigurationRefusalGoesStraightIntoTheGuidedHandoff(t *testing.T) {
 	handoffRan := false
 	prepared := false
 	seams := engineRunSeams{
@@ -252,26 +252,18 @@ func TestInstallModel_ConfigurationRefusalOffersTheGuidedHandoff(t *testing.T) {
 	m, cmd := startInstallRun(t, m)
 	m = drive(t, m, cmd, s)
 
-	if m.run.state != runConfigPrompt {
-		t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
-	}
-	if handoffRan || prepared {
-		t.Fatal("the handoff must wait for the user's explicit choice")
-	}
-	if !strings.Contains(m.View().Content, "Orbit needs your configuration") {
-		t.Error("expected the styled configuration prompt")
-	}
-
-	// Accept the default: Continue — guided configuration. This engine
-	// handed over no configure tree (an install.sh without
-	// ai/orbit#1225), so there is nothing verified to run in-console and
-	// the guided installer gets the terminal straight away — nothing is
-	// fetched instead (#190).
-	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = drive(t, updated, cmd).(InstallModel)
-
+	// The refusal goes straight into guided configuration (#251), with
+	// no key press and no screen of its own. This engine handed over no
+	// configure tree (an install.sh without ai/orbit#1225), so there is
+	// nothing verified to run in-console and the guided installer gets
+	// the terminal straight away — nothing is fetched instead (#190).
 	if !prepared || !handoffRan {
-		t.Fatal("expected the interactive handoff to run after Continue")
+		t.Fatal("expected the interactive handoff to run with no key pressed")
+	}
+	for _, gone := range []string{"The engine stopped before touching anything", "Continue — guided configuration"} {
+		if strings.Contains(m.View().Content, gone) {
+			t.Errorf("the removed configuration screen is still shown (%q)", gone)
+		}
 	}
 	o := m.Outcome()
 	if !o.Done || !o.Succeeded {
@@ -314,7 +306,7 @@ func TestInstallModel_LegacyRefusalFailureScreenOpensGuidedInstaller(t *testing.
 	// A legacy engine (orbit main) reports no telemetry: its
 	// non-interactive configuration refusal is just prose plus exit 1,
 	// which honestly lands on the failure screen — whose first option
-	// is the same guided installer the config prompt offers.
+	// is the same guided installer the in-console session falls back to.
 	handoffRan := false
 	m, s := newTestInstallModel(engineRunSeams{
 		prepareEngine: fakeEngine(nil,
@@ -409,12 +401,8 @@ func TestInstallModel_HandoffFailureReachesFailed(t *testing.T) {
 	m, cmd := startInstallRun(t, m)
 	m = drive(t, m, cmd, s)
 
-	updated, cmd := m.Update(key(tea.KeyEnter)) // Continue — guided configuration
-	m = drive(t, updated, cmd).(InstallModel)
-
-	updated, cmd = m.Update(key(tea.KeyEnter)) // sign-in mode: default local
-	m = drive(t, updated, cmd).(InstallModel)
-
+	// No key press: the refusal goes straight into guided configuration,
+	// which (with no tree handed over) falls back to the handoff (#251).
 	if m.run.state != runFailed {
 		t.Errorf("run state = %v, want runFailed after a failed handoff", m.run.state)
 	}

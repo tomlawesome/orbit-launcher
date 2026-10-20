@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
@@ -916,57 +919,217 @@ func (m RepairModel) viewDiagnosis() string {
 		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
 	}
 
-	m.writePlan(&b, result)
+	steps, after := m.planParts(result)
+	var tail strings.Builder
+	for _, row := range after {
+		fmt.Fprintln(&tail, row)
+	}
+	fmt.Fprintln(&tail)
+	m.menu.over(m.planMenu()).write(&tail)
 
-	fmt.Fprintln(&b)
-	m.menu.over(m.planMenu()).write(&b)
+	// The steps take whatever rows the rest leaves, so a short terminal
+	// never pushes the summary and menu off the bottom. The last row is
+	// left to the sky, as on every scene screen.
+	room := math.MaxInt
+	if m.height > 0 {
+		room = m.height - 1 - strings.Count(b.String(), "\n") - strings.Count(tail.String(), "\n")
+	}
+	m.writeSteps(&b, steps, room)
+	b.WriteString(tail.String())
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
-// writePlan renders the proposed plan (orbit#261 slice 3): what the
+// writeSteps writes the plan's steps into room rows: all of them when
+// they fit, otherwise as many whole steps as fit and then one row
+// saying how many are not shown.
+func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) {
+	total := 0
+	for _, step := range steps {
+		total += len(step)
+	}
+	// With no steps there is nothing to count as "more", however
+	// little room the findings left.
+	if total <= room || len(steps) == 0 {
+		for _, step := range steps {
+			for _, row := range step {
+				fmt.Fprintln(b, row)
+			}
+		}
+		return
+	}
+	shown := len(steps)
+	var more []string
+	for {
+		more = wrapWords(fmt.Sprintf("and %d more — make the terminal taller to see them", len(steps)-shown), measure(m.width, proseWidth))
+		used := len(more)
+		for _, step := range steps[:shown] {
+			used += len(step)
+		}
+		if used <= room || shown == 0 {
+			break
+		}
+		shown--
+	}
+	for _, step := range steps[:shown] {
+		for _, row := range step {
+			fmt.Fprintln(b, row)
+		}
+	}
+	for _, row := range more {
+		fmt.Fprintln(b, style.Tagline.Render(row))
+	}
+}
+
+// planParts lays out the proposed plan (orbit#261 slice 3): what the
 // engine would do, classified — and the plain truth that nothing has
-// run yet.
-func (m *RepairModel) writePlan(b *strings.Builder, result string) {
+// run yet. steps holds each plan line and manual step as its screen
+// rows; after is the rows that follow them, which are always shown.
+func (m *RepairModel) planParts(result string) (steps [][]string, after []string) {
 	if len(m.planActions) == 0 {
 		// No plan lines: healthy, a --check fallback run, or nothing
 		// plannable. Keep the honest note whenever something's wrong.
 		if result != engine.ResultHealthy {
-			fmt.Fprintln(b, style.Tagline.Render("repair actions arrive with a later Orbit release"))
+			after = append(after, style.Tagline.Render("repair actions arrive with a later Orbit release"))
 		}
-		return
+		return nil, after
 	}
 
 	for _, p := range m.planActions {
-		fmt.Fprintln(b, planLine(p))
+		steps = append(steps, planRows(p, m.width))
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
-			fmt.Fprintln(b, style.Tagline.Render(step))
+			// The engine's guidance is unsized prose with a machine tag
+			// on the end: drop the tag (the plan line above already
+			// names the problem) and wrap the rest, so it is never cut
+			// at the screen's edge (#253).
+			lines := wrapWords(manualStepWords(step), measure(m.width, proseWidth))
+			if len(lines) == 0 {
+				lines = []string{""}
+			}
+			rows := make([]string, len(lines))
+			for i, line := range lines {
+				rows[i] = style.Tagline.Render(line)
+			}
+			steps = append(steps, rows)
 		}
 	}
-	fmt.Fprintln(b)
-	fmt.Fprintln(b, style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous())))
+	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
 }
 
-// planLine renders one proposed action: the action in plain words and
-// what it resolves, with the backup requirement when the contract
-// demands one. The mutation class is deliberately not repeated — the
-// action words already carry it, and every line must hold inside 80
-// cells (the cell-truth bar). Unknown enum values render verbatim.
-// Plan mode's stdout carries no separate finding lines, so the
-// resolves class is the reader's only pointer at the underlying
-// problem — always shown.
+// planLine renders one proposed action on one row: the action in plain
+// words and what it resolves, with the backup requirement when the
+// contract demands one. The mutation class is deliberately not repeated
+// — the action words already carry it. Unknown enum values render
+// verbatim. Plan mode's stdout carries no separate finding lines, so the
+// resolves class is the reader's only pointer at the underlying problem
+// — always shown. The screen draws it with planRows, which wraps.
 func planLine(p engine.PlanAction) string {
+	return planRows(p, math.MaxInt)[0]
+}
+
+// planRows is planLine laid out for a screen width cells wide: a line
+// too long for the row wraps as wrapWords does, its continuation rows
+// indented under the text after the glyph, so it is never cut at the
+// edge and "backup first" stays on screen. The action words keep their
+// ink on whichever rows they land.
+func planRows(p engine.PlanAction, width int) []string {
 	glyph := style.AccentText.Render(style.SymbolQueued)
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
-	context := classWords(p.Resolves)
+	// The glyph and its space take two cells off the row.
+	lines := wrapWords(planText(p), width-2)
+	// The action words lead the text; wrapWords drops only the space at
+	// each break, so each row's ink is what it shares with the action
+	// words not yet drawn (matched, not counted, as an unknown action
+	// comes verbatim and cleaning may change it).
+	ink := actionWords(p.Action)
+	rows := make([]string, len(lines))
+	for i, line := range lines {
+		lead := "  "
+		if i == 0 {
+			lead = glyph + " "
+		}
+		n := 0
+		for n < len(line) && n < len(ink) && line[n] == ink[n] {
+			n++
+		}
+		for n > 0 && n < len(line) && !utf8.RuneStart(line[n]) {
+			n--
+		}
+		rows[i] = lead + style.Ink.Render(line[:n]) + style.Tagline.Render(line[n:])
+		ink = strings.TrimPrefix(ink[n:], " ")
+		if n == 0 {
+			ink = ""
+		}
+	}
+	// Every row is centred on its own, so pad a wrapped line's rows to
+	// one width: their left edges then align and the indent shows.
+	blockWidth := 0
+	for _, row := range rows {
+		blockWidth = max(blockWidth, lipgloss.Width(row))
+	}
+	for i, row := range rows {
+		rows[i] = row + strings.Repeat(" ", blockWidth-lipgloss.Width(row))
+	}
+	return rows
+}
+
+// planText is a plan line's words after its glyph, unstyled.
+func planText(p engine.PlanAction) string {
+	context := planReasonWords(p.Action, p.Resolves)
 	if p.Backup == "required" {
 		context += style.Separator + "backup first"
 	}
-	return glyph + " " + style.Ink.Render(actionWords(p.Action)) +
-		style.Tagline.Render(" — "+context)
+	return actionWords(p.Action) + " — " + context
+}
+
+// manualStepWords is a manual step's guidance without the engine's
+// trailing "(resolves=<class>)" tag, which is protocol, not words.
+func manualStepWords(step string) string {
+	if i := strings.LastIndex(step, "(resolves="); i >= 0 && strings.HasSuffix(step, ")") {
+		step = strings.TrimSpace(step[:i])
+	}
+	return step
+}
+
+// planReasonWords is what a plan line resolves, with its subject named.
+// A finding line puts its target before classWords ("database — can't
+// be reached"); a plan line has none, so a class whose words lack a
+// subject gets one (#253) — unless the action already names it
+// ("rotate database credentials"), where repeating it would only push
+// the line past 80 cells.
+func planReasonWords(action, class string) string {
+	var noun, lead string
+	switch class {
+	case "database-unreachable", "database-credential-mismatch":
+		noun, lead = "database", "the database"
+	case "database-schema-mismatch":
+		noun, lead = "database", "the database was"
+	case "application-unhealthy":
+		noun, lead = "application", "the application"
+	case "stale-container":
+		noun, lead = "container", "a container is"
+		if action == "restart-services" {
+			// Beside the restart's words, "is" pushes the line past
+			// 80 cells; without it the line still names the container.
+			lead = "a container"
+		}
+	case "secret-missing":
+		noun, lead = "secret", "a secret is"
+	case "managed-file-missing", "managed-file-symlink":
+		noun, lead = "managed file", "a managed file"
+		if class == "managed-file-missing" {
+			lead += " is"
+		}
+	default:
+		return classWords(class)
+	}
+	if strings.Contains(actionWords(action), noun) {
+		return classWords(class)
+	}
+	return lead + " " + classWords(class)
 }
 
 // actionWords maps plan action classes to plain words.
@@ -1108,6 +1271,12 @@ func classWords(class string) string {
 		return "unreadable or structurally broken"
 	case "staging-evidence-present":
 		return "an interrupted install left staging behind"
+	case "configuration-migration-interrupted":
+		return "a configuration change was interrupted"
+	case "document-volume-retained-without-key":
+		return "document data kept but its encryption key is gone"
+	case "deployment-version-unsupported":
+		return "no valid recorded Orbit version"
 	case "compose-interpolation-failed":
 		return "compose files don't resolve"
 	case "docker-unavailable":
@@ -1125,6 +1294,10 @@ func classWords(class string) string {
 		return "can't be reached"
 	case "database-credential-mismatch":
 		return "rejects the stored credentials"
+	case "database-credential-unverifiable":
+		// Orbit's application restarts faster than repair can read the
+		// credential it presents, so nothing was compared.
+		return "password couldn't be checked: the application restarts too fast"
 	case "stale-container":
 		return "running an older image than configured"
 	case "application-unhealthy":
@@ -1135,6 +1308,8 @@ func classWords(class string) string {
 		return "a migration failed"
 	case "image-identity-mismatch":
 		return "image identity doesn't match the record"
+	case "database-schema-mismatch":
+		return "migrated by a different Orbit version"
 	default:
 		return class
 	}

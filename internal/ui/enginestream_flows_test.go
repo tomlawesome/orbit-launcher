@@ -211,7 +211,8 @@ func TestRepair_TheSupersededRunsStreamEndingDoesNotFailTheNewRun(t *testing.T) 
 
 // configViaInstall takes an Install flow, built with its sender the way
 // AppModel builds it, through an engine refusal for configuration and
-// into the guided session's sign-in-mode screen, then picks local
+// straight into the guided session's sign-in-mode screen (#251; no key
+// is pressed to get there), then picks local
 // sign-in so --init starts on start's stream.
 func configViaInstall(t *testing.T, start startConfigFunc) (*InstallModel, *flowLoop) {
 	t.Helper()
@@ -233,12 +234,8 @@ func configViaInstall(t *testing.T, start startConfigFunc) (*InstallModel, *flow
 		return next
 	})
 	loop.settle(cmd)
-	if s := screen(install); !strings.Contains(s, "Continue — guided configuration") {
-		t.Fatalf("the engine's configuration refusal never arrived:\n%s", s)
-	}
-	loop.settle(loop.update(key(tea.KeyEnter))) // Continue — guided configuration
 	if s := screen(install); !strings.Contains(s, "How will people sign in?") {
-		t.Fatalf("the guided session did not reach the sign-in question:\n%s", s)
+		t.Fatalf("the configuration refusal did not go straight into the guided session:\n%s", s)
 	}
 	return install, loop
 }
@@ -266,7 +263,7 @@ func TestConfig_StreamClosingEarlyFailsVisibly(t *testing.T) {
 
 // The configuration session's state guard keeps working: once Esc has
 // cancelled the session, its stream's DoneMsg and its ending arrive
-// late and belong to nothing. The refusal menu stays put.
+// late and belong to nothing. The run stays on its way to the main menu.
 func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 	var started *engine.Stream
 	install, loop := configViaInstall(t, func(string, deploy.ConfigStep, deploy.AuthMode) (*engine.Stream, io.WriteCloser, error) {
@@ -290,10 +287,10 @@ func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 	started.Kill() // whatever Esc did to the engine, its stream now ends
 	loop.settle(nil)
 
-	s := screen(install)
-	if !strings.Contains(s, "Continue — guided configuration") {
-		t.Fatalf("Esc should leave the operator on the refusal menu:\n%s", s)
+	if o := install.Outcome(); !leftForMenu(o) {
+		t.Fatalf("outcome after Esc = %+v, want back to the main menu", o)
 	}
+	s := screen(install)
 	for _, unwanted := range []string{"Install stopped", stoppedWithoutReporting} {
 		if strings.Contains(s, unwanted) {
 			t.Fatalf("the cancelled session's late stream ending changed the screen (%q):\n%s", unwanted, s)
