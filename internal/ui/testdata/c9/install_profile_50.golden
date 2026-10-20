@@ -9,7 +9,7 @@
            [1;38;2;231;233;238mChoose a deployment profile[m            
                                                   
      [38;2;231;233;238mOrbit installs into /srv/containers/mail[m     
-     [38;2;231;233;238mstack/orbit production/with several/long[m[38;2;74;84;104m·[m    
+     [38;2;231;233;238mstack/orbit production/with several/long[m     
      [38;2;231;233;238mdirectories/under the data volume/orbit[m      
          [38;2;74;84;104m·[m                                        
      [38;2;216;180;90m▸[m [38;2;231;233;238mStandard · mail, documents, calendar[m       

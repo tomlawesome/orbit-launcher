@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -254,6 +255,19 @@ func compositeScene(star starfield.Model, ready bool, width, bodyHeight int, con
 			start := (width - lineWidth) / 2
 			if start < 0 {
 				start = 0
+			}
+			// Keep one clear cell beside the text (#270): a star touching
+			// its first or last character reads as part of it. Spaces the
+			// line carries at either end are not text, so they already
+			// supply the gap; only a line whose text reaches its edge
+			// needs the neighbouring sky cell cleared.
+			if plain := ansi.Strip(line); strings.TrimSpace(plain) != "" {
+				if start > 0 && !strings.HasPrefix(plain, " ") {
+					sky[y][start-1] = skyCell{glyph: ' '}
+				}
+				if start+lineWidth < width && !strings.HasSuffix(plain, " ") {
+					sky[y][start+lineWidth] = skyCell{glyph: ' '}
+				}
 			}
 			rows[y] = renderSkyCells(sky[y][:start]) + line + renderSkyCells(sky[y][min(start+lineWidth, width):])
 		} else {
