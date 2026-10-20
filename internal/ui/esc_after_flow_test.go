@@ -189,6 +189,11 @@ type appFinished struct {
 func appOnRemoveScreen(t *testing.T, standDownErr error) AppModel {
 	t.Helper()
 	m := leaveApp(t)
+	// The path is incidental: a short one keeps the removal command's
+	// words fitting the box whole at 80x24 (#271 criterion r).
+	short := shortTempDir(t)
+	writeEnv(t, short, "APP_URL=https://mail.example.test\n")
+	m.targetDir = short
 	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // Remove
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	m = drive(t, m, cmd)

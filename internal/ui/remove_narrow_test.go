@@ -546,7 +546,9 @@ func TestNarrow_K_EscapeHeavyFolderGrowsTheBoxNotTheScreen(t *testing.T) {
 	}
 	want := strings.Join(shown, " ")
 	for _, width := range []int{50, 80} {
-		s := screen(narrowDoneModel(t, folder, width, 30, &bytes.Buffer{}))
+		// Height is not promised at 50 columns: the screen is tall enough
+		// for the whole box, which is never capped in rows.
+		s := screen(narrowDoneModel(t, folder, width, 60, &bytes.Buffer{}))
 		for _, r := range strings.Split(s, "\n") {
 			if w := lipgloss.Width(r); w > width {
 				t.Errorf("at %d: a row is %d cells: %q", width, w, r)
@@ -592,6 +594,40 @@ func TestNarrow_L_DoneScreenKeepsItsMenuAt80x26(t *testing.T) {
 	}
 	if len(lines) > 26 {
 		t.Errorf("the screen is %d rows, want at most 26:\n%s", len(lines), s)
+	}
+}
+
+// q. At 80x24 the done screen keeps its menu for a bare path of 46
+// characters and a quoted path of 44: every unit still fits one row at the
+// 72-cell inside. (Longer paths are promised at 80x26 only, DECISIONS.md.)
+func TestNarrow_Q_DoneScreenKeepsItsMenuAt80x24ForRealisticPaths(t *testing.T) {
+	dirs := map[string]string{
+		"bare 46":   "/srv/" + strings.Repeat("a", 41),
+		"quoted 44": "/srv/mail stack/" + strings.Repeat("x", 28),
+	}
+	if len(dirs["bare 46"]) != 46 || len(dirs["quoted 44"]) != 44 {
+		t.Fatalf("test paths are %d and %d characters", len(dirs["bare 46"]), len(dirs["quoted 44"]))
+	}
+	for name, dir := range dirs {
+		s := screen(narrowDoneModel(t, dir, 80, 24, &bytes.Buffer{}))
+		lines := strings.Split(s, "\n")
+		for _, label := range []string{"Copy command", "Menu", "Exit"} {
+			at := -1
+			for i, l := range lines {
+				if screenRow(l) == label {
+					at = i
+				}
+			}
+			switch {
+			case at < 0:
+				t.Errorf("%s: no %q row on the screen:\n%s", name, label, s)
+			case at >= 24:
+				t.Errorf("%s: %q is on row %d of a 24-row terminal:\n%s", name, label, at+1, s)
+			}
+		}
+		if len(lines) > 24 {
+			t.Errorf("%s: the screen is %d rows, want at most 24:\n%s", name, len(lines), s)
+		}
 	}
 }
 
