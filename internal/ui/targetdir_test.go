@@ -107,24 +107,6 @@ func openUpdate(t *testing.T, m AppModel, pushed *sink) AppModel {
 	return drive(t, m, cmd, pushed)
 }
 
-// boxRows returns the rows drawn inside the screen's box, border,
-// padding and continuation backslash removed.
-func boxRows(screen string) []string {
-	var rows []string
-	for _, row := range strings.Split(screen, "\n") {
-		row = strings.TrimSpace(row)
-		if !strings.HasPrefix(row, "│") {
-			continue
-		}
-		inner := strings.TrimSpace(strings.Trim(row, "│"))
-		inner = strings.TrimSpace(strings.TrimSuffix(inner, "\\"))
-		if inner != "" {
-			rows = append(rows, inner)
-		}
-	}
-	return rows
-}
-
 // pathPattern finds an absolute path written in prose: a slash at the
 // start of a word, up to the next space, quote or border.
 var pathPattern = regexp.MustCompile(`(?:^|\s)(/[^\s'"│]*)`)
