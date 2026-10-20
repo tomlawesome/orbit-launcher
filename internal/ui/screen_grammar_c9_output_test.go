@@ -6,6 +6,10 @@ package ui
 // code as it stood BEFORE the change, escapes and all, and stored under
 // testdata/c9; they must keep rendering byte for byte. A difference
 // here is a defect in the change, never a reason to refresh a file.
+//
+// One deliberate exception: #248 dropped the "Ready to install" screen, so
+// install_confirm_* were deleted and install_profile_* added (the profile
+// screen now names the folder). Nothing else moved.
 
 import (
 	"errors"
@@ -54,10 +58,9 @@ func c9Screens(t *testing.T) map[string]string {
 	for _, w := range c9Widths {
 		tag := fmt.Sprintf("%d", w)
 
-		// install: confirm names the directory at proseWidth.
+		// install: the profile screen names the directory at proseWidth.
 		in := c9Size(t, NewInstallModel(c9LongDir, "v1"), w)
-		in.state = installStateConfirm
-		out["install_confirm_"+tag] = in.View().Content
+		out["install_profile_"+tag] = in.View().Content
 
 		// remove: not found (header wraps the directory), done (prose and
 		// the removal command), failed (error at errorWidth).

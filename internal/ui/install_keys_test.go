@@ -46,9 +46,12 @@ func TestInstallModel_EscOnTheProfileScreenGoesBackToTheMenu(t *testing.T) {
 
 func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, _ = updateAs(t, m, key(tea.KeyEnter)) // confirm
 	if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
-		t.Fatal("Ctrl+C on the confirm screen did not quit")
+		t.Fatal("Ctrl+C on the profile screen did not quit")
+	}
+	m, _ = updateAs(t, m, key(tea.KeyEnter)) // notice
+	if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
+		t.Fatal("Ctrl+C on the notice did not quit")
 	}
 }
 
@@ -73,27 +76,22 @@ func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 	}
 }
 
-func TestInstallModel_ConfirmCancelRowReturnsToProfile(t *testing.T) {
+func TestInstallModel_ProfileScreenNamesTheFolderAndIgnoresUnboundKeys(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	m, _ = updateAs(t, m, key(tea.KeyEnter))
-	if s := screen(m); !strings.Contains(s, "Ready to install") || !strings.Contains(s, "/opt/orbit") {
-		t.Fatalf("confirm screen:\n%s", s)
+	if s := screen(m); !strings.Contains(s, "Orbit installs into /opt/orbit") {
+		t.Fatalf("profile screen:\n%s", s)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyDown))
-	if !strings.Contains(screen(m), "▸ Cancel") {
-		t.Fatalf("Down should select Cancel:\n%s", screen(m))
+	if !strings.Contains(screen(m), "▸ AI") {
+		t.Fatalf("Down should select AI:\n%s", screen(m))
 	}
-	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp)) // toggles: Install now, Cancel
-	if m.confirm.sel != 1 {
-		t.Fatalf("Up toggles between the two rows, sel = %d", m.confirm.sel)
+	m, _ = updateAs(t, m, key(tea.KeyUp))
+	if m.profile.sel != 0 {
+		t.Fatalf("Up should return to Standard, sel = %d", m.profile.sel)
 	}
 	m, cmd := updateAs(t, m, runeKey('y'))
-	if cmd != nil || m.state != installStateConfirm {
-		t.Fatal("an unbound key acted on the confirm screen")
-	}
-	m, cmd = updateAs(t, m, key(tea.KeyEnter))
 	if cmd != nil || m.state != installStateProfile {
-		t.Fatalf("Cancel should return to the profile screen without starting anything, state = %v", m.state)
+		t.Fatal("an unbound key acted on the profile screen")
 	}
 }
 

@@ -62,14 +62,12 @@ func driveToInstallNow(t *testing.T, console *vtConsole) {
 	console.send("\r")
 	must("Choose a deployment profile")
 	console.send("\r")
-	must("Ready to install")
-	console.send("\r")
 	passNotice(t, console)
 }
 
 // noticeWait outlasts the development notice's countdown (#175). The
 // binary keeps its full 70 s — nothing outside it can shorten an
-// approved gate — so a run through Install now waits it out.
+// approved gate — so a run through Standard waits it out.
 const noticeWait = 72 * time.Second
 
 // passNotice gets past the development notice the way a person does:

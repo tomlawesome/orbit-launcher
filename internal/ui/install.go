@@ -18,14 +18,13 @@ type installState int
 const (
 	installStateProfile installState = iota
 	installStateUnavailableProfile
-	installStateConfirm
 	installStateNotice
 	installStateRunning
 	installStateStaleVolume
 )
 
-// InstallModel is the Install flow: profile choice, confirmation, then
-// the mission console — the engine's event stream rendered natively
+// InstallModel is the Install flow: profile choice, the development
+// notice, then the mission console — the engine's event stream rendered natively
 // inside the TUI (see internal/ui/enginerun.go and design/mockups-v5.html
 // section 02). Only the Standard profile is wired; AI/Full are visible
 // but honestly say they aren't available yet rather than silently doing
@@ -46,7 +45,6 @@ type InstallModel struct {
 	version       string
 
 	profile menu // installProfiles
-	confirm menu // installConfirmRows
 	volume  menu // installVolumeRows
 
 	// left is Esc or Cancel on the flow's first screen: back to the main
@@ -66,8 +64,8 @@ type InstallModel struct {
 	// daemon — production code leaves it nil and gets the real check.
 	checkVolumes func(context.Context, string) []deploy.DatabaseVolume
 
-	// notice is the development notice (#175) between the confirm
-	// screen and the run; rebuilt fresh on every Install now.
+	// notice is the development notice (#175) between the profile
+	// screen and the run; rebuilt fresh each time Standard is chosen.
 	notice noticeModel
 
 	// noticeDuration is the notice's reading countdown; zero means
@@ -116,7 +114,6 @@ func NewInstallModel(targetDir, version string) InstallModel {
 		targetDir: targetDir,
 		version:   version,
 		profile:   newMenu(installProfiles...),
-		confirm:   newMenu(installConfirmRows...),
 		volume:    newMenu(installVolumeRows...),
 	}
 }
@@ -132,8 +129,7 @@ var installProfiles = []string{
 }
 
 var (
-	installConfirmRows = []string{"Install now", "Cancel"}
-	installVolumeRows  = []string{"Continue anyway", "Cancel"}
+	installVolumeRows = []string{"Continue anyway", "Cancel"}
 
 	// installUnavailableRows: the dead end's one row, back to the
 	// profile choice that led in.
@@ -193,7 +189,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// The notice's countdown redraws on its own one-second chain. A
-	// tick from an earlier visit (Back, then Install now again)
+	// tick from an earlier visit (Back, then Standard again)
 	// carries that visit's start and is dropped, so two chains never
 	// run; the chain ends when the countdown does.
 	if t, ok := msg.(noticeTickMsg); ok {
@@ -215,7 +211,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if found, ok := msg.(staleVolumesMsg); ok {
 		// Only the profile screen is interrupted. The check is async, so
 		// a quick hand can already be past it — and stopping someone
-		// mid-confirm to report a pre-flight finding would be worse than
+		// mid-notice to report a pre-flight finding would be worse than
 		// letting the engine give them the same news.
 		if len(found.volumes) > 0 && m.state == installStateProfile {
 			m.staleVolumes = found.volumes
@@ -253,8 +249,6 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.state = installStateProfile
 		}
 		return m, nil
-	case installStateConfirm:
-		return m.handleConfirmKey(msg)
 	case installStateNotice:
 		return m.handleNoticeKey(msg)
 	}
@@ -290,40 +284,26 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		m.left = true
 	case chosen == "": // a move, or a key the menu does not use
 	case chosen == installStandard:
-		m.state = installStateConfirm
-		m.confirm = newMenu(installConfirmRows...)
+		// Standard opens the development notice (#175) directly (#248),
+		// fresh every time: going back and coming again restarts the
+		// countdown and closes the scroll gate.
+		m.state = installStateNotice
+		m.notice = newNotice(m.now(), m.width, m.height)
+		return m, noticeTick(m.notice.start)
 	default:
 		m.state = installStateUnavailableProfile
 	}
 	return m, nil
 }
 
-func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	var chosen string
-	var back bool
-	m.confirm, chosen, back = m.confirm.onScreen(msg)
-	switch {
-	case back, chosen == "Cancel":
-		m.state = installStateProfile
-	case chosen == "Install now":
-		// Install now opens the development notice (#175), fresh every
-		// time: going back and coming again restarts the countdown and
-		// closes the scroll gate.
-		m.state = installStateNotice
-		m.notice = newNotice(m.now(), m.width, m.height)
-		return m, noticeTick(m.notice.start)
-	}
-	return m, nil
-}
-
 // handleNoticeKey wires the notice: Esc or Back returns to the
-// confirm screen, a correct phrase starts the run, nothing else leaves.
+// profile screen, a correct phrase starts the run, nothing else leaves.
 func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var out noticeOutcome
 	m.notice, out = m.notice.handleKey(msg, m.now, m.noticeDur())
 	switch out {
 	case noticeBack:
-		m.state = installStateConfirm
+		m.state = installStateProfile
 		return m, nil
 	case noticeAccept:
 		m.state = installStateRunning
@@ -379,8 +359,6 @@ func (m InstallModel) view() string {
 		return m.viewProfile()
 	case installStateUnavailableProfile:
 		return m.viewUnavailableProfile()
-	case installStateConfirm:
-		return m.viewConfirm()
 	case installStateNotice:
 		return m.viewNotice()
 	case installStateRunning:
@@ -437,6 +415,10 @@ func (m InstallModel) viewStaleVolume() string {
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
+	// The folder is the one word here whose length nobody chose, so it
+	// wraps rather than being cut (#248).
+	writeWrapped(&b, style.Ink, "Orbit installs into "+m.targetDir, measure(m.width, proseWidth))
+	fmt.Fprintln(&b)
 	m.profile.write(&b)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
@@ -456,19 +438,4 @@ func (m InstallModel) viewUnavailableProfile() string {
 // viewNotice is the development notice (#175, notice.go) over the sky.
 func (m InstallModel) viewNotice() string {
 	return skyBlock(m.star, m.width, m.height, m.notice.view(m.now(), m.noticeDur()))
-}
-
-func (m InstallModel) viewConfirm() string {
-	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Ready to install")
-	fmt.Fprintln(&b, style.MutedText.Render("Orbit's own installer runs inside the mission console —"))
-	fmt.Fprintln(&b, style.MutedText.Render("watch it validate, pull the image, and start the containers"))
-	fmt.Fprintln(&b, style.MutedText.Render("right here. If it needs configuration only you can provide,"))
-	fmt.Fprintln(&b, style.MutedText.Render("it stops safely and asks first."))
-	fmt.Fprintln(&b)
-	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.Tagline, m.targetDir, measure(m.width, proseWidth))
-	fmt.Fprintln(&b)
-	m.confirm.write(&b)
-	return skyBlock(m.star, m.width, m.height, b.String())
 }

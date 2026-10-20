@@ -100,9 +100,7 @@ func newTestInstallModel(seams engineRunSeams) (InstallModel, *sink) {
 
 func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 	t.Helper()
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
-	m = updated.(InstallModel)
-	m, cmd := acceptNotice(t, m) // confirm -> notice -> running
+	m, cmd := acceptNotice(t, m) // profile -> notice -> running
 	if m.state != installStateRunning {
 		t.Fatalf("state = %v, want installStateRunning", m.state)
 	}
@@ -112,8 +110,8 @@ func startInstallRun(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 	return m, cmd
 }
 
-// acceptNotice takes a model on the confirm screen through the
-// development notice (#175) the way a person does: Install now, the
+// acceptNotice takes a model on the profile screen through the
+// development notice (#175) the way a person does: Standard, the
 // countdown runs out, End shows the whole notice, the phrase is typed,
 // Enter. The notice reads a clock of its own here and the flow's clock
 // is handed back just before the accepting Enter, so a test that counts
@@ -123,7 +121,7 @@ func acceptNotice(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 	flowClock := m.seams.now
 	noticeTime := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 	m.seams.now = func() time.Time { return noticeTime }
-	updated, _ := m.Update(key(tea.KeyEnter)) // Install now -> notice
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	if m.state != installStateNotice {
 		t.Fatalf("state = %v, want installStateNotice", m.state)
@@ -138,12 +136,12 @@ func acceptNotice(t *testing.T, m InstallModel) (InstallModel, tea.Cmd) {
 	return updated.(InstallModel), cmd
 }
 
-func TestInstallModel_SelectingStandardMovesToConfirm(t *testing.T) {
+func TestInstallModel_SelectingStandardOpensTheNotice(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
 	updated, _ := m.Update(key(tea.KeyEnter))
 	m = updated.(InstallModel)
-	if m.state != installStateConfirm {
-		t.Errorf("state = %v, want installStateConfirm", m.state)
+	if m.state != installStateNotice {
+		t.Errorf("state = %v, want installStateNotice", m.state)
 	}
 }
 
@@ -159,9 +157,9 @@ func TestInstallModel_SelectingAIOrFullShowsUnavailableNotFakeProgress(t *testin
 	}
 }
 
-func TestInstallModel_EscapeFromConfirmReturnsToProfile(t *testing.T) {
+func TestInstallModel_EscapeFromTheNoticeReturnsToProfile(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	updated, _ = m.Update(key(tea.KeyEsc))
 	m = updated.(InstallModel)
@@ -170,7 +168,7 @@ func TestInstallModel_EscapeFromConfirmReturnsToProfile(t *testing.T) {
 	}
 }
 
-func TestInstallModel_ConfirmNeverStartsTheEngineAutomatically(t *testing.T) {
+func TestInstallModel_StandardNeverStartsTheEngineAutomatically(t *testing.T) {
 	engineCalled := false
 	seams := engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -179,12 +177,12 @@ func TestInstallModel_ConfirmNeverStartsTheEngineAutomatically(t *testing.T) {
 		},
 	}
 	m, _ := newTestInstallModel(seams)
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> confirm
+	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	_ = m.View() // rendering alone must never trigger a side effect
 
 	if engineCalled {
-		t.Error("the engine must only start after an explicit confirm, never as a side effect of rendering")
+		t.Error("the engine must only start after the notice is accepted, never as a side effect of rendering")
 	}
 }
 
@@ -507,7 +505,7 @@ func TestInstallModel_NoStaleVolumeChangesNothing(t *testing.T) {
 }
 
 // The check is async, so its answer can arrive after a quick hand has
-// already moved on. Yanking someone back from the confirm screen to
+// already moved on. Yanking someone back from the notice to
 // report a pre-flight finding is worse than letting the engine say the
 // same thing a moment later.
 func TestInstallModel_StaleVolumeFindingNeverInterruptsALaterScreen(t *testing.T) {
@@ -515,13 +513,13 @@ func TestInstallModel_StaleVolumeFindingNeverInterruptsALaterScreen(t *testing.T
 	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	updated, _ = updated.Update(key(tea.KeyEnter)) // Standard → confirm
-	if got := updated.(InstallModel).state; got != installStateConfirm {
-		t.Fatalf("expected the confirm screen, got state %v", got)
+	updated, _ = updated.Update(key(tea.KeyEnter)) // Standard → notice
+	if got := updated.(InstallModel).state; got != installStateNotice {
+		t.Fatalf("expected the notice, got state %v", got)
 	}
 
 	updated, _ = updated.Update(m.Init()())
-	if got := updated.(InstallModel).state; got != installStateConfirm {
+	if got := updated.(InstallModel).state; got != installStateNotice {
 		t.Errorf("a late pre-flight finding pulled the flow back to state %v", got)
 	}
 }

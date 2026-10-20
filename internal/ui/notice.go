@@ -107,7 +107,7 @@ const (
 
 // noticeTickMsg redraws the countdown. It carries the start of the
 // notice that armed it, so a chain left over from an earlier visit
-// (Back, then Install now again) is recognised and dropped.
+// (Back, then Standard again) is recognised and dropped.
 type noticeTickMsg struct{ start time.Time }
 
 func noticeTick(start time.Time) tea.Cmd {

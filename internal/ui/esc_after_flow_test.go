@@ -238,13 +238,11 @@ func appOnInstallSuccess(t *testing.T) AppModel {
 
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install
 	m = drive(t, m, cmd)
-	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Standard profile
+	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Standard profile -> the notice
 	m = drive(t, m, cmd)
-	if s := screen(m); !strings.Contains(s, "Ready to install") {
-		t.Fatalf("not on Install's confirm screen:\n%s", s)
+	if s := screen(m); !strings.Contains(s, "A note before you install") {
+		t.Fatalf("not on Install's notice:\n%s", s)
 	}
-	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Install now -> the notice
-	m = drive(t, m, cmd)
 	m, cmd = updateAs(t, m, key(tea.KeyEnd), tea.KeyPressMsg{Text: noticePhrase}, key(tea.KeyEnter))
 	m = drive(t, m, cmd, queue)
 	if m.state != appStateSuccess {

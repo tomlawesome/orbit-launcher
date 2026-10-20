@@ -71,9 +71,12 @@ func folderBlock(s string) (words []string, lines []string, ok bool) {
 			}
 			lines = append(lines, l)
 			for _, w := range strings.Fields(l) {
-				if !onlyGlyphs.MatchString(w) {
-					words = append(words, w)
+				if onlyGlyphs.MatchString(w) {
+					continue
 				}
+				// A sky star can sit in the cell right after a line's
+				// last character (compositeScene leaves no gap; #270).
+				words = append(words, strings.TrimRight(w, "·✦●⟡"))
 			}
 		}
 		return words, lines, true

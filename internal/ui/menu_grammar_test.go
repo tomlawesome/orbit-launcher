@@ -83,15 +83,6 @@ func installUnavailableProfile(t *testing.T) tea.Model {
 	return m
 }
 
-func installConfirm(t *testing.T) tea.Model {
-	t.Helper()
-	m, _ := updateAs(t, profileInstall(t), key(tea.KeyEnter))
-	if !strings.Contains(screen(m), "Ready to install") {
-		t.Fatalf("not on Install's confirm screen:\n%s", screen(m))
-	}
-	return m
-}
-
 func repairErrorScreen(t *testing.T) tea.Model {
 	t.Helper()
 	m, _ := updateAs(t, sizedRepair(t), repairReadyMsg{err: errors.New("target directory: no such file")})
@@ -107,8 +98,6 @@ func grammarScreens() []grammarScreen {
 			rows: []string{"Back"}, escShows: "Choose a deployment profile"},
 		// Questions: Cancel declines and goes where Esc goes.
 		{name: "Install stale volume", build: staleInstall, rows: []string{"Continue anyway", "Cancel"}},
-		{name: "Install confirm", build: installConfirm,
-			rows: []string{"Install now", "Cancel"}, escShows: "Choose a deployment profile"},
 		{name: "Update confirm", build: confirmUpdate, rows: []string{"Update Orbit", "Cancel"}},
 		{name: "Remove confirm", build: confirmRemove, rows: []string{"Stand down Orbit", "Cancel"}},
 		{name: "Install profile", build: profileInstall},
@@ -328,8 +317,8 @@ func TestMenuGrammar_NoticeRowIsBackAndLandsWhereEscLands(t *testing.T) {
 		t.Fatal("the Back row quit")
 	}
 	for name, got := range map[string]InstallModel{"Esc": viaEsc, "Back": viaRow} {
-		if got.state != installStateConfirm || !strings.Contains(screen(got), "Ready to install") {
-			t.Errorf("%s left the notice for state %v, want the confirm screen:\n%s", name, got.state, screen(got))
+		if got.state != installStateProfile || !strings.Contains(screen(got), "Choose a deployment profile") {
+			t.Errorf("%s left the notice for state %v, want the profile screen:\n%s", name, got.state, screen(got))
 		}
 	}
 }
