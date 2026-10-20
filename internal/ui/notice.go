@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -160,7 +161,11 @@ func (n noticeModel) resize(width, height int) noticeModel {
 
 func (n noticeModel) viewport() int { return max(n.height-noticeHeaderRows-noticePinnedRows, 1) }
 
-func (n noticeModel) maxOffset() int { return max(len(n.doc)-n.viewport(), 0) }
+// prose is the rows the text gets: the viewport less the blank and the
+// down arrow below it (#249).
+func (n noticeModel) prose() int { return max(n.viewport()-2, 1) }
+
+func (n noticeModel) maxOffset() int { return max(len(n.doc)-n.prose(), 0) }
 
 // scrollTo clamps the offset and opens the scroll gate the first time
 // the end is on screen. The gate never closes again.
@@ -174,7 +179,7 @@ func (n noticeModel) scrollTo(offset int) noticeModel {
 
 func (n noticeModel) scrollBy(delta int) noticeModel { return n.scrollTo(n.offset + delta) }
 
-func (n noticeModel) page() int { return max(n.viewport()-1, 1) }
+func (n noticeModel) page() int { return max(n.prose()-1, 1) }
 
 func (n noticeModel) timerDone(now time.Time, d time.Duration) bool {
 	return now.Sub(n.start) >= d
@@ -195,7 +200,7 @@ type noticeLayout struct {
 
 func (n noticeModel) layout() noticeLayout {
 	l := noticeLayout{fadeTop: -1, fadeBot: -1}
-	vp := n.viewport()
+	vp := n.prose()
 	if len(n.doc) <= vp {
 		l.rows = n.doc
 		l.endOnScreen = true
@@ -449,13 +454,35 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	)
 
 	// Prose.
+	// A track in the right gutter shows where the window sits (#249).
 	l := n.layout()
+	p, total, maxOff := n.prose(), len(n.doc), n.maxOffset()
+	thumbLen, thumbTop := p, 0
+	if maxOff > 0 {
+		thumbLen = max(1, int(math.Round(float64(p*p)/float64(total))))
+		thumbTop = int(math.Round(float64(n.offset) / float64(maxOff) * float64(p-thumbLen)))
+	}
+	trackStyle := lipgloss.NewStyle().Foreground(style.Border)
 	for i, r := range l.rows {
-		if r.blank() {
-			lines = append(lines, blank)
-			continue
+		track := trackStyle.Render("│")
+		if i >= thumbTop && i < thumbTop+thumbLen {
+			track = mutedStyle.Render("┃")
 		}
-		lines = append(lines, pad(gutter+renderNoticeRow(r, i == l.fadeTop || i == l.fadeBot), noticeGutter+r.width()))
+		text := ""
+		if !r.blank() {
+			text = renderNoticeRow(r, i == l.fadeTop || i == l.fadeBot)
+		}
+		lines = append(lines, gutter+text+strings.Repeat(" ", n.measure-r.width())+track+strings.Repeat(" ", max(blockW-noticeGutter-n.measure-1, 0)))
+	}
+
+	// One blank row, then the arrow while more is below; it goes once the
+	// whole notice has been on screen.
+	lines = append(lines, blank)
+	if n.endSeen || n.offset >= maxOff {
+		lines = append(lines, blank)
+	} else {
+		left := noticeGutter + n.measure/2
+		lines = append(lines, pad(strings.Repeat(" ", left)+mutedStyle.Render("↓"), left+1))
 	}
 
 	// Countdown: blank once the gate is passed — the gate is gone, so

@@ -122,9 +122,9 @@ func TestNoticeCountdown_TypingNeedsTheCountdownOverAndTheEndSeen(t *testing.T) 
 	})
 
 	t.Run("a notice that fits the screen waits only for the countdown", func(t *testing.T) {
-		m, clock, _ := openNotice(t, 120, 53, engineRunSeams{})
+		m, clock, _ := openNotice(t, 120, 55, engineRunSeams{})
 		if !m.notice.endSeen {
-			t.Fatal("precondition: the whole notice is on screen at 120x53")
+			t.Fatal("precondition: the whole notice is on screen at 120x55")
 		}
 		clock.advance(19 * time.Second)
 		m, _ = updateAs(t, m, runeKey('I'))

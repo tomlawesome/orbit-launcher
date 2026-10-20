@@ -200,8 +200,8 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Errorf("view is %d rows, want 26", len(lines))
 	}
 	l := m.notice.layout()
-	if len(l.rows) != 12 {
-		t.Errorf("prose viewport = %d rows, want 12", len(l.rows))
+	if len(l.rows) != 10 {
+		t.Errorf("prose viewport = %d rows, want 10", len(l.rows))
 	}
 	if l.fadeBot != len(l.rows)-1 || l.fadeTop != -1 {
 		t.Errorf("fades = top %d, bottom %d; want only the last row faded", l.fadeTop, l.fadeBot)
@@ -226,7 +226,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 
 	clock.advance(time.Second)
 	block := strings.Split(m.notice.view(m.now(), m.noticeDur()), "\n")
-	countdown := block[noticeHeaderRows+len(m.notice.layout().rows)]
+	countdown := block[noticeHeaderRows+len(m.notice.layout().rows)+2]
 	if strings.TrimSpace(ansi.Strip(countdown)) != "" {
 		t.Errorf("at 20 s the countdown row must be blank, got %q", ansi.Strip(countdown))
 	}
@@ -237,7 +237,7 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 }
 
 func TestNotice_TallTerminalFitsWithoutScrolling(t *testing.T) {
-	m, _, _ := openNotice(t, 120, 53, engineRunSeams{})
+	m, _, _ := openNotice(t, 120, 55, engineRunSeams{})
 	if !m.notice.endSeen {
 		t.Error("when everything fits the scroll gate is open on entry")
 	}
@@ -247,7 +247,7 @@ func TestNotice_TallTerminalFitsWithoutScrolling(t *testing.T) {
 }
 
 func TestNotice_ThreeHiddenRowsNeedThreeDowns(t *testing.T) {
-	m, _, _ := openNotice(t, 120, 50, engineRunSeams{})
+	m, _, _ := openNotice(t, 120, 52, engineRunSeams{})
 	if m.notice.endSeen {
 		t.Fatal("three rows hang below at 120×50")
 	}
@@ -274,7 +274,7 @@ func TestNotice_GapIsNeverTheLastRowWhileMoreFollows(t *testing.T) {
 
 func TestNotice_ScrollGateIsSticky(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
-	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 53})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 55})
 	if !m.notice.endSeen {
 		t.Fatal("a resize that reveals the end must open the scroll gate")
 	}
@@ -295,17 +295,17 @@ func TestNotice_ScrollKeysAndWheel(t *testing.T) {
 		t.Error("the notice turns mouse reporting on so the wheel scrolls")
 	}
 	m, _ = updateAs(t, m, key(tea.KeyPgDown))
-	if m.notice.offset != 11 {
-		t.Errorf("PgDn: offset = %d, want viewport-1 = 11", m.notice.offset)
+	if m.notice.offset != 9 {
+		t.Errorf("PgDn: offset = %d, want prose-1 = 9", m.notice.offset)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyPgUp))
 	m, _ = updateAs(t, m, key(tea.KeySpace))
-	if m.notice.offset != 11 || !m.notice.typed.empty() {
+	if m.notice.offset != 9 || !m.notice.typed.empty() {
 		t.Errorf("Space while asleep: offset = %d, typed %q; want a page down", m.notice.offset, m.notice.typed.String())
 	}
 	m, _ = updateAs(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if m.notice.offset != 8 {
-		t.Errorf("wheel up: offset = %d, want 8", m.notice.offset)
+	if m.notice.offset != 6 {
+		t.Errorf("wheel up: offset = %d, want 6", m.notice.offset)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyHome))
 	if m.notice.offset != 0 {
