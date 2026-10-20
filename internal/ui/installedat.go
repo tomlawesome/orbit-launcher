@@ -42,10 +42,12 @@ func deploymentIdentity(d *deploy.Deployment) string {
 	case d.AppURL == "":
 		return "deployment detected"
 	}
+	// APP_URL is read from the deployment's own env file: shown escaped,
+	// so a CR or ESC in it cannot forge or restyle the confirm screen.
 	if u, err := url.Parse(d.AppURL); err == nil && u.Host != "" {
-		return u.Host
+		return visibleText(u.Host)
 	}
-	return d.AppURL
+	return visibleText(d.AppURL)
 }
 
 // identityLine is the confirm screens' one line of deployment identity:
