@@ -197,7 +197,9 @@ func (m SuccessModel) centreBlockLines() []string {
 	// The identity slot, tight beneath: the deployment URL is the one
 	// gold object on this screen, with the status word under it.
 	if m.appURL != "" {
-		lines = append(lines, style.AccentText.Render(m.appURL))
+		// Escaped for the screen only: open() above still gets the raw
+		// address, as the Remove box shows escaped and runs raw.
+		lines = append(lines, style.AccentText.Render(visibleText(m.appURL)))
 	}
 	lines = append(lines, style.SuccessText.Render("alive"))
 	lines = append(lines, "")

@@ -202,7 +202,7 @@ func (m UpdateModel) viewConfirm() string {
 
 	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
 	if image := m.deploymentImage(); image != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(image))
+		fmt.Fprintln(&b, style.Tagline.Render(visibleText(image)))
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))
