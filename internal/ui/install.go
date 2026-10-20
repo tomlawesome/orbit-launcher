@@ -380,13 +380,14 @@ func (m InstallModel) view() string {
 //
 // Every name shown comes verbatim from docker's own output (see
 // deploy.UnownedDatabaseVolumes), because a person may well act on a
-// volume name they read here.
+// volume name they read here; only a rune that isn't printable is shown
+// as its escape (#272).
 func (m InstallModel) viewStaleVolume() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This machine already has an Orbit database")
 
 	for _, v := range m.staleVolumes {
-		line := v.Name
+		line := visibleText(v.Name)
 		if v.Project != "" {
 			// Named as the Compose label it is, not as "from the
 			// <project> deployment": since Orbit #999/#1043 every
@@ -394,7 +395,7 @@ func (m InstallModel) viewStaleVolume() string {
 			// read as if it identified one install when it never
 			// could. The directory sentence below is what actually
 			// tells them apart.
-			line += style.Separator + "Compose project " + v.Project
+			line += style.Separator + "Compose project " + visibleText(v.Project)
 		}
 		fmt.Fprintln(&b, style.Ink.Render(line))
 	}

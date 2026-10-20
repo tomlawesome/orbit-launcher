@@ -868,7 +868,7 @@ func (m RepairModel) viewError() string {
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), title)
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
-		writeWrapped(&b, style.Tagline, m.runErr.Error(), measure(m.width, errorWidth))
+		writeWrapped(&b, style.Tagline, visibleLines(m.runErr.Error()), measure(m.width, errorWidth))
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
@@ -1150,7 +1150,7 @@ func actionWords(action string) string {
 	case "manual":
 		return "needs your hands"
 	default:
-		return action
+		return visibleText(action)
 	}
 }
 

@@ -212,6 +212,18 @@ func writeWrapped(b *strings.Builder, ink lipgloss.Style, text string, limit int
 // never pushes a screen's menu off a 24-row terminal.
 const folderRows = 4
 
+// visibleLines is visibleText for error text, which may span lines
+// (Docker's, the installer's): each LF stays a row break, and every
+// other non-graphic rune on each line is shown escaped (#272). The rows
+// it adds stay inside the error block, so they forge nothing.
+func visibleLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = visibleText(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // visibleText shows text nobody vetted, such as a folder name, as the
 // terminal should draw it: every rune that is not graphic is written as
 // its Go escape (\r, \n, \t, \x1b, \u202e, \xff for an invalid

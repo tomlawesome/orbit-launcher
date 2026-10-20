@@ -364,7 +364,7 @@ func (m RemoveModel) viewFailed() string {
 	if m.standDownErr != nil {
 		// Docker's words, at Docker's length: wrapped so the reason is
 		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), measure(m.width, errorWidth))
+		writeWrapped(&b, style.Tagline, visibleLines(m.standDownErr.Error()), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)

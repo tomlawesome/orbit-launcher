@@ -106,7 +106,7 @@ func viewUnreadableDeployment(star starfield.Model, width, height int, dir strin
 	}
 	fmt.Fprintln(&b)
 	if err != nil {
-		writeWrapped(&b, style.Tagline, err.Error(), measure(width, errorWidth))
+		writeWrapped(&b, style.Tagline, visibleLines(err.Error()), measure(width, errorWidth))
 	}
 	// Two sentences, each wrapped on its own so a narrow terminal never
 	// cuts the second.

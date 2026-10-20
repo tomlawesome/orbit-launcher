@@ -230,17 +230,17 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 
 	word, known := stateWords[ev.State]
 	if !known {
-		word = ev.State
+		word = visibleText(ev.State)
 	}
-	line := glyph + " " + style.MutedText.Render(ev.Component) + " "
+	line := glyph + " " + style.MutedText.Render(visibleText(ev.Component)) + " "
 	if known {
 		switch ev.State {
 		case engine.StateCompleted, engine.StateHealthy:
 			line += style.MutedText.Render(word)
 		case engine.StateFailed:
-			line += style.ErrorText.Render(word) + style.Tagline.Render(" — "+ev.Reason)
+			line += style.ErrorText.Render(word) + style.Tagline.Render(" — "+visibleText(ev.Reason))
 		case engine.StateBlocked:
-			line += style.DegradedText.Render(word) + style.Tagline.Render(" — "+ev.Reason)
+			line += style.DegradedText.Render(word) + style.Tagline.Render(" — "+visibleText(ev.Reason))
 		default:
 			line += style.Tagline.Render(word)
 		}
