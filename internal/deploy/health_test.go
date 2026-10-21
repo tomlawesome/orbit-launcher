@@ -84,7 +84,7 @@ func TestTransportReason_DNSFlagsDecide(t *testing.T) {
 		want HealthReason
 	}{
 		{"not found", &net.DNSError{Err: "no such host", Name: "orbit.invalid", IsNotFound: true}, HealthAddressNotFound},
-		{"network unreachable", &net.DNSError{Err: "dial udp 10.0.0.53:53: connect: network is unreachable", Name: "orbit.example", IsTemporary: true}, HealthNotResponding},
+		{"network unreachable", &net.DNSError{Err: "dial udp 192.0.2.53:53: connect: network is unreachable", Name: "orbit.example", IsTemporary: true}, HealthNotResponding},
 		{"timeout", &net.DNSError{Err: "i/o timeout", Name: "orbit.example", IsTimeout: true, IsTemporary: true}, HealthNotResponding},
 		{"server misbehaving", &net.DNSError{Err: "server misbehaving", Name: "orbit.example", IsTemporary: true}, HealthNotResponding},
 		{"no flags", &net.DNSError{Err: "lookup: cannot unmarshal DNS message", Name: "orbit.example"}, HealthNotResponding},
