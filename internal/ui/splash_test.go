@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"strings"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestSplashModel_EnterAfterANumberKeyActs(t *testing.T) {
 // The health probe must not fight a caret the digit placed.
 func TestSplashModel_DegradedNeverMovesTheCaretAfterANumberKey(t *testing.T) {
 	m, _ := updateAs(t, seedDeployment(NewSplashModel()), runeKey('4'))
-	m, _ = updateAs(t, m, healthResultMsg{healthy: false})
+	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthNotResponding})
 	if m.menu.sel != 3 {
 		t.Errorf("selected = %d, want 3 — the probe moved the caret a digit had placed", m.menu.sel)
 	}
@@ -386,7 +387,7 @@ func seedDeployment(m SplashModel) SplashModel {
 func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
 	m := seedDeployment(NewSplashModel())
 
-	updated, _ := m.Update(healthResultMsg{healthy: true})
+	updated, _ := m.Update(healthResultMsg{reason: deploy.HealthResponding})
 	m = updated.(SplashModel)
 
 	if m.state != stateAlive {
@@ -400,7 +401,7 @@ func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
 func TestSplashModel_HealthResultDegradedPreselectsRepair(t *testing.T) {
 	m := seedDeployment(NewSplashModel())
 
-	updated, _ := m.Update(healthResultMsg{healthy: false})
+	updated, _ := m.Update(healthResultMsg{reason: deploy.HealthNotResponding})
 	m = updated.(SplashModel)
 
 	if m.state != stateDegraded {
@@ -418,7 +419,7 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 	m = updated.(SplashModel)
 	navigatedTo := m.menu.sel
 
-	updated, _ = m.Update(healthResultMsg{healthy: false})
+	updated, _ = m.Update(healthResultMsg{reason: deploy.HealthNotResponding})
 	m = updated.(SplashModel)
 
 	if m.state != stateDegraded {
@@ -445,12 +446,12 @@ func TestSplashModel_ViewShowsIdentityBlockPerState(t *testing.T) {
 		t.Error("unknown-health view must never guess a status word")
 	}
 
-	updated, _ = m.Update(healthResultMsg{healthy: true})
+	updated, _ = m.Update(healthResultMsg{reason: deploy.HealthResponding})
 	if view := updated.(SplashModel).View().Content; !strings.Contains(view, "alive") {
 		t.Error("alive view must show the status word")
 	}
 
-	updated, _ = m.Update(healthResultMsg{healthy: false})
+	updated, _ = m.Update(healthResultMsg{reason: deploy.HealthNotResponding})
 	if view := updated.(SplashModel).View().Content; !strings.Contains(view, "degraded") {
 		t.Error("degraded view must show the status word")
 	}

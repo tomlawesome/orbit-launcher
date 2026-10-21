@@ -40,7 +40,7 @@ type AppModel struct {
 	// returns to the menu) is built exactly like the first one.
 	version       string
 	updateCheck   func(context.Context) (string, bool, error)
-	healthProbe   func(ctx context.Context, appURL string) bool
+	healthProbe   func(ctx context.Context, appURL string) deploy.HealthReason
 	detectOnStart bool
 
 	// targetDir is where an existing deployment, if any, would be found.
@@ -124,7 +124,7 @@ func (m AppModel) WithVersion(v string) AppModel {
 // splash's Init (see SplashModel.probeHealthCmd); nil leaves the state
 // at "deployment exists, health unknown", which renders as the FQDN
 // with no status word.
-func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) bool) AppModel {
+func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) deploy.HealthReason) AppModel {
 	m.healthProbe = probe
 	m.detectOnStart = true
 	m.splash = m.applyDeployment(m.splash)
@@ -183,6 +183,8 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
 	s.healthProbe = m.healthProbe
+	s.serviceStates = realServiceStates
+	s.targetDir = m.resolvedTargetDir()
 	return s
 }
 

@@ -130,7 +130,7 @@ func TestAppModel_SplashOnAnUnreadableEnvSaysItCannotReadIt(t *testing.T) {
 	probes := 0
 	m := NewAppModelNoAnimation().WithoutVolumeCheck()
 	m.targetDir = dir
-	m = m.WithDeploymentStatus(func(context.Context, string) bool { probes++; return true })
+	m = m.WithDeploymentStatus(func(context.Context, string) deploy.HealthReason { probes++; return deploy.HealthResponding })
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
 
 	if m.splash.state != stateUnreadable {

@@ -57,6 +57,10 @@ const (
 	// SymbolMasked is one bullet of the fixed mask a secret prompt shows
 	// once its answer holds anything (#252).
 	SymbolMasked = "●"
+	// SymbolDrawerClosed and SymbolDrawerOpen follow a status word that
+	// opens a drawer beneath it (#254).
+	SymbolDrawerClosed = "›"
+	SymbolDrawerOpen   = "⌄"
 )
 
 // SpinnerFrames are the in-progress glyph's animation frames, one per

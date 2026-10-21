@@ -60,7 +60,7 @@ func startApp(stdout, stderr io.Writer) int {
 	// The health probe hits only the user's own deployment (its APP_URL),
 	// resolving the splash's alive/degraded state; the env gate mirrors
 	// ORBIT_LAUNCHER_NO_UPDATE_CHECK so tests stay offline-deterministic.
-	var probe func(context.Context, string) bool
+	var probe func(context.Context, string) deploy.HealthReason
 	if os.Getenv(deploy.NoHealthProbeEnv) == "" {
 		probe = deploy.ProbeHealth
 	}
