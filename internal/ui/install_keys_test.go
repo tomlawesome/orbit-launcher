@@ -15,7 +15,7 @@ import (
 func TestInstallModel_ProfileArrowsWrapAndShowTheSelection(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
 	m, _ = updateAs(t, m, key(tea.KeyUp))
-	if m.profile.sel != 2 || !strings.Contains(screen(m), "▸ Full") {
+	if m.profile.sel != 3 || !strings.Contains(screen(m), "▸ Full") {
 		t.Fatalf("Up from Standard should wrap to Full (sel=%d):\n%s", m.profile.sel, screen(m))
 	}
 	m, _ = updateAs(t, m, key(tea.KeyDown))
@@ -58,9 +58,9 @@ func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 	for _, back := range []tea.KeyPressMsg{key(tea.KeyEnter), key(tea.KeyEsc)} {
 		m, _ := newTestInstallModel(engineRunSeams{})
-		m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // AI
+		m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // Documents
 		s := screen(m)
-		for _, want := range []string{"This profile isn't available yet", "local-model configuration", "▸ Back"} {
+		for _, want := range []string{"This profile isn't available yet", "wired into this", "▸ Back"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("unavailable screen lacks %q:\n%s", want, s)
 			}
@@ -82,8 +82,8 @@ func TestInstallModel_ProfileScreenNamesTheFolderAndIgnoresUnboundKeys(t *testin
 		t.Fatalf("profile screen:\n%s", s)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyDown))
-	if !strings.Contains(screen(m), "▸ AI") {
-		t.Fatalf("Down should select AI:\n%s", screen(m))
+	if !strings.Contains(screen(m), "▸ Documents") {
+		t.Fatalf("Down should select Documents:\n%s", screen(m))
 	}
 	m, _ = updateAs(t, m, key(tea.KeyUp))
 	if m.profile.sel != 0 {

@@ -2,6 +2,10 @@ package deploy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"net"
 	"net/http"
 	"time"
 )
@@ -17,22 +21,56 @@ const healthProbeTimeout = 2 * time.Second
 // has no timeout at all.
 var healthClient = &http.Client{Timeout: healthProbeTimeout}
 
-// ProbeHealth reports whether the deployment at appURL is responding: a
-// single GET against the app's own URL, healthy iff it answers with any
-// non-server-error status. This is deliberately coarse — a reachability
-// check for the splash's alive/degraded state, not a per-service health
-// sweep. It gives up after healthProbeTimeout, or sooner if ctx ends,
-// and any transport error (refused, DNS, TLS, timeout) simply reads as
-// degraded.
-func ProbeHealth(ctx context.Context, appURL string) bool {
+// HealthReason says why a deployment reads as degraded; the empty
+// reason means it answered (#254).
+type HealthReason string
+
+// The reasons the splash's degraded drawer can show.
+const (
+	HealthResponding          HealthReason = ""
+	HealthNotResponding       HealthReason = "not responding"
+	HealthAddressNotFound     HealthReason = "address not found"
+	HealthServerError         HealthReason = "server error"
+	HealthCertificateRejected HealthReason = "certificate rejected"
+	HealthUnchecked           HealthReason = "could not check"
+)
+
+// ProbeHealth asks the deployment at appURL whether it is responding: a
+// single GET against the app's own URL. A 2xx to 4xx answer is
+// responding, a 5xx is a server error, and a transport failure is named
+// by its cause (DNS, certificate) or reads as not responding. This is
+// deliberately coarse, a reachability check for the splash's
+// alive/degraded state, not a per-service sweep. It gives up after
+// healthProbeTimeout, or sooner if ctx ends.
+func ProbeHealth(ctx context.Context, appURL string) HealthReason {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appURL, nil)
 	if err != nil {
-		return false
+		return HealthUnchecked
 	}
 	resp, err := healthClient.Do(req)
 	if err != nil {
-		return false
+		return transportReason(err)
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode < 500
+	if resp.StatusCode >= 500 {
+		return HealthServerError
+	}
+	return HealthResponding
+}
+
+// transportReason names a failed request's cause.
+func transportReason(err error) HealthReason {
+	var dnsErr *net.DNSError
+	var certVerify *tls.CertificateVerificationError
+	var unknownAuth x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	switch {
+	case errors.As(err, &dnsErr):
+		return HealthAddressNotFound
+	case errors.As(err, &certVerify), errors.As(err, &unknownAuth),
+		errors.As(err, &hostname), errors.As(err, &invalid):
+		return HealthCertificateRejected
+	}
+	return HealthNotResponding
 }

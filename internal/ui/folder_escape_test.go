@@ -355,7 +355,7 @@ func TestFolderEscape_h_LongPathReadsAcrossRows(t *testing.T) {
 	checkLongPath(t, f)
 	for _, w := range folderWidths {
 		s := f.draw(t, "/srv/"+strings.Repeat("a", 120), w)
-		for _, want := range []string{"▸ Standard", "AI", "Full", "only Standard is available so far"} {
+		for _, want := range []string{"▸ Standard", "Agent", "Full"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("at %d the screen lacks %q:\n%s", w, want, s)
 			}
@@ -381,7 +381,7 @@ func TestFolderEscape_i_HugePathIsCutAtFolderRows(t *testing.T) {
 		if last := rows[len(rows)-1]; !strings.HasSuffix(last, "…") {
 			t.Errorf("at %d the last row %q does not end in …:\n%s", w, last, s)
 		}
-		for _, want := range []string{"▸ Standard", "only Standard is available so far"} {
+		for _, want := range []string{"▸ Standard"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("at %d the screen lacks %q:\n%s", w, want, s)
 			}

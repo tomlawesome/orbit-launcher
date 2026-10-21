@@ -353,6 +353,7 @@ func wrapHard(text string, limit, edge, maxRows int) []string {
 	text = visibleText(text)
 	var rows []string
 	row, rowW := "", 0
+	cut := false // row is the last fragment of a word cut at limit
 	for rest := text; rest != ""; {
 		end := strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsSpace(r) })
 		if end < 0 {
@@ -374,20 +375,37 @@ func wrapHard(text string, limit, edge, maxRows int) []string {
 		switch {
 		case rowW+w <= limit:
 			row, rowW = row+gap+word, rowW+w
+			cut = false
+		case cut && isStub(word):
+			// The dash after a cut path never stands alone on a row
+			// (#275): the cut moves back until the row has room for
+			// it, and the clusters it gives up go down with the dash.
+			head, tail := row, ""
+			for cs := clusters(row); lipgloss.Width(head)+w > limit && len(cs) > 1; cs = cs[:len(cs)-1] {
+				tail = cs[len(cs)-1] + tail
+				head = strings.Join(cs[:len(cs)-1], "")
+			}
+			rows = append(rows, head)
+			row = tail + gap + word
+			rowW = lipgloss.Width(row)
+			cut = false
 		case lipgloss.Width(word) <= limit:
 			rows = append(rows, row)
 			row, rowW = word, lipgloss.Width(word)
+			cut = false
 		case lipgloss.Width(word) <= edge:
 			if row != "" {
 				rows = append(rows, row)
 			}
 			rows = append(rows, word)
 			row, rowW = "", 0
+			cut = false
 		default:
 			parts := strings.Split(xansi.Hardwrap(row+gap+word, limit, true), "\n")
 			rows = append(rows, parts[:len(parts)-1]...)
 			row = parts[len(parts)-1]
 			rowW = lipgloss.Width(row)
+			cut = true
 		}
 	}
 	if row != "" {
@@ -398,4 +416,30 @@ func wrapHard(text string, limit, edge, maxRows int) []string {
 		rows[maxRows-1] = xansi.Truncate(rows[maxRows-1], limit-1, "") + "…"
 	}
 	return rows
+}
+
+// isStub reports whether a word is punctuation alone and at most two
+// cells wide: the "—" a sentence hangs after a path. Such a word belongs
+// with what it follows, never at the head of a row.
+func isStub(word string) bool {
+	if word == "" || lipgloss.Width(word) > 2 {
+		return false
+	}
+	for _, r := range word {
+		if !unicode.IsPunct(r) && !unicode.IsSymbol(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// clusters splits text into its grapheme clusters.
+func clusters(text string) []string {
+	var cs []string
+	for rest := text; rest != ""; {
+		c, _ := xansi.FirstGraphemeCluster(rest, xansi.GraphemeWidth)
+		cs = append(cs, c)
+		rest = rest[len(c):]
+	}
+	return cs
 }

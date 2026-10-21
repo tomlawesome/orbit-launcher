@@ -104,12 +104,12 @@ func neverAnswers(t *testing.T) string {
 func TestProbeHealth_GivesUpOnItsOwnWithoutACallerDeadline(t *testing.T) {
 	url := neverAnswers(t)
 
-	done := make(chan bool, 1)
+	done := make(chan HealthReason, 1)
 	go func() { done <- ProbeHealth(context.Background(), url) }()
 
 	select {
-	case alive := <-done:
-		if alive {
+	case reason := <-done:
+		if reason == HealthResponding {
 			t.Error("a server that never answered read as alive")
 		}
 	case <-time.After(6 * time.Second):

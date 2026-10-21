@@ -99,15 +99,15 @@ func TestNoConfirm_ProfileScreenFolderLineSitsBetweenHeaderAndRows(t *testing.T)
 	m, _ := noConfirmModel(t, noConfirmDir, 80, 26, engineRunSeams{})
 	s := screen(m)
 	at := func(sub string) int { return strings.Index(s, sub) }
-	header, folder, standard, ai, full, tagline := at("Choose a deployment profile"), at("Orbit installs into"),
-		at("Standard"), at("AI"), at("Full"), at("only Standard is available so far")
-	for name, i := range map[string]int{"header": header, "folder line": folder, "Standard": standard, "AI": ai, "Full": full, "tagline": tagline} {
+	header, folder, standard, ai, full := at("Choose a deployment profile"), at("Orbit installs into"),
+		at("Standard"), at("Agent"), at("Full")
+	for name, i := range map[string]int{"header": header, "folder line": folder, "Standard": standard, "Agent": ai, "Full": full} {
 		if i < 0 {
 			t.Fatalf("profile screen lacks the %s:\n%s", name, s)
 		}
 	}
-	if !(header < folder && folder < standard && standard < ai && ai < full && full < tagline) {
-		t.Errorf("order must be header, folder line, rows, tagline:\n%s", s)
+	if !(header < folder && folder < standard && standard < ai && ai < full) {
+		t.Errorf("order must be header, folder line, rows:\n%s", s)
 	}
 	if !strings.Contains(s, "▸ Standard") {
 		t.Errorf("the caret must start on Standard:\n%s", s)
@@ -323,8 +323,8 @@ func TestNoConfirm_EscOnTheProfileScreenGoesToTheMenu(t *testing.T) {
 	}
 }
 
-func TestNoConfirm_AIAndFullStillReachTheUnavailableScreenAndBackReturns(t *testing.T) {
-	for _, downs := range []int{1, 2} { // AI, Full
+func TestNoConfirm_DocumentsAgentAndFullStillReachTheUnavailableScreenAndBackReturns(t *testing.T) {
+	for _, downs := range []int{1, 2, 3} { // Documents, Agent, Full
 		for _, back := range []tea.KeyPressMsg{key(tea.KeyEnter), key(tea.KeyEsc)} {
 			m, _ := noConfirmModel(t, noConfirmDir, 80, 26, engineRunSeams{})
 			for range downs {
