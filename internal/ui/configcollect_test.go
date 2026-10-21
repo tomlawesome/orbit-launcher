@@ -15,8 +15,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // machineInitScript speaks the machine prompt protocol for --init the
@@ -314,9 +316,12 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
+	// Every wait reads through rec, which keeps what WaitFor consumes, so
+	// the check at the end can see the whole journey.
+	rec := recordOutput(tm.Output())
 	wait := func(want string) {
 		t.Helper()
-		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		teatest.WaitFor(t, rec, func(out []byte) bool {
 			return bytes.Contains(out, []byte(want))
 		}, teatest.WithDuration(10*time.Second))
 	}
@@ -342,8 +347,7 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 
 	wait("Get into Orbit")
 
-	out, err := io.ReadAll(tm.Output())
-	if err == nil && bytes.Contains(out, []byte("OIDC client secret")) {
+	if strings.Contains(rec.everything(), "OIDC client secret") {
 		t.Fatal("the secret step ran even though the re-check said the secret is not in use")
 	}
 
@@ -362,20 +366,31 @@ func TestAppModel_SecretInputIsNeverEchoed(t *testing.T) {
 		detect:        fakeDetect("https://orbit.example.test"),
 	})
 
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	// Every wait reads through rec, which keeps what WaitFor consumes, so
+	// the check below sees the frames drawn while the secret was typed.
+	rec := recordOutput(tm.Output())
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("OIDC client secret"))
 	}, teatest.WithDuration(10*time.Second))
 
+	// Wait for the frame the typing produced before pressing Enter: if
+	// the keys and Enter went in together the renderer could skip the
+	// typed state altogether and the check below would see nothing to
+	// object to. The row shows either the mask or, wrongly, the text.
 	tm.Type("hunter2-super-secret")
+	teatest.WaitFor(t, rec, func(out []byte) bool {
+		shown := ansi.Strip(string(out))
+		return strings.Contains(shown, strings.Repeat(style.SymbolMasked, secretMaskWidth)) ||
+			strings.Contains(shown, "hunter2")
+	}, teatest.WithDuration(10*time.Second))
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("Get into Orbit"))
 	}, teatest.WithDuration(10*time.Second))
 
-	// The final output must never have contained the typed secret.
-	out, err := io.ReadAll(tm.Output())
-	if err == nil && bytes.Contains(out, []byte("hunter2")) {
+	// No frame, from the prompt to the end, may have held the typed secret.
+	if strings.Contains(rec.everything(), "hunter2") {
 		t.Fatal("the secret was echoed to the screen")
 	}
 
@@ -910,9 +925,12 @@ func TestAppModel_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 		detect: fakeDetect("https://orbit.example.test"),
 	})
 
+	// Every wait reads through rec, which keeps what WaitFor consumes, so
+	// the check at the end can see the whole journey.
+	rec := recordOutput(tm.Output())
 	wait := func(wants ...string) {
 		t.Helper()
-		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		teatest.WaitFor(t, rec, func(out []byte) bool {
 			for _, want := range wants {
 				if !bytes.Contains(out, []byte(want)) {
 					return false
@@ -936,14 +954,12 @@ func TestAppModel_LocalSignInSkipsOIDCAndSecret(t *testing.T) {
 
 	wait("Get into Orbit")
 
-	out, err := io.ReadAll(tm.Output())
-	if err == nil {
-		if bytes.Contains(out, []byte("OIDC issuer")) || bytes.Contains(out, []byte("OIDC client ID")) {
-			t.Error("local sign-in reached an OIDC prompt")
-		}
-		if bytes.Contains(out, []byte("OIDC client secret")) {
-			t.Error("local sign-in reached the secret step")
-		}
+	seen := rec.everything()
+	if strings.Contains(seen, "OIDC issuer") || strings.Contains(seen, "OIDC client ID") {
+		t.Error("local sign-in reached an OIDC prompt")
+	}
+	if strings.Contains(seen, "OIDC client secret") {
+		t.Error("local sign-in reached the secret step")
 	}
 
 	tm.Send(ctrlC())

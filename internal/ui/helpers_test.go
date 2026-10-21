@@ -6,6 +6,8 @@ package ui
 // engine run pushes into.
 
 import (
+	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -171,4 +173,29 @@ func moveCaretTo[M tea.Model](t *testing.T, m M, label string) M {
 	}
 	t.Fatalf("the caret never reached %q; rows %q:\n%s", label, screenLabels(screen(m)), screen(m))
 	return m
+}
+
+// recordedOutput wraps a teatest output stream and keeps every byte read
+// through it. teatest.WaitFor consumes what it reads, so a "was X ever
+// shown" check made after a later wait sees only what came after that
+// wait; hand every wait this wrapper instead of tm.Output() and ask it
+// afterwards. everything also reads whatever is still unread.
+type recordedOutput struct {
+	r    io.Reader
+	seen bytes.Buffer
+}
+
+func recordOutput(r io.Reader) *recordedOutput { return &recordedOutput{r: r} }
+
+func (o *recordedOutput) Read(p []byte) (int, error) {
+	n, err := o.r.Read(p)
+	o.seen.Write(p[:n])
+	return n, err
+}
+
+// everything is all the output seen so far with the escape codes
+// removed, so text the renderer wrote in separate pieces reads as one.
+func (o *recordedOutput) everything() string {
+	_, _ = io.Copy(io.Discard, o)
+	return ansi.Strip(o.seen.String())
 }
