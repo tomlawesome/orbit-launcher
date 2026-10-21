@@ -226,7 +226,8 @@ func TestPlanLine_NamesWhatItIsAbout(t *testing.T) {
 }
 
 // TestPlanLine_EveryLineFitsIn80Columns (review F5): every plan line
-// the other tests know stays within 80 cells: each action and reason
+// the other tests know, wrapped at the plan width an 80-column screen
+// gives it, has no row wider than that width: each action and reason
 // pair in a fixture (with its own mutation and backup), each action word
 // against the reason TestPlanLine_ActionWords uses, and the manual action
 // against each reason TestPlanLine_NamesWhatItIsAbout uses.
@@ -256,21 +257,24 @@ func TestPlanLine_EveryLineFitsIn80Columns(t *testing.T) {
 		known = append(known, engine.PlanAction{Action: "manual", Resolves: c, Mutation: "none", Backup: "not-required"})
 	}
 
+	// The text wraps at the prose measure; the glyph and its space (or
+	// the continuation indent) add two cells.
+	limit := measure(80, proseWidth) + 2
 	for _, p := range known {
-		got := ansi.Strip(planLine(p))
-		if w := lipgloss.Width(got); w > 80 {
-			t.Errorf("%d cells, want at most 80: action=%s resolves=%s mutation=%s backup=%s: %q", w, p.Action, p.Resolves, p.Mutation, p.Backup, got)
+		for _, row := range planRows(p, measure(80, proseWidth)) {
+			got := strings.TrimRight(ansi.Strip(row), " ")
+			if w := lipgloss.Width(got); w > limit {
+				t.Errorf("%d cells, want at most %d: action=%s resolves=%s mutation=%s backup=%s: %q", w, limit, p.Action, p.Resolves, p.Mutation, p.Backup, got)
+			}
 		}
 	}
 }
 
-// The line found too wide still says what it is about once shortened.
+// The restart line for a stale container reads in full, as the other
+// actions' lines do: the screen wraps it, so it is not shortened to fit.
 func TestPlanLine_RestartForAStaleContainerFitsAndSaysWhatItIsAbout(t *testing.T) {
 	got := ansi.Strip(planLine(engine.PlanAction{Action: "restart-services", Resolves: "stale-container", Mutation: "reversible", Backup: "not-required"}))
-	if w := lipgloss.Width(got); w > 80 {
-		t.Errorf("the restart line for a stale container is %d cells, want at most 80: %q", w, got)
-	}
-	for _, want := range []string{"restart Orbit's services", "container"} {
+	for _, want := range []string{"restart Orbit's services", "a container is running an older image than configured"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the restart line for a stale container reads %q, which lacks %q", got, want)
 		}

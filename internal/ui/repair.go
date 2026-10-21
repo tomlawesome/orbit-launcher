@@ -952,15 +952,12 @@ func (m RepairModel) viewDiagnosis() string {
 	head := b.String()
 	b.Reset()
 
-	for _, f := range sortedFindings(m.findings) {
-		fmt.Fprintln(&b, findingLine(f))
-	}
+	var summary strings.Builder
 	if len(m.findings) > 0 {
-		fmt.Fprintln(&b)
+		fmt.Fprintln(&summary)
 	}
-
 	if m.diagnosis != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
+		fmt.Fprintln(&summary, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
 	}
 
 	steps, after := m.planParts(result)
@@ -971,16 +968,30 @@ func (m RepairModel) viewDiagnosis() string {
 	fmt.Fprintln(&tail)
 	m.menu.over(m.planMenu()).write(&tail)
 
+	// The findings take the rows the header, the summary, the whole
+	// plan and the menu leave, as the steps do, so an older repair.sh
+	// with many findings never pushes the menu off the screen.
+	stepRows := 0
+	for _, step := range steps {
+		stepRows += len(step)
+	}
+	findRoom := math.MaxInt
+	if m.height > 0 {
+		findRoom = m.height - 1 - strings.Count(head, "\n") - strings.Count(summary.String(), "\n") - strings.Count(tail.String(), "\n") - stepRows
+	}
+	var found [][]string
+	for _, f := range sortedFindings(m.findings) {
+		found = append(found, []string{findingLine(f)})
+	}
+	m.writeSteps(&b, found, findRoom)
+	b.WriteString(summary.String())
+
 	// The services block sits above the findings and takes the rows the
 	// rest leaves (the whole plan counted, since the steps can shorten
 	// themselves but the block should not squeeze them): the full list
 	// when it fits, else the running rows folded. The last row is left
 	// to the sky, as on every scene screen.
 	m.loadServices()
-	stepRows := 0
-	for _, step := range steps {
-		stepRows += len(step)
-	}
 	rest := head + b.String()
 	svcRoom := math.MaxInt
 	if m.height > 0 {
@@ -1003,9 +1014,9 @@ func (m RepairModel) viewDiagnosis() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
-// writeSteps writes the plan's steps into room rows: all of them when
-// they fit, otherwise as many whole steps as fit and then one row
-// saying how many are not shown.
+// writeSteps writes the plan's steps (or the findings, one row each)
+// into room rows: all of them when they fit, otherwise as many whole
+// steps as fit and then one row saying how many are not shown.
 func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) {
 	total := 0
 	for _, step := range steps {
@@ -1058,8 +1069,10 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 		return nil, after
 	}
 
+	// The plan rows' text wraps at the same measure as the manual
+	// steps below, so the two never break at different widths.
 	for _, p := range m.planActions {
-		steps = append(steps, planRows(p, m.width))
+		steps = append(steps, planRows(p, measure(m.width, proseWidth)))
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
@@ -1081,29 +1094,23 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
 }
 
-// planLine renders one proposed action on one row: the action in plain
-// words and what it resolves, with the backup requirement when the
-// contract demands one. The mutation class is deliberately not repeated
-// — the action words already carry it. Unknown enum values render
-// verbatim. Plan mode's stdout carries no separate finding lines, so the
-// resolves class is the reader's only pointer at the underlying problem
-// — always shown. The screen draws it with planRows, which wraps.
-func planLine(p engine.PlanAction) string {
-	return planRows(p, math.MaxInt)[0]
-}
-
-// planRows is planLine laid out for a screen width cells wide: a line
+// planRows renders one proposed action: the action in plain words and
+// what it resolves, with the backup requirement when the contract
+// demands one. The mutation class is deliberately not repeated — the
+// action words already carry it. Unknown enum values render as
+// visibleText. Plan mode's stdout carries no separate finding lines, so
+// the resolves class is the reader's only pointer at the underlying
+// problem — always shown. Its text wraps at limit cells: a line
 // too long for the row wraps as wrapWords does, its continuation rows
 // indented under the text after the glyph, so it is never cut at the
 // edge and "backup first" stays on screen. The action words keep their
 // ink on whichever rows they land.
-func planRows(p engine.PlanAction, width int) []string {
+func planRows(p engine.PlanAction, limit int) []string {
 	glyph := style.AccentText.Render(style.SymbolQueued)
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
-	// The glyph and its space take two cells off the row.
-	lines := wrapWords(planText(p), width-2)
+	lines := wrapWords(planText(p), limit)
 	// The action words lead the text; wrapWords drops only the space at
 	// each break, so each row's ink is what it shares with the action
 	// words not yet drawn (matched, not counted, as an unknown action
@@ -1175,11 +1182,6 @@ func planReasonWords(action, class string) string {
 		noun, lead = "application", "the application"
 	case "stale-container":
 		noun, lead = "container", "a container is"
-		if action == "restart-services" {
-			// Beside the restart's words, "is" pushes the line past
-			// 80 cells; without it the line still names the container.
-			lead = "a container"
-		}
 	case "secret-missing":
 		noun, lead = "secret", "a secret is"
 	case "managed-file-missing", "managed-file-symlink":
@@ -1268,7 +1270,7 @@ func sortedFindings(findings []engine.Finding) []engine.Finding {
 
 // findingLine renders one finding: severity glyph, the target in plain
 // words, the reason class in plain words. Unknown enum values render
-// verbatim — honest, never guessed at.
+// verbatim as visibleText — honest, never guessed at.
 func findingLine(f engine.Finding) string {
 	glyph := style.Tagline.Render(style.SymbolQueued)
 	switch f.Severity {
@@ -1308,7 +1310,8 @@ func targetWords(target string) string {
 	case "application":
 		return "application"
 	default:
-		return target
+		// The engine's value as given, escaped: it is drawn on screen.
+		return visibleText(target)
 	}
 }
 
@@ -1375,6 +1378,7 @@ func classWords(class string) string {
 	case "database-schema-mismatch":
 		return "migrated by a different Orbit version"
 	default:
-		return class
+		// The engine's value as given, escaped: it is drawn on screen.
+		return visibleText(class)
 	}
 }
