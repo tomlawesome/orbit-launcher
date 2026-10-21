@@ -362,7 +362,7 @@ func TestSplashDegraded_DrawerRowsAreCentredOnTheAxis(t *testing.T) {
 	}())
 	s := screen(m)
 	for _, row := range []string{"certificate rejected", "2 of 3 services running"} {
-		assertCentredWith(t, s, row, "ORBIT")
+		assertCentredWith(t, s, row, "O R B I T")
 		assertCentredWith(t, s, row, "degraded")
 	}
 }
