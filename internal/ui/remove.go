@@ -84,6 +84,10 @@ type RemoveModel struct {
 	// of seam as standDown, nil in production, which means os.Stdout. Tests
 	// set it so they neither write to the real terminal nor go unchecked.
 	clipboard io.Writer
+
+	// signalQuit is a SignalQuitMsg that arrived during the stand-down:
+	// the launcher quits as soon as the stand-down's result is in.
+	signalQuit bool
 }
 
 // NewRemoveModel constructs the Remove flow for a detected deployment. A
@@ -159,7 +163,19 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.after = newMenu(removeDoneRows[1:]...)
 			}
 		}
+		if m.signalQuit {
+			return m.handleKey(ctrlCPress)
+		}
 		return m, nil
+
+	case SignalQuitMsg:
+		// The stand-down is not interrupted (see handleKey), but nobody
+		// may be left to see its result, so the quit waits for it.
+		if m.state == removeStateStandingDown {
+			m.signalQuit = true
+			return m, nil
+		}
+		return m.handleKey(ctrlCPress)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)

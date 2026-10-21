@@ -99,6 +99,9 @@ type RepairModel struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	quitting bool
+	// signalQuit is a SignalQuitMsg that arrived during the safe
+	// repairs: the launcher quits as soon as they have finished.
+	signalQuit bool
 
 	// Done/WantsMenu surface the outcome to AppModel, exactly like a
 	// flow's engine run.
@@ -281,6 +284,22 @@ func (m RepairModel) startRotate() tea.Cmd {
 
 // Update implements tea.Model.
 func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(SignalQuitMsg); ok {
+		// The safe repairs ignore Ctrl-C (see handleKey), but nobody may
+		// be left to see their result, so the quit waits for them.
+		if m.state == repairExecuting {
+			m.signalQuit = true
+		}
+		return m.handleKey(ctrlCPress)
+	}
+	updated, cmd := m.update(msg)
+	if r := updated.(RepairModel); r.signalQuit && r.state != repairExecuting {
+		return r.handleKey(ctrlCPress)
+	}
+	return updated, cmd
+}
+
+func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		// See RemoveModel.Update: the sky is built here, the tick chain

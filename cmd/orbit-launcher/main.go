@@ -119,14 +119,15 @@ func startApp(stdout, stderr io.Writer) int {
 }
 
 // forwardSignals reads sigs and, for SIGHUP (a dropped SSH session) and
-// SIGTERM, hands send a Ctrl-C key press, so the launcher stops the way
+// SIGTERM, hands send a ui.SignalQuitMsg, so the launcher stops the way
 // Ctrl-C stops it: the engine gets its polite stop and grace, and the
-// staged install.sh and configuration tree are removed. SIGINT keeps
-// what Bubble Tea's handler did with it: an interrupt (the program ends
-// with an error), except while install.sh holds the terminal, when it is
-// the person's Ctrl-C to install.sh and is dropped. stop ends the
-// forwarding and returns once the goroutine has; it is safe to call
-// twice.
+// staged install.sh and configuration tree are removed. Unlike the key,
+// it is not dropped by a step that ignores Ctrl-C: it quits once that
+// step finishes. SIGINT keeps what Bubble Tea's handler did with it: an
+// interrupt (the program ends with an error), except while install.sh
+// holds the terminal, when it is the person's Ctrl-C to install.sh and
+// is dropped. stop ends the forwarding and returns once the goroutine
+// has; it is safe to call twice.
 func forwardSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func()) {
 	quit, done := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -138,7 +139,7 @@ func forwardSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func()) {
 			case sig := <-sigs:
 				switch sig {
 				case syscall.SIGHUP, syscall.SIGTERM:
-					send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+					send(ui.SignalQuitMsg{})
 				case syscall.SIGINT:
 					if !ui.TerminalHandedOver() {
 						send(tea.InterruptMsg{})
