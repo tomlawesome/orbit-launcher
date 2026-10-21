@@ -404,7 +404,7 @@ func TestPhraseMatches(t *testing.T) {
 }
 
 func TestNotice_ExtremeSizesDoNotPanic(t *testing.T) {
-	for _, size := range [][2]int{{40, 10}, {200, 60}, {10, 3}} {
+	for _, size := range [][2]int{{40, 10}, {200, 60}, {10, 3}, {41, 26}} {
 		m, clock, _ := openNotice(t, size[0], size[1], engineRunSeams{})
 		_ = m.View()
 		clock.advance(noticeDefaultDuration)
@@ -413,6 +413,29 @@ func TestNotice_ExtremeSizesDoNotPanic(t *testing.T) {
 		}
 		m = typeText(t, m, strings.Repeat("long text ", 10))
 		_ = m.View()
+		m, _ = updateAs(t, m, key(tea.KeyEnd))
+		_ = m.View()
+	}
+}
+
+// The row holding the longest unbreakable word may overrun a narrow
+// terminal (the screen edge clips it), but rendering it must never panic,
+// whatever the width, height or scroll offset.
+func TestNotice_NarrowTerminalsNeverPanicAtAnyOffset(t *testing.T) {
+	for w := 10; w < 80; w++ {
+		for _, h := range []int{3, 10, 24, 26} {
+			n := newNotice(time.Now(), w, h)
+			for off := 0; off <= n.maxOffset(); off++ {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							t.Fatalf("view panicked at width %d, height %d, offset %d: %v", w, h, off, r)
+						}
+					}()
+					_ = n.scrollTo(off).view(time.Now(), noticeDefaultDuration)
+				}()
+			}
+		}
 	}
 }
 
