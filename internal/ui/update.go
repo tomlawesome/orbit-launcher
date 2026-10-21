@@ -152,8 +152,10 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.left = true
 	case chosen == "Update Orbit":
 		m.state = updateStateRunning
+		// Only an address names the deployment in the title; without
+		// one, "deployment detected" adds nothing to a plain "Update".
 		title := "Update"
-		if m.deployment != nil {
+		if m.deployment != nil && m.deployment.AppURL != "" {
 			title = "Update — " + deploymentIdentity(m.deployment)
 		}
 		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)

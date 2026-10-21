@@ -105,7 +105,7 @@ func TestIdentity_ConfirmScreensKeepTheHostWhenThereIsOne(t *testing.T) {
 func TestIdentity_UpdateTitleNamesTheDeployment(t *testing.T) {
 	cases := map[*deploy.Deployment]string{
 		{TargetDir: "/opt/orbit", AppURL: "https://mail.example.com"}: "Update — mail.example.com",
-		wi10NoURL(): "Update — " + wi10Detected,
+		wi10NoURL(): "Update",
 	}
 	for d, want := range cases {
 		updated, _ := wi10UpdateModel(d).Update(key(tea.KeyEnter)) // Update Orbit
