@@ -453,7 +453,9 @@ func (m SplashModel) statusRow() string {
 	}
 	word := style.DegradedText.Render("degraded") + " " + style.Tagline.Render(chevron)
 	if m.onStatusRow {
-		return style.MenuCaret.Render(style.SymbolSelected) + " " + word
+		// The same trailing pad as menuRow, so the caret does not shift
+		// the row's centre.
+		return style.MenuCaret.Render(style.SymbolSelected) + " " + word + "  "
 	}
 	return word
 }

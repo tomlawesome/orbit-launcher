@@ -78,9 +78,13 @@ func lineIndex(s, sub string) int {
 }
 
 // centreCol is the middle column of a row's visible text.
+// sky is what a screen row may carry besides its text: padding and the
+// starfield's glyphs. Rows are read with it taken off their ends.
+const sky = " .·✦●"
+
 func centreCol(line string) float64 {
-	trimmed := strings.TrimRight(line, " ")
-	text := strings.TrimLeft(trimmed, " ")
+	trimmed := strings.TrimRight(line, sky)
+	text := strings.TrimLeft(trimmed, sky)
 	lead := utf8.RuneCountInString(trimmed) - utf8.RuneCountInString(text)
 	return float64(lead) + float64(utf8.RuneCountInString(text))/2
 }
@@ -105,8 +109,8 @@ func assertCentredWith(t *testing.T, s, a, b string) {
 func caretRows(s string) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), style.SymbolSelected) {
-			out = append(out, strings.TrimSpace(l))
+		if row := strings.Trim(l, sky); strings.HasPrefix(row, style.SymbolSelected) {
+			out = append(out, row)
 		}
 	}
 	return out
@@ -275,14 +279,17 @@ func TestSplashDegraded_EscOnTheClosedRowDoesNothing(t *testing.T) {
 }
 
 func TestSplashDegraded_EnterOnTheRowNeverChoosesOrQuits(t *testing.T) {
+	// Enter opens the drawer, Enter again closes it onto Repair; neither
+	// press chooses a menu item or quits.
 	m := onDegradedRow(t)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		var cmd tea.Cmd
 		m, cmd = updateAs(t, m, key(tea.KeyEnter))
 		if m.Chosen != "" || m.quitting || (cmd != nil && isQuit(cmd)) {
 			t.Fatalf("press %d chose %q / quit", i+1, m.Chosen)
 		}
 	}
+	assertCaretOn(t, screen(m), "Repair")
 }
 
 func TestSplashDegraded_AliveHasNoRowUpWrapsToExit(t *testing.T) {
