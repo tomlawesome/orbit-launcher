@@ -1268,7 +1268,7 @@ func sortedFindings(findings []engine.Finding) []engine.Finding {
 
 // findingLine renders one finding: severity glyph, the target in plain
 // words, the reason class in plain words. Unknown enum values render
-// verbatim — honest, never guessed at.
+// verbatim as visibleText — honest, never guessed at.
 func findingLine(f engine.Finding) string {
 	glyph := style.Tagline.Render(style.SymbolQueued)
 	switch f.Severity {
@@ -1308,7 +1308,8 @@ func targetWords(target string) string {
 	case "application":
 		return "application"
 	default:
-		return target
+		// The engine's value as given, escaped: it is drawn on screen.
+		return visibleText(target)
 	}
 }
 
@@ -1375,6 +1376,7 @@ func classWords(class string) string {
 	case "database-schema-mismatch":
 		return "migrated by a different Orbit version"
 	default:
-		return class
+		// The engine's value as given, escaped: it is drawn on screen.
+		return visibleText(class)
 	}
 }
