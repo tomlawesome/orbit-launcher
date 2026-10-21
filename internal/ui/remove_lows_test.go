@@ -93,8 +93,9 @@ exit 1
 	if n := strings.Count(s, "Stopping"); n > 12 {
 		t.Errorf("%d progress lines on the failed screen, want a short tail (the engine failure screen keeps six)", n)
 	}
-	if !strings.Contains(s, "active endpoints") && !strings.Contains(s, "Stand-down stopped") {
-		t.Errorf("none of the error survived the cap:\n%s", s)
+	// Docker's reason is the last line it prints, so a tail cap keeps it.
+	if !strings.Contains(s, "active endpoints") {
+		t.Errorf("Docker's reason did not survive the cap:\n%s", s)
 	}
 }
 
