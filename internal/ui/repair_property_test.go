@@ -4,46 +4,126 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"strconv"
+	"strings"
 	"testing"
 )
 
-// TestRepairModel_NeverMutatesAnything statically scans repair.go and
-// fails if it contains any direct call capable of touching the
-// filesystem or spawning a process. The diagnosis flow's only writes
-// and spawns live behind the deploy/engine seams (fetch, stage, run),
-// where they carry repair.sh's own read-only contract — the UI layer
-// itself must stay incapable of acting on a deployment, so a future
-// screen change can't quietly grow a side effect.
+// repairFiles are the files that draw and drive the Repair screen. They
+// are the UI layer of Repair: whatever touches the deployment or starts a
+// process does it behind a seam in deploy or engine, never here.
+var repairFiles = []string{"repair.go", "repair_services.go", "repair_foreign.go"}
+
+// repairForbiddenImports are the packages whose every use is a way to
+// touch the filesystem, the network or a process directly. Reaching them
+// by any name — a call, a function value, a renamed import — counts.
+var repairForbiddenImports = map[string]bool{
+	"os":        true,
+	"os/exec":   true,
+	"syscall":   true,
+	"io/ioutil": true,
+	"io/fs":     true,
+	"net":       true,
+	"net/http":  true,
+}
+
+// repairAllowedUses are the only selections from a forbidden package the
+// Repair files may make: standard output as the writer the copy sequence
+// goes to (repair_foreign.go), which is a value, not an action.
+var repairAllowedUses = map[string]bool{"os.Stdout": true}
+
+// repairAllowedCalls are the only functions of deploy and engine the
+// Repair files may call. Each one is the seam where Repair reaches
+// outside the process (RepairCommand builds repair.sh's command and the
+// two Start functions run it with repair.sh's own read-only contract;
+// ServiceStates asks Docker for container states; Detect reads
+// .env-orbit) or builds text (ChownCommandWords). A new entry point
+// gets in only by being added here, after someone has asked what it does.
+var repairAllowedCalls = map[string]bool{
+	"deploy.RepairCommand":     true,
+	"deploy.ServiceStates":     true,
+	"deploy.Detect":            true,
+	"deploy.ChownCommandWords": true,
+	"engine.Start":             true,
+	"engine.StartInteractive":  true,
+}
+
+// TestRepairModel_NeverMutatesAnything statically scans the Repair
+// screen's files and fails if one reaches the filesystem, the network or
+// a process directly, or calls a deploy or engine function that is not on
+// the list of known seams. The diagnosis flow's only writes and spawns
+// live behind those seams, where they carry repair.sh's own contract —
+// the UI layer itself must stay incapable of acting on a deployment, so a
+// future screen change can't quietly grow a side effect.
 func TestRepairModel_NeverMutatesAnything(t *testing.T) {
-	src, err := os.ReadFile("repair.go")
-	if err != nil {
-		t.Fatalf("read repair.go: %v", err)
+	for _, name := range repairFiles {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+
+		// Local name -> import path, so a renamed import is still seen.
+		local := map[string]string{}
+		for _, im := range file.Imports {
+			path, err := strconv.Unquote(im.Path.Value)
+			if err != nil {
+				t.Fatalf("%s: import %s: %v", name, im.Path.Value, err)
+			}
+			base := path[strings.LastIndex(path, "/")+1:]
+			if im.Name != nil {
+				base = im.Name.Name
+			}
+			if base == "." {
+				t.Errorf("%s: dot-imports %s, which hides what the file calls", name, path)
+			}
+			local[base] = path
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			id, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			path, imported := local[id.Name]
+			if !imported {
+				return true
+			}
+			use := path[strings.LastIndex(path, "/")+1:] + "." + sel.Sel.Name
+			if repairForbiddenImports[path] && !repairAllowedUses[use] {
+				t.Errorf("%s: %s uses %s — Repair must not be able to touch the filesystem, the network or a process", fset.Position(sel.Pos()), name, use)
+			}
+			return true
+		})
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			id, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			path, imported := local[id.Name]
+			if !imported || !strings.HasSuffix(path, "/internal/deploy") && !strings.HasSuffix(path, "/internal/engine") {
+				return true
+			}
+			use := path[strings.LastIndex(path, "/")+1:] + "." + sel.Sel.Name
+			// engine's parsers read one event line and return a value.
+			if strings.HasPrefix(use, "engine.Parse") || repairAllowedCalls[use] {
+				return true
+			}
+			t.Errorf("%s: %s calls %s, which is not a known Repair seam (repairAllowedCalls)", fset.Position(call.Pos()), name, use)
+			return true
+		})
 	}
-
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "repair.go", src, 0)
-	if err != nil {
-		t.Fatalf("parse repair.go: %v", err)
-	}
-
-	forbiddenPackages := map[string]bool{"exec": true, "os": true}
-
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		pkgIdent, ok := sel.X.(*ast.Ident)
-		if !ok || !forbiddenPackages[pkgIdent.Name] {
-			return true
-		}
-		pos := fset.Position(call.Pos())
-		t.Errorf("%s: repair.go calls %s.%s — Repair must not be able to touch the filesystem or spawn a process", pos, pkgIdent.Name, sel.Sel.Name)
-		return true
-	})
 }
