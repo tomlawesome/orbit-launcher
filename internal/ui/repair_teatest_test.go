@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -329,27 +330,44 @@ exit 3`)
 		return engine.StartInteractive(exec.Command("bash", "-c", rotationScript))
 	}
 	tm := newRepairTestModel(t, m, 80, 26)
+	// Every wait reads through rec, which keeps what WaitFor consumes, so
+	// the passphrase check at the end sees the whole journey, from the
+	// first key typed.
+	rec := recordOutput(tm.Output())
 
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("Rotate database credentials")) &&
 			bytes.Contains(out, []byte("Repairs proposed"))
 	}, teatest.WithDuration(5*time.Second))
 
 	// The rotation entry is preselected (only executable action).
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("The action word")) &&
 			bytes.Contains(out, []byte("type rotate to proceed"))
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Type("rotate")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("Checkpoint passphrase"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Type("orbit-checkpoint-pass")
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	typeSecret := func() {
+		t.Helper()
+		// Wait for the frame the typing produced before Enter: sent
+		// together, the renderer may skip the typed state altogether and
+		// there would be nothing for the echo check to see. The row
+		// shows the mask or, wrongly, the text.
+		tm.Type("orbit-checkpoint-pass")
+		teatest.WaitFor(t, rec, func(out []byte) bool {
+			shown := ansi.Strip(string(out))
+			return strings.Contains(shown, strings.Repeat(style.SymbolMasked, secretMaskWidth)) ||
+				strings.Contains(shown, "orbit-checkpoint-pass")
+		}, teatest.WithDuration(5*time.Second))
+		tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	}
+	typeSecret()
 	// "Confirm the passphrase" is centred over the same columns as
 	// "Checkpoint passphrase" before it, and shares its first letter and
 	// its last word with it, so the cell diff only ever carries the middle
@@ -357,21 +375,19 @@ exit 3`)
 	// TestRepairModel_TeaTest_SafeExecutionRunsAndShowsAfterPicture. The
 	// proof that both prompts were answered is the completed run waited
 	// for below; this is only the synchronisation before typing.
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("onfirm the"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Type("orbit-checkpoint-pass")
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+	typeSecret()
+	teatest.WaitFor(t, rec, func(out []byte) bool {
 		return bytes.Contains(out, []byte("Repairs applied")) &&
 			bytes.Contains(out, []byte("rotate database credentials")) &&
 			bytes.Contains(out, []byte("diagnosis clear after repairs"))
 	}, teatest.WithDuration(5*time.Second))
 
-	// The passphrase must never have been echoed.
-	out, err := io.ReadAll(tm.Output())
-	if err == nil && bytes.Contains(out, []byte("orbit-checkpoint-pass")) {
+	// The passphrase must never have been echoed, at either prompt.
+	if strings.Contains(rec.everything(), "orbit-checkpoint-pass") {
 		t.Fatal("the checkpoint passphrase was echoed to the screen")
 	}
 

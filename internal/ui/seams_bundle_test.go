@@ -163,7 +163,9 @@ func TestAppHandsRotateSeamToRepair(t *testing.T) {
 		*app, next = updateAs(t, *app, msg)
 		return next
 	})
-	loop.settle(cmd)
+	loop.settle(cmd, "the plan screen", func() bool {
+		return strings.Contains(ansi.Strip(app.View().Content), "Rotate database credentials")
+	})
 
 	// The plan screen proves the repair seam reached the flow and the
 	// rotation entry is there to be chosen: the absence checked below
@@ -178,7 +180,12 @@ func TestAppHandsRotateSeamToRepair(t *testing.T) {
 		t.Fatalf("the rotate seam ran before the rotation was chosen (%d calls)", before)
 	}
 
-	loop.settle(loop.update(key(tea.KeyEnter))) // the rotation is preselected
+	// The rotation is preselected; Enter hands it to the rotate seam.
+	loop.settle(loop.update(key(tea.KeyEnter)), "the rotate seam to be called", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(called) > 0
+	})
 
 	mu.Lock()
 	defer mu.Unlock()

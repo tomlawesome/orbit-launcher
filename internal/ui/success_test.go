@@ -7,6 +7,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/ansi"
+	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 func newTestSuccessModel() SuccessModel {
@@ -112,20 +115,28 @@ func TestSuccessModel_MenuSignalsReturnWithoutQuitting(t *testing.T) {
 	}
 }
 
-func TestSuccessModel_WordmarkIsGreen(t *testing.T) {
-	// The wordmark carries the alive colour on success — the same
-	// being as the splash, now green (design/mockups-v5.html §03).
+func TestSuccessModel_MarkIsAliveGreenAndWordmarkIsInk(t *testing.T) {
+	// The mark alone carries the alive colour on success; the wordmark
+	// stays full ink, because states outrank brand (success.go,
+	// centreBlockLines). The view must hold the mark drawn in the success
+	// style and the wordmark drawn in the wordmark's own style, and those
+	// must be different colours.
 	m := newTestSuccessModel()
-	if !strings.Contains(m.View().Content, "\x1b[") {
-		t.Skip("styling disabled in this environment")
+	view := m.View().Content
+
+	wantMark := style.SuccessText.Render(style.SymbolMark)
+	if ansi.Strip(wantMark) == wantMark {
+		t.Fatal("the success style applies no colour at all")
 	}
-	// #4ade80 -> 78;222;128 in truecolor profiles; lipgloss may also
-	// downsample, so assert on the seam that matters: the view differs
-	// from a dormant splash's white wordmark rendering.
-	splash := NewSplashModel()
-	updatedSplash, _ := splash.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
-	if m.View().Content == updatedSplash.(SplashModel).View().Content {
-		t.Error("success screen must not render identically to the splash")
+	if !strings.Contains(view, wantMark) {
+		t.Errorf("the mark is not drawn in the success colour %q:\n%q", wantMark, view)
+	}
+	wantWordmark := style.Wordmark("ORBIT")
+	if !strings.Contains(view, wantWordmark) {
+		t.Errorf("the wordmark is not drawn in the ink style %q:\n%q", wantWordmark, view)
+	}
+	if strings.Contains(view, style.SuccessText.Render("O R B I T")) {
+		t.Error("the wordmark is drawn in the success colour; only the mark is green")
 	}
 }
 

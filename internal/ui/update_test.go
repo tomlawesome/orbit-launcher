@@ -178,7 +178,9 @@ func TestUpdateModel_ConfigurationRefusalGoesStraightIntoGuidedConfigurationToo(
 		},
 	})
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = drive(t, updated, cmd, s).(UpdateModel)
+	// Watched at every step: the removed configuration screen must never
+	// come up on the way, not merely be absent from the last screen.
+	m = driveWatching(t, updated, cmd, removedConfigScreenText, s).(UpdateModel)
 
 	if m.run.state != runConfigSignInMode {
 		t.Fatalf("run state = %v, want the guided session's sign-in-mode screen with no key pressed", m.run.state)
@@ -189,11 +191,6 @@ func TestUpdateModel_ConfigurationRefusalGoesStraightIntoGuidedConfigurationToo(
 	v := screen(m)
 	if !strings.Contains(v, "How will people sign in?") {
 		t.Fatalf("not in guided configuration:\n%s", v)
-	}
-	for _, gone := range []string{"The engine stopped before touching anything", "Continue — guided configuration"} {
-		if strings.Contains(v, gone) {
-			t.Errorf("the removed configuration screen is still shown (%q):\n%s", gone, v)
-		}
 	}
 }
 

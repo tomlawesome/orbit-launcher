@@ -206,6 +206,9 @@ func stepSpan(row string, words []string) int {
 // is about. "needs your hands — can't be reached" leaves the operator
 // guessing what cannot be reached; the subject must be named. The manual
 // action is used so the action's own words cannot supply the subject.
+// These classes are the ones whose reason has to carry the subject
+// itself; each must be a class Orbit really sends (realPlanPairs), so the
+// list cannot go on naming a class that has been renamed or dropped.
 func TestPlanLine_NamesWhatItIsAbout(t *testing.T) {
 	subjects := map[string]string{
 		"database-unreachable":         "database",
@@ -214,7 +217,15 @@ func TestPlanLine_NamesWhatItIsAbout(t *testing.T) {
 		"stale-container":              "container",
 		"secret-missing":               "secret",
 	}
+	real := map[string]bool{}
+	for _, c := range realClasses() {
+		real[c] = true
+	}
 	for class, subject := range subjects {
+		if !real[class] {
+			t.Errorf("%q is not a class Orbit's repair.sh sends (realPlanPairs); drop it from this test or rename it", class)
+			continue
+		}
 		got := ansi.Strip(planLine(engine.PlanAction{Action: "manual", Resolves: class, Mutation: "none", Backup: "not-required"}))
 		if !strings.Contains(got, subject) {
 			t.Errorf("plan line for %q reads %q, which never says it is about the %s (want e.g. \"the %s ...\")", class, got, subject, subject)
@@ -226,46 +237,46 @@ func TestPlanLine_NamesWhatItIsAbout(t *testing.T) {
 }
 
 // TestPlanLine_EveryLineFitsIn80Columns (review F5): every plan line
-// the other tests know, wrapped at the plan width an 80-column screen
-// gives it, has no row wider than that width: each action and reason
-// pair in a fixture (with its own mutation and backup), each action word
-// against the reason TestPlanLine_ActionWords uses, and the manual action
-// against each reason TestPlanLine_NamesWhatItIsAbout uses.
+// Orbit can send fits an 80-column screen, once laid out for it: planRows
+// wraps a long line at the plan width an 80-column screen gives it, no row
+// wider than that width plus the glyph's two cells, and
+// "backup first" stays on the screen. The lines come from realPlanPairs,
+// not from a list kept here: each real pair with its own mutation and
+// backup, and again with the backup value flipped, so a pair added to
+// realPlanPairs is measured at once. (An action against a class Orbit
+// never gives it, such as a credential rotation for a symlinked file, is
+// not a line Orbit sends and is not measured. Unwrapped, five real lines
+// run past 80 cells, up to 99, which is why the screen wraps them.)
 func TestPlanLine_EveryLineFitsIn80Columns(t *testing.T) {
-	known := []engine.PlanAction{
-		// Fixtures across the package's tests.
-		{Action: "fix-permissions", Resolves: "managed-file-permissions", Mutation: "reversible", Backup: "not-required"},
-		{Action: "fix-permissions", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
-		{Action: "manual", Resolves: "database-unreachable", Mutation: "none", Backup: "not-required"},
-		{Action: "manual", Resolves: "volume-retained-without-credentials", Mutation: "none", Backup: "not-required"},
-		{Action: "manual", Resolves: "secret-stale", Mutation: "none", Backup: "required"},
-		{Action: "regenerate-secret", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
-		{Action: "rerun-configuration", Resolves: "configuration-incomplete", Mutation: "none", Backup: "not-required"},
-		{Action: "restart-services", Resolves: "stale-container", Mutation: "reversible", Backup: "not-required"},
-		{Action: "rotate-database-credential", Resolves: "database-credential-mismatch", Mutation: "credential-rotation", Backup: "required"},
+	var known []engine.PlanAction
+	for _, p := range realPlanPairs {
+		known = append(known, p.planAction())
+		flipped := p.planAction()
+		if flipped.Backup == "required" {
+			flipped.Backup = "not-required"
+		} else {
+			flipped.Backup = "required"
+		}
+		known = append(known, flipped)
 	}
-	for _, a := range []string{
-		"fix-permissions", "rerun-configuration", "restore-transaction",
-		"rotate-database-credential", "regenerate-secret", "restart-services", "manual",
-	} {
-		known = append(known, engine.PlanAction{Action: a, Resolves: "migration-failed", Backup: "not-required"})
-	}
-	for _, c := range []string{
-		"database-unreachable", "database-credential-mismatch", "application-unhealthy",
-		"stale-container", "secret-missing",
-	} {
-		known = append(known, engine.PlanAction{Action: "manual", Resolves: c, Mutation: "none", Backup: "not-required"})
+	if len(known) != 2*len(realPlanPairs) || len(known) < 40 {
+		t.Fatalf("%d plan lines to measure; realPlanPairs is not being walked", len(known))
 	}
 
 	// The text wraps at the prose measure; the glyph and its space (or
 	// the continuation indent) add two cells.
 	limit := measure(80, proseWidth) + 2
 	for _, p := range known {
-		for _, row := range planRows(p, measure(80, proseWidth)) {
+		rows := planRows(p, measure(80, proseWidth))
+		for i, row := range rows {
 			got := strings.TrimRight(ansi.Strip(row), " ")
 			if w := lipgloss.Width(got); w > limit {
-				t.Errorf("%d cells, want at most %d: action=%s resolves=%s mutation=%s backup=%s: %q", w, limit, p.Action, p.Resolves, p.Mutation, p.Backup, got)
+				t.Errorf("row %d is %d cells, want at most %d: action=%s resolves=%s mutation=%s backup=%s: %q", i, w, limit, p.Action, p.Resolves, p.Mutation, p.Backup, got)
 			}
+		}
+		// A break between "backup" and "first" is fine; losing them is not.
+		if p.Backup == "required" && !strings.Contains(strings.Join(strings.Fields(ansi.Strip(strings.Join(rows, " "))), " "), "backup first") {
+			t.Errorf("the rows for action=%s resolves=%s lose \"backup first\"", p.Action, p.Resolves)
 		}
 	}
 }

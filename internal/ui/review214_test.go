@@ -8,7 +8,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -68,27 +67,33 @@ func TestConsole_EmojiPresentationLineStaysInsideTheBox(t *testing.T) {
 }
 
 // #157's line, as the console gets it: the cut stays linear in its
-// length. The bound is generous; the quadratic cut took minutes.
+// length, four times the line taking about four times as long, not
+// sixteen. The quadratic cut took minutes at the larger size. Two sizes
+// are compared, not one timed against a fixed number of seconds, so a
+// loaded host cannot fail the test.
 func TestTruncateStyled_OverlongProgressLineIsCutQuickly(t *testing.T) {
-	var b strings.Builder
-	for i := 1; i <= 4000; i++ {
-		b.WriteString(" waiting for postgres (")
-		b.WriteString(strings.Repeat("9", 4))
-		b.WriteString(")\r")
+	build := func(repeats int) string {
+		var b strings.Builder
+		for i := 1; i <= repeats; i++ {
+			b.WriteString(" waiting for postgres (")
+			b.WriteString(strings.Repeat("9", 4))
+			b.WriteString(")\r")
+		}
+		return b.String()
 	}
-	line := b.String()
+	line := build(4000)
 	if len(line) < 100000 {
 		t.Fatalf("test line is only %d bytes", len(line))
 	}
-	start := time.Now()
-	for i := 0; i < 10; i++ {
-		if got := truncateStyled(line, 72); lipgloss.Width(got) > 72 {
-			t.Fatalf("cut is %d cells", lipgloss.Width(got))
+	if got := truncateStyled(line, 72); lipgloss.Width(got) > 72 {
+		t.Fatalf("cut is %d cells", lipgloss.Width(got))
+	}
+	lines := map[int]string{1000: build(1000), 4000: line}
+	requireNearLinear(t, "cutting a progress line", 1000, 4000, func(repeats int) {
+		for range 10 {
+			truncateStyled(lines[repeats], 72)
 		}
-	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Errorf("ten cuts of a %d-byte line took %v", len(line), d)
-	}
+	})
 }
 
 // A line break in the text is kept, and a line that fits is written as

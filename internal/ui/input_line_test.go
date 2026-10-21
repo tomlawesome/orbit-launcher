@@ -326,8 +326,8 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=OIDC_CLIENT_ID kind=text required=true attempt=1"}})
 		r, _ = r.update(runeKey('a'))
 		r, _ = r.update(key(tea.KeyEsc))
-		if !r.Done || !r.WantsMenu {
-			t.Fatalf("Done=%v WantsMenu=%v, want the main menu (the session was cancelled)", r.Done, r.WantsMenu)
+		if o := outcomeOf(r); !leftForMenu(o) {
+			t.Fatalf("outcome = %+v, want back to the main menu without success (the session was cancelled)", o)
 		}
 		awaitEnd(t, s)
 		if stdin.String() != "" {

@@ -70,7 +70,7 @@ exit 1`
 				prepareConfig: planned(true, false),
 				startConfig:   scriptedConfig(script, machineSecretScript),
 			})
-			f.press(key(tea.KeyEnter)) // sign-in mode
+			f.pressUntil(key(tea.KeyEnter), "the failure screen", f.failed) // sign-in mode
 			s := f.screen()
 			if f.runState() != runFailed {
 				t.Fatalf("setup: run state = %v, want the failure screen:\n%s", f.runState(), s)
