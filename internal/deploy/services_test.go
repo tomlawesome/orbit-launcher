@@ -108,3 +108,23 @@ func TestServiceStates_SlowDockerIsCutOffAndSaysSo(t *testing.T) {
 		t.Errorf("err = %v, want one saying it did not finish within 1s", err)
 	}
 }
+
+func TestServiceState_Running(t *testing.T) {
+	for _, tc := range []struct {
+		state, health string
+		want          bool
+	}{
+		{"running", "healthy", true},
+		{"running", "", true},
+		{"running", "unhealthy", false},
+		{"running", "starting", false},
+		{"exited", "", false},
+		{"restarting", "", false},
+		{"", "", false},
+	} {
+		s := ServiceState{Service: "orbit-app", State: tc.state, Health: tc.health}
+		if got := s.Running(); got != tc.want {
+			t.Errorf("Running() for state %q health %q = %v, want %v", tc.state, tc.health, got, tc.want)
+		}
+	}
+}
