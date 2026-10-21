@@ -87,6 +87,20 @@ func TestDecisionsLows_AWaitingEnterThenNoVolumesContinuesLikeEnterAfterTheAnswe
 	}
 }
 
+// Moving the cursor while Enter waits drops the wait: the answer must
+// not then carry on with a row that is no longer chosen.
+func TestDecisionsLows_AMoveWhileWaitingDropsTheWaitingEnter(t *testing.T) {
+	m, answer := checkingInstall(t)
+	m, _ = updateAs(t, m, key(tea.KeyEnter), key(tea.KeyDown))
+	if strings.Contains(screen(m), "Checking") {
+		t.Errorf("the working line should go once the cursor moves:\n%s", screen(m))
+	}
+	m, _ = updateAs(t, m, answer)
+	if m.state != installStateProfile {
+		t.Errorf("the answer carried on with a dropped choice: state = %v", m.state)
+	}
+}
+
 func TestDecisionsLows_EnterAfterAnNoVolumeAnswerProceedsAtOnce(t *testing.T) {
 	m, answer := checkingInstall(t)
 	m, _ = updateAs(t, m, answer)
@@ -205,19 +219,32 @@ func loopEnvDir(t *testing.T) string {
 // screen, flattened to running text.
 func unreadableAdvice(t *testing.T, dir string, check func(t *testing.T, flat, raw string)) {
 	t.Helper()
-	for name, open := range map[string]func(*testing.T, AppModel) AppModel{
-		"Remove": openRemove,
-		"Update": func(t *testing.T, m AppModel) AppModel { return openUpdate(t, m, nil) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			m := NewAppModelNoAnimation().WithoutVolumeCheck()
-			m.targetDir = dir
-			m = open(t, m)
-			s := screen(m)
-			assertCouldntReadScreen(t, s, dir)
-			check(t, oneLine(s), s)
-		})
+	adviceOn(t, "Remove", openRemove, dir, check)
+	adviceOn(t, "Update", func(t *testing.T, m AppModel) AppModel { return openUpdate(t, m, nil) }, dir, check)
+}
+
+func adviceOn(t *testing.T, name string, open func(*testing.T, AppModel) AppModel, dir string, check func(t *testing.T, flat, raw string)) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		m := NewAppModelNoAnimation().WithoutVolumeCheck()
+		m.targetDir = dir
+		m = open(t, m)
+		s := screen(m)
+		assertCouldntReadScreen(t, s, dir)
+		check(t, proseOnly(s), s)
+	})
+}
+
+// proseOnly flattens a screen to running text without the starfield,
+// whose glyphs can land in the gap a wrapped sentence leaves.
+func proseOnly(s string) string {
+	var words []string
+	for _, w := range strings.Fields(s) {
+		if strings.Trim(w, ".·✦●") != "" {
+			words = append(words, w)
+		}
 	}
+	return strings.Join(words, " ")
 }
 
 func wantAdvice(t *testing.T, flat, raw string, shown []string, hidden ...string) {

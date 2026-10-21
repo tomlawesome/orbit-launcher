@@ -643,9 +643,10 @@ func promptWords(field, origin string) (label, hint string, notes []string) {
 // callbackNote names the redirect URI this deployment will actually sign
 // in through, which is the value the identity provider's registration
 // needs and the one most often got wrong. origin is the answer already
-// given for APP_URL; when it is missing or long enough to break the
-// 80-cell bar, the note falls back to the shape rather than a truncated
-// address someone might paste.
+// given for APP_URL. The note is two rows: what to do, then the address
+// alone, so it can be copied whole. When the origin is missing or the
+// address is wider than a prose row on an 80-cell screen, the note falls
+// back to the shape rather than a wrapped address someone might paste.
 func callbackNote(origin string) []string {
 	const callbackPath = "/api/auth/callback"
 	generic := []string{"register <your Orbit URL>" + callbackPath, "as the redirect URI in your provider"}
@@ -653,11 +654,11 @@ func callbackNote(origin string) []string {
 	if origin == "" || !strings.HasPrefix(origin, "https://") {
 		return generic
 	}
-	line := "register " + origin + callbackPath
-	if len(line) > 76 {
+	address := origin + callbackPath
+	if len(address) > measure(80, errorWidth) {
 		return generic
 	}
-	return []string{line, "as the redirect URI in your provider"}
+	return []string{"Register the redirect URI with your provider", address}
 }
 
 // rejectionWords maps the engine's rejection reason classes to honest

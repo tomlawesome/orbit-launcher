@@ -397,6 +397,10 @@ func TestNoConfirm_ALateStaleVolumeFindingNeverInterruptsTheNotice(t *testing.T)
 	m := NewInstallModel(noConfirmDir, "v9.9.9")
 	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
+	// Enter waits for the check (#267), so a finding can only reach the
+	// notice after a clean answer has let the flow through: a stray one
+	// must still never pull it back.
+	m, _ = updateAs(t, m, staleVolumesMsg{})
 	m, _ = noConfirmNotice(t, m)
 	m, _ = updateAs(t, m, m.Init()())
 	if m.state != installStateNotice {

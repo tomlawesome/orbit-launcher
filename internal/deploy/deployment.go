@@ -14,9 +14,13 @@ import (
 	"syscall"
 )
 
-// errNotRegularFile is why Detect refuses an EnvFile that is a pipe, a
-// device or a directory.
-var errNotRegularFile = errors.New("not a regular file")
+// Why Detect refuses an EnvFile that is not a regular file, wrapped in an
+// fs.PathError: a directory, or anything else (a pipe, a device). The UI
+// tells them apart with errors.Is, to advise on each.
+var (
+	ErrEnvIsDir      = errors.New("is a directory")
+	ErrEnvNotRegular = errors.New("not a regular file")
+)
 
 // The deployment's own files, named once here (#208): everything that
 // reads, writes, stands down or describes a deployment spells them
@@ -84,8 +88,10 @@ func Detect(targetDir string) (*Deployment, error) {
 	defer f.Close()
 	if info, err := f.Stat(); err != nil {
 		return nil, err
+	} else if info.IsDir() {
+		return nil, &fs.PathError{Op: "read", Path: envPath, Err: ErrEnvIsDir}
 	} else if !info.Mode().IsRegular() {
-		return nil, &fs.PathError{Op: "read", Path: envPath, Err: errNotRegularFile}
+		return nil, &fs.PathError{Op: "read", Path: envPath, Err: ErrEnvNotRegular}
 	}
 
 	d := &Deployment{TargetDir: targetDir, Project: defaultComposeProject}

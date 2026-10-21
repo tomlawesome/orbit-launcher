@@ -57,6 +57,10 @@ type AppModel struct {
 	// so tests need no Docker daemon; nil in production (real check).
 	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
 
+	// flowNoVolumeCheck is set by WithoutVolumeCheck: Install's Enter
+	// then never waits for the pre-flight.
+	flowNoVolumeCheck bool
+
 	// flowInstalledAt fakes Remove's and Update's install-date lookup
 	// the same way; nil in production (asks Docker).
 	flowInstalledAt func(context.Context, *deploy.Deployment) time.Time
@@ -154,6 +158,7 @@ func (m AppModel) WithSender(send func(tea.Msg)) AppModel {
 // screens: that date is read from the same daemon's volumes.
 func (m AppModel) WithoutVolumeCheck() AppModel {
 	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
+	m.flowNoVolumeCheck = true
 	m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	return m
 }
@@ -367,6 +372,10 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams
 		m.install.checkVolumes = m.flowCheckVolumes
+		if m.install.checkVolumes == nil {
+			m.install.checkVolumes = deploy.UnownedDatabaseVolumes
+		}
+		m.install.noVolumeCheck = m.flowNoVolumeCheck
 		m.install.noticeDuration = m.flowNoticeDuration
 		m.install.send = m.flowSend
 		m.state = appStateInstall

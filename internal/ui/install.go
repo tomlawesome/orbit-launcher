@@ -65,6 +65,20 @@ type InstallModel struct {
 	// daemon — production code leaves it nil and gets the real check.
 	checkVolumes func(context.Context, string) []deploy.DatabaseVolume
 
+	// noVolumeCheck is set when the pre-flight is disabled
+	// (AppModel.WithoutVolumeCheck): Enter then never waits for it.
+	noVolumeCheck bool
+
+	// volumesAnswered is set when the pre-flight's answer has arrived.
+	// Until then Enter on the profile screen waits (awaiting holds the
+	// row it chose) and the screen shows a working line. The check's own
+	// 5 s limit ends the wait: a timed-out check reports no volumes.
+	volumesAnswered bool
+	awaiting        string
+
+	// frame is the working line's spinner frame, advanced on the shared tick.
+	frame int
+
 	// notice is the development notice (#175) between the profile
 	// screen and the run; rebuilt fresh each time Standard is chosen.
 	notice noticeModel
@@ -211,6 +225,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if _, ok := msg.(tickMsg); ok {
 		m.star = m.star.Advance()
+		m.frame = nextFrame(m.frame)
 		if m.state != installStateRunning {
 			return m, tick()
 		}
@@ -237,6 +252,9 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if found, ok := msg.(staleVolumesMsg); ok {
+		m.volumesAnswered = true
+		chosen := m.awaiting
+		m.awaiting = ""
 		// Only the profile screen is interrupted. The check is async, so
 		// a quick hand can already be past it — and stopping someone
 		// mid-notice to report a pre-flight finding would be worse than
@@ -245,6 +263,11 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.staleVolumes = found.volumes
 			m.state = installStateStaleVolume
 			m.volume = newMenu(installVolumeRows...)
+			return m, nil
+		}
+		// None found: a waiting Enter carries on as it would have.
+		if chosen != "" && m.state == installStateProfile {
+			return m.chooseProfile(chosen)
 		}
 		return m, nil
 	}
@@ -310,17 +333,32 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	switch {
 	case back:
 		m.left = true
+		m.awaiting = ""
 	case chosen == "": // a move, or a key the menu does not use
-	case chosen == installStandard:
+		// A move drops a waiting Enter: the row it chose is no longer
+		// the one under the cursor.
+		m.awaiting = ""
+	case m.checkVolumes != nil && !m.volumesAnswered && !m.noVolumeCheck:
+		// The pre-flight has not answered: wait for it rather than
+		// moving on past a finding it is about to report.
+		m.awaiting = chosen
+	default:
+		return m.chooseProfile(chosen)
+	}
+	return m, nil
+}
+
+// chooseProfile acts on the row Enter chose on the profile screen.
+func (m InstallModel) chooseProfile(chosen string) (tea.Model, tea.Cmd) {
+	if chosen == installStandard {
 		// Standard opens the development notice (#175) directly (#248),
 		// fresh every time: going back and coming again restarts the
 		// countdown and closes the scroll gate.
 		m.state = installStateNotice
 		m.notice = newNotice(m.now(), m.width, m.height)
 		return m, noticeTick(m.notice.start)
-	default:
-		m.state = installStateUnavailableProfile
 	}
+	m.state = installStateUnavailableProfile
 	return m, nil
 }
 
@@ -455,6 +493,10 @@ func (m InstallModel) viewProfile() string {
 	}
 	fmt.Fprintln(&b)
 	m.writeProfileTable(&b)
+	if m.awaiting != "" {
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, workingLine(m.frame, "Checking for an old Orbit database…", ""))
+	}
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
