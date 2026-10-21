@@ -52,17 +52,19 @@ func deploymentIdentity(d *deploy.Deployment) string {
 	}
 	// Unparseable (a control character does that): take the host by hand,
 	// so a user:password part or a path never reaches the screen (#267
-	// FR3-2). The scheme goes, then everything from the first /, ? or #,
-	// then everything up to the last @.
+	// FR3-2). The scheme goes, then everything up to the last @ (so a
+	// password holding /, ? or # is gone before those are looked for),
+	// then everything from the first /, ? or #. A value this broken may
+	// name the wrong host; it never shows the account part.
 	host := d.AppURL
 	if _, rest, ok := strings.Cut(host, "://"); ok {
 		host = rest
 	}
-	if i := strings.IndexAny(host, "/?#"); i >= 0 {
-		host = host[:i]
-	}
 	if i := strings.LastIndexByte(host, '@'); i >= 0 {
 		host = host[i+1:]
+	}
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
 	}
 	return visibleText(host)
 }
