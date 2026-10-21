@@ -87,6 +87,25 @@ func TestConfigCollect_RecheckFailureFallsBackToTheHandoff(t *testing.T) {
 // fails, the stopped screen shows the adoption error, not the earlier
 // refusal or its tail.
 func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
+	// holdFiles gives the run the two things a failed adoption must let go
+	// of, each counting its releases: what the engine run staged (install.sh
+	// and the configuration tree) and the configuration session's own
+	// handle on the tree.
+	holdFiles := func(r *engineRun) (staged, session *int) {
+		staged, session = new(int), new(int)
+		r.cleanup = func() error { *staged++; return nil }
+		r.cfg.plan.cleanup = func() { *session++ }
+		return staged, session
+	}
+	requireReleasedOnce := func(t *testing.T, r engineRun, staged, session *int) {
+		t.Helper()
+		if *staged != 1 || *session != 1 {
+			t.Errorf("released the staged files %d times and the session's tree %d times, want each once", *staged, *session)
+		}
+		if r.cleanup != nil || r.cfg.plan.cleanup != nil {
+			t.Error("a released cleanup is still held, so a later exit would run it again")
+		}
+	}
 	const (
 		adoptErr   = "cannot write .env-orbit: permission denied"
 		refusal    = "configuration-failure"
@@ -102,10 +121,12 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 				t.Fatalf("setup: state = %v, want the configuration session", r.state)
 			}
 
+			staged, session := holdFiles(&r)
 			r, cmd := r.update(configAdoptedMsg{err: errors.New(adoptErr)})
 			if cmd != nil {
 				t.Fatal("a failed adoption must not retry the engine")
 			}
+			requireReleasedOnce(t, r, staged, session)
 			s := runScreen(r)
 			if r.state != runFailed || !strings.Contains(s, title) || !strings.Contains(s, adoptErr) {
 				t.Fatalf("state = %v, want %q showing the adoption error %q; screen:\n%s", r.state, title, adoptErr, s)
@@ -119,10 +140,12 @@ func TestConfigCollect_AdoptFailureStopsTheRunWithTheReason(t *testing.T) {
 	}
 	t.Run("session only", func(t *testing.T) {
 		r := collectingRun(t, engineRunSeams{})
+		staged, session := holdFiles(&r)
 		r, cmd := r.update(configAdoptedMsg{err: errors.New("configuration session left no .env-orbit")})
 		if cmd != nil {
 			t.Fatal("a failed adoption must not retry the engine")
 		}
+		requireReleasedOnce(t, r, staged, session)
 		s := runScreen(r)
 		if r.state != runFailed || !strings.Contains(s, "Install stopped") || !strings.Contains(s, "configuration session left no .env-orbit") {
 			t.Fatalf("state = %v, screen:\n%s", r.state, s)
