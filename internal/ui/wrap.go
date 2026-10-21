@@ -25,9 +25,10 @@ const (
 
 // measure is the wrap width of a screen's prose: the terminal's width
 // less the two-cell margin each side, capped at limit (proseWidth or
-// errorWidth).
+// errorWidth). It is never under one cell, so a row on a terminal four
+// columns wide or less still holds text rather than nothing.
 func measure(width, limit int) int {
-	return min(width-4, limit)
+	return max(1, min(width-4, limit))
 }
 
 // wrapShellCommand lays a shell command, given as its already-quoted
