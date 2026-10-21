@@ -75,6 +75,36 @@ var credentialCases = []struct {
 		wantHost: `m.example\r`,
 		hidden:   []string{"hunter", "admin", "tail"},
 	},
+	{
+		name:     "parseable: digits then # in the password",
+		appURL:   "https://admin:1234#x@mail.example.com",
+		wantHost: "mail.example.com",
+		hidden:   []string{"admin", "1234", "#x"},
+	},
+	{
+		name:     "parseable: digits then / in the password",
+		appURL:   "https://admin:12/x@mail.example.com",
+		wantHost: "mail.example.com",
+		hidden:   []string{"admin", ":12", "/x@"},
+	},
+	{
+		name:     "parseable: digits then ? in the password",
+		appURL:   "https://admin:1234?x@mail.example.com",
+		wantHost: "mail.example.com",
+		hidden:   []string{"admin", "1234", "?x"},
+	},
+	{
+		name:     "parseable: no password, # in the user name",
+		appURL:   "https://admin#x@mail.example.com",
+		wantHost: "mail.example.com",
+		hidden:   []string{"admin", "#x"},
+	},
+	{
+		name:     "parseable: account part and a port",
+		appURL:   "https://user:secret@mail.example.com:8443/x",
+		wantHost: "mail.example.com:8443",
+		hidden:   []string{"user", "secret", "/x"},
+	},
 }
 
 // FR3-2 (a). Neither confirm screen shows the account part or the tail of
@@ -148,5 +178,38 @@ func TestIdentityCredentials_DeploymentIdentityDropsTheAccountPart(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+// Ordinary addresses, with no account part, read exactly as they did
+// before the parse was simplified. The "//" and IPv6 rows are the ones a
+// careless hand parse breaks.
+func TestIdentityCredentials_OrdinaryShapesReadAsBefore(t *testing.T) {
+	for _, c := range []struct{ appURL, want string }{
+		{"https://mail.example.com:8443/x", "mail.example.com:8443"},
+		{"https://[::1]:8080", "[::1]:8080"},
+		{"http://localhost", "localhost"},
+		{"mail.example.com/x", "mail.example.com"},
+		{"//mail.example.com/x", "mail.example.com"},
+		{"https://mail.example.com?q=1#f", "mail.example.com"},
+		{"HTTPS://Mail.Example.com", "Mail.Example.com"},
+	} {
+		t.Run(c.appURL, func(t *testing.T) {
+			got := deploymentIdentity(&deploy.Deployment{AppURL: c.appURL})
+			if got != c.want {
+				t.Errorf("deploymentIdentity(%q) = %q, want %q", c.appURL, got, c.want)
+			}
+		})
+	}
+}
+
+// An "@" in the path is read as the end of an account part, so the
+// identity is whatever follows the last "@". This is the accepted cost of
+// never showing an account part: a change here is a design change, not a
+// fix.
+func TestIdentityCredentials_AtInThePathNamesTheTail(t *testing.T) {
+	got := deploymentIdentity(&deploy.Deployment{AppURL: "https://mail.example.com/users/@alice"})
+	if got != "alice" {
+		t.Errorf("deploymentIdentity = %q, want %q", got, "alice")
 	}
 }
