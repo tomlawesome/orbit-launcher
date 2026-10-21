@@ -304,6 +304,9 @@ type Problem struct {
 	File string
 	Line int
 	Msg  string
+	// Conflict marks two workflows pinning one action at different commits,
+	// which regenerating the policy cannot clear.
+	Conflict bool
 }
 
 func (p Problem) String() string {
@@ -352,6 +355,7 @@ func VerifyPins(pins []Pin, pol Policy) []Problem {
 			add(p.File, p.Line, "%s is pinned to %s here but to %s at %s:%d. "+
 				"Workflows must pin one action to one commit; change one of the two to match the other.",
 				p.Action, p.Ref, first.Ref, first.File, first.Line)
+			problems[len(problems)-1].Conflict = true
 		}
 	}
 
