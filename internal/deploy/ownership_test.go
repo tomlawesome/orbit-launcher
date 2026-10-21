@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"reflect"
@@ -282,16 +283,21 @@ func TestForeignOwned_ListsForeignFilesRelativeAndSorted(t *testing.T) {
 // chown command can use it as is) and "uid N" for the files (display).
 func TestForeignOwned_UnknownAccountIsTheBareUIDForChownAndUidNForDisplay(t *testing.T) {
 	fowRoot(t)
-	const folderUID, fileUID = 54399, 54398
+	const folderUID, fileUID, folderGID = 54399, 54398, 54397
 	if _, err := user.LookupId(strconv.Itoa(folderUID)); err == nil {
 		t.Skipf("uid %d has an account here", folderUID)
+	}
+	if _, err := user.LookupGroupId(strconv.Itoa(folderGID)); err == nil {
+		t.Skipf("gid %d names a group here", folderGID)
 	}
 	if _, err := user.LookupId(strconv.Itoa(fileUID)); err == nil {
 		t.Skipf("uid %d has an account here", fileUID)
 	}
 	dir := t.TempDir()
 	fowWrite(t, filepath.Join(dir, ".env-orbit"), "A=b\n")
-	fowChown(t, dir, folderUID)
+	if err := os.Lchown(dir, folderUID, folderGID); err != nil {
+		t.Skipf("cannot give %s to uid %d gid %d here: %v", dir, folderUID, folderGID, err)
+	}
 	fowChown(t, filepath.Join(dir, ".env-orbit"), fileUID)
 
 	own, err := ForeignOwned(dir)
@@ -304,6 +310,12 @@ func TestForeignOwned_UnknownAccountIsTheBareUIDForChownAndUidNForDisplay(t *tes
 	want := []ForeignFile{{".env-orbit", "uid 54398"}}
 	if !reflect.DeepEqual(own.Files, want) {
 		t.Errorf("Files = %+v, want %+v", own.Files, want)
+	}
+	if own.Group != "54397" {
+		t.Errorf("Group = %q, want %q (the folder's gid)", own.Group, "54397")
+	}
+	if words := ChownCommandWords(dir, own); len(words) < 4 || words[3] != "54399:54397" {
+		t.Errorf("words = %q, want the fourth word to be %q", words, "54399:54397")
 	}
 }
 
@@ -334,25 +346,33 @@ func TestForeignOwned_ForeignSymlinkIsListedNotFollowed(t *testing.T) {
 	}
 }
 
-// The chown command names the owner as one bare word, whether it is an
-// account name or a number, and never carries the display text.
-func TestChownCommandWords_NumericOwnerIsOneBareWord(t *testing.T) {
+// The chown command's owner spec: an account with no name is the bare
+// number and carries the folder's group (a trailing ":" would not be
+// accepted by chown for a number); a named account keeps its login-group
+// form; and the display text never appears.
+func TestChownCommandWords_NumericOwnerCarriesTheFolderGroup(t *testing.T) {
 	files := []ForeignFile{{".env-orbit", "uid 54398"}}
 	cases := []struct {
-		account string
-		want    []string
+		own  Ownership
+		want []string
 	}{
-		{"54399", []string{"sudo", "chown", "-R", "54399:", "/opt/orbit/.env-orbit"}},
-		{"alice", []string{"sudo", "chown", "-R", "alice:", "/opt/orbit/.env-orbit"}},
+		{Ownership{Account: "54399", Group: "1000"}, []string{"sudo", "chown", "-R", "54399:1000", "/opt/orbit/.env-orbit"}},
+		{Ownership{Account: "alice", Group: "1000"}, []string{"sudo", "chown", "-R", "alice:", "/opt/orbit/.env-orbit"}},
+		{Ownership{Account: "54399"}, []string{"sudo", "chown", "-R", "54399", "/opt/orbit/.env-orbit"}},
 	}
 	for _, c := range cases {
-		got := ChownCommandWords("/opt/orbit", Ownership{Account: c.account, Files: files})
+		c.own.Files = files
+		got := ChownCommandWords("/opt/orbit", c.own)
 		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("account %q: words = %q, want %q", c.account, got, c.want)
+			t.Errorf("account %q group %q: words = %q, want %q", c.own.Account, c.own.Group, got, c.want)
 		}
+		allDigits := c.own.Account != "" && strings.Trim(c.own.Account, "0123456789") == ""
 		for _, w := range got {
 			if strings.Contains(w, " ") || strings.Contains(w, "uid") {
-				t.Errorf("account %q: word %q has a space or the text \"uid\"", c.account, w)
+				t.Errorf("account %q group %q: word %q has a space or the text \"uid\"", c.own.Account, c.own.Group, w)
+			}
+			if allDigits && strings.HasSuffix(w, ":") {
+				t.Errorf("account %q group %q: word %q ends in \":\" for a numeric account", c.own.Account, c.own.Group, w)
 			}
 		}
 	}
@@ -370,4 +390,120 @@ func TestForeignOwned_AccountIsNeverTheDisplayForm(t *testing.T) {
 	if own.Account == "" || strings.Contains(own.Account, " ") || strings.HasPrefix(own.Account, "uid ") {
 		t.Errorf("Account = %q, want a name or bare number with no space", own.Account)
 	}
+}
+
+// The folder's group is its gid as a decimal number: the part of the
+// chown spec that follows the colon when the owner has no name.
+func TestForeignOwned_GroupIsTheFolderGid(t *testing.T) {
+	dir := fowOwnDeployment(t)
+	own, err := ForeignOwned(dir)
+	if err != nil {
+		t.Fatalf("ForeignOwned: %v", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strconv.FormatUint(uint64(info.Sys().(*syscall.Stat_t).Gid), 10)
+	if own.Group != want {
+		t.Errorf("Group = %q, want %q (the folder's gid)", own.Group, want)
+	}
+	if own.Group == "" || strings.Trim(own.Group, "0123456789") != "" {
+		t.Errorf("Group = %q, want all digits with no space", own.Group)
+	}
+}
+
+func fowGID(t *testing.T, path string) uint32 {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Sys().(*syscall.Stat_t).Gid
+}
+
+// fowRunChown runs the command ChownCommandWords gives, less its leading
+// sudo, with no shell, and fails the test unless chown exits 0 silently.
+func fowRunChown(t *testing.T, dir string, own Ownership) {
+	t.Helper()
+	words := ChownCommandWords(dir, own)
+	if len(words) < 3 || words[0] != "sudo" {
+		t.Fatalf("words = %q, want a sudo command", words)
+	}
+	words = words[1:]
+	var stderr strings.Builder
+	cmd := exec.Command(words[0], words[1:]...)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%q: %v; stderr: %s", words, err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("%q: stderr = %q, want empty", words, stderr.String())
+	}
+}
+
+// The words must be a spec the real chown accepts and carries out, for
+// an owner with no name and for a named one.
+func TestChownCommandWords_SpecIsAcceptedByChown(t *testing.T) {
+	fowRoot(t)
+	if _, err := exec.LookPath("chown"); err != nil {
+		t.Skip("no chown on PATH")
+	}
+	t.Run("owner with no name", func(t *testing.T) {
+		const folderUID, fileUID, folderGID = 54399, 54398, 54397
+		if _, err := user.LookupId(strconv.Itoa(folderUID)); err == nil {
+			t.Skipf("uid %d has an account here", folderUID)
+		}
+		if _, err := user.LookupId(strconv.Itoa(fileUID)); err == nil {
+			t.Skipf("uid %d has an account here", fileUID)
+		}
+		if _, err := user.LookupGroupId(strconv.Itoa(folderGID)); err == nil {
+			t.Skipf("gid %d names a group here", folderGID)
+		}
+		dir := t.TempDir()
+		env := filepath.Join(dir, ".env-orbit")
+		key := filepath.Join(dir, ".orbit-secrets", "key")
+		fowWrite(t, env, "A=b\n")
+		fowWrite(t, key, "x\n")
+		if err := os.Lchown(dir, folderUID, folderGID); err != nil {
+			t.Skipf("cannot give %s to uid %d gid %d here: %v", dir, folderUID, folderGID, err)
+		}
+		fowChown(t, env, fileUID)
+		fowChown(t, key, fileUID)
+
+		own, err := ForeignOwned(dir)
+		if err != nil {
+			t.Fatalf("ForeignOwned: %v", err)
+		}
+		fowRunChown(t, dir, own)
+		for _, p := range []string{env, key} {
+			if got := fowUID(t, p); got != folderUID {
+				t.Errorf("%s: uid = %d, want %d", p, got, folderUID)
+			}
+			if got := fowGID(t, p); got != folderGID {
+				t.Errorf("%s: gid = %d, want %d", p, got, folderGID)
+			}
+		}
+	})
+	t.Run("named owner", func(t *testing.T) {
+		dir := t.TempDir() // owned by root
+		env := filepath.Join(dir, ".env-orbit")
+		fowWrite(t, env, "A=b\n")
+		fowChown(t, env, 54398)
+
+		own, err := ForeignOwned(dir)
+		if err != nil {
+			t.Fatalf("ForeignOwned: %v", err)
+		}
+		if own.Account != "root" {
+			t.Skipf("Account = %q, want root for this case", own.Account)
+		}
+		fowRunChown(t, dir, own)
+		if got := fowUID(t, env); got != 0 {
+			t.Errorf("uid = %d, want 0", got)
+		}
+		if got := fowGID(t, env); got != 0 {
+			t.Errorf("gid = %d, want 0 (root's login group)", got)
+		}
+	})
 }
