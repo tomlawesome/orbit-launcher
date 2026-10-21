@@ -304,11 +304,17 @@ func (m RemoveModel) viewConfirm() string {
 	fmt.Fprintln(&b)
 	// Each hand-broken line wraps on its own, so it stays one row where
 	// it fits and breaks at spaces where it does not.
-	for _, line := range []string{
+	prose := []string{
 		"Your mail, documents, and configuration are not deleted",
 		"by this step — they stay on disk, and the next screen",
 		"shows exactly how to remove them if you choose to.",
-	} {
+	}
+	// The root or home folder gets no removal command, so nothing is
+	// promised for it.
+	if m.refusedFolder() != "" {
+		prose = []string{prose[0], "by this step — they stay on disk."}
+	}
+	for _, line := range prose {
 		writeWrapped(&b, style.MutedText, line, measure(m.width, proseWidth))
 	}
 	fmt.Fprintln(&b)
