@@ -90,21 +90,6 @@ func (l *flowLoop) handle(msg tea.Msg) {
 	l.run(l.update(msg))
 }
 
-// drain handles the messages already in the queue and returns at once
-// when it is empty. For a step whose whole effect is on the test
-// goroutine, such as a key press that only moves a selection: anything
-// that lands later is for the next wait to take.
-func (l *flowLoop) drain() {
-	for {
-		select {
-		case msg := <-l.queue.msgs:
-			l.handle(msg)
-		default:
-			return
-		}
-	}
-}
-
 // flowPoll is how often until looks at cond when no message has arrived:
 // cond may depend on something that changes off the queue, such as a
 // counter a seam bumps on another goroutine.

@@ -125,7 +125,7 @@ func TestLows_CtrlCWhilePreparingLetsAnEngineThatStartedAnywayRollBack(t *testin
 		t.Fatal("setup: Ctrl+C while preparing quit before the preparation reported back")
 	}
 	r, cmd = r.update(ready)
-	r, stopped, quit := settleStop(t, r, cmd)
+	_, stopped, quit := settleStop(t, r, cmd)
 
 	if !quit {
 		t.Fatal("the run did not quit after the late engine was stopped")
