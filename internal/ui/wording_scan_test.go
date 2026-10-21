@@ -80,13 +80,17 @@ func wordingLiterals(t *testing.T) []struct {
 // package, so they are not in this scan.
 var wordingSpelledOut = []string{"will not", "cannot", "could not"}
 
-// wordingAllowedCannot is the one warning that keeps its weight (remove's
-// "it cannot be undone").
-const wordingAllowedCannot = "it cannot be undone"
+// wordingAllowed are the phrases that keep their spelled-out form: the
+// one warning that keeps its weight (remove's "it cannot be undone"),
+// and the status a check the launcher could not run reads as (owner,
+// 2026-10-21: "could not check" is the technical reading).
+var wordingAllowed = []string{"it cannot be undone", "could not check"}
 
 func spelledOutForms(lit string) []string {
 	l := strings.ToLower(lit)
-	l = strings.ReplaceAll(l, wordingAllowedCannot, "")
+	for _, a := range wordingAllowed {
+		l = strings.ReplaceAll(l, a, "")
+	}
 	var hits []string
 	for _, f := range wordingSpelledOut {
 		if strings.Contains(l, f) {
@@ -102,7 +106,7 @@ func TestWording_ContractionDetectorSeesWhatItForbids(t *testing.T) {
 			t.Errorf("detector missed %q", bad)
 		}
 	}
-	for _, ok := range []string{"won't start", "can't be empty", "Stand-down stopped", "Removing it cannot be undone", "isn't ready", "upgrading it is not guaranteed"} {
+	for _, ok := range []string{"won't start", "can't be empty", "Stand-down stopped", "Removing it cannot be undone", "services · could not check", "isn't ready", "upgrading it is not guaranteed"} {
 		if h := spelledOutForms(ok); len(h) != 0 {
 			t.Errorf("detector flagged %q: %v", ok, h)
 		}

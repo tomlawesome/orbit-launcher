@@ -26,7 +26,7 @@ var allReasons = []struct {
 	{"address not found", deploy.HealthAddressNotFound, "address not found"},
 	{"server error", deploy.HealthServerError, "server error"},
 	{"certificate rejected", deploy.HealthCertificateRejected, "certificate rejected"},
-	{"unchecked", deploy.HealthUnchecked, "couldn't check"},
+	{"unchecked", deploy.HealthUnchecked, "could not check"},
 }
 
 func TestSplashDegraded_ReasonTextsAreExact(t *testing.T) {
@@ -36,7 +36,7 @@ func TestSplashDegraded_ReasonTextsAreExact(t *testing.T) {
 		deploy.HealthAddressNotFound:     "address not found",
 		deploy.HealthServerError:         "server error",
 		deploy.HealthCertificateRejected: "certificate rejected",
-		deploy.HealthUnchecked:           "couldn't check",
+		deploy.HealthUnchecked:           "could not check",
 	}
 	for r, text := range want {
 		if string(r) != text {

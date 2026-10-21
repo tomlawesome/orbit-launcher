@@ -207,8 +207,8 @@ func TestRepairServices_ProcessingProfileHasTikaNotOllama(t *testing.T) {
 func TestRepairServices_CouldNotCheck(t *testing.T) {
 	m := servicesModel(t, "standard", 80, 30, nil, fmt.Errorf("docker: not running"))
 	s := plain(m)
-	if !strings.Contains(s, "services · couldn't check") {
-		t.Errorf("no `services · couldn't check` row:\n%s", screen(m))
+	if !strings.Contains(s, "services · could not check") {
+		t.Errorf("no `services · could not check` row:\n%s", screen(m))
 	}
 	if rows := svcRows(t, m); len(rows) != 0 {
 		t.Errorf("per-service rows shown after the check failed: %v", rows)

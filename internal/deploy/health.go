@@ -32,7 +32,7 @@ const (
 	HealthAddressNotFound     HealthReason = "address not found"
 	HealthServerError         HealthReason = "server error"
 	HealthCertificateRejected HealthReason = "certificate rejected"
-	HealthUnchecked           HealthReason = "couldn't check"
+	HealthUnchecked           HealthReason = "could not check"
 )
 
 // ProbeHealth asks the deployment at appURL whether it is responding: a

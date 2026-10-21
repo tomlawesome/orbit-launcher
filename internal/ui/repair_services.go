@@ -120,7 +120,7 @@ func (m RepairModel) servicesBlock(room int) []string {
 		return nil
 	}
 	if m.services.err != nil {
-		return []string{style.MutedText.Render("services" + style.Separator + "couldn't check")}
+		return []string{style.MutedText.Render("services" + style.Separator + "could not check")}
 	}
 	rows := serviceRows(m.services.expected, m.services.states)
 	var folded, faulted []serviceRow
