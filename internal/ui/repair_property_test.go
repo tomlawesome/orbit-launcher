@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -125,5 +126,23 @@ func TestRepairModel_NeverMutatesAnything(t *testing.T) {
 			t.Errorf("%s: %s calls %s, which is not a known Repair seam (repairAllowedCalls)", fset.Position(call.Pos()), name, use)
 			return true
 		})
+	}
+}
+
+// TestRepairFiles_ListsEveryRepairFile keeps repairFiles complete: a new
+// repair*.go file is scanned too, or this fails.
+func TestRepairFiles_ListsEveryRepairFile(t *testing.T) {
+	found, err := filepath.Glob("repair*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, f := range repairFiles {
+		listed[f] = true
+	}
+	for _, f := range found {
+		if !strings.HasSuffix(f, "_test.go") && !listed[f] {
+			t.Errorf("%s is not in repairFiles, so the Repair scans never read it", f)
+		}
 	}
 }
