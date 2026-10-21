@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -73,6 +74,14 @@ func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 // launcher actually found (#205).
 var ErrNoTargetDir = errors.New("no deployment directory given")
 
+// ErrRootFolder and ErrHomeFolder refuse a removal command for a folder
+// that is plainly not Orbit's own: "sudo rm -rf" of it would delete far
+// more than the deployment.
+var (
+	ErrRootFolder = errors.New("the deployment folder is the root folder")
+	ErrHomeFolder = errors.New("the deployment folder is the home folder")
+)
+
 // RemovalCommand returns the exact, copy-pasteable shell command that
 // fully and irreversibly removes an Orbit deployment — including its data
 // volumes and every file in targetDir. This package never executes it:
@@ -100,6 +109,18 @@ func RemovalCommand(targetDir string) (string, error) {
 func RemovalCommandWords(targetDir string) ([]string, error) {
 	if targetDir == "" {
 		return nil, ErrNoTargetDir
+	}
+	// Compared after cleaning, so "//", "/." or "home/../home" are
+	// caught too; the command itself still names targetDir as found.
+	clean := filepath.Clean(targetDir)
+	if abs, err := filepath.Abs(targetDir); err == nil {
+		clean = abs
+	}
+	if clean == "/" {
+		return nil, ErrRootFolder
+	}
+	if home, err := os.UserHomeDir(); err == nil && clean == filepath.Clean(home) {
+		return nil, ErrHomeFolder
 	}
 	dir := shellQuote(targetDir)
 	envFile := shellQuote(filepath.Join(targetDir, EnvFile))

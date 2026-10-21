@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -153,6 +154,10 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state = removeStateDone
 			m.after = newMenu(removeDoneRows...)
+			if m.refusedFolder() != "" {
+				// No command to copy for a folder that is not Orbit's own.
+				m.after = newMenu(removeDoneRows[1:]...)
+			}
 		}
 		return m, nil
 
@@ -329,6 +334,15 @@ func (m RemoveModel) viewDone() string {
 	}
 	writeWrapped(&b, style.MutedText, "nothing has been deleted.", prose)
 	fmt.Fprintln(&b)
+	// "sudo rm -rf" of the root or home folder would delete far more than
+	// Orbit, so no command is built or offered for it: one plain sentence
+	// says why instead.
+	if refused := m.refusedFolder(); refused != "" {
+		writeWrapped(&b, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own.", prose)
+		fmt.Fprintln(&b)
+		m.after.write(&b)
+		return skyBlock(m.star, m.width, m.height, b.String())
+	}
 	writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
 
 	// The command is over 100 cells for a short path, and the box adds
@@ -380,6 +394,19 @@ func (m RemoveModel) viewDone() string {
 	}
 	b.WriteString(tail.String())
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// refusedFolder names the deployment folder when no removal command is
+// built for it ("the root folder", "your home folder"); empty otherwise.
+func (m RemoveModel) refusedFolder() string {
+	_, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	switch {
+	case errors.Is(err, deploy.ErrRootFolder):
+		return "the root folder"
+	case errors.Is(err, deploy.ErrHomeFolder):
+		return "your home folder"
+	}
+	return ""
 }
 
 func (m RemoveModel) viewFailed() string {
