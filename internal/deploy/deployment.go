@@ -150,12 +150,12 @@ func splitProfiles(value string) []string {
 }
 
 // requireScript is the one lookup for scripts/<name> in dir, before
-// anything runs it: absent is sentinel, the caller's "not available";
+// anything runs it: absent (or scripts/ not a directory) is sentinel, the caller's "not available";
 // any other failure to look is an error naming the script; a script
 // that is there must pass the trust check (trusted.go) first.
 func requireScript(dir, name string, sentinel error) error {
 	if _, err := os.Lstat(filepath.Join(dir, scriptsDir, name)); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) || scriptsNotADirectory(dir, err) {
 			return sentinel
 		}
 		return fmt.Errorf("%s: %w", name, err)
@@ -163,4 +163,15 @@ func requireScript(dir, name string, sentinel error) error {
 	// It exists; run it only from a path nobody else could have put it
 	// in (#191).
 	return requireTrustedScripts(dir, name)
+}
+
+// scriptsNotADirectory reports whether a lookup failed with ENOTDIR
+// because scripts/ inside dir is not a directory: that is as absent as
+// no scripts/ at all. dir itself not being a directory stays an error.
+func scriptsNotADirectory(dir string, err error) bool {
+	if !errors.Is(err, syscall.ENOTDIR) {
+		return false
+	}
+	info, statErr := os.Stat(dir)
+	return statErr == nil && info.IsDir()
 }
