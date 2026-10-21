@@ -2,8 +2,8 @@
 
 This repository is **not currently accepting outside code changes.** That
 is a deliberate, temporary choice. The owner holds all the rights to this
-code, which lets it be offered under both a free and a commercial licence
-(see [LICENSING.md](LICENSING.md)). Accepting outside code would complicate
+code, which keeps its licensing options open (see
+[LICENSING.md](LICENSING.md)). Accepting outside code would complicate
 that, so for now we don't. If that changes, this file will set out a
 contributor agreement before any outside change is merged.
 

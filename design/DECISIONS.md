@@ -97,6 +97,17 @@ Both one-shot, both skipped by `ORBIT_LAUNCHER_NO_ANIMATION`:
   visually awkward in terminal"). The plain thin line stays.
 - Success/failure key off events plus exit codes, never scraped prose.
 
+### The install notice (v7)
+
+Proposals 2, 3 and 4 of `design/mockups-v7-notice.html` were accepted as
+shipped (owner, 2026-10-21, #195).
+
+- **Bottom region (2):** the timer row, prompt, text box, feedback row and
+  Go back are pinned at the bottom; only the prose scrolls.
+- **Every install (3):** the notice shows on every install, not once per
+  machine.
+- **Keys (4):** PgDn, PgUp, Home, End and the mouse wheel scroll the prose.
+
 ## Rejected, with reasons (do not resurrect for the TUI)
 
 - Ring/sphere around the menu, orbiting planets with occlusion, sun
