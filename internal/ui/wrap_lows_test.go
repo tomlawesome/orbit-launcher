@@ -117,4 +117,3 @@ func TestVisibleText_ThePlainSpaceStaysASpace(t *testing.T) {
 		t.Errorf("visibleText(%q) = %q, want it unchanged", want, got)
 	}
 }
-
