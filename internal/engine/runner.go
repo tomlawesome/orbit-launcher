@@ -243,15 +243,28 @@ func (s *Stream) Terminate() {
 	s.termOnce.Do(func() { s.signal(syscall.SIGTERM, false) })
 }
 
+// killReapWait bounds Kill's wait for the killed process to be reaped.
+// SIGKILL takes effect in milliseconds; the bound is for a process
+// stuck in the kernel, which no signal can hurry.
+const killReapWait = 2 * time.Second
+
 // Kill ends the engine at once (SIGKILL) — the whole process group,
-// and the process itself in case it is not a group leader. Idempotent,
-// and sends nothing once the process has been reaped (see Terminate).
-// Reports whether the signal reached a process that had not yet been
-// reaped, so a caller can tell a kill that ended the engine from one
-// that found it already gone.
+// and the process itself in case it is not a group leader — and
+// returns once the process has been reaped (bounded by killReapWait),
+// so a caller that removes the engine's files next does not race a
+// process still ending. Idempotent, and sends nothing once the process
+// has been reaped (see Terminate). Reports whether the signal reached a
+// process that had not yet been reaped, so a caller can tell a kill
+// that ended the engine from one that found it already gone.
 func (s *Stream) Kill() bool {
 	var sent bool
 	s.killOnce.Do(func() { sent = s.signal(syscall.SIGKILL, true) })
+	if sent {
+		select {
+		case <-s.done:
+		case <-time.After(killReapWait):
+		}
+	}
 	return sent
 }
 
