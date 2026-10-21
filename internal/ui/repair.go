@@ -738,8 +738,8 @@ func (m RepairModel) stopRotation() (tea.Model, tea.Cmd) {
 func (m RepairModel) View() tea.View { return tea.NewView(m.view()) }
 
 // cannotStopLine is the second line of a working screen whose step
-// changes the machine and so ignores Ctrl-C and Esc while it runs:
-// Repair's, and Remove's stand-down (#227).
+// changes the machine and so ignores Ctrl-C and Esc while it runs.
+// Remove's stand-down has its own line, since stopping it is not unsafe.
 const cannotStopLine = "can't be stopped from here — stopping halfway is the one unsafe step"
 
 // view renders the screen's content.
