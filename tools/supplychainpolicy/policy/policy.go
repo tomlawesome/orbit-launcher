@@ -8,9 +8,10 @@
 // Only the fields nobody can derive (an update owner, an explanatory note) are
 // human-authored, and those are carried across a regeneration untouched.
 //
-// Licence and source URL come from the GitHub API and so are fetched only when
-// writing. Checking is deliberately offline: a gate that needs the network to
-// say yes is a gate that fails for reasons unrelated to the thing it guards.
+// The licence comes from the GitHub API and so is fetched only when writing
+// (the source URL is built from the action's name and version). Checking is
+// deliberately offline: a gate that needs the network to say yes is a gate
+// that fails for reasons unrelated to the thing it guards.
 package policy
 
 import (
@@ -27,8 +28,7 @@ import (
 // reviewedOn/reviewBy: a date recording "when a human last looked" could only
 // be moved by hand, and for an action that simply has not released, it went
 // stale while nothing was wrong. Currency is driven by Renovate opening a
-// bump, and by the commit check below refusing a bump that leaves this file
-// behind.
+// bump, and by VerifyPins failing a bump that leaves this file behind.
 const SchemaVersion = 2
 
 const (
@@ -250,8 +250,9 @@ func (e *SchemaError) Error() string {
 }
 
 // DerivedActions returns the mechanical fields for every distinct action the
-// workflows pin, sorted by name. Human-authored fields are left empty; Merge
-// carries those across.
+// workflows pin, sorted by name. Human-authored fields are left empty; the
+// -write command (regenerate in tools/supplychainpolicy) carries those across
+// from the previous file.
 func DerivedActions(pins []Pin) []Action {
 	byName := map[string]Action{}
 	for _, p := range pins {
