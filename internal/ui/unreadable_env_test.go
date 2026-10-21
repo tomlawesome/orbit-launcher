@@ -103,7 +103,7 @@ func TestAppModel_UnreadableEnvScreensHoldAtEveryWidth(t *testing.T) {
 			m.targetDir = dir
 			m = open(t, m)
 			m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: w, Height: 30})
-			s := oneLine(screen(m))
+			s := proseOnly(screen(m))
 			if !strings.Contains(s, "Couldn't read .env-orbit in") || !strings.Contains(s, "permission denied") ||
 				strings.Contains(s, "No Orbit deployment found") {
 				t.Errorf("%s at width %d:\n%s", name, w, screen(m))
