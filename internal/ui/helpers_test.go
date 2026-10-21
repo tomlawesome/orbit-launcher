@@ -199,3 +199,38 @@ func (o *recordedOutput) everything() string {
 	_, _ = io.Copy(io.Discard, o)
 	return ansi.Strip(o.seen.String())
 }
+
+// bestOf is the shortest of runs timings of f. The shortest is the one a
+// busy host disturbed least, so it stands for the work itself.
+func bestOf(runs int, f func()) time.Duration {
+	best := time.Duration(1<<63 - 1)
+	for range runs {
+		start := time.Now()
+		f()
+		if d := time.Since(start); d < best {
+			best = d
+		}
+	}
+	return best
+}
+
+// requireNearLinear fails if run(big) takes much more than big/small times
+// as long as run(small): twice and a quarter that, so a four-fold input
+// may take up to nine times as long where linear work takes four and
+// quadratic work sixteen. It compares two sizes on the same host in the
+// same breath, so a slow or loaded runner changes both sides and nothing
+// here depends on how long a second is. big must be four times small.
+func requireNearLinear(t *testing.T, what string, small, big int, run func(size int)) {
+	t.Helper()
+	if big != 4*small {
+		t.Fatalf("%s: sizes %d and %d are not four-fold", what, small, big)
+	}
+	run(small) // once to warm up, unmeasured
+	shortest := bestOf(7, func() { run(small) })
+	longest := bestOf(7, func() { run(big) })
+	ratio := float64(longest) / float64(shortest)
+	if ratio > 9 {
+		t.Errorf("%s: %d times the input took %.1f times as long (%v for %d, %v for %d); linear work takes about 4, quadratic about 16",
+			what, big/small, ratio, shortest, small, longest, big)
+	}
+}
