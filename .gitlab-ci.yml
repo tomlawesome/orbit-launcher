@@ -73,11 +73,11 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+  GO_IMAGE: golang:1.27.3-bookworm@sha256:32fa283222e2905d9fee971f60c842e5c815fdc036cf7ea599bf36bd7ca8f67f
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
-  GO_VERSION: "1.27.2"
-  GO_SHA256: ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
+  GO_VERSION: "1.27.3"
+  GO_SHA256: 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
   # Ships the exact Chromium that test/visual/package-lock.json's
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
@@ -88,7 +88,7 @@ variables:
   # Debian leg that was tried and dropped).
   UBUNTU_IMAGE: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
   # Same pins as the workflows. A commit on staticcheck's master, not a
-  # release: go1.27.2 writes compiler export data version 5, and every release
+  # release: Go 1.27 writes compiler export data version 5, and every release
   # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
   # so staticcheck fails on every package (#202). Master moved to x/tools
   # v0.51.0 and Go 1.27 on 2026-10-09. Move back to a release tag once one
