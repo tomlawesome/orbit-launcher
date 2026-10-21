@@ -206,13 +206,27 @@ func (m SuccessModel) launchURL() error {
 	if open == nil {
 		open = defaultOpenURL
 	}
+	target := m.appURL
 	if m.claimLink != "" {
-		return open(m.claimLink)
+		target = m.claimLink
 	}
-	if m.appURL == "" {
+	if target == "" {
 		return errors.New("no deployment URL")
 	}
-	return open(m.appURL)
+	if !webAddress(target) {
+		return errors.New("not a web address")
+	}
+	return open(target)
+}
+
+// webAddress reports whether s is an http or https address, the only
+// kind handed to the opener: APP_URL comes from a file the launcher may
+// not have written, and the opener would run any other scheme's handler
+// or read a leading "-" as an option. A prefix test, not url.Parse, so a
+// web address holding control characters still opens as written.
+func webAddress(s string) bool {
+	l := strings.ToLower(s)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
 }
 
 // clipboardWriter is where the copy sequence goes: os.Stdout unless a test
