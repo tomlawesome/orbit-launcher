@@ -413,9 +413,15 @@ func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Stand-down stopped")
 	if m.standDownErr != nil {
-		// Docker's words, at Docker's length: wrapped so the reason is
-		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, visibleLines(m.standDownErr.Error()), measure(m.width, errorWidth))
+		// Docker's words, wrapped so the reason is never cut at the
+		// screen's edge. Compose adds a progress line per container
+		// (about 36 for Orbit), which would push Menu and Exit off a
+		// small terminal: the first line, which holds the reason, stays,
+		// and only the last six after it, as on the engine failure
+		// screen.
+		lines := strings.Split(strings.TrimRight(m.standDownErr.Error(), "\n"), "\n")
+		shown := append([]string{lines[0]}, tailLines(lines[1:], 6)...)
+		writeWrapped(&b, style.Tagline, visibleLines(strings.Join(shown, "\n")), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)
