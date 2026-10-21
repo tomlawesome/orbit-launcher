@@ -177,12 +177,22 @@ func TestInstallModel_StandardNeverStartsTheEngineAutomatically(t *testing.T) {
 		},
 	}
 	m, _ := newTestInstallModel(seams)
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> notice
+	updated, cmd := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	_ = m.View() // rendering alone must never trigger a side effect
 
+	// What Enter returns is the only thing that could start the engine:
+	// run it. It must be the notice's countdown tick and nothing else.
+	if cmd == nil {
+		t.Fatal("opening the notice must arm its countdown tick")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("the command Enter returned yielded nothing, want the notice's tick")
+	} else if _, ok := msg.(noticeTickMsg); !ok {
+		t.Fatalf("Enter on Standard returned a command that yielded %T, want only the notice's tick", msg)
+	}
 	if engineCalled {
-		t.Error("the engine must only start after the notice is accepted, never as a side effect of rendering")
+		t.Error("the engine must only start after the notice is accepted, never as a side effect of Enter or of rendering")
 	}
 }
 
