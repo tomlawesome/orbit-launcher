@@ -61,6 +61,11 @@ type AppModel struct {
 	// the same way; nil in production (asks Docker).
 	flowInstalledAt func(context.Context, *deploy.Deployment) time.Time
 
+	// flowReadClaim fakes the success screen's claim-link read after an
+	// Install (#259) so tests need no Docker daemon; nil in production
+	// (deploy.ReadClaimLink).
+	flowReadClaim func(ctx context.Context, dir, appURL string, since time.Time) (string, error)
+
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 70 s default).
 	flowNoticeDuration time.Duration
@@ -283,13 +288,39 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 	if o.Succeeded {
 		m.success = NewSuccessModel(o.URL, o.Elapsed, m.version)
 		m.success.noAnimation = m.splash.noAnimation
+		if m.state == appStateInstall {
+			m.success.readClaim = m.claimReader(o.URL)
+		}
 		m.state = appStateSuccess
-		return m, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+		sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+		// Not Init: the sky's ticks already run, carried over from the
+		// flow, and a second chain would double their pace.
+		if read := m.success.claimCmd(); read != nil {
+			return m, tea.Batch(sizeCmd, read)
+		}
+		return m, sizeCmd
 	}
 	if o.WantsMenu {
 		return m.refreshSplash()
 	}
 	return m, cmd
+}
+
+// claimReader is the success screen's claim-link read after a finished
+// Install (#259): the app's logs since the install started, in the
+// folder it installed into. Only Install offers it; after an Update
+// Orbit has long been claimed. No address means nothing to compare a
+// link against, so nothing is read.
+func (m AppModel) claimReader(appURL string) func() (string, error) {
+	if appURL == "" {
+		return nil
+	}
+	read := m.flowReadClaim
+	if read == nil {
+		read = deploy.ReadClaimLink
+	}
+	dir, since := m.install.targetDir, m.install.startedAt
+	return func() (string, error) { return read(context.Background(), dir, appURL, since) }
 }
 
 func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -323,6 +354,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 		m.repair.engineRunSeams = m.flowSeams
 		m.repair.serviceStates = realServiceStates
+		m.repair.foreignOwned = deploy.ForeignOwned
 		m.repair.send = m.flowSend
 		m.state = appStateRepair
 		return m, tea.Batch(sizeCmd, m.repair.Init())
