@@ -72,7 +72,11 @@ func svcRows(t *testing.T, m RepairModel) []svcRow {
 				if len(rest) < 14 {
 					t.Fatalf("row too short for a 14-cell name column: %q", line)
 				}
-				rows = append(rows, svcRow{string(c), strings.TrimSpace(string(rest[:14])), strings.TrimSpace(string(rest[14:]))})
+				state := ""
+				if f := strings.Fields(string(rest[14:])); len(f) > 0 {
+					state = f[0]
+				}
+				rows = append(rows, svcRow{string(c), strings.TrimSpace(string(rest[:14])), state})
 				break
 			}
 		}
@@ -194,8 +198,8 @@ func TestRepairServices_ProcessingProfileHasTikaNotOllama(t *testing.T) {
 func TestRepairServices_CouldNotCheck(t *testing.T) {
 	m := servicesModel(t, "standard", 80, 30, nil, fmt.Errorf("docker: not running"))
 	s := plain(m)
-	if !strings.Contains(s, "services · could not check") {
-		t.Errorf("no `services · could not check` row:\n%s", screen(m))
+	if !strings.Contains(s, "services · couldn't check") {
+		t.Errorf("no `services · couldn't check` row:\n%s", screen(m))
 	}
 	if rows := svcRows(t, m); len(rows) != 0 {
 		t.Errorf("per-service rows shown after the check failed: %v", rows)

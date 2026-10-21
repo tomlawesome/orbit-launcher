@@ -66,6 +66,13 @@ type RepairModel struct {
 	rot   promptSession
 
 	stream *engine.Stream
+
+	// serviceStates reads the deployment's containers for the services
+	// block (#255). Nil shows no block: the c9 harness leaves it unset,
+	// which keeps its goldens as they were. services holds the one
+	// reading; see loadServices.
+	serviceStates func(dir string) ([]deploy.ServiceState, error)
+	services      *serviceReading
 	// frame is the working lines' spinner frame, advanced on every tick.
 	frame int
 	// menu is the cursor on whichever menu screen is showing; each screen
@@ -151,7 +158,7 @@ var repairStream = streamWrap{
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan}
+	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan, services: &serviceReading{}}
 	// One context for the model's whole life: Init cannot store state,
 	// and the model quits once it is cancelled.
 	m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -449,6 +456,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 	case engine.ExitHealthy, engine.ExitAttention, engine.ExitFailed:
 		// The contract's outcomes, shared by --check and --plan.
 		m.state = repairDiagnosis
+		m.loadServices()
 		if m.mode == deploy.RepairPlan {
 			// The manual guidance lines ride stderr, value-free by
 			// the script's contract.
@@ -907,6 +915,8 @@ func (m RepairModel) viewDiagnosis() string {
 		glyph, title = style.ErrorText.Render(style.SymbolFailure), "Problems found"
 	}
 	writeInlineHeader(&b, glyph, title)
+	head := b.String()
+	b.Reset()
 
 	for _, f := range sortedFindings(m.findings) {
 		fmt.Fprintln(&b, findingLine(f))
@@ -927,9 +937,29 @@ func (m RepairModel) viewDiagnosis() string {
 	fmt.Fprintln(&tail)
 	m.menu.over(m.planMenu()).write(&tail)
 
-	// The steps take whatever rows the rest leaves, so a short terminal
-	// never pushes the summary and menu off the bottom. The last row is
-	// left to the sky, as on every scene screen.
+	// The services block sits above the findings and takes the rows the
+	// rest leaves (the whole plan counted, since the steps can shorten
+	// themselves but the block should not squeeze them): the full list
+	// when it fits, else the running rows folded. The last row is left
+	// to the sky, as on every scene screen.
+	m.loadServices()
+	stepRows := 0
+	for _, step := range steps {
+		stepRows += len(step)
+	}
+	rest := head + b.String()
+	svcRoom := math.MaxInt
+	if m.height > 0 {
+		svcRoom = m.height - 1 - strings.Count(rest, "\n") - strings.Count(tail.String(), "\n") - stepRows
+	}
+	if block := m.servicesBlock(svcRoom); block != nil {
+		rest = head + strings.Join(block, "\n") + "\n" + b.String()
+	}
+	b.Reset()
+	b.WriteString(rest)
+
+	// The steps take whatever rows remain, so a short terminal
+	// never pushes the summary and menu off the bottom.
 	room := math.MaxInt
 	if m.height > 0 {
 		room = m.height - 1 - strings.Count(b.String(), "\n") - strings.Count(tail.String(), "\n")
