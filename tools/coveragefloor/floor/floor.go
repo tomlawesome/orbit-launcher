@@ -194,6 +194,11 @@ func ParseFloors(r io.Reader) (map[string]Floor, error) {
 		if err != nil {
 			return nil, fmt.Errorf("floors file line %d: floor %q for %s is not a number: %w", l.No, fields[1], fields[0], err)
 		}
+		// `!(pct >= 0)` rather than `pct < 0`: NaN is neither below nor
+		// above anything, so a NaN floor would otherwise pass every check.
+		if !(pct >= 0) {
+			return nil, fmt.Errorf("floors file line %d: floor %q for %s is not a percentage of zero or more", l.No, fields[1], fields[0])
+		}
 		if prev, dup := floors[fields[0]]; dup {
 			return nil, fmt.Errorf("floors file line %d: %s already has a floor, set on line %d", l.No, fields[0], prev.Line)
 		}
