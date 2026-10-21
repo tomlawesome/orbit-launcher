@@ -136,6 +136,18 @@ func isClaimLinkFor(link, appURL string) bool {
 	if err != nil || u.User != nil || u.Host == "" {
 		return false
 	}
-	return u.Scheme == app.Scheme && strings.EqualFold(u.Host, app.Host) &&
+	return u.Scheme == app.Scheme && strings.EqualFold(claimHost(u), claimHost(app)) &&
 		strings.HasPrefix(u.Fragment, claimFragment)
+}
+
+// claimHost is a URL's host as compared: a default port spelled out
+// (:443 on https, :80 on http) is dropped, since Orbit prints the link
+// without it however APP_URL was written. Brackets round an IPv6
+// address stay.
+func claimHost(u *url.URL) string {
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		return strings.TrimSuffix(u.Host, ":"+port)
+	}
+	return u.Host
 }
