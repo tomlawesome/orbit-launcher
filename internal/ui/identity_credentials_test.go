@@ -31,25 +31,49 @@ var credentialCases = []struct {
 		name:     "unparseable (ESC in host)",
 		appURL:   "https://user:secret@m.example\x1b[0m/path",
 		wantHost: `m.example\x1b[0m`,
-		hidden:   []string{"secret", "user:", "/path"},
+		hidden:   []string{"secret", "user", "user:", "/path"},
 	},
 	{
 		name:     "unparseable (CR in host), distinctive tail",
 		appURL:   "https://user:secret@m.example\r/tailmarker?token=hunter2",
 		wantHost: `m.example\r`,
-		hidden:   []string{"secret", "user:", "tailmarker", "hunter2"},
+		hidden:   []string{"secret", "user", "user:", "tailmarker", "hunter2"},
 	},
 	{
 		name:     "unparseable (control rune in the account part)",
 		appURL:   "https://us\x1ber:secret@m.example/tailmarker",
 		wantHost: "m.example",
-		hidden:   []string{"secret", "user:", "tailmarker"},
+		hidden:   []string{"secret", "user", "user:", "tailmarker"},
 	},
 	{
 		name:     "parseable",
 		appURL:   "https://user:secret@mail.example.com/x",
 		wantHost: "mail.example.com",
-		hidden:   []string{"secret", "user:"},
+		hidden:   []string{"secret", "user", "user:"},
+	},
+	{
+		name:     "unparseable (# in the password)",
+		appURL:   "https://admin:hunter#2@mail.example.com",
+		wantHost: "mail.example.com",
+		hidden:   []string{"hunter", "admin", "#2"},
+	},
+	{
+		name:     "unparseable (/ in the password), with a path",
+		appURL:   "https://user:p/ss@mail.example.com/x",
+		wantHost: "mail.example.com",
+		hidden:   []string{"p/ss", "user", ":p", "/x"},
+	},
+	{
+		name:     "unparseable (? in the password)",
+		appURL:   "https://user:se?cret@mail.example.com",
+		wantHost: "mail.example.com",
+		hidden:   []string{"secret", "se?cret", "user", ":se"},
+	},
+	{
+		name:     "unparseable (# in the password) and a control rune in the host",
+		appURL:   "https://admin:hunter#2@m.example\r/tail",
+		wantHost: `m.example\r`,
+		hidden:   []string{"hunter", "admin", "tail"},
 	},
 }
 
