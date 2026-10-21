@@ -952,15 +952,12 @@ func (m RepairModel) viewDiagnosis() string {
 	head := b.String()
 	b.Reset()
 
-	for _, f := range sortedFindings(m.findings) {
-		fmt.Fprintln(&b, findingLine(f))
-	}
+	var summary strings.Builder
 	if len(m.findings) > 0 {
-		fmt.Fprintln(&b)
+		fmt.Fprintln(&summary)
 	}
-
 	if m.diagnosis != nil {
-		fmt.Fprintln(&b, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
+		fmt.Fprintln(&summary, style.Tagline.Render(fmt.Sprintf("%d checked%s%d skipped", m.diagnosis.Checked, style.Separator, m.diagnosis.Skipped)))
 	}
 
 	steps, after := m.planParts(result)
@@ -971,16 +968,30 @@ func (m RepairModel) viewDiagnosis() string {
 	fmt.Fprintln(&tail)
 	m.menu.over(m.planMenu()).write(&tail)
 
+	// The findings take the rows the header, the summary, the whole
+	// plan and the menu leave, as the steps do, so an older repair.sh
+	// with many findings never pushes the menu off the screen.
+	stepRows := 0
+	for _, step := range steps {
+		stepRows += len(step)
+	}
+	findRoom := math.MaxInt
+	if m.height > 0 {
+		findRoom = m.height - 1 - strings.Count(head, "\n") - strings.Count(summary.String(), "\n") - strings.Count(tail.String(), "\n") - stepRows
+	}
+	var found [][]string
+	for _, f := range sortedFindings(m.findings) {
+		found = append(found, []string{findingLine(f)})
+	}
+	m.writeSteps(&b, found, findRoom)
+	b.WriteString(summary.String())
+
 	// The services block sits above the findings and takes the rows the
 	// rest leaves (the whole plan counted, since the steps can shorten
 	// themselves but the block should not squeeze them): the full list
 	// when it fits, else the running rows folded. The last row is left
 	// to the sky, as on every scene screen.
 	m.loadServices()
-	stepRows := 0
-	for _, step := range steps {
-		stepRows += len(step)
-	}
 	rest := head + b.String()
 	svcRoom := math.MaxInt
 	if m.height > 0 {
@@ -1003,9 +1014,9 @@ func (m RepairModel) viewDiagnosis() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
-// writeSteps writes the plan's steps into room rows: all of them when
-// they fit, otherwise as many whole steps as fit and then one row
-// saying how many are not shown.
+// writeSteps writes the plan's steps (or the findings, one row each)
+// into room rows: all of them when they fit, otherwise as many whole
+// steps as fit and then one row saying how many are not shown.
 func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) {
 	total := 0
 	for _, step := range steps {
