@@ -117,6 +117,11 @@ type configCollect struct {
 
 	// late is shared with the prepare and start commands still running.
 	late *configLate
+
+	// ctx is the session's lifetime: the configure.sh --check runs it
+	// starts are cancelled by close, so leaving stops them.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // configLate settles who releases what a prepare or start command
@@ -169,6 +174,9 @@ func (l *configLate) stop() {
 // close releases the session's process and what it collected, and
 // whatever a command still running for it goes on to produce.
 func (c *configCollect) close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
 	if c.late != nil {
 		c.late.stop()
 	}
@@ -221,14 +229,15 @@ func defaultStartConfig(configTree string, step deploy.ConfigStep, mode deploy.A
 func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	r.state = runConfigCollect
 	late := &configLate{}
-	r.cfg = configCollect{late: late}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cfg = configCollect{late: late, ctx: ctx, cancel: cancel}
 	prepare := r.prepareConfig
 	if prepare == nil {
 		prepare = defaultPrepareConfig
 	}
 	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
-		msg := prepare(context.Background(), targetDir, configTree)
+		msg := prepare(ctx, targetDir, configTree)
 		if !late.hand(func() { releaseConfigMsg(msg) }) {
 			return nil
 		}
@@ -451,9 +460,12 @@ func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
 	if recheck == nil {
 		recheck = deploy.RunConfigCheck
 	}
-	configTree := r.cfg.plan.configTree
+	configTree, ctx := r.cfg.plan.configTree, r.cfg.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return r, func() tea.Msg {
-		check, err := recheck(context.Background(), configTree)
+		check, err := recheck(ctx, configTree)
 		return configRecheckMsg{check: check, err: err}
 	}
 }
