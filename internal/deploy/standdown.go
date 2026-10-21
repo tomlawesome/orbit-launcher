@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -52,7 +53,9 @@ func StandDown(ctx context.Context, targetDir string) error {
 	cmd := standDownCommand(ctx, targetDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("docker compose down did not finish within %s: %w: %s", limit, err, out)
+			// The containers stopped so far stay stopped, so a second
+			// stand-down picks up where this one was cut off.
+			return fmt.Errorf("docker compose down did not finish within %s — running Stand down again finishes the job: %w: %s", limit, err, out)
 		}
 		return fmt.Errorf("docker compose down: %w: %s", err, out)
 	}
@@ -72,6 +75,14 @@ func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
 // directory: a removal command only ever names a deployment the
 // launcher actually found (#205).
 var ErrNoTargetDir = errors.New("no deployment directory given")
+
+// ErrRootFolder and ErrHomeFolder refuse a removal command for a folder
+// that is plainly not Orbit's own: "sudo rm -rf" of it would delete far
+// more than the deployment.
+var (
+	ErrRootFolder = errors.New("the deployment folder is the root folder")
+	ErrHomeFolder = errors.New("the deployment folder is the home folder")
+)
 
 // RemovalCommand returns the exact, copy-pasteable shell command that
 // fully and irreversibly removes an Orbit deployment — including its data
@@ -100,6 +111,18 @@ func RemovalCommand(targetDir string) (string, error) {
 func RemovalCommandWords(targetDir string) ([]string, error) {
 	if targetDir == "" {
 		return nil, ErrNoTargetDir
+	}
+	// Compared after cleaning, so "//", "/." or "home/../home" are
+	// caught too; the command itself still names targetDir as found.
+	clean := filepath.Clean(targetDir)
+	if abs, err := filepath.Abs(targetDir); err == nil {
+		clean = abs
+	}
+	if clean == "/" {
+		return nil, ErrRootFolder
+	}
+	if home, err := os.UserHomeDir(); err == nil && clean == filepath.Clean(home) {
+		return nil, ErrHomeFolder
 	}
 	dir := shellQuote(targetDir)
 	envFile := shellQuote(filepath.Join(targetDir, EnvFile))

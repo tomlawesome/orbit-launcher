@@ -54,6 +54,7 @@ type flowLoop struct {
 	t      *testing.T
 	queue  *sink
 	update func(tea.Msg) tea.Cmd
+	seen   []tea.Msg // every message handed to update from the queue, in order
 }
 
 func newFlowLoop(t *testing.T, queue *sink, update func(tea.Msg) tea.Cmd) *flowLoop {
@@ -78,23 +79,59 @@ func (l *flowLoop) run(cmd tea.Cmd) {
 	}()
 }
 
-// settle runs cmd and everything it leads to until the queue has been
-// quiet for a moment (or a few seconds have passed in all), so late
-// messages have had their chance to land before the test looks.
-func (l *flowLoop) settle(cmd tea.Cmd) {
+// flowWait is the longest any wait for an event may take. Nothing here
+// waits for quiet: a test names the screen, state or message it needs and
+// waits for that, so a slow runner only makes it later, never wrong.
+const flowWait = 10 * time.Second
+
+// handle hands one queued message to update and runs what it leads to.
+func (l *flowLoop) handle(msg tea.Msg) {
+	l.seen = append(l.seen, msg)
+	l.run(l.update(msg))
+}
+
+// flowPoll is how often until looks at cond when no message has arrived:
+// cond may depend on something that changes off the queue, such as a
+// counter a seam bumps on another goroutine.
+const flowPoll = 5 * time.Millisecond
+
+// until handles queued messages, and everything they lead to, until cond
+// holds, and fails the test if it has not within flowWait. cond runs on
+// the test goroutine between messages, where the model is not being
+// changed, so it may read screens and state. what names the event waited
+// for, for the failure.
+func (l *flowLoop) until(what string, cond func() bool) {
 	l.t.Helper()
-	l.run(cmd)
-	deadline := time.After(5 * time.Second)
-	for {
+	deadline := time.After(flowWait)
+	poll := time.NewTicker(flowPoll)
+	defer poll.Stop()
+	for !cond() {
 		select {
 		case msg := <-l.queue.msgs:
-			l.run(l.update(msg))
-		case <-time.After(300 * time.Millisecond):
-			return
+			l.handle(msg)
+		case <-poll.C:
 		case <-deadline:
-			return
+			l.t.Fatalf("gave up after %s waiting for %s", flowWait, what)
 		}
 	}
+}
+
+// settle runs cmd and then waits, as until does, for cond.
+func (l *flowLoop) settle(cmd tea.Cmd, what string, cond func() bool) {
+	l.t.Helper()
+	l.run(cmd)
+	l.until(what, cond)
+}
+
+// handled counts the messages handled so far for which match is true.
+func (l *flowLoop) handled(match func(tea.Msg) bool) int {
+	n := 0
+	for _, msg := range l.seen {
+		if match(msg) {
+			n++
+		}
+	}
+	return n
 }
 
 // stoppedWithoutReporting is the #159 wording for this exact condition,
@@ -134,7 +171,9 @@ func TestRepair_DiagnosisStreamClosingEarlyFailsVisibly(t *testing.T) {
 	app, loop, cmd := repairViaApp(t, func(context.Context, string, deploy.RepairMode) (*engine.Stream, error) {
 		return stoppedStream(engine.RawLineMsg{Text: "finding class=secret-missing target=session-secret severity=warn"}), nil
 	})
-	loop.settle(cmd)
+	loop.settle(cmd, "the diagnosis's failure screen", func() bool {
+		return strings.Contains(screen(app), stoppedWithoutReporting)
+	})
 
 	s := screen(app)
 	if strings.Contains(s, "reading the deployment") {
@@ -159,12 +198,14 @@ func TestRepair_ExecutionStreamClosingEarlyFailsVisibly(t *testing.T) {
 		}
 		return engine.Start(exec.Command("bash", "-c", safePlanStream))
 	})
-	loop.settle(cmd)
-	if s := screen(app); !strings.Contains(s, "Run the safe repairs") {
-		t.Fatalf("the plan screen never arrived:\n%s", s)
-	}
+	loop.settle(cmd, "the plan screen", func() bool {
+		return strings.Contains(screen(app), "Run the safe repairs")
+	})
 
-	loop.settle(loop.update(key(tea.KeyEnter))) // "Run the safe repairs" is preselected
+	// "Run the safe repairs" is preselected.
+	loop.settle(loop.update(key(tea.KeyEnter)), "the repair's failure screen", func() bool {
+		return strings.Contains(screen(app), stoppedWithoutReporting)
+	})
 
 	s := screen(app)
 	if strings.Contains(s, "running the safe repairs") {
@@ -194,7 +235,11 @@ func TestRepair_TheSupersededRunsStreamEndingDoesNotFailTheNewRun(t *testing.T) 
 			engine.DoneMsg{ExitCode: 0},
 		), nil
 	})
-	loop.settle(cmd)
+	// Both streams end, the rejected --plan run's and the --check run's,
+	// whichever order they land in; each ends behind its DoneMsg, so the
+	// verdict is in by then, and it must stand after both.
+	isEnd := func(msg tea.Msg) bool { _, ok := msg.(repairStreamEndedMsg); return ok }
+	loop.settle(cmd, "both streams' endings", func() bool { return loop.handled(isEnd) == 2 })
 
 	s := screen(app)
 	if !strings.Contains(s, "Diagnosis clear") {
@@ -233,7 +278,9 @@ func configViaInstall(t *testing.T, start startConfigFunc) (*InstallModel, *flow
 		*install = updated.(InstallModel)
 		return next
 	})
-	loop.settle(cmd)
+	loop.settle(cmd, "the sign-in question", func() bool {
+		return strings.Contains(screen(install), "How will people sign in?")
+	})
 	if s := screen(install); !strings.Contains(s, "How will people sign in?") {
 		t.Fatalf("the configuration refusal did not go straight into the guided session:\n%s", s)
 	}
@@ -248,7 +295,10 @@ func TestConfig_StreamClosingEarlyFailsVisibly(t *testing.T) {
 		return stoppedStream(engine.RawLineMsg{Text: "prompt field=APP_URL kind=url required=true attempt=1"}),
 			nopWriteCloser{&bytes.Buffer{}}, nil
 	})
-	loop.settle(loop.update(key(tea.KeyEnter))) // Local accounts: --init starts
+	// Local accounts: --init starts, and its stream stops without a DoneMsg.
+	loop.settle(loop.update(key(tea.KeyEnter)), "the failure screen", func() bool {
+		return strings.Contains(screen(install), stoppedWithoutReporting)
+	})
 
 	s := screen(install)
 	if strings.Contains(s, "Public Orbit origin") || strings.Contains(s, "talking to the engine") {
@@ -275,17 +325,23 @@ func TestConfig_ACancelledSessionsLateStreamEndingIsDropped(t *testing.T) {
 		}
 		return s, stdin, err
 	})
-	loop.settle(loop.update(key(tea.KeyEnter))) // Local accounts: --init starts
+	// Local accounts: --init starts and asks for the origin.
+	loop.settle(loop.update(key(tea.KeyEnter)), "the session's first prompt", func() bool {
+		return strings.Contains(screen(install), "Public Orbit origin")
+	})
 	if started == nil {
 		t.Fatal("--init never started")
 	}
-	if s := screen(install); !strings.Contains(s, "Public Orbit origin") {
-		t.Fatalf("the session's first prompt never arrived:\n%s", s)
-	}
 
-	loop.settle(loop.update(key(tea.KeyEsc)))
-	started.Kill() // whatever Esc did to the engine, its stream now ends
-	loop.settle(nil)
+	loop.settle(loop.update(key(tea.KeyEsc)), "Esc to leave for the menu", func() bool {
+		return leftForMenu(install.Outcome())
+	})
+	// Whatever Esc did to the engine, its stream now ends; wait for that
+	// ending to reach the flow, late, so the check below is of what it did.
+	isEnd := func(msg tea.Msg) bool { _, ok := msg.(configStreamEndedMsg); return ok }
+	before := loop.handled(isEnd)
+	started.Kill()
+	loop.until("the cancelled session's stream ending", func() bool { return loop.handled(isEnd) > before })
 
 	if o := install.Outcome(); !leftForMenu(o) {
 		t.Fatalf("outcome after Esc = %+v, want back to the main menu", o)

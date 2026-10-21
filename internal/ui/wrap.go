@@ -25,9 +25,10 @@ const (
 
 // measure is the wrap width of a screen's prose: the terminal's width
 // less the two-cell margin each side, capped at limit (proseWidth or
-// errorWidth).
+// errorWidth). It is never under one cell, so a row on a terminal four
+// columns wide or less still holds text rather than nothing.
 func measure(width, limit int) int {
-	return min(width-4, limit)
+	return max(1, min(width-4, limit))
 }
 
 // wrapShellCommand lays a shell command, given as its already-quoted
@@ -43,6 +44,7 @@ func measure(width, limit int) int {
 // (§2.2.1: a backslash-newline continues a line; §2.2.2: adjacent quoted
 // strings join into one word; see cutUnit). The next unit starts a fresh row.
 func wrapShellCommand(words []string, limit int) []string {
+	words = shownQuotes(words)
 	if cmd := strings.Join(words, " "); lipgloss.Width(cmd) <= limit {
 		return []string{cmd}
 	}
@@ -107,6 +109,19 @@ func endCut(text string, limit int) string {
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`
 
+// shownQuotes puts back the escaped apostrophes visibleText doubled the
+// backslash of in words shown on screen: they are the shell's quoting,
+// not text from the folder, so the box writes them as the shell does
+// and cutUnit still knows them. Inside a quoted word every apostrophe
+// is a quote or part of one, so the doubled form is never anything else.
+func shownQuotes(words []string) []string {
+	out := make([]string, len(words))
+	for i, w := range words {
+		out[i] = strings.ReplaceAll(w, `'\\''`, escapedQuote)
+	}
+	return out
+}
+
 // cutUnit cuts a unit too wide for one row (an option with its value, or
 // a word) into rows that read back as it. It returns every row but the
 // last, each ending in a backslash that continues the line, and the last
@@ -115,7 +130,7 @@ const escapedQuote = `'\''`
 // left. A cut inside a single-quoted word closes the quote and reopens
 // it: a row ends in `'\` and the next starts with `'`. A cut inside a
 // bare word ends the row in a backslash glued to the text. A cut falls
-// between grapheme clusters, never leaves an empty fragment, and never
+// between escapeUnits, never leaves an empty fragment, and never
 // falls beside or inside an escaped apostrophe. A unit with no place to
 // cut is returned whole.
 func cutUnit(u string, limit int) (rows []string, last string) {
@@ -134,7 +149,7 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 	for rest := u; rest != ""; {
 		a := escapedQuote
 		if !strings.HasPrefix(rest, a) {
-			a, _ = xansi.FirstGraphemeCluster(rest, xansi.GraphemeWidth)
+			a = firstUnit(rest) // an escape such as \x1b is never cut
 		}
 		atoms = append(atoms, a)
 		rest = rest[len(a):]
@@ -318,11 +333,14 @@ func visibleLines(s string) string {
 }
 
 // visibleText shows text nobody vetted, such as a folder name, as the
-// terminal should draw it: every rune that is not graphic is written as
+// terminal should draw it: every rune that is not printable is written as
 // its Go escape (\r, \n, \t, \x1b, \u202e, \xff for an invalid
 // byte), so a CR or LF cannot forge or add a row, an escape sequence
 // cannot restyle the screen, and a bidi override cannot reorder it.
-// Printable text, spaces and non-ASCII letters stay as they are.
+// A backslash is shown as \\, so text that really reads \x1b never
+// looks like an escape character, and a blank other than the plain
+// space (a no-break space) is escaped too, so it never passes for one.
+// Printable text, plain spaces and non-ASCII letters stay as they are.
 func visibleText(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -330,7 +348,7 @@ func visibleText(s string) string {
 		switch {
 		case r == utf8.RuneError && n == 1:
 			fmt.Fprintf(&b, `\x%02x`, s[i])
-		case unicode.IsGraphic(r):
+		case r != '\\' && strconv.IsPrint(r): // IsPrint: IsGraphic less the blanks other than U+0020
 			b.WriteRune(r)
 		default:
 			q := strconv.QuoteRune(r)
@@ -346,7 +364,7 @@ func visibleText(s string) string {
 // runs of spaces to limit cells (the prose width). A word wider than
 // limit that still fits edge (the screen's text area) gets a row of its
 // own, whole, since what fits the terminal is never cut. A word wider
-// than edge joins the row and is cut at limit on grapheme clusters, so
+// than edge joins the row and is cut at limit between escapeUnits, so
 // the whole path reads across rows. Rows past maxRows are dropped, the
 // last kept one ending in "…".
 func wrapHard(text string, limit, edge, maxRows int) []string {
@@ -381,7 +399,7 @@ func wrapHard(text string, limit, edge, maxRows int) []string {
 			// (#275): the cut moves back until the row has room for
 			// it, and the clusters it gives up go down with the dash.
 			head, tail := row, ""
-			for cs := clusters(row); lipgloss.Width(head)+w > limit && len(cs) > 1; cs = cs[:len(cs)-1] {
+			for cs := escapeUnits(row); lipgloss.Width(head)+w > limit && len(cs) > 1; cs = cs[:len(cs)-1] {
 				tail = cs[len(cs)-1] + tail
 				head = strings.Join(cs[:len(cs)-1], "")
 			}
@@ -401,7 +419,7 @@ func wrapHard(text string, limit, edge, maxRows int) []string {
 			row, rowW = "", 0
 			cut = false
 		default:
-			parts := strings.Split(xansi.Hardwrap(row+gap+word, limit, true), "\n")
+			parts := hardCut(row+gap+word, limit)
 			rows = append(rows, parts[:len(parts)-1]...)
 			row = parts[len(parts)-1]
 			rowW = lipgloss.Width(row)
@@ -433,13 +451,65 @@ func isStub(word string) bool {
 	return true
 }
 
-// clusters splits text into its grapheme clusters.
-func clusters(text string) []string {
+// escapeUnits splits text into the pieces a cut may fall between: its
+// grapheme clusters, except that an escape visibleText writes (\\, \r,
+// \x1b, \u202e, \U0001f600) is one piece, so a cut never leaves \x at
+// the end of one row and 1b at the start of the next.
+func escapeUnits(text string) []string {
 	var cs []string
 	for rest := text; rest != ""; {
-		c, _ := xansi.FirstGraphemeCluster(rest, xansi.GraphemeWidth)
+		c := firstUnit(rest)
 		cs = append(cs, c)
 		rest = rest[len(c):]
 	}
 	return cs
+}
+
+// firstUnit is the first of text's escapeUnits.
+func firstUnit(text string) string {
+	if n := escapeLen(text); n > 0 {
+		return text[:n]
+	}
+	c, _ := xansi.FirstGraphemeCluster(text, xansi.GraphemeWidth)
+	return c
+}
+
+// escapeLen is the length of the visibleText escape text starts with, or
+// 0 when it starts with none.
+func escapeLen(text string) int {
+	if len(text) < 2 || text[0] != '\\' {
+		return 0
+	}
+	if strings.IndexByte(`\abfnrtv`, text[1]) >= 0 {
+		return 2
+	}
+	digits := map[byte]int{'x': 2, 'u': 4, 'U': 8}[text[1]]
+	if digits == 0 {
+		return 0
+	}
+	if len(text) < 2+digits {
+		return 0
+	}
+	for _, c := range []byte(text[2 : 2+digits]) {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", rune(c)) {
+			return 0
+		}
+	}
+	return 2 + digits
+}
+
+// hardCut cuts text into rows of at most limit cells, between
+// escapeUnits only. A piece wider than limit has a row of its own.
+func hardCut(text string, limit int) []string {
+	var rows []string
+	row, w := "", 0
+	for _, c := range escapeUnits(text) {
+		cw := lipgloss.Width(c)
+		if row != "" && w+cw > limit {
+			rows = append(rows, row)
+			row, w = "", 0
+		}
+		row, w = row+c, w+cw
+	}
+	return append(rows, row)
 }

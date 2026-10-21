@@ -379,16 +379,19 @@ func TestEscAfterFlow_RepairPostRunScreensStillGoBackToTheMenu(t *testing.T) {
 
 	t.Run("through the app after a clear diagnosis", func(t *testing.T) {
 		app, loop, cmd := repairViaApp(t, fakeRepairStream(`echo 'diagnosis result=healthy checked=13 skipped=0'; exit 0`))
-		loop.settle(cmd)
-		if s := screen(app); !strings.Contains(s, "Diagnosis clear") {
-			t.Fatalf("the diagnosis never finished:\n%s", s)
-		}
-		loop.settle(loop.update(tea.WindowSizeMsg{Width: 100, Height: 30}))
+		loop.settle(cmd, "the clear diagnosis", func() bool {
+			return strings.Contains(screen(app), "Diagnosis clear")
+		})
+		loop.settle(loop.update(tea.WindowSizeMsg{Width: 100, Height: 30}), "the window size to be taken", func() bool {
+			return app.width == 100 && app.height == 30
+		})
 		next := loop.update(key(tea.KeyEsc))
 		if isQuit(next) {
 			t.Fatal("Esc on Repair's finished diagnosis quit the launcher")
 		}
-		loop.settle(next)
+		loop.settle(next, "the menu at the window's size", func() bool {
+			return app.state == appStateSplash && app.splash.width == 100 && app.splash.height == 30
+		})
 		if app.state != appStateSplash {
 			t.Fatalf("Esc left the app in state %v, want the menu:\n%s", app.state, screen(app))
 		}
@@ -397,7 +400,9 @@ func TestEscAfterFlow_RepairPostRunScreensStillGoBackToTheMenu(t *testing.T) {
 		}
 		// Live, by the same reading the Esc tests above use.
 		before := app.splash.menu.sel
-		loop.settle(loop.update(key(tea.KeyDown)))
+		loop.settle(loop.update(key(tea.KeyDown)), "Down to move the selection", func() bool {
+			return app.splash.menu.sel != before
+		})
 		if want := (before + 1) % len(app.splash.menu.items); app.splash.menu.sel != want {
 			t.Fatalf("Down moved the selection to %d, want %d: the menu is not live", app.splash.menu.sel, want)
 		}

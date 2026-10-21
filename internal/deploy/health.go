@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -43,6 +44,11 @@ const (
 // alive/degraded state, not a per-service sweep. It gives up after
 // healthProbeTimeout, or sooner if ctx ends.
 func ProbeHealth(ctx context.Context, appURL string) HealthReason {
+	// APP_URL comes from a file the launcher may not have written, so
+	// only a web address is ever asked; any other scheme is not checked.
+	if u, err := url.Parse(appURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return HealthUnchecked
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appURL, nil)
 	if err != nil {
 		return HealthUnchecked

@@ -177,12 +177,22 @@ func TestInstallModel_StandardNeverStartsTheEngineAutomatically(t *testing.T) {
 		},
 	}
 	m, _ := newTestInstallModel(seams)
-	updated, _ := m.Update(key(tea.KeyEnter)) // Standard -> notice
+	updated, cmd := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	_ = m.View() // rendering alone must never trigger a side effect
 
+	// What Enter returns is the only thing that could start the engine:
+	// run it. It must be the notice's countdown tick and nothing else.
+	if cmd == nil {
+		t.Fatal("opening the notice must arm its countdown tick")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("the command Enter returned yielded nothing, want the notice's tick")
+	} else if _, ok := msg.(noticeTickMsg); !ok {
+		t.Fatalf("Enter on Standard returned a command that yielded %T, want only the notice's tick", msg)
+	}
 	if engineCalled {
-		t.Error("the engine must only start after the notice is accepted, never as a side effect of rendering")
+		t.Error("the engine must only start after the notice is accepted, never as a side effect of Enter or of rendering")
 	}
 }
 
@@ -248,7 +258,9 @@ func TestInstallModel_ConfigurationRefusalGoesStraightIntoTheGuidedHandoff(t *te
 	}
 	m, s := newTestInstallModel(seams)
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd, s)
+	// Watched at every step: the removed configuration screen must never
+	// come up on the way, not merely be absent from the last screen.
+	m = driveWatching(t, m, cmd, removedConfigScreenText, s)
 
 	// The refusal goes straight into guided configuration (#251), with
 	// no key press and no screen of its own. This engine handed over no
@@ -257,11 +269,6 @@ func TestInstallModel_ConfigurationRefusalGoesStraightIntoTheGuidedHandoff(t *te
 	// the terminal straight away — nothing is fetched instead (#190).
 	if !prepared || !handoffRan {
 		t.Fatal("expected the interactive handoff to run with no key pressed")
-	}
-	for _, gone := range []string{"The engine stopped before touching anything", "Continue — guided configuration"} {
-		if strings.Contains(m.View().Content, gone) {
-			t.Errorf("the removed configuration screen is still shown (%q)", gone)
-		}
 	}
 	o := m.Outcome()
 	if !o.Done || !o.Succeeded {

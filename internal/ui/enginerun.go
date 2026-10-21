@@ -107,7 +107,10 @@ type engineReadyMsg struct {
 	// configuration tree (deploy.ConfigTreeDir); cleanup removes it.
 	configTree string
 	cleanup    func() error
-	err        error
+	// script is the install.sh the engine was started from, kept for
+	// the run's retry.
+	script []byte
+	err    error
 }
 
 // engineStoppedMsg ends the wait after Ctrl-C: the engine has exited
@@ -168,6 +171,11 @@ type engineRun struct {
 
 	stream  *engine.Stream
 	cleanup func() error
+	// script is the install.sh this run fetched. The retry after guided
+	// configuration starts from it rather than fetching again, so a
+	// network blip then cannot read as bad answers, and the retry runs
+	// the same script that asked for the configuration.
+	script []byte
 	// configTree is where this run's engine copies its verified
 	// configuration tree on a configuration refusal (ai/orbit#1225). It
 	// lives until cleanup runs, which a refusal defers until the
@@ -180,6 +188,11 @@ type engineRun struct {
 	// managed to start, so no engine is ever left running unobserved.
 	cancelPrepare context.CancelFunc
 	quitting      bool
+	// handoffPending is the terminal handoff's preparation still
+	// running: its staged files arrive only in installPreparedMsg, so a
+	// Ctrl-C meanwhile waits for that message, as one while preparing
+	// the engine does.
+	handoffPending bool
 
 	// cfg is the in-console configuration session, live while state is
 	// runConfigCollect.
@@ -196,6 +209,12 @@ type engineRun struct {
 	lastFailed    *engine.Event
 	stderrTail    []string
 	runErr        error
+
+	// handoffByHand is the terminal handoff chosen from the failure
+	// screen rather than reached as a fallback; handoffErr is why its
+	// preparation failed, shown below the failure it was meant to answer.
+	handoffByHand bool
+	handoffErr    error
 
 	// exitNote is set only when the launcher killed an installer that
 	// was still undoing its work; main prints it after the screen closes
@@ -240,11 +259,14 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	targetDir, action := r.targetDir, string(r.action)
+	targetDir, action, script := r.targetDir, string(r.action), r.script
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
 		if prepare == nil {
+			if script != nil {
+				return startEngine(ctx, script, targetDir, action)
+			}
 			return defaultPrepareEngine(ctx, targetDir, action)
 		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
@@ -260,6 +282,11 @@ func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineR
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
+	return startEngine(ctx, script, targetDir, action)
+}
+
+// startEngine stages script and starts it as the engine run.
+func startEngine(ctx context.Context, script []byte, targetDir, action string) engineReadyMsg {
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
@@ -274,7 +301,7 @@ func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineR
 		cleanup()
 		return engineReadyMsg{err: err}
 	}
-	return engineReadyMsg{stream: stream, configTree: deploy.ConfigTreeDir(cmd), cleanup: cleanup}
+	return engineReadyMsg{stream: stream, configTree: deploy.ConfigTreeDir(cmd), cleanup: cleanup, script: script}
 }
 
 // releaseRunFiles removes what the engine run staged — install.sh and
@@ -353,7 +380,11 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 	case engineReadyMsg:
 		if r.quitting {
 			if msg.stream != nil {
-				msg.stream.Kill()
+				// The engine started after all: stop it as Ctrl-C stops a
+				// running one, so its EXIT trap can roll back what it began.
+				r.stream, r.cleanup, r.configTree = msg.stream, msg.cleanup, msg.configTree
+				r, stop := r.beginStop()
+				return r, tea.Batch(stop, readEngineStream(r.send, r.stream, engineRunStream))
 			}
 			if msg.cleanup != nil {
 				_ = msg.cleanup()
@@ -368,6 +399,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
 		r.configTree = msg.configTree
+		if msg.script != nil {
+			r.script = msg.script
+		}
 		r.state = runStreaming
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
@@ -392,6 +426,20 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
+		r.handoffPending = false
+		if r.quitting {
+			if msg.cleanup != nil {
+				_ = msg.cleanup()
+			}
+			return r, tea.Quit
+		}
+		if msg.err != nil && r.handoffByHand {
+			// Chosen on the failure screen: that failure still stands,
+			// and the preparation's error goes beneath it.
+			r.handoffErr = msg.err
+			r.state = runFailed
+			return r, nil
+		}
 		if msg.err != nil {
 			// The preparation's own error, not an earlier refusal the
 			// handoff was meant to answer.
@@ -542,6 +590,8 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 // install.sh's interactive prompts, which is what lets CI treat one of
 // those prompts appearing as proof of the in-console path.
 func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
+	r.handoffByHand = false
+	r.handoffErr = nil
 	// The handoff stages its own install.sh and configuration tree; a
 	// refused run's are done with.
 	r.releaseRunFiles()
@@ -563,14 +613,18 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 	if prepare == nil {
 		prepare = defaultPrepareInstall
 	}
-	return r, prepareInstallCmd(prepare, r.targetDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancelPrepare = cancel
+	r.handoffPending = true
+	return r, prepareInstallCmd(ctx, prepare, r.targetDir)
 }
 
 func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if isCtrlC(msg) {
-		if r.state == runPreparing {
+		if r.state == runPreparing || (r.state == runHandoffRunning && r.handoffPending) {
 			// Nothing to kill yet: cancel the preparation and quit when
-			// it reports back (see the engineReadyMsg case).
+			// it reports back (the engineReadyMsg and installPreparedMsg
+			// cases), which is when its staged files can be removed.
 			r.quitting = true
 			if r.cancelPrepare != nil {
 				r.cancelPrepare()
@@ -596,7 +650,9 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
 			switch label {
 			case "Open the guided installer":
-				return r.beginHandoff()
+				r, cmd := r.beginHandoff()
+				r.handoffByHand = true
+				return r, cmd
 			case "Menu":
 				r.Done = true
 				r.WantsMenu = true
@@ -732,10 +788,20 @@ func (r engineRun) viewFailed(width, height int) string {
 			fmt.Fprintln(&b, line)
 		}
 	} else if r.runErr != nil {
-		writeWrapped(&b, style.Tagline, visibleLines(r.runErr.Error()), limit)
+		text := r.runErr.Error()
+		// visibleText is not idempotent (a backslash is shown doubled), so
+		// text that was escaped as it was built is not escaped again.
+		var shown shownText
+		if !errors.As(r.runErr, &shown) {
+			text = visibleLines(text)
+		}
+		writeWrapped(&b, style.Tagline, text, limit)
 	}
 	for _, line := range tailLines(r.stderrTail, 6) {
 		writeWrapped(&b, style.Tagline, line, limit)
+	}
+	if r.handoffErr != nil {
+		writeWrapped(&b, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
 	}
 	fmt.Fprintln(&b)
 	r.menu.over(failedMenu).write(&b)

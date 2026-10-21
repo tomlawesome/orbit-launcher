@@ -243,6 +243,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
 	}
+	// Only Remove and Repair have a step that ignores Ctrl-C, so only
+	// they need to tell a signal from the key; elsewhere it is the key.
+	if _, ok := msg.(SignalQuitMsg); ok && m.state != appStateRemove && m.state != appStateRepair {
+		msg = ctrlCPress
+	}
 
 	switch m.state {
 	case appStateSplash:

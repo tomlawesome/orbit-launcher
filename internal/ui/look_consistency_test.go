@@ -377,19 +377,13 @@ func TestLookOutcomeMark_ConfigurationSessionKeepsTheAmberMark(t *testing.T) {
 			prepareConfig: planned(true, false),
 		})
 		m, cmd := startInstallRun(t, m)
-		m = drive(t, m, cmd, s)
+		m = driveWatching(t, m, cmd, []string{oldScreen}, s)
 		if m.run.state != runConfigSignInMode {
 			t.Fatalf("run state = %v, want the guided session's first screen", m.run.state)
-		}
-		if strings.Contains(screen(m), oldScreen) {
-			t.Fatalf("the removed configuration screen is shown:\n%s", screen(m))
 		}
 	})
 	t.Run("the collection session", func(t *testing.T) {
 		r := collectingRun(t, engineRunSeams{})
-		if strings.Contains(runScreen(r), oldScreen) {
-			t.Fatalf("the removed configuration screen is shown:\n%s", runScreen(r))
-		}
 		if !strings.Contains(r.view(80, 26), amber) {
 			t.Error("the mark is not amber (style.DegradedText); the stop before it was")
 		}

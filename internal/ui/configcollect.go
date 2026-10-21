@@ -117,6 +117,11 @@ type configCollect struct {
 
 	// late is shared with the prepare and start commands still running.
 	late *configLate
+
+	// ctx is the session's lifetime: the configure.sh --check runs it
+	// starts are cancelled by close, so leaving stops them.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // configLate settles who releases what a prepare or start command
@@ -169,6 +174,9 @@ func (l *configLate) stop() {
 // close releases the session's process and what it collected, and
 // whatever a command still running for it goes on to produce.
 func (c *configCollect) close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
 	if c.late != nil {
 		c.late.stop()
 	}
@@ -221,14 +229,15 @@ func defaultStartConfig(configTree string, step deploy.ConfigStep, mode deploy.A
 func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	r.state = runConfigCollect
 	late := &configLate{}
-	r.cfg = configCollect{late: late}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cfg = configCollect{late: late, ctx: ctx, cancel: cancel}
 	prepare := r.prepareConfig
 	if prepare == nil {
 		prepare = defaultPrepareConfig
 	}
 	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
-		msg := prepare(context.Background(), targetDir, configTree)
+		msg := prepare(ctx, targetDir, configTree)
 		if !late.hand(func() { releaseConfigMsg(msg) }) {
 			return nil
 		}
@@ -451,9 +460,12 @@ func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
 	if recheck == nil {
 		recheck = deploy.RunConfigCheck
 	}
-	configTree := r.cfg.plan.configTree
+	configTree, ctx := r.cfg.plan.configTree, r.cfg.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return r, func() tea.Msg {
-		check, err := recheck(context.Background(), configTree)
+		check, err := recheck(ctx, configTree)
 		return configRecheckMsg{check: check, err: err}
 	}
 }
@@ -495,7 +507,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		r.releaseRunFiles()
 		r.lastFailed = nil
 		r.stderrTail = nil
-		r.runErr = errors.New(r.cfg.session.giveUpWords(r.cfg.origin))
+		r.runErr = shownText(r.cfg.session.giveUpWords(r.cfg.origin))
 		r.state = runFailed
 		r.menu = menu{}
 		return r, nil
@@ -525,6 +537,7 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
+	r.handoffErr = nil
 	r.menu = menu{}
 	return r.start(r.width, r.height)
 }
@@ -582,7 +595,7 @@ func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 // promptWords maps protocol field names to the same human labels
 // install.sh's own TTY prompts use, plus the guidance a person actually
 // needs to answer at that moment. An unknown field renders its protocol
-// name — honest, never guessed at.
+// name, control codes shown as text — honest, never guessed at.
 //
 // notes carry worked examples, because naming a field is not the same as
 // telling someone where to find its value: "your identity provider's
@@ -622,7 +635,8 @@ func promptWords(field, origin string) (label, hint string, notes []string) {
 	case "safe-batch":
 		return "Run the safe repairs?", "y to proceed", nil
 	default:
-		return field, "", nil
+		// The engine's own word: drawn, never obeyed.
+		return visibleText(field), "", nil
 	}
 }
 
@@ -647,7 +661,7 @@ func callbackNote(origin string) []string {
 }
 
 // rejectionWords maps the engine's rejection reason classes to honest
-// words. Unknown classes render verbatim.
+// words. Unknown classes render as given, control codes shown as text.
 func rejectionWords(reason string) string {
 	switch reason {
 	case "empty":
@@ -663,7 +677,8 @@ func rejectionWords(reason string) string {
 	case "too-large":
 		return "too large"
 	default:
-		return reason
+		// The engine's own word: drawn, never obeyed.
+		return visibleText(reason)
 	}
 }
 

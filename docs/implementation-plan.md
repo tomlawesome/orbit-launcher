@@ -10,7 +10,8 @@
 > Wave 3, and the "immediate next steps" in section 7. The current
 > release process is in [releasing.md](releasing.md); GitLab and
 > `.gitlab-ci.yml` are the CI gate, and the live test runs when asked for
-> or when a change moves the pins it installs with. The module layout also omits `internal/engine` and `internal/notices`.
+> or when a change moves the pins it installs with. The module layout also omits `internal/ansi`, `internal/engine`,
+> `internal/notices` and `internal/testutil`.
 
 
 ## Purpose
@@ -527,7 +528,7 @@ keep working. Two things follow from that:
   so fetching only this one file is sufficient. The one exception is
   `ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH`: when set, `FetchInstallScript`
   reads that local file instead of downloading anything. It isn't
-  vendoring — it's how `scripts/get-orbit-launcher.sh` hands over the
+  vendoring — it's how Orbit's `scripts/get-orbit.sh` hands over the
   exact copy it already fetched and verified against Orbit's signed
   manifest (ADR-0031), so the launcher doesn't re-fetch something
   already checked. `install.sh` is the only script the launcher ever

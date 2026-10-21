@@ -78,27 +78,108 @@ func (f *straightFlow) outcome() flowOutcome {
 	return f.model.(interface{ Outcome() flowOutcome }).Outcome()
 }
 
-// press delivers one message to the flow and lets everything it sets off
-// settle.
-func (f *straightFlow) press(msg tea.Msg) {
-	f.t.Helper()
-	f.loop.settle(f.loop.update(msg))
+// run is the engine run the flow holds.
+func (f *straightFlow) run() engineRun {
+	switch m := f.model.(type) {
+	case InstallModel:
+		return m.run
+	case UpdateModel:
+		return m.run
+	}
+	f.t.Fatalf("unexpected model %T", f.model)
+	return engineRun{}
 }
 
-// typeLine types text and presses Enter.
+// atRest reports whether the flow is waiting for the operator or is over:
+// the sign-in question or a prompt is open, the failure screen is up, or
+// the flow has left. A key that opens the next prompt is not at rest until
+// that prompt has arrived, so a test types the next answer only once it
+// can be taken (a keystroke sent before the prompt opens is dropped).
+func (f *straightFlow) atRest() bool {
+	if f.outcome().Done {
+		return true
+	}
+	r := f.run()
+	switch r.state {
+	case runConfigSignInMode, runFailed, runSucceeded, runLeft:
+		return true
+	case runConfigCollect:
+		return r.cfg.session.prompt != nil
+	}
+	return false
+}
+
+const atRestWhat = "the flow to be waiting for the operator again"
+
+// press delivers one message to the flow and waits until it is at rest
+// again. Where the key's effect is a different place (the failure screen
+// after an engine that gives up, say, which passes through an open prompt)
+// use pressUntil.
+func (f *straightFlow) press(msg tea.Msg) {
+	f.t.Helper()
+	f.pressUntil(msg, atRestWhat, f.atRest)
+}
+
+// pressUntil delivers one message to the flow and waits for cond.
+func (f *straightFlow) pressUntil(msg tea.Msg, what string, cond func() bool) {
+	f.t.Helper()
+	f.loop.settle(f.loop.update(msg), what, cond)
+}
+
+// typeLine types text and presses Enter, waiting for the flow to be at
+// rest again.
 func (f *straightFlow) typeLine(text string) {
+	f.t.Helper()
+	f.typeLineUntil(text, atRestWhat, f.atRest)
+}
+
+// typeLineUntil types text and presses Enter, then waits for cond.
+func (f *straightFlow) typeLineUntil(text, what string, cond func() bool) {
 	f.t.Helper()
 	for _, r := range text {
 		f.loop.run(f.loop.update(runeKey(r)))
 	}
-	f.press(key(tea.KeyEnter))
+	f.pressUntil(key(tea.KeyEnter), what, cond)
+}
+
+// failed reports whether the flow is on its failure screen.
+func (f *straightFlow) failed() bool { return f.runState() == runFailed }
+
+// driveToFailure picks the sign-in row, types answers at the prompts as
+// they open, and waits for the failure screen the engine's giving up ends
+// on. The last step waits for the failure itself, not for a rest: the
+// engine's prompt can be on screen just before it gives up.
+func (f *straightFlow) driveToFailure(sso bool, answers []string) {
+	f.t.Helper()
+	if sso {
+		f.press(key(tea.KeyDown))
+	}
+	if len(answers) == 0 {
+		f.pressUntil(key(tea.KeyEnter), "the failure screen", f.failed) // sign-in mode
+		return
+	}
+	f.press(key(tea.KeyEnter)) // sign-in mode: the first prompt opens
+	for i, a := range answers {
+		if i < len(answers)-1 {
+			f.typeLine(a)
+		} else {
+			f.typeLineUntil(a, "the failure screen", f.failed)
+		}
+	}
 }
 
 // startStraightFlow starts the named flow against an engine that stops
-// for configuration and settles; it presses nothing after the run starts.
-// seams supplies the configuration session's seams; the engine and the
-// handoff are filled in here.
+// for configuration and waits until it is at rest; it presses nothing
+// after the run starts. seams supplies the configuration session's seams;
+// the engine and the handoff are filled in here.
 func startStraightFlow(t *testing.T, name string, seams engineRunSeams) *straightFlow {
+	t.Helper()
+	return startStraightFlowUntil(t, name, seams, atRestWhat, (*straightFlow).atRest)
+}
+
+// startStraightFlowUntil is startStraightFlow waiting for cond instead of
+// for rest, for a test whose seam holds the flow somewhere else.
+func startStraightFlowUntil(t *testing.T, name string, seams engineRunSeams, what string, cond func(*straightFlow) bool) *straightFlow {
 	t.Helper()
 	f := &straightFlow{t: t, name: name}
 	seams.prepareEngine = func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -141,10 +222,18 @@ func startStraightFlow(t *testing.T, name string, seams engineRunSeams) *straigh
 	f.loop = newFlowLoop(t, queue, func(msg tea.Msg) tea.Cmd {
 		var next tea.Cmd
 		f.model, next = f.model.Update(msg)
+		// Every screen the flow shows, not only the ones a test stops to
+		// look at: the removed screen would be on the way, not at the end.
+		notShowingRemovedScreen(t, screen(f.model))
 		return next
 	})
-	f.loop.settle(cmd)
+	f.loop.settle(cmd, what, f.holding(cond))
 	return f
+}
+
+// holding is cond as a condition on the flow f, for a wait.
+func (f *straightFlow) holding(cond func(*straightFlow) bool) func() bool {
+	return func() bool { return cond(f) }
 }
 
 // countingPlan is planned() with a count of the session's own cleanup
@@ -393,13 +482,7 @@ func TestStraightIn_TheEngineGivingUpShowsTheFailureScreen(t *testing.T) {
 					prepareConfig: planned(true, false),
 					startConfig:   cfg.start,
 				})
-				if c.sso {
-					f.press(key(tea.KeyDown))
-				}
-				f.press(key(tea.KeyEnter)) // sign-in mode
-				for _, a := range c.answers {
-					f.typeLine(a)
-				}
+				f.driveToFailure(c.sso, c.answers)
 
 				s := f.screen()
 				if f.runState() != runFailed {
@@ -442,7 +525,7 @@ func TestStraightIn_TheGiveUpScreensMenuIsTheUsualOne(t *testing.T) {
 		prepareConfig: planned(true, false),
 		startConfig:   scriptedConfig(giveUpOnAppURLScript, machineSecretScript),
 	})
-	f.press(key(tea.KeyEnter)) // sign-in mode
+	f.driveToFailure(false, nil)
 	if f.runState() != runFailed {
 		t.Fatalf("run state = %v, want the failure screen:\n%s", f.runState(), f.screen())
 	}
@@ -654,17 +737,18 @@ func waitCount(t *testing.T, n *atomic.Int32, what string) {
 func TestStraightIn_EscWhileThePlanIsPreparedCleansUpTheLatePlan(t *testing.T) {
 	for _, name := range straightInFlows {
 		t.Run(name, func(t *testing.T) {
-			var planCleaned atomic.Int32
+			var planCleaned, preparing atomic.Int32
 			hold := newGate()
 			late := countingPlan(true, false, &planCleaned)
 			cfg := &recordedConfig{inner: scriptedConfig(machineInitScript, machineSecretScript)}
-			f := startStraightFlow(t, name, engineRunSeams{
+			f := startStraightFlowUntil(t, name, engineRunSeams{
 				prepareConfig: func(ctx context.Context, dir, tree string) configPlanMsg {
+					preparing.Add(1)
 					hold.wait()
 					return late(ctx, dir, tree)
 				},
 				startConfig: cfg.start,
-			})
+			}, "the plan to be held in preparation", func(*straightFlow) bool { return preparing.Load() > 0 })
 			if hold.timedOut() {
 				t.Fatal("setup: the plan was prepared inside Update, so there is no preparing phase")
 			}
@@ -679,7 +763,7 @@ func TestStraightIn_EscWhileThePlanIsPreparedCleansUpTheLatePlan(t *testing.T) {
 			afterEsc := f.screen()
 
 			hold.open()
-			f.loop.settle(nil)
+			f.loop.until("the late plan's cleanup", func() bool { return planCleaned.Load() > 0 })
 
 			waitCount(t, &planCleaned, "the late plan's cleanup")
 			if o := f.outcome(); !leftForMenu(o) {
@@ -717,7 +801,8 @@ func TestStraightIn_EscWhileTheProcessStartsKillsTheLateProcess(t *testing.T) {
 			if !strings.Contains(f.screen(), "How will people sign in?") {
 				t.Fatalf("not on the sign-in question:\n%s", f.screen())
 			}
-			f.press(key(tea.KeyEnter)) // Local accounts: the process starts
+			// Local accounts: the process starts, and is held.
+			f.pressUntil(key(tea.KeyEnter), "the configuration process to be asked for", func() bool { return starts.Load() > 0 })
 			if hold.timedOut() {
 				t.Fatal("setup: the process was started inside Update, so there is no starting phase")
 			}
@@ -732,7 +817,7 @@ func TestStraightIn_EscWhileTheProcessStartsKillsTheLateProcess(t *testing.T) {
 			afterEsc := f.screen()
 
 			hold.open()
-			f.loop.settle(nil)
+			f.loop.until("the late process's stdin to be closed", stdin.closed.Load)
 
 			waitStopped(t, proc)
 			deadline := time.Now().Add(3 * time.Second)
@@ -805,13 +890,7 @@ func TestStraightIn_TheGiveUpReasonNamesOnlyAFieldStillBeingAsked(t *testing.T) 
 					prepareConfig: planned(true, false),
 					startConfig:   scriptedConfig(c.script, machineSecretScript),
 				})
-				if c.sso {
-					f.press(key(tea.KeyDown))
-				}
-				f.press(key(tea.KeyEnter)) // sign-in mode
-				for _, a := range c.answers {
-					f.typeLine(a)
-				}
+				f.driveToFailure(c.sso, c.answers)
 
 				s := f.screen()
 				if f.runState() != runFailed {

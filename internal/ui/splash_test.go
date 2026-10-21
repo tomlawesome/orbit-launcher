@@ -542,23 +542,27 @@ func TestSplashModel_ArrivalShowsTheWordsInOrder(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	m = updated.(SplashModel)
 
-	var sawGet, sawInto, sawOrbitAlone bool
+	// The tick each beat first shows on. -1 is "never".
+	getAt, intoAt, orbitAt := -1, -1, -1
 	for i := 0; i < 80; i++ {
-		view := m.View().Content
-		if strings.Contains(view, "Get") {
-			sawGet = true
+		view := screen(m)
+		if getAt < 0 && strings.Contains(view, "Get") {
+			getAt = i
 		}
-		if strings.Contains(view, "Into") {
-			sawInto = true
+		if intoAt < 0 && strings.Contains(view, "Into") {
+			intoAt = i
 		}
-		if strings.Contains(view, "O R B I T") && !strings.Contains(view, "Install") {
-			sawOrbitAlone = true
+		if orbitAt < 0 && strings.Contains(view, "O R B I T") && !strings.Contains(view, "Install") {
+			orbitAt = i
 		}
 		updated, _ = m.Update(tickMsg{})
 		m = updated.(SplashModel)
 	}
-	if !sawGet || !sawInto || !sawOrbitAlone {
-		t.Errorf("arrival beats missing: Get=%v Into=%v OrbitAlone=%v", sawGet, sawInto, sawOrbitAlone)
+	if getAt < 0 || intoAt < 0 || orbitAt < 0 {
+		t.Fatalf("arrival beats missing: Get at tick %d, Into at %d, the wordmark alone at %d", getAt, intoAt, orbitAt)
+	}
+	if !(getAt < intoAt && intoAt < orbitAt) {
+		t.Errorf("arrival beats out of order: Get at tick %d, Into at %d, the wordmark alone at %d; want Get, then Into, then Orbit", getAt, intoAt, orbitAt)
 	}
 }
 

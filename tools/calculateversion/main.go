@@ -37,12 +37,22 @@ func main() {
 
 // run is main with its inputs and outputs passed in, so the flag handling,
 // the output and the exit codes can be tested without a real repository or
-// a subprocess. Exit codes are cli.Run's: 2 on a bad flag, 0 for -h, 1
-// when the tags cannot be read.
+// a subprocess. Exit codes are cli.Run's: 2 on a bad flag or any
+// positional argument, 0 for -h, 1 when the tags cannot be read.
 func run(args []string, tags func() ([]string, error), stdout, stderr io.Writer) int {
-	return cli.Run("calculateversion", args, stderr, func(fs *flag.FlagSet) func() error {
+	usageError := false
+	code := cli.Run("calculateversion", args, stderr, func(fs *flag.FlagSet) func() error {
 		hotfix := fs.Bool("hotfix", false, "calculate a hotfix (patch) version instead of an ordinary (minor) train")
 		return func() error {
+			// The command takes no positional arguments. `calculateversion
+			// hotfix` (the flag without its dash) would otherwise print the
+			// next minor version and a release would be cut at the wrong
+			// number. cli.Run reserves 2 for flags, so it is mapped here.
+			if fs.NArg() > 0 {
+				usageError = true
+				fmt.Fprintf(stderr, "calculateversion: unexpected argument %q; the only flag is -hotfix\n", fs.Arg(0))
+				return nil
+			}
 			list, err := tags()
 			if err != nil {
 				return err
@@ -51,4 +61,8 @@ func run(args []string, tags func() ([]string, error), stdout, stderr io.Writer)
 			return nil
 		}
 	})
+	if usageError {
+		return 2
+	}
+	return code
 }

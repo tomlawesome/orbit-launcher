@@ -127,8 +127,9 @@ func (c ConsoleModel) observeEvent(e engine.Event) ConsoleModel {
 	switch {
 	case idx == -1:
 		// An unknown phase is newest information; show its literal
-		// token until a known phase moves things forward again.
-		c.unknownStage = e.Phase
+		// token, control codes as text, until a known phase moves
+		// things forward again.
+		c.unknownStage = visibleText(e.Phase)
 	case idx >= c.phaseIdx:
 		c.phaseIdx = idx
 		c.unknownStage = ""

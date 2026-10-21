@@ -768,7 +768,10 @@ func TestRepairModel_UnsummarisedPlanNeedsAttention(t *testing.T) {
 	)
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
 	s := screen(m)
-	if !strings.Contains(s, "Needs your attention") || !strings.Contains(s, "re-run guided configuration — required fields aren't ready") {
+	// The plan line wraps at the prose measure (56 cells at 80 columns),
+	// so "ready" goes to the next row.
+	if !strings.Contains(s, "Needs your attention") || !strings.Contains(s, "re-run guided configuration — required fields aren't") ||
+		!strings.Contains(strings.Join(skyWords(s), " "), "required fields aren't ready") {
 		t.Fatalf("screen:\n%s", s)
 	}
 }

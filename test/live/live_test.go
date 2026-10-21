@@ -163,6 +163,20 @@ func (s *liveSession) expectWithin(what string, match vtscreen.Match) string {
 	return out
 }
 
+// removedConfigScreenText is what the screen the engine's configuration
+// stop used to land on showed (#251): the stop goes straight into guided
+// configuration now. Every wait fails if one of these comes up.
+var removedConfigScreenText = []string{"The engine stopped before touching anything", "Continue — guided configuration"}
+
+func showsRemovedConfigScreen(screen string) (string, bool) {
+	for _, gone := range removedConfigScreenText {
+		if strings.Contains(screen, gone) {
+			return gone, true
+		}
+	}
+	return "", false
+}
+
 // expectWithinErr holds all of expectWithin's logic but returns the
 // failure instead of calling t.Fatalf, so the timeout/diagnose path can
 // be exercised and asserted on by a test.
@@ -191,7 +205,13 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, matc
 		return "", fmt.Errorf("%s: test deadline is within cleanupReserve (%s); failing now so cleanup can run", what, cleanupReserve)
 	}
 	start := time.Now()
-	screen, err := vtscreen.Wait(s.term, budget, match)
+	// The removed configuration screen would be on the way to the one
+	// waited for, and replaced by it, so a check of the screen the wait
+	// ends on could never see it: it ends the wait here instead.
+	screen, err := vtscreen.Wait(s.term, budget, func(sc string) bool {
+		_, removed := showsRemovedConfigScreen(sc)
+		return removed || match(sc)
+	})
 	if err != nil {
 		// A cut budget's timeout would otherwise read like a budget bug.
 		if budget < requested {
@@ -202,6 +222,9 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, matc
 	}
 	// The evidence screenBudget is calibrated against (#166).
 	s.t.Logf("%s: matched after %s (budget %s)", what, time.Since(start).Round(100*time.Millisecond), budget)
+	if gone, removed := showsRemovedConfigScreen(screen); removed {
+		return "", fmt.Errorf("the removed configuration screen is shown (%q). Screen:\n%s", gone, screen)
+	}
 	return screen, nil
 }
 
@@ -1216,9 +1239,6 @@ func openGuidedConfiguration(session *liveSession) {
 	// leads to the guided configuration.
 	screen := session.expectWithin("expected the sign-in question or failure screen after the piped attempt",
 		vtscreen.ContainsAny("How will people sign in?", "Install stopped"))
-	if strings.Contains(screen, "The engine stopped before touching anything") || strings.Contains(screen, "Continue — guided configuration") {
-		session.t.Fatalf("the removed configuration screen is shown. Screen:\n%s", screen)
-	}
 	if !strings.Contains(screen, "How will people sign in?") {
 		sendLine("") // Open the guided installer
 	}
@@ -1593,6 +1613,40 @@ func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
 	if !ok || !status.Signaled() || status.Signal() != syscall.SIGQUIT {
 		t.Errorf("child state = %v, want it ended by the diagnosis's SIGQUIT", cmd.ProcessState)
 	}
+}
+
+// TestExpectWithin_FailsWhenTheRemovedConfigurationScreenComesUp proves a
+// wait ends, and fails, on the screen the engine's configuration stop used
+// to land on even when what it waits for is shown next, which a check of
+// the screen the wait ends on could never see.
+func TestExpectWithin_FailsWhenTheRemovedConfigurationScreenComesUp(t *testing.T) {
+	sessionShowing := func(t *testing.T, drawn string) *liveSession {
+		t.Helper()
+		term, err := vtscreen.New(80, 24, nil)
+		if err != nil {
+			t.Fatalf("create virtual terminal: %v", err)
+		}
+		t.Cleanup(func() { _ = term.Close() })
+		if _, err := io.WriteString(term.Output(), drawn); err != nil {
+			t.Fatalf("draw: %v", err)
+		}
+		return &liveSession{t: t, term: term, budget: 5 * time.Second, screenBudget: 5 * time.Second}
+	}
+	signIn := vtscreen.ContainsAny("How will people sign in?")
+
+	t.Run("the removed screen fails the wait", func(t *testing.T) {
+		session := sessionShowing(t, "The engine stopped before touching anything\r\n")
+		_, err := session.expectWithinErr("waiting for the sign-in question", signIn)
+		if err == nil || !strings.Contains(err.Error(), "removed configuration screen") {
+			t.Fatalf("error = %v, want the removed configuration screen reported", err)
+		}
+	})
+	t.Run("an ordinary screen still matches", func(t *testing.T) {
+		session := sessionShowing(t, "How will people sign in?")
+		if _, err := session.expectWithinErr("waiting for the sign-in question", signIn); err != nil {
+			t.Fatalf("an ordinary screen did not match: %v", err)
+		}
+	})
 }
 
 func TestCapBudgetLeavesRoomForCleanup(t *testing.T) {

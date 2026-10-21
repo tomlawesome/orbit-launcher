@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,6 +84,10 @@ type RemoveModel struct {
 	// of seam as standDown, nil in production, which means os.Stdout. Tests
 	// set it so they neither write to the real terminal nor go unchecked.
 	clipboard io.Writer
+
+	// signalQuit is a SignalQuitMsg that arrived during the stand-down:
+	// the launcher quits as soon as the stand-down's result is in.
+	signalQuit bool
 }
 
 // NewRemoveModel constructs the Remove flow for a detected deployment. A
@@ -153,8 +158,24 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state = removeStateDone
 			m.after = newMenu(removeDoneRows...)
+			if m.refusedFolder() != "" {
+				// No command to copy for a folder that is not Orbit's own.
+				m.after = newMenu(removeDoneRows[1:]...)
+			}
+		}
+		if m.signalQuit {
+			return m.handleKey(ctrlCPress)
 		}
 		return m, nil
+
+	case SignalQuitMsg:
+		// The stand-down is not interrupted (see handleKey), but nobody
+		// may be left to see its result, so the quit waits for it.
+		if m.state == removeStateStandingDown {
+			m.signalQuit = true
+			return m, nil
+		}
+		return m.handleKey(ctrlCPress)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -299,11 +320,17 @@ func (m RemoveModel) viewConfirm() string {
 	fmt.Fprintln(&b)
 	// Each hand-broken line wraps on its own, so it stays one row where
 	// it fits and breaks at spaces where it does not.
-	for _, line := range []string{
+	prose := []string{
 		"Your mail, documents, and configuration are not deleted",
 		"by this step — they stay on disk, and the next screen",
 		"shows exactly how to remove them if you choose to.",
-	} {
+	}
+	// The root or home folder gets no removal command, so nothing is
+	// promised for it.
+	if m.refusedFolder() != "" {
+		prose = []string{prose[0], "by this step — they stay on disk."}
+	}
+	for _, line := range prose {
 		writeWrapped(&b, style.MutedText, line, measure(m.width, proseWidth))
 	}
 	fmt.Fprintln(&b)
@@ -311,8 +338,14 @@ func (m RemoveModel) viewConfirm() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
+// removeCannotStopLine is the stand-down's second working line. It keeps
+// Repair's "can't be stopped from here" (#227) but not Repair's reason:
+// a stand-down deletes nothing and is undone by starting Orbit again,
+// so stopping it halfway is not unsafe.
+const removeCannotStopLine = "can't be stopped from here — nothing is deleted, and it ends on its own"
+
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", cannotStopLine))
+	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", removeCannotStopLine))
 }
 
 func (m RemoveModel) viewDone() string {
@@ -329,6 +362,15 @@ func (m RemoveModel) viewDone() string {
 	}
 	writeWrapped(&b, style.MutedText, "nothing has been deleted.", prose)
 	fmt.Fprintln(&b)
+	// "sudo rm -rf" of the root or home folder would delete far more than
+	// Orbit, so no command is built or offered for it: one plain sentence
+	// says why instead.
+	if refused := m.refusedFolder(); refused != "" {
+		writeWrapped(&b, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own.", prose)
+		fmt.Fprintln(&b)
+		m.after.write(&b)
+		return skyBlock(m.star, m.width, m.height, b.String())
+	}
 	writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
 
 	// The command is over 100 cells for a short path, and the box adds
@@ -382,13 +424,32 @@ func (m RemoveModel) viewDone() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
+// refusedFolder names the deployment folder when no removal command is
+// built for it ("the root folder", "your home folder"); empty otherwise.
+func (m RemoveModel) refusedFolder() string {
+	_, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	switch {
+	case errors.Is(err, deploy.ErrRootFolder):
+		return "the root folder"
+	case errors.Is(err, deploy.ErrHomeFolder):
+		return "your home folder"
+	}
+	return ""
+}
+
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Stand-down stopped")
 	if m.standDownErr != nil {
-		// Docker's words, at Docker's length: wrapped so the reason is
-		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, visibleLines(m.standDownErr.Error()), measure(m.width, errorWidth))
+		// Docker's words, wrapped so the reason is never cut at the
+		// screen's edge. Compose adds a progress line per container
+		// (about 36 for Orbit), which would push Menu and Exit off a
+		// small terminal: the first line, which holds the reason, stays,
+		// and only the last six after it, as on the engine failure
+		// screen.
+		lines := strings.Split(strings.TrimRight(m.standDownErr.Error(), "\n"), "\n")
+		shown := append([]string{lines[0]}, tailLines(lines[1:], 6)...)
+		writeWrapped(&b, style.Tagline, visibleLines(strings.Join(shown, "\n")), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)
