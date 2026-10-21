@@ -2,11 +2,16 @@ package ui
 
 import (
 	"errors"
+	"io"
+	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -48,9 +53,32 @@ type SuccessModel struct {
 	// there's often no browser, and the honest response is a hint to
 	// copy the URL, not an error screen.
 	openFailed bool
+
+	// readClaim reads the claim link Orbit prints while nobody has
+	// claimed it (#259); nil reads nothing, which is every screen but
+	// the one after a fresh Install. claimLink is its answer: with one,
+	// the address links to the claim page and Copy claim link appears.
+	// The link reaches the screen and the clipboard, nothing else.
+	readClaim func() (string, error)
+	claimLink string
+	copied    bool
+
+	// clipboard is where Copy claim link writes its OSC 52 sequence:
+	// nil in production, which means os.Stdout, as for Remove's Copy
+	// command.
+	clipboard io.Writer
 }
 
-var successMenu = []string{"Get into Orbit", "Terminal", "Menu"}
+const successCopyClaim = "Copy claim link"
+
+var (
+	successMenu      = []string{"Get into Orbit", "Terminal", "Menu"}
+	successClaimMenu = []string{"Get into Orbit", successCopyClaim, "Terminal", "Menu"}
+)
+
+// claimLinkMsg carries readClaim's answer back into the event loop; an
+// empty link leaves the screen as it is.
+type claimLinkMsg struct{ link string }
 
 // NewSuccessModel constructs the success screen. elapsed is the mission
 // console's real wall-clock duration; zero renders no footer figure
@@ -71,10 +99,30 @@ func (m SuccessModel) Outcome() flowOutcome {
 
 // Init implements tea.Model.
 func (m SuccessModel) Init() tea.Cmd {
+	read := m.claimCmd()
 	if m.noAnimation {
+		return read
+	}
+	if read == nil {
+		return tick()
+	}
+	return tea.Batch(tick(), read)
+}
+
+// claimCmd is the one claim-link read, or nil without a reader. An
+// error is no link: the screen stays as it would have been.
+func (m SuccessModel) claimCmd() tea.Cmd {
+	readClaim := m.readClaim
+	if readClaim == nil {
 		return nil
 	}
-	return tick()
+	return func() tea.Msg {
+		link, err := readClaim()
+		if err != nil {
+			return claimLinkMsg{}
+		}
+		return claimLinkMsg{link: link}
+	}
 }
 
 // Update implements tea.Model.
@@ -107,6 +155,13 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 
+	case claimLinkMsg:
+		if msg.link != "" {
+			m.claimLink = msg.link
+			m.menu = m.menu.over(successClaimMenu)
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -132,6 +187,9 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "Get into Orbit":
 		m.openFailed = m.launchURL() != nil
 		return m, nil
+	case successCopyClaim:
+		m.copied = true
+		return m, copyToClipboard(m.clipboardWriter(), m.claimLink)
 	case "Terminal":
 		m.Chosen = "terminal"
 		return m, tea.Quit
@@ -148,10 +206,22 @@ func (m SuccessModel) launchURL() error {
 	if open == nil {
 		open = defaultOpenURL
 	}
+	if m.claimLink != "" {
+		return open(m.claimLink)
+	}
 	if m.appURL == "" {
 		return errors.New("no deployment URL")
 	}
 	return open(m.appURL)
+}
+
+// clipboardWriter is where the copy sequence goes: os.Stdout unless a test
+// supplied a writer.
+func (m SuccessModel) clipboardWriter() io.Writer {
+	if m.clipboard != nil {
+		return m.clipboard
+	}
+	return os.Stdout
 }
 
 // defaultOpenURL launches url with the platform opener. Start (not Run):
@@ -199,17 +269,76 @@ func (m SuccessModel) centreBlockLines() []string {
 	if m.appURL != "" {
 		// Escaped for the screen only: open() above still gets the raw
 		// address, as the Remove box shows escaped and runs raw.
-		lines = append(lines, style.AccentText.Render(visibleText(m.appURL)))
+		address := style.AccentText.Render(visibleText(m.appURL))
+		if m.claimLink != "" {
+			// The address a person reads, opening the claim page a
+			// terminal that knows OSC 8 lets them click.
+			address = xansi.SetHyperlink(m.claimLink) + address + xansi.ResetHyperlink()
+		}
+		lines = append(lines, address)
 	}
-	lines = append(lines, style.SuccessText.Render("alive"))
+	status := style.SuccessText.Render("alive")
+	if m.claimLink != "" {
+		status += style.Separator + style.DegradedText.Render("unclaimed")
+	}
+	lines = append(lines, status)
 	lines = append(lines, "")
 
-	for i, label := range m.menu.items {
+	// The copy row says so once it has copied; the menu's own label,
+	// which Enter answers with, stays the same.
+	rows := m.menu.items
+	if m.copied {
+		rows = make([]string, len(m.menu.items))
+		for i, label := range m.menu.items {
+			if label == successCopyClaim {
+				label += style.Separator + "copied"
+			}
+			rows[i] = label
+		}
+	}
+	for i, label := range rows {
 		lines = append(lines, menuRow(label, i == m.menu.sel))
+	}
+	if m.copied {
+		lines = append(lines, "")
+		for _, row := range claimLinkRows(m.claimLink, measure(m.width, errorWidth)) {
+			lines = append(lines, style.MutedText.Render(row))
+		}
 	}
 	if m.openFailed {
 		lines = append(lines, "")
 		lines = append(lines, style.Tagline.Render("no browser here — copy the URL above"))
 	}
 	return lines
+}
+
+// claimLinkRows lays the claim link out in rows of at most limit cells:
+// whole when it fits, otherwise in its two units, the address and then
+// the #claim= fragment, each on its own row. The address is written
+// without a bare "/" path, which names the same page, so it reads as
+// the address above it. A unit wider than limit is cut at the measure,
+// the one place a unit is broken. deploy.ParseClaimLink admits printable
+// ASCII only, so a byte is a cell.
+func claimLinkRows(link string, limit int) []string {
+	if lipgloss.Width(link) <= limit || limit <= 0 {
+		return []string{link}
+	}
+	address, fragment := link, ""
+	if i := strings.IndexByte(link, '#'); i >= 0 {
+		address, fragment = link[:i], link[i:]
+	}
+	if u, err := url.Parse(link); err == nil && u.Path == "/" && !u.ForceQuery && u.RawQuery == "" {
+		address = strings.TrimSuffix(address, "/")
+	}
+	var rows []string
+	for _, unit := range []string{address, fragment} {
+		for len(unit) > limit {
+			rows = append(rows, unit[:limit])
+			unit = unit[limit:]
+		}
+		if unit != "" {
+			rows = append(rows, unit)
+		}
+	}
+	return rows
 }

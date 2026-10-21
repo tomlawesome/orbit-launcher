@@ -76,6 +76,10 @@ type InstallModel struct {
 
 	run engineRun
 
+	// startedAt is when the engine run began: the success screen reads
+	// the claim link from the app's logs since then (#259).
+	startedAt time.Time
+
 	// Test seams, copied into the engine run at start; nil means real.
 	seams engineRunSeams
 }
@@ -341,6 +345,9 @@ func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
 	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
+	// The console's own start, so the clock is read once (a later
+	// restart after in-console configuration keeps this first one).
+	m.startedAt = m.run.console.startedAt
 	return m, cmd
 }
 
