@@ -47,3 +47,6 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `ORBIT_FIRST_RECORD_IMAGE_JOB` and `ORBIT_FIRST_SIGN_EVIDENCE_JOB`: the
   `record_image` and `sign_evidence` job IDs of an earlier signed ai/orbit
   preview pipeline. The job token can't list pipelines to find them itself.
+- A preview run (`orbit_channel` preview, or `orbit_branch` paired with it) needs
+  the GitLab route, started by hand with `RUN_LIVE=true`, as the GitHub mirror has
+  no release manifest (#194).
