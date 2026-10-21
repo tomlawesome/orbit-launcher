@@ -478,3 +478,24 @@ func TestSplashProbe_PassesTheAppURLToTheProbe(t *testing.T) {
 		t.Errorf("probe asked about %q, want %q", got, m.appURL)
 	}
 }
+
+// A service that is up but not healthy is not counted as running.
+func TestSplashProbe_UnhealthyServiceIsNotCountedAsRunning(t *testing.T) {
+	for _, health := range []string{"unhealthy", "starting"} {
+		t.Run("health="+health, func(t *testing.T) {
+			m, _ := probeModel(t, "")
+			m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthServerError }
+			m.serviceStates = func(string) ([]deploy.ServiceState, error) {
+				return []deploy.ServiceState{
+					{Service: "orbit-db", State: "running", Health: "healthy"},
+					{Service: "orbit-app", State: "running", Health: health},
+					{Service: "orbit-clamav", State: "running", Health: ""},
+				}, nil
+			}
+			want := healthResultMsg{reason: deploy.HealthServerError, running: 2, expected: 3, counted: true}
+			if got := m.probeHealthCmd()(); got != want {
+				t.Errorf("message = %+v, want %+v", got, want)
+			}
+		})
+	}
+}

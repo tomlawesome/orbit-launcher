@@ -272,3 +272,63 @@ func TestRepairServices_RenderingIsRepeatable(t *testing.T) {
 		t.Errorf("two renders differ:\n%s\n---\n%s", a, b)
 	}
 }
+
+// Diagnose again reads the services again: the after-picture must not
+// keep showing the state read for the first diagnosis.
+func TestRepairServices_DiagnoseAgainReadsTheServicesAgain(t *testing.T) {
+	have := []deploy.ServiceState{
+		{Service: "orbit-db", State: "running", Health: "healthy"},
+		{Service: "orbit-app", State: "exited"},
+		{Service: "orbit-clamav", State: "running", Health: "healthy"},
+	}
+	calls := 0
+	m := servicesModel(t, "", 80, 30, nil, nil)
+	m.serviceStates = func(string) ([]deploy.ServiceState, error) {
+		calls++
+		return have, nil
+	}
+
+	assertRows(t, m, []svcRow{{"✓", "orbit-db", "running"}, {"!", "orbit-app", "stopped"}, {"✓", "orbit-clamav", "running"}})
+	if calls != 1 {
+		t.Fatalf("first diagnosis read the services %d times, want 1", calls)
+	}
+	// Rendering again must not read again.
+	_ = screen(m)
+	_ = screen(m)
+	if calls != 1 {
+		t.Fatalf("rendering the diagnosis read the services %d times in total, want 1", calls)
+	}
+
+	m.state = repairExecuted
+	m.menu = menu{}
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
+
+	have = up("orbit-db", "orbit-app", "orbit-clamav")
+	m = repairLines(t, m, "diagnosis result=healthy checked=15 skipped=0")
+	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitHealthy})
+
+	if calls != 2 {
+		t.Errorf("services read %d times after Diagnose again, want 2", calls)
+	}
+	rows := svcRows(t, m)
+	var sawApp bool
+	for _, r := range rows {
+		if r.state == "stopped" {
+			t.Errorf("a stopped row remains after Diagnose again: %v", rows)
+		}
+		if r.name == "orbit-app" {
+			sawApp = true
+			if r.glyph != "✓" || r.state != "running" {
+				t.Errorf("orbit-app row = %v, want ✓ orbit-app running", r)
+			}
+		}
+	}
+	if !sawApp {
+		t.Errorf("no orbit-app row; screen:\n%s", screen(m))
+	}
+	_ = screen(m)
+	_ = screen(m)
+	if calls != 2 {
+		t.Errorf("rendering added reads: %d, want 2", calls)
+	}
+}
