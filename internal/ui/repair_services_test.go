@@ -47,6 +47,15 @@ func servicesModel(t *testing.T, profiles string, w, h int, have []deploy.Servic
 		{Class: "secret-missing", Target: "compose-file", Severity: "fail"},
 		{Class: "secret-stale", Target: "env-file", Severity: "warn"},
 	}
+	// A plan, as scene h of the v8 round has: the collapse rule is "the
+	// list and the plan will not both fit", so a fixture without a plan
+	// never collapses.
+	m.planActions = []engine.PlanAction{
+		{Action: "fix-permissions", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
+		{Action: "manual", Resolves: "secret-stale", Mutation: "none", Backup: "required"},
+	}
+	m.planSummary = &engine.PlanSummary{Result: "ready", Actions: 2}
+	m.exitCode = engine.ExitPlanAvailable
 	return m
 }
 
