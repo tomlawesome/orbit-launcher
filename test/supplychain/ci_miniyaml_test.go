@@ -351,22 +351,32 @@ func (n *yamlNode) dump() string {
 }
 
 // flatScripts returns the strings of a script-like node, flattening nested
-// sequences the way GitLab does.
-func (n *yamlNode) flatScripts() []string {
+// sequences the way GitLab does. A mapping is an error, not an empty entry: a
+// plain step holding ": ", such as `- curl -H "Accept: json" ...`, reads as a
+// one-key mapping, and skipping it would hide that step from every
+// comparison (#236). GitLab refuses such a script too; quote the step.
+func (n *yamlNode) flatScripts() ([]string, error) {
 	if n == nil {
-		return nil
+		return nil, nil
 	}
-	if n.kind == 's' {
+	switch n.kind {
+	case 's':
 		if n.str == "" {
-			return nil
+			return nil, nil
 		}
-		return []string{n.str}
+		return []string{n.str}, nil
+	case 'm':
+		return nil, fmt.Errorf("a script entry reads as a mapping (%s): a plain step containing \": \" must be quoted", n.dump())
 	}
 	var out []string
 	for _, it := range n.items {
-		out = append(out, it.flatScripts()...)
+		s, err := it.flatScripts()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s...)
 	}
-	return out
+	return out, nil
 }
 
 // find reports whether a mapping key of this name exists anywhere below n.
@@ -424,7 +434,11 @@ func (d *yamlDoc) effectiveJob(name string) (jobEffective, error) {
 		if !set && def != nil && hook != "script" {
 			v = def.vals[hook]
 		}
-		all = append(all, v.flatScripts()...)
+		s, err := v.flatScripts()
+		if err != nil {
+			return jobEffective{}, fmt.Errorf("job %q %s: %w", name, hook, err)
+		}
+		all = append(all, s...)
 	}
 	keys := map[string]*yamlNode{}
 	for _, k := range merged.keys {
@@ -523,5 +537,29 @@ func TestMiniYAMLRefusesFoldedBlocks(t *testing.T) {
 	}
 	if got := doc.root.vals[".a"].str; got != "export X=1\napt-get update -qq" {
 		t.Errorf("literal block read as %q", got)
+	}
+}
+
+// A plain script step containing ": " reads as a one-key mapping. The guard
+// used to skip it, so such a step could change unnoticed (#236); it must
+// stop with an error, while the quoted form stays a readable step.
+func TestMiniYAMLRefusesScriptStepThatReadsAsMapping(t *testing.T) {
+	doc, err := parseMiniYAML("job:\n  script:\n    - echo one\n    - curl -H \"Accept: json\" https://example.invalid/\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, err := doc.effectiveJob("job"); err == nil {
+		t.Errorf("a script step that reads as a mapping was accepted; effective script %q", e.Script)
+	}
+	doc, err = parseMiniYAML("job:\n  script:\n    - echo one\n    - 'curl -H \"Accept: json\" https://example.invalid/'\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := doc.effectiveJob("job")
+	if err != nil {
+		t.Fatalf("quoted step refused: %v", err)
+	}
+	if want := "echo one\ncurl -H \"Accept: json\" https://example.invalid/"; e.Script != want {
+		t.Errorf("quoted step read as %q, want %q", e.Script, want)
 	}
 }
