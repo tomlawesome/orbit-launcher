@@ -42,8 +42,10 @@ var scriptFetchClient = &http.Client{Timeout: scriptFetchTimeout}
 
 // FetchInstallScript downloads the current install.sh from orbit's stable
 // branch. It never touches disk or executes anything — see Install for
-// that — and is deliberately re-fetched every time rather than cached, so
-// a person always installs against the current, real script.
+// that — and is deliberately re-fetched for every run rather than cached,
+// so a person always installs against the current, real script. (A run's
+// own retry after guided configuration reuses the copy that run fetched
+// moments before: see engineRun.script in internal/ui.)
 //
 // ORBIT_LAUNCHER_INSTALL_SCRIPT_URL overrides the source URL. It exists
 // only so CI can run the real install flow against orbit's develop/preview

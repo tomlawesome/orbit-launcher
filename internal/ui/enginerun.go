@@ -107,7 +107,10 @@ type engineReadyMsg struct {
 	// configuration tree (deploy.ConfigTreeDir); cleanup removes it.
 	configTree string
 	cleanup    func() error
-	err        error
+	// script is the install.sh the engine was started from, kept for
+	// the run's retry.
+	script []byte
+	err    error
 }
 
 // engineStoppedMsg ends the wait after Ctrl-C: the engine has exited
@@ -168,6 +171,11 @@ type engineRun struct {
 
 	stream  *engine.Stream
 	cleanup func() error
+	// script is the install.sh this run fetched. The retry after guided
+	// configuration starts from it rather than fetching again, so a
+	// network blip then cannot read as bad answers, and the retry runs
+	// the same script that asked for the configuration.
+	script []byte
 	// configTree is where this run's engine copies its verified
 	// configuration tree on a configuration refusal (ai/orbit#1225). It
 	// lives until cleanup runs, which a refusal defers until the
@@ -245,11 +253,14 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	targetDir, action := r.targetDir, string(r.action)
+	targetDir, action, script := r.targetDir, string(r.action), r.script
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
 		if prepare == nil {
+			if script != nil {
+				return startEngine(ctx, script, targetDir, action)
+			}
 			return defaultPrepareEngine(ctx, targetDir, action)
 		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
@@ -265,6 +276,11 @@ func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineR
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
+	return startEngine(ctx, script, targetDir, action)
+}
+
+// startEngine stages script and starts it as the engine run.
+func startEngine(ctx context.Context, script []byte, targetDir, action string) engineReadyMsg {
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
@@ -279,7 +295,7 @@ func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineR
 		cleanup()
 		return engineReadyMsg{err: err}
 	}
-	return engineReadyMsg{stream: stream, configTree: deploy.ConfigTreeDir(cmd), cleanup: cleanup}
+	return engineReadyMsg{stream: stream, configTree: deploy.ConfigTreeDir(cmd), cleanup: cleanup, script: script}
 }
 
 // releaseRunFiles removes what the engine run staged — install.sh and
@@ -377,6 +393,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
 		r.configTree = msg.configTree
+		if msg.script != nil {
+			r.script = msg.script
+		}
 		r.state = runStreaming
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
