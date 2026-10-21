@@ -279,7 +279,11 @@ func (s *Stream) signal(sig syscall.Signal, alsoProcess bool) bool {
 	}
 	// Negative pid addresses the process group the engine leads.
 	// Best effort: the process may already be gone.
-	_ = syscall.Kill(-s.cmd.Process.Pid, sig)
+	if err := syscall.Kill(-s.cmd.Process.Pid, sig); errors.Is(err, syscall.ESRCH) && !alsoProcess {
+		// No such group: the process does not lead one, so it gets the
+		// signal itself rather than none at all.
+		_ = s.cmd.Process.Signal(sig)
+	}
 	if alsoProcess {
 		_ = s.cmd.Process.Kill()
 	}

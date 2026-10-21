@@ -358,7 +358,11 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 	case engineReadyMsg:
 		if r.quitting {
 			if msg.stream != nil {
-				msg.stream.Kill()
+				// The engine started after all: stop it as Ctrl-C stops a
+				// running one, so its EXIT trap can roll back what it began.
+				r.stream, r.cleanup, r.configTree = msg.stream, msg.cleanup, msg.configTree
+				r, stop := r.beginStop()
+				return r, tea.Batch(stop, readEngineStream(r.send, r.stream, engineRunStream))
 			}
 			if msg.cleanup != nil {
 				_ = msg.cleanup()
