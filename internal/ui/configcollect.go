@@ -595,7 +595,7 @@ func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 // promptWords maps protocol field names to the same human labels
 // install.sh's own TTY prompts use, plus the guidance a person actually
 // needs to answer at that moment. An unknown field renders its protocol
-// name — honest, never guessed at.
+// name, control codes shown as text — honest, never guessed at.
 //
 // notes carry worked examples, because naming a field is not the same as
 // telling someone where to find its value: "your identity provider's
@@ -635,7 +635,8 @@ func promptWords(field, origin string) (label, hint string, notes []string) {
 	case "safe-batch":
 		return "Run the safe repairs?", "y to proceed", nil
 	default:
-		return field, "", nil
+		// The engine's own word: drawn, never obeyed.
+		return visibleText(field), "", nil
 	}
 }
 
@@ -660,7 +661,7 @@ func callbackNote(origin string) []string {
 }
 
 // rejectionWords maps the engine's rejection reason classes to honest
-// words. Unknown classes render verbatim.
+// words. Unknown classes render as given, control codes shown as text.
 func rejectionWords(reason string) string {
 	switch reason {
 	case "empty":
@@ -676,7 +677,8 @@ func rejectionWords(reason string) string {
 	case "too-large":
 		return "too large"
 	default:
-		return reason
+		// The engine's own word: drawn, never obeyed.
+		return visibleText(reason)
 	}
 }
 
