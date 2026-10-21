@@ -38,7 +38,7 @@ const (
 // ProbeHealth asks the deployment at appURL whether it is responding: a
 // single GET against the app's own URL. A 2xx to 4xx answer is
 // responding, a 5xx is a server error, and a transport failure is named
-// by its cause (DNS, certificate) or reads as not responding. This is
+// by its cause (a name that does not exist, certificate) or reads as not responding. This is
 // deliberately coarse, a reachability check for the splash's
 // alive/degraded state, not a per-service sweep. It gives up after
 // healthProbeTimeout, or sooner if ctx ends.
@@ -66,7 +66,10 @@ func transportReason(err error) HealthReason {
 	var hostname x509.HostnameError
 	var invalid x509.CertificateInvalidError
 	switch {
-	case errors.As(err, &dnsErr):
+	// Only a resolver's not-found answer means the name does not exist; an
+	// unreachable resolver, a timeout or SERVFAIL is also a DNSError, and
+	// offline must not send the person to check their DNS record.
+	case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
 		return HealthAddressNotFound
 	case errors.As(err, &certVerify), errors.As(err, &unknownAuth),
 		errors.As(err, &hostname), errors.As(err, &invalid):
