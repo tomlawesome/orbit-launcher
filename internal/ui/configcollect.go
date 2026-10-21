@@ -537,6 +537,7 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
+	r.handoffErr = nil
 	r.menu = menu{}
 	return r.start(r.width, r.height)
 }

@@ -210,6 +210,12 @@ type engineRun struct {
 	stderrTail    []string
 	runErr        error
 
+	// handoffByHand is the terminal handoff chosen from the failure
+	// screen rather than reached as a fallback; handoffErr is why its
+	// preparation failed, shown below the failure it was meant to answer.
+	handoffByHand bool
+	handoffErr    error
+
 	// exitNote is set only when the launcher killed an installer that
 	// was still undoing its work; main prints it after the screen closes
 	// and exits 1. Empty means a clean stop, or no stop.
@@ -427,6 +433,13 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 			}
 			return r, tea.Quit
 		}
+		if msg.err != nil && r.handoffByHand {
+			// Chosen on the failure screen: that failure still stands,
+			// and the preparation's error goes beneath it.
+			r.handoffErr = msg.err
+			r.state = runFailed
+			return r, nil
+		}
 		if msg.err != nil {
 			// The preparation's own error, not an earlier refusal the
 			// handoff was meant to answer.
@@ -577,6 +590,8 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 // install.sh's interactive prompts, which is what lets CI treat one of
 // those prompts appearing as proof of the in-console path.
 func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
+	r.handoffByHand = false
+	r.handoffErr = nil
 	// The handoff stages its own install.sh and configuration tree; a
 	// refused run's are done with.
 	r.releaseRunFiles()
@@ -635,7 +650,9 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
 			switch label {
 			case "Open the guided installer":
-				return r.beginHandoff()
+				r, cmd := r.beginHandoff()
+				r.handoffByHand = true
+				return r, cmd
 			case "Menu":
 				r.Done = true
 				r.WantsMenu = true
@@ -782,6 +799,9 @@ func (r engineRun) viewFailed(width, height int) string {
 	}
 	for _, line := range tailLines(r.stderrTail, 6) {
 		writeWrapped(&b, style.Tagline, line, limit)
+	}
+	if r.handoffErr != nil {
+		writeWrapped(&b, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
 	}
 	fmt.Fprintln(&b)
 	r.menu.over(failedMenu).write(&b)
