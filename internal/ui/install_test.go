@@ -511,15 +511,16 @@ func TestInstallModel_NoStaleVolumeChangesNothing(t *testing.T) {
 	}
 }
 
-// The check is async, so its answer can arrive after a quick hand has
-// already moved on. Yanking someone back from the notice to
-// report a pre-flight finding is worse than letting the engine say the
+// Enter waits for the check (#267), so a finding reaches a later screen
+// only as a stray after a clean answer. Yanking someone back from the
+// notice for it would still be worse than letting the engine say the
 // same thing a moment later.
 func TestInstallModel_StaleVolumeFindingNeverInterruptsALaterScreen(t *testing.T) {
 	m := NewInstallModel("/opt/orbit", "v0.1.0")
 	m.checkVolumes = staleVolumeCheck(deploy.DatabaseVolume{Name: "orbit-db-data"})
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ = updated.Update(staleVolumesMsg{})
 	updated, _ = updated.Update(key(tea.KeyEnter)) // Standard → notice
 	if got := updated.(InstallModel).state; got != installStateNotice {
 		t.Fatalf("expected the notice, got state %v", got)

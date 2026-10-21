@@ -17,7 +17,9 @@ heading.
 ## TestServiceStates_SlowDockerIsCutOffAndSaysSo (internal/deploy)
 
 - 2026-10-21 · 2cd89f3 · local, full `go test ./...` on a busy host · error said "996ms" where the test wants "within 1s"; passed on rerun
+- 2026-10-21 · fix/lows-decisions work · local, `scripts/coverage.sh -race` · error said "999ms" where the test wants "within 1s"
 
 ## TestAppModel_UnreadableEnvScreensHoldAtEveryWidth (internal/ui)
 
 - 2026-10-21 · 834d2c4 (fix/lows-repair) · local, full `go test ./...` · failed once, output not kept; passed 43 of 43 reruns. Possibly the long-TMPDIR wrap in #279
+- 2026-10-21 · de5debc + fix/lows-decisions work · local, full `go test ./...` · Remove at width 50 showed "permission · denied": a starfield glyph landed in the wrap gap and broke the flattened match. Not #279. Fixed in the test: it now flattens with `proseOnly`, which drops star-only words

@@ -749,30 +749,31 @@ func TestPromptWords_CarriesTheGuidanceEachFieldNeeds(t *testing.T) {
 // and the one most often got wrong, so the client-ID note names this
 // deployment's real one whenever APP_URL has already been answered.
 func TestCallbackNote_NamesThisDeploymentsRedirectURI(t *testing.T) {
-	const generic = "register <your Orbit URL>/api/auth/callback"
+	generic := []string{"register <your Orbit URL>/api/auth/callback", "as the redirect URI in your provider"}
+	named := []string{"Register the redirect URI with your provider", "https://orbit.example.com/api/auth/callback"}
 
 	cases := []struct {
 		name   string
 		origin string
-		want   string
+		want   []string
 	}{
 		{"no APP_URL answered yet", "", generic},
-		{"a real origin", "https://orbit.example.com", "register https://orbit.example.com/api/auth/callback"},
-		{"a trailing slash is not doubled", "https://orbit.example.com/", "register https://orbit.example.com/api/auth/callback"},
-		{"surrounding whitespace", "  https://orbit.example.com  ", "register https://orbit.example.com/api/auth/callback"},
+		{"a real origin", "https://orbit.example.com", named},
+		{"a trailing slash is not doubled", "https://orbit.example.com/", named},
+		{"surrounding whitespace", "  https://orbit.example.com  ", named},
 		{"plain http is not an Orbit origin", "http://orbit.example.com", generic},
-		{"too long for the bar", "https://" + strings.Repeat("a", 70) + ".example.com", generic},
+		{"too long for a prose row", "https://" + strings.Repeat("a", 70) + ".example.com", generic},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := callbackNote(tc.origin)
-			if len(got) == 0 || got[0] != tc.want {
-				t.Errorf("callbackNote(%q) first line = %q, want %q", tc.origin, got, tc.want)
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Errorf("callbackNote(%q) = %q, want %q", tc.origin, got, tc.want)
 			}
 			for _, line := range got {
-				if len(line) > 76 {
-					t.Errorf("note line would break the 80-cell bar: %q", line)
+				if len(line) > measure(80, errorWidth) {
+					t.Errorf("note line is wider than a prose row: %q", line)
 				}
 			}
 		})

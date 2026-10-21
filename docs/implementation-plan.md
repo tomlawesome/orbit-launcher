@@ -140,6 +140,10 @@ I can responsibly set up without legal advice:
   extra process. If that changes later, a CLA becomes a real prerequisite
   again at that point, not before.
 
+The commercial-license offer was dropped on 2026-10-21 (#195): AGPL-3.0
+cannot restrict commercial use, a commercial license would only sell an
+exception to its copyleft, and none is offered for now.
+
 ---
 
 ## 3. Testing strategy
