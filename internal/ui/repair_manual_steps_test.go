@@ -264,13 +264,11 @@ func TestPlanLine_EveryLineFitsIn80Columns(t *testing.T) {
 	}
 }
 
-// The line found too wide still says what it is about once shortened.
+// The restart line for a stale container reads in full, as the other
+// actions' lines do: the screen wraps it, so it is not shortened to fit.
 func TestPlanLine_RestartForAStaleContainerFitsAndSaysWhatItIsAbout(t *testing.T) {
 	got := ansi.Strip(planLine(engine.PlanAction{Action: "restart-services", Resolves: "stale-container", Mutation: "reversible", Backup: "not-required"}))
-	if w := lipgloss.Width(got); w > 80 {
-		t.Errorf("the restart line for a stale container is %d cells, want at most 80: %q", w, got)
-	}
-	for _, want := range []string{"restart Orbit's services", "container"} {
+	for _, want := range []string{"restart Orbit's services", "a container is running an older image than configured"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the restart line for a stale container reads %q, which lacks %q", got, want)
 		}

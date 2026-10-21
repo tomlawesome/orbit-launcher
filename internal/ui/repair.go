@@ -1176,11 +1176,6 @@ func planReasonWords(action, class string) string {
 		noun, lead = "application", "the application"
 	case "stale-container":
 		noun, lead = "container", "a container is"
-		if action == "restart-services" {
-			// Beside the restart's words, "is" pushes the line past
-			// 80 cells; without it the line still names the container.
-			lead = "a container"
-		}
 	case "secret-missing":
 		noun, lead = "secret", "a secret is"
 	case "managed-file-missing", "managed-file-symlink":
