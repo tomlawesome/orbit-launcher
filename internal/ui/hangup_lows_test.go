@@ -65,6 +65,14 @@ func TestHangup_RemoveSignalDuringStandDownQuitsOnceItFinishes(t *testing.T) {
 	}
 }
 
+// Outside the stand-down, the signal quits Remove at once, as Ctrl-C does.
+func TestHangup_RemoveSignalOutsideTheStandDownQuitsAtOnce(t *testing.T) {
+	m := newTestRemoveModel(func(context.Context, string) error { return nil })
+	if _, cmd := updateAs(t, m, SignalQuitMsg{}); !isQuit(cmd) {
+		t.Fatalf("a signal on Remove's choices did not quit:\n%s", screen(m))
+	}
+}
+
 func TestHangup_RemoveSignalDoesNotCancelTheRunningStandDown(t *testing.T) {
 	release := make(chan struct{})
 	gotCtx := make(chan context.Context, 1)

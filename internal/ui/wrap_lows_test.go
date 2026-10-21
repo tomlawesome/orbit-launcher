@@ -117,3 +117,18 @@ func TestVisibleText_ThePlainSpaceStaysASpace(t *testing.T) {
 		t.Errorf("visibleText(%q) = %q, want it unchanged", want, got)
 	}
 }
+
+// A backslash that does not start a complete visibleText escape is one
+// character, not the start of an escape to keep whole.
+func TestEscapeLen_RejectsWhatIsNotACompleteEscape(t *testing.T) {
+	for _, text := range []string{`\q1`, `\x4`, `\u12`, `\xZZ`, `\u12g4`} {
+		if got := escapeLen(text); got != 0 {
+			t.Errorf("escapeLen(%q) = %d, want 0", text, got)
+		}
+	}
+	for text, want := range map[string]int{`\n`: 2, `\x1b`: 4, `\u00e9!`: 6, `\U0001F600`: 10} {
+		if got := escapeLen(text); got != want {
+			t.Errorf("escapeLen(%q) = %d, want %d", text, got, want)
+		}
+	}
+}
