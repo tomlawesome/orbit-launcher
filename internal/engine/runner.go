@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // stderrTailLines bounds how much stderr is kept for the failure
@@ -48,8 +50,9 @@ type Stream struct {
 	cmd *exec.Cmd
 	// Terminate and Kill are each idempotent, and separately so: a Kill
 	// after a Terminate (the grace ran out) must still send SIGKILL.
-	termOnce sync.Once
-	killOnce sync.Once
+	termOnce  sync.Once
+	againOnce sync.Once
+	killOnce  sync.Once
 
 	// mu guards reaped: once cmd.Wait has returned, the PID no longer
 	// names the engine and must not be signalled.
@@ -88,19 +91,53 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 			return nil, nil, err
 		}
 	}
-	stdout, err := cmd.StdoutPipe()
+	// Plain pipes rather than StdoutPipe and StderrPipe: Wait closes
+	// those as soon as the process exits, so it can only be called once
+	// they are read to the end, and a leftover child holding stdout then
+	// keeps Wait, and the bound on the pipes, from ever starting. With
+	// pipes of our own, Wait runs alongside the reading (#236).
+	stdout, outW, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, errW, err := os.Pipe()
 	if err != nil {
+		stdout.Close()
+		outW.Close()
 		return nil, nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	cmd.Stdout, cmd.Stderr = outW, errW
+	err = cmd.Start()
+	// The child holds its own copies; the launcher's write ends must go,
+	// or the readers never see end-of-file.
+	outW.Close()
+	errW.Close()
+	if err != nil {
+		stdout.Close()
+		stderr.Close()
 		return nil, nil, err
 	}
 
 	s := &Stream{C: make(chan any, 64), cmd: cmd, done: make(chan struct{})}
+
+	// Wait as soon as the process exits, then give the readers
+	// cmd.WaitDelay to drain what is left, as exec does for its own
+	// pipes: past it a child still holding the pipes is no longer
+	// waited for.
+	waited := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		s.mu.Lock()
+		s.reaped = true
+		s.mu.Unlock()
+		close(s.done)
+		if cmd.WaitDelay > 0 {
+			limit := time.Now().Add(cmd.WaitDelay)
+			_ = stdout.SetReadDeadline(limit)
+			_ = stderr.SetReadDeadline(limit)
+		}
+		waited <- err
+	}()
 
 	// stderr is drained concurrently into a tail ring so a chatty
 	// stderr can never deadlock the process against a full pipe.
@@ -113,6 +150,7 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 				tail = tail[1:]
 			}
 		})
+		stderr.Close()
 		tailCh <- tail
 	}()
 
@@ -124,17 +162,11 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 				s.C <- RawLineMsg{Text: line}
 			}
 		})
+		stdout.Close()
 
-		// Join the stderr drain before Wait: with StderrPipe, Wait
-		// closes the pipes as soon as the process exits, and on a slow
-		// machine that can cut the drain off mid-read and lose the
-		// tail (seen as a real release-gate failure).
+		// Every line, and the stderr tail, is in before DoneMsg goes out.
 		tail := <-tailCh
-		err := cmd.Wait()
-		s.mu.Lock()
-		s.reaped = true
-		s.mu.Unlock()
-		close(s.done)
+		err := <-waited
 		done := DoneMsg{Err: err, StderrTail: tail}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -212,15 +244,36 @@ func (s *Stream) Terminate() {
 	s.termOnce.Do(func() { s.signal(syscall.SIGTERM, false) })
 }
 
+// killReapWait bounds Kill's wait for the killed process to be reaped.
+// SIGKILL takes effect in milliseconds; the bound is for a process
+// stuck in the kernel, which no signal can hurry.
+const killReapWait = 2 * time.Second
+
+// TerminateAgain sends the group SIGTERM a second time, once. A SIGTERM
+// that lands between bash's fork and a child's exec is lost by that
+// child, which then outlives the stop; a stop that is taking long
+// repeats the signal partway through its grace to reach it.
+func (s *Stream) TerminateAgain() {
+	s.againOnce.Do(func() { s.signal(syscall.SIGTERM, false) })
+}
+
 // Kill ends the engine at once (SIGKILL) — the whole process group,
-// and the process itself in case it is not a group leader. Idempotent,
-// and sends nothing once the process has been reaped (see Terminate).
-// Reports whether the signal reached a process that had not yet been
-// reaped, so a caller can tell a kill that ended the engine from one
-// that found it already gone.
+// and the process itself in case it is not a group leader — and
+// returns once the process has been reaped (bounded by killReapWait),
+// so a caller that removes the engine's files next does not race a
+// process still ending. Idempotent, and sends nothing once the process
+// has been reaped (see Terminate). Reports whether the signal reached a
+// process that had not yet been reaped, so a caller can tell a kill
+// that ended the engine from one that found it already gone.
 func (s *Stream) Kill() bool {
 	var sent bool
 	s.killOnce.Do(func() { sent = s.signal(syscall.SIGKILL, true) })
+	if sent {
+		select {
+		case <-s.done:
+		case <-time.After(killReapWait):
+		}
+	}
 	return sent
 }
 
@@ -235,7 +288,11 @@ func (s *Stream) signal(sig syscall.Signal, alsoProcess bool) bool {
 	}
 	// Negative pid addresses the process group the engine leads.
 	// Best effort: the process may already be gone.
-	_ = syscall.Kill(-s.cmd.Process.Pid, sig)
+	if err := syscall.Kill(-s.cmd.Process.Pid, sig); errors.Is(err, syscall.ESRCH) && !alsoProcess {
+		// No such group: the process does not lead one, so it gets the
+		// signal itself rather than none at all.
+		_ = s.cmd.Process.Signal(sig)
+	}
 	if alsoProcess {
 		_ = s.cmd.Process.Kill()
 	}

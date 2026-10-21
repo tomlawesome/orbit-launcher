@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -85,9 +88,17 @@ func startApp(stdout, stderr io.Writer) int {
 	// it is a property of the view now — see ui.AppModel.View.
 	app = app.WithAltScreen()
 
-	program := tea.NewProgram(app)
+	// Bubble Tea's own handler turns SIGTERM into an immediate quit that
+	// skips the engine's stop and the temp-file cleanup, so it is off and
+	// forwardSignals is the one handler. SIGKILL cannot be caught.
+	program := tea.NewProgram(app, tea.WithoutSignalHandler())
 	sender.Attach(program)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
+	stopSignals := forwardSignals(sigs, program.Send)
 	final, err := program.Run()
+	signal.Stop(sigs)
+	stopSignals()
 	if err != nil {
 		fmt.Fprintln(stderr, "orbit-launcher:", err)
 		return 1
@@ -105,4 +116,40 @@ func startApp(stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// forwardSignals reads sigs and, for SIGHUP (a dropped SSH session) and
+// SIGTERM, hands send a Ctrl-C key press, so the launcher stops the way
+// Ctrl-C stops it: the engine gets its polite stop and grace, and the
+// staged install.sh and configuration tree are removed. SIGINT keeps
+// what Bubble Tea's handler did with it: an interrupt (the program ends
+// with an error), except while install.sh holds the terminal, when it is
+// the person's Ctrl-C to install.sh and is dropped. stop ends the
+// forwarding and returns once the goroutine has; it is safe to call
+// twice.
+func forwardSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-quit:
+				return
+			case sig := <-sigs:
+				switch sig {
+				case syscall.SIGHUP, syscall.SIGTERM:
+					send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+				case syscall.SIGINT:
+					if !ui.TerminalHandedOver() {
+						send(tea.InterruptMsg{})
+					}
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(quit) })
+		<-done
+	}
 }

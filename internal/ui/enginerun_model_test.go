@@ -273,8 +273,9 @@ func TestEngineRun_CtrlCWhilePreparingKillsAnEngineThatStartedAnyway(t *testing.
 	if cmd != nil {
 		t.Fatal("Ctrl+C while preparing quit before the preparation reported back")
 	}
-	if _, cmd = r.update(ready); !isQuit(cmd) {
-		t.Fatal("the run did not quit once the engine arrived")
+	r, cmd = r.update(ready)
+	if _, _, quit := settleStop(t, r, cmd); !quit {
+		t.Fatal("the run did not quit once the engine that arrived was stopped")
 	}
 	if !cleaned {
 		t.Fatal("the staged script was not cleaned up")

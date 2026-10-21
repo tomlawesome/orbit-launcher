@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"io"
 	"os/exec"
+	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -34,19 +36,58 @@ func defaultPrepareInstall(ctx context.Context, targetDir string) (*exec.Cmd, fu
 	return deploy.BuildInstallCommand(script, targetDir)
 }
 
-// prepareInstallCmd wraps prepare as a tea.Cmd.
-func prepareInstallCmd(prepare func(context.Context, string) (*exec.Cmd, func() error, error), targetDir string) tea.Cmd {
+// prepareInstallCmd wraps prepare as a tea.Cmd; cancelling ctx (Ctrl-C)
+// stops the fetch.
+func prepareInstallCmd(ctx context.Context, prepare func(context.Context, string) (*exec.Cmd, func() error, error), targetDir string) tea.Cmd {
 	return func() tea.Msg {
-		cmd, cleanup, err := prepare(context.Background(), targetDir)
+		cmd, cleanup, err := prepare(ctx, targetDir)
 		return installPreparedMsg{cmd: cmd, cleanup: cleanup, err: err}
 	}
 }
 
-// defaultRunHandoff hands the real terminal to cmd via tea.ExecProcess,
-// which suspends this program's rendering, runs cmd with the real
+// defaultRunHandoff hands the real terminal to cmd via tea.Exec, which
+// suspends this program's rendering, runs cmd with the real
 // stdin/stdout/stderr, and resumes once it exits.
 func defaultRunHandoff(cmd *exec.Cmd) tea.Cmd {
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	return tea.Exec(&handoffCommand{Cmd: cmd}, func(err error) tea.Msg {
 		return installFinishedMsg{err: err}
 	})
+}
+
+// terminalHandedOver is set while install.sh holds the real terminal.
+var terminalHandedOver atomic.Bool
+
+// TerminalHandedOver reports whether install.sh holds the real terminal
+// in the handoff. A SIGINT then is the person's Ctrl-C to install.sh,
+// which shares the launcher's process group, not one to the launcher.
+func TerminalHandedOver() bool { return terminalHandedOver.Load() }
+
+// handoffCommand is tea.ExecProcess's command wrapper, marking the time
+// install.sh holds the terminal (TerminalHandedOver).
+type handoffCommand struct{ *exec.Cmd }
+
+func (c *handoffCommand) Run() error {
+	terminalHandedOver.Store(true)
+	defer terminalHandedOver.Store(false)
+	return c.Cmd.Run()
+}
+
+// The setters leave a stream the command already has, as ExecProcess's do.
+
+func (c *handoffCommand) SetStdin(r io.Reader) {
+	if c.Stdin == nil {
+		c.Stdin = r
+	}
+}
+
+func (c *handoffCommand) SetStdout(w io.Writer) {
+	if c.Stdout == nil {
+		c.Stdout = w
+	}
+}
+
+func (c *handoffCommand) SetStderr(w io.Writer) {
+	if c.Stderr == nil {
+		c.Stderr = w
+	}
 }
