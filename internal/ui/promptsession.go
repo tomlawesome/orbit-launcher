@@ -176,6 +176,12 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	}
 }
 
+// shownText is an error whose text is ready for the screen: every
+// outside value in it already went through visibleText.
+type shownText string
+
+func (e shownText) Error() string { return string(e) }
+
 // giveUpWords is the failure screen's reason when the engine gave up: the
 // field it stopped asking for (the abort line's, else the last one asked)
 // and, if it had rejected an answer, the rejection's words on a row

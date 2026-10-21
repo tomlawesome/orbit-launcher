@@ -795,7 +795,14 @@ func (r engineRun) viewFailed(width, height int) string {
 			fmt.Fprintln(&b, line)
 		}
 	} else if r.runErr != nil {
-		writeWrapped(&b, style.Tagline, visibleLines(r.runErr.Error()), limit)
+		text := r.runErr.Error()
+		// visibleText is not idempotent (a backslash is shown doubled), so
+		// text that was escaped as it was built is not escaped again.
+		var shown shownText
+		if !errors.As(r.runErr, &shown) {
+			text = visibleLines(text)
+		}
+		writeWrapped(&b, style.Tagline, text, limit)
 	}
 	for _, line := range tailLines(r.stderrTail, 6) {
 		writeWrapped(&b, style.Tagline, line, limit)

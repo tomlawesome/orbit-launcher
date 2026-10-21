@@ -507,7 +507,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 		r.releaseRunFiles()
 		r.lastFailed = nil
 		r.stderrTail = nil
-		r.runErr = errors.New(r.cfg.session.giveUpWords(r.cfg.origin))
+		r.runErr = shownText(r.cfg.session.giveUpWords(r.cfg.origin))
 		r.state = runFailed
 		r.menu = menu{}
 		return r, nil
