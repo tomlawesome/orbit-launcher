@@ -347,6 +347,30 @@ func (m RemoveModel) viewDone() string {
 		words[i] = visibleText(w)
 	}
 	lines := wrapShellCommand(words, m.width-8)
+
+	// The rows after the box are laid out first, so the box knows how
+	// many rows they need.
+	var tail strings.Builder
+	writeWrapped(&tail, style.DegradedText, "this deletes all mail, documents, and configuration —", prose)
+	writeWrapped(&tail, style.DegradedText, "it cannot be undone", prose)
+	fmt.Fprintln(&tail)
+	// The copy row says so once it has copied; the menu's own label,
+	// which Enter answers with, stays the same.
+	done := m.after
+	if m.copied {
+		done = done.over(append([]string{removeCopy + style.Separator + "copied"}, removeDoneRows[1:]...))
+	}
+	done.write(&tail)
+
+	// The box gets the rows the screen has left once every other row,
+	// the menu included, has its place: a long folder at a narrow width
+	// must never push Copy command, Menu and Exit off the screen. Rows
+	// past that are stood for by one "…" row; Copy command still
+	// carries the whole command.
+	room := max(m.height-strings.Count(b.String(), "\n")-strings.Count(tail.String(), "\n")-2, 1)
+	if len(lines) > room {
+		lines = append(lines[:room-1:room-1], "  …")
+	}
 	boxW := 0
 	for _, l := range lines {
 		boxW = max(boxW, lipgloss.Width(l))
@@ -354,17 +378,7 @@ func (m RemoveModel) viewDone() string {
 	for _, l := range drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines) {
 		fmt.Fprintln(&b, l)
 	}
-	writeWrapped(&b, style.DegradedText, "this deletes all mail, documents, and configuration —", prose)
-	writeWrapped(&b, style.DegradedText, "it cannot be undone", prose)
-	fmt.Fprintln(&b)
-
-	// The copy row says so once it has copied; the menu's own label,
-	// which Enter answers with, stays the same.
-	done := m.after
-	if m.copied {
-		done = done.over(append([]string{removeCopy + style.Separator + "copied"}, removeDoneRows[1:]...))
-	}
-	done.write(&b)
+	b.WriteString(tail.String())
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
