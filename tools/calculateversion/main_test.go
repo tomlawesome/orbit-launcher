@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -137,7 +138,10 @@ func TestGitTagsFailsOutsideARepository(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	dir := t.TempDir()
-	t.Setenv("GIT_CEILING_DIRECTORIES", dir) // stop git finding a repository above the temp dir
+	// git does not exclude the directory it starts in, so the ceiling is the
+	// parent: git then stops before it, even when the temp dir is itself
+	// inside a repository (TMPDIR under a checkout).
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 
 	_, err := gitTags(dir)
 	if err == nil {
