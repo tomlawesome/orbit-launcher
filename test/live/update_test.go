@@ -149,9 +149,6 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		screen := session.expectWithin("expected the in-console OIDC client secret prompt",
 			vtscreen.ContainsAny("OIDC client secret", "Update stopped", "How will people sign in?", "Get into Orbit"))
 		to := time.Now()
-		if strings.Contains(screen, "The engine stopped before touching anything") || strings.Contains(screen, "Continue — guided configuration") {
-			t.Fatalf("the removed configuration screen is shown. Screen:\n%s", screen)
-		}
 		if strings.Contains(screen, "Get into Orbit") {
 			t.Fatalf("the update did not stop for configuration, so the launcher never ran configure and this leg proves nothing; "+
 				"the emptied OIDC client secret should have made install.sh refuse. Screen:\n%s", screen)

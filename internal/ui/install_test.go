@@ -258,7 +258,9 @@ func TestInstallModel_ConfigurationRefusalGoesStraightIntoTheGuidedHandoff(t *te
 	}
 	m, s := newTestInstallModel(seams)
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd, s)
+	// Watched at every step: the removed configuration screen must never
+	// come up on the way, not merely be absent from the last screen.
+	m = driveWatching(t, m, cmd, removedConfigScreenText, s)
 
 	// The refusal goes straight into guided configuration (#251), with
 	// no key press and no screen of its own. This engine handed over no
@@ -267,11 +269,6 @@ func TestInstallModel_ConfigurationRefusalGoesStraightIntoTheGuidedHandoff(t *te
 	// the terminal straight away — nothing is fetched instead (#190).
 	if !prepared || !handoffRan {
 		t.Fatal("expected the interactive handoff to run with no key pressed")
-	}
-	for _, gone := range []string{"The engine stopped before touching anything", "Continue — guided configuration"} {
-		if strings.Contains(m.View().Content, gone) {
-			t.Errorf("the removed configuration screen is still shown (%q)", gone)
-		}
 	}
 	o := m.Outcome()
 	if !o.Done || !o.Succeeded {

@@ -64,6 +64,15 @@ func (s *sink) Send(msg tea.Msg) { s.msgs <- msg }
 // move stars, and a frozen test has no use for an endless chain.
 func drive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, pushed ...*sink) M {
 	t.Helper()
+	return driveWatching(t, m, cmd, nil, pushed...)
+}
+
+// driveWatching is drive that also looks at the screen after every update
+// on the way and fails the test if it ever shows one of never. A check of
+// the screen the drive ends on cannot see a screen that was shown on the
+// way and replaced; this one can.
+func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, pushed ...*sink) M {
+	t.Helper()
 	var queue *sink
 	if len(pushed) > 0 {
 		queue = pushed[0]
@@ -100,6 +109,14 @@ func drive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, pushed ...*sink) M {
 		}
 		var more tea.Cmd
 		m, more = updateAs(t, m, msg)
+		if len(never) > 0 {
+			shown := screen(m)
+			for _, gone := range never {
+				if strings.Contains(shown, gone) {
+					t.Errorf("a screen showing %q came up after %T:\n%s", gone, msg, shown)
+				}
+			}
+		}
 		// Nothing follows the stream ending, so waiting for more would
 		// only spend the timeout above.
 		if _, ended := msg.(engineStreamEndedMsg); ended && more == nil && len(cmds) == 0 {

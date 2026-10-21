@@ -222,6 +222,9 @@ func startStraightFlowUntil(t *testing.T, name string, seams engineRunSeams, wha
 	f.loop = newFlowLoop(t, queue, func(msg tea.Msg) tea.Cmd {
 		var next tea.Cmd
 		f.model, next = f.model.Update(msg)
+		// Every screen the flow shows, not only the ones a test stops to
+		// look at: the removed screen would be on the way, not at the end.
+		notShowingRemovedScreen(t, screen(f.model))
 		return next
 	})
 	f.loop.settle(cmd, what, func() bool { return cond(f) })

@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -137,14 +136,14 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 
 // expectNoRemovedConfigScreen fails if the screen now showing is the one
 // the engine's configuration stop used to land on (#251): the stop goes
-// straight into guided configuration.
+// straight into guided configuration. Every wait also fails if that screen
+// comes up while it waits (vtConsole.expectWithin); this is the look at the
+// screen the test is standing on.
 func expectNoRemovedConfigScreen(t *testing.T, console *vtConsole) {
 	t.Helper()
 	screen := vtscreen.Screen(console.term)
-	for _, gone := range []string{"The engine stopped before touching anything", "Continue — guided configuration"} {
-		if strings.Contains(screen, gone) {
-			t.Errorf("the removed configuration screen is shown (%q):\n%s", gone, screen)
-		}
+	if gone, removed := showsRemovedConfigScreen(screen); removed {
+		t.Errorf("the removed configuration screen is shown (%q):\n%s", gone, screen)
 	}
 }
 
