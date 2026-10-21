@@ -1058,8 +1058,10 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 		return nil, after
 	}
 
+	// The plan rows' text wraps at the same measure as the manual
+	// steps below, so the two never break at different widths.
 	for _, p := range m.planActions {
-		steps = append(steps, planRows(p, m.width))
+		steps = append(steps, planRows(p, measure(m.width, proseWidth)))
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
@@ -1092,18 +1094,17 @@ func planLine(p engine.PlanAction) string {
 	return planRows(p, math.MaxInt)[0]
 }
 
-// planRows is planLine laid out for a screen width cells wide: a line
+// planRows is planLine with its text wrapped at limit cells: a line
 // too long for the row wraps as wrapWords does, its continuation rows
 // indented under the text after the glyph, so it is never cut at the
 // edge and "backup first" stays on screen. The action words keep their
 // ink on whichever rows they land.
-func planRows(p engine.PlanAction, width int) []string {
+func planRows(p engine.PlanAction, limit int) []string {
 	glyph := style.AccentText.Render(style.SymbolQueued)
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
-	// The glyph and its space take two cells off the row.
-	lines := wrapWords(planText(p), width-2)
+	lines := wrapWords(planText(p), limit)
 	// The action words lead the text; wrapWords drops only the space at
 	// each break, so each row's ink is what it shares with the action
 	// words not yet drawn (matched, not counted, as an unknown action
