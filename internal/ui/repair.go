@@ -252,6 +252,10 @@ func (m *RepairModel) startExecution() {
 	m.rot = promptSession{}
 	m.exitCode = 0
 	m.stoppedIn = repairPreparing
+	// A fresh pointer rather than clearing loaded on the old one: a view
+	// still holding the old reading is undisturbed, and the next
+	// diagnosis reads Docker again instead of showing the stale states.
+	m.services = &serviceReading{}
 }
 
 // keepRunAfterCancel keeps a mutating run the engine started just as
