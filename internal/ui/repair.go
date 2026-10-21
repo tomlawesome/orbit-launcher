@@ -1094,18 +1094,13 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
 }
 
-// planLine renders one proposed action on one row: the action in plain
-// words and what it resolves, with the backup requirement when the
-// contract demands one. The mutation class is deliberately not repeated
-// — the action words already carry it. Unknown enum values render
-// verbatim. Plan mode's stdout carries no separate finding lines, so the
-// resolves class is the reader's only pointer at the underlying problem
-// — always shown. The screen draws it with planRows, which wraps.
-func planLine(p engine.PlanAction) string {
-	return planRows(p, math.MaxInt)[0]
-}
-
-// planRows is planLine with its text wrapped at limit cells: a line
+// planRows renders one proposed action: the action in plain words and
+// what it resolves, with the backup requirement when the contract
+// demands one. The mutation class is deliberately not repeated — the
+// action words already carry it. Unknown enum values render as
+// visibleText. Plan mode's stdout carries no separate finding lines, so
+// the resolves class is the reader's only pointer at the underlying
+// problem — always shown. Its text wraps at limit cells: a line
 // too long for the row wraps as wrapWords does, its continuation rows
 // indented under the text after the glyph, so it is never cut at the
 // edge and "backup first" stays on screen. The action words keep their
