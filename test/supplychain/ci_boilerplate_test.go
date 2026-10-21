@@ -162,6 +162,7 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 			t.Errorf("top-level %q changed (#217)\nwant: %s\n got: %s", k, o, n)
 		}
 	}
+	compareTopLevelVariables(t, oldDoc, newDoc)
 
 	compared := 0
 	for _, name := range topLevelKeysAtCE4B412 {
@@ -228,6 +229,59 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	}
 	if want, _ := oldDoc.effectiveJob("deps"); want.Keys["cache"] == nil || want.Keys["tags"] == nil {
 		t.Fatal("the fixture's `deps` job reads with no cache or no tags: `extends:` or `default:` is not being applied")
+	}
+}
+
+// isToolPinVariable reports whether a top-level variable is a tool pin that
+// Renovate or a toolchain bump moves: an image, a version or a digest. Those
+// are checked against GitHub's copies in ci_hosts_agree_test.go instead.
+func isToolPinVariable(name string) bool {
+	for _, suffix := range []string{"_IMAGE", "_VERSION", "_SHA256"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// compareTopLevelVariables checks the pipeline's `variables:` against the
+// ce4b412 fixture: the same names, and the same value for every one that is
+// not a tool pin. ORBIT_CHANNEL, ORBIT_PROJECT and the rest decide whether the
+// update leg and the manifest check run, so a merge slip there must not pass
+// quietly (#236).
+func compareTopLevelVariables(t *testing.T, oldDoc, newDoc *yamlDoc) {
+	t.Helper()
+	oldV, newV := oldDoc.root.vals["variables"], newDoc.root.vals["variables"]
+	if oldV == nil || oldV.kind != 'm' {
+		t.Fatal("the fixture has no top-level variables mapping: the reader lost it")
+	}
+	if newV == nil || newV.kind != 'm' {
+		t.Fatal(".gitlab-ci.yml has no top-level variables mapping")
+	}
+	names := map[string]string{}
+	for _, m := range []*yamlNode{oldV, newV} {
+		for _, k := range m.keys {
+			names[k] = ""
+		}
+	}
+	compared := 0
+	for _, k := range unionOfKeys(names, nil) {
+		o, inOld := oldV.vals[k]
+		n, inNew := newV.vals[k]
+		switch {
+		case !inNew:
+			t.Errorf("top-level variable %s is gone (#236)\nwas: %s", k, o.dump())
+		case !inOld:
+			t.Errorf("top-level variable %s is new (#236)\nnow: %s", k, n.dump())
+		case isToolPinVariable(k):
+		case o.dump() != n.dump():
+			t.Errorf("top-level variable %s changed (#236)\nwant: %s\n got: %s", k, o.dump(), n.dump())
+		default:
+			compared++
+		}
+	}
+	if compared < 5 {
+		t.Fatalf("compared only %d non-pin variables: the reader is not finding them", compared)
 	}
 }
 
