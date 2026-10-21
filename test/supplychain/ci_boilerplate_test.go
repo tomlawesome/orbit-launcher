@@ -7,9 +7,9 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198, #241, #273, #264 and #236 make on purpose, listed in
-// changedBy216, changedBy198, changedBy241, changedBy273, changedBy264 and
-// changedBy236.
+// the ones #216, #198, #241, #273, #264, #236 and #195 make on purpose,
+// listed in changedBy216, changedBy198, changedBy241, changedBy273,
+// changedBy264, changedBy236 and changedBy195.
 package supplychain
 
 import (
@@ -688,8 +688,25 @@ var changedBy236 = []struct {
 	},
 }
 
+// What #195 (T2-Q1) changes on purpose: after the coverage gate, `fast` runs
+// the packages whose tests skip as root again as an unprivileged user, so the
+// unreadable-file branches are checked on GitLab too. Same form and the same
+// exactly-once rule as changedBy216.
+var changedBy195 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		old:  `go run ./tools/coveragefloor coverage.out`,
+		new: `go run ./tools/coveragefloor coverage.out
+bash scripts/ci/nonroot-tests.sh`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -704,6 +721,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy273...)
 	all = append(all, changedBy264...)
 	all = append(all, changedBy236...)
+	all = append(all, changedBy195...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

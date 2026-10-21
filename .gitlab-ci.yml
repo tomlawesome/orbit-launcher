@@ -319,6 +319,11 @@ fast:
     # into one profile (#169): see scripts/coverage.sh.
     - scripts/coverage.sh -race
     - go run ./tools/coveragefloor coverage.out
+    # The suite above runs as root, which reads a mode-0000 file, so the
+    # tests that build an unreadable case skip. Run their packages again as
+    # an unprivileged user (#195 T2-Q1). GitHub's runner is not root, so its
+    # own test step already covers them.
+    - bash scripts/ci/nonroot-tests.sh
   artifacts:
     name: coverage
     when: always
