@@ -34,10 +34,11 @@ func defaultPrepareInstall(ctx context.Context, targetDir string) (*exec.Cmd, fu
 	return deploy.BuildInstallCommand(script, targetDir)
 }
 
-// prepareInstallCmd wraps prepare as a tea.Cmd.
-func prepareInstallCmd(prepare func(context.Context, string) (*exec.Cmd, func() error, error), targetDir string) tea.Cmd {
+// prepareInstallCmd wraps prepare as a tea.Cmd; cancelling ctx (Ctrl-C)
+// stops the fetch.
+func prepareInstallCmd(ctx context.Context, prepare func(context.Context, string) (*exec.Cmd, func() error, error), targetDir string) tea.Cmd {
 	return func() tea.Msg {
-		cmd, cleanup, err := prepare(context.Background(), targetDir)
+		cmd, cleanup, err := prepare(ctx, targetDir)
 		return installPreparedMsg{cmd: cmd, cleanup: cleanup, err: err}
 	}
 }

@@ -180,6 +180,11 @@ type engineRun struct {
 	// managed to start, so no engine is ever left running unobserved.
 	cancelPrepare context.CancelFunc
 	quitting      bool
+	// handoffPending is the terminal handoff's preparation still
+	// running: its staged files arrive only in installPreparedMsg, so a
+	// Ctrl-C meanwhile waits for that message, as one while preparing
+	// the engine does.
+	handoffPending bool
 
 	// cfg is the in-console configuration session, live while state is
 	// runConfigCollect.
@@ -392,6 +397,13 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
+		r.handoffPending = false
+		if r.quitting {
+			if msg.cleanup != nil {
+				_ = msg.cleanup()
+			}
+			return r, tea.Quit
+		}
 		if msg.err != nil {
 			// The preparation's own error, not an earlier refusal the
 			// handoff was meant to answer.
@@ -563,14 +575,18 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 	if prepare == nil {
 		prepare = defaultPrepareInstall
 	}
-	return r, prepareInstallCmd(prepare, r.targetDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancelPrepare = cancel
+	r.handoffPending = true
+	return r, prepareInstallCmd(ctx, prepare, r.targetDir)
 }
 
 func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if isCtrlC(msg) {
-		if r.state == runPreparing {
+		if r.state == runPreparing || (r.state == runHandoffRunning && r.handoffPending) {
 			// Nothing to kill yet: cancel the preparation and quit when
-			// it reports back (see the engineReadyMsg case).
+			// it reports back (the engineReadyMsg and installPreparedMsg
+			// cases), which is when its staged files can be removed.
 			r.quitting = true
 			if r.cancelPrepare != nil {
 				r.cancelPrepare()
