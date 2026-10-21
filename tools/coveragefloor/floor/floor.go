@@ -42,6 +42,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"regexp"
 	"sort"
@@ -210,6 +211,16 @@ func ParseFloors(r io.Reader) (map[string]Floor, error) {
 	return floors, nil
 }
 
+// roundDown1 rounds a percentage down to one decimal place, the way the
+// floors file records its numbers. Checking and printing the same rounded
+// figure means a printed value can be copied into the file as a floor and
+// pass, and a report never reads "got 85.0%, floor 85.0%" and fails. The
+// small addition absorbs float error so an exact tenth is not rounded below
+// itself.
+func roundDown1(p float64) float64 {
+	return math.Floor(p*10+1e-9) / 10
+}
+
 // Result is one measured package's coverage, and the floor (if any) it
 // was checked against.
 type Result struct {
@@ -231,7 +242,7 @@ func Check(measured map[string]Coverage, floors map[string]Floor) (results []Res
 	sort.Strings(pkgs)
 
 	for _, pkg := range pkgs {
-		got := measured[pkg].Percent()
+		got := roundDown1(measured[pkg].Percent())
 		r := Result{Package: pkg, Got: got}
 		if f, ok := floors[pkg]; ok {
 			r.HasFloor = true
