@@ -116,11 +116,31 @@ func TestParseExtra(t *testing.T) {
 		"About: tables\n\nNOTICE",                      // no module
 		"Module: example.com/a\n\nNOTICE",              // no about
 		"Module: example.com/a\nAbout: tables\n\n",     // no notice
-		"Modules: example.com/a\nAbout: t\n\nN",        // unknown header
 	} {
 		if _, err := ParseExtra("bad.txt", bad); err == nil {
 			t.Errorf("%q parsed, want an error", bad)
 		}
+	}
+}
+
+// An unknown header is refused on its own account: each text below has a
+// Module line, an About line and a notice, so the header is the only thing
+// wrong and the error must name it (T2-Q9, #195).
+func TestParseExtra_RefusesAnUnknownHeader(t *testing.T) {
+	for name, text := range map[string]string{
+		"misspelt key":        "Module: example.com/a\nModules: example.com/b\nAbout: t\n\nN",
+		"extra key":           "Module: example.com/a\nAbout: t\nLicence: MIT\n\nN",
+		"missing colon-space": "Module: example.com/a\nAbout: t\nSource\n\nN",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseExtra("bad.txt", text)
+			if err == nil {
+				t.Fatal("parsed, want an error for the unknown header")
+			}
+			if strings.Contains(err.Error(), "needs at least one Module") {
+				t.Errorf("err = %v; the header must be refused, not a missing field", err)
+			}
+		})
 	}
 }
 

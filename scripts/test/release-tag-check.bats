@@ -95,3 +95,50 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = "RELEASE_TAG=v0.3.0" ]
 }
+
+# Two-digit components: a version compared as text puts 0.10.0 below 0.9.0,
+# so these cases only pass when the guard compares the numbers (T2-Q2, #195).
+@test "0.10.0 is accepted above a newest tag of 0.9.0" {
+  multi="$(printf '%s\t%s\n' aaaa refs/tags/v0.2.0 cccc refs/tags/v0.9.0)"
+  run --separate-stderr sh "$script" 0.10.0 "$multi" main "$tip" "$tip"
+  [ "$status" -eq 0 ]
+  [ "$output" = "RELEASE_TAG=v0.10.0" ]
+}
+
+@test "0.9.5 is refused below a newest tag of 0.10.0, naming it" {
+  multi="$(printf '%s\t%s\n' aaaa refs/tags/v0.9.0 cccc refs/tags/v0.10.0)"
+  run --separate-stderr sh "$script" 0.9.5 "$multi" main "$tip" "$tip"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"does not sort above"* ]]
+  [[ "$stderr" == *"0.10.0"* ]]
+}
+
+@test "a two-digit tag that already exists is refused" {
+  multi="$(printf '%s\t%s\n' aaaa refs/tags/v0.9.0 cccc refs/tags/v0.10.0)"
+  run --separate-stderr sh "$script" 0.10.0 "$multi" main "$tip" "$tip"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"already exists"* ]]
+}
+
+@test "a commit carrying v0.9.0 and v0.10.0 is reported as tagged v0.10.0" {
+  both="$(printf '%s\t%s\n%s\t%s\n' "$tip" refs/tags/v0.9.0 "$tip" refs/tags/v0.10.0)"
+  run --separate-stderr sh "$script" 0.11.0 "$both" main "$tip" "$tip"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"already tagged v0.10.0"* ]]
+}
+
+@test "a leading zero in any part is refused, in multi-digit versions too" {
+  for bad in 0.01.0 0.10.00 1.0.010 00.10.0 0.010.0; do
+    run --separate-stderr sh "$script" "$bad" "$tags" main "$tip" "$tip"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"not a semantic version"* ]]
+  done
+}
+
+@test "a multi-digit version with no leading zero is accepted" {
+  for good in 10.0.0 0.10.0 1.0.10 12.34.56; do
+    run --separate-stderr sh "$script" "$good" "$tags" main "$tip" "$tip"
+    [ "$status" -eq 0 ]
+    [ "$output" = "RELEASE_TAG=v$good" ]
+  done
+}
