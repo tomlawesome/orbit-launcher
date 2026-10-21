@@ -316,8 +316,14 @@ func (m RemoveModel) viewConfirm() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
+// removeCannotStopLine is the stand-down's second working line. It keeps
+// Repair's "can't be stopped from here" (#227) but not Repair's reason:
+// a stand-down deletes nothing and is undone by starting Orbit again,
+// so stopping it halfway is not unsafe.
+const removeCannotStopLine = "can't be stopped from here — nothing is deleted, and it ends on its own"
+
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", cannotStopLine))
+	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", removeCannotStopLine))
 }
 
 func (m RemoveModel) viewDone() string {
