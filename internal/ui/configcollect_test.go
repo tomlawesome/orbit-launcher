@@ -437,6 +437,23 @@ func TestAppModel_LegacyConfigureFallsBackToHandoff(t *testing.T) {
 	}
 }
 
+// giveUpReasons are the three rejection reasons giveUpAfterThreeScript
+// gives, one per attempt.
+var giveUpReasons = []string{"fox", "owl", "cat"}
+
+// giveUpAfterThreeScript rejects every answer to APP_URL with a reason of
+// its own, then aborts after the third.
+const giveUpAfterThreeScript = `
+attempt=1
+for reason in fox owl cat; do
+  echo "prompt field=APP_URL kind=url required=true attempt=$attempt"
+  read -r a || exit 1
+  echo "prompt-reject field=APP_URL reason=$reason"
+  attempt=$((attempt+1))
+done
+echo "prompt-abort field=APP_URL"
+exit 1`
+
 // The engine giving up mid-session lands on the failure screen, naming
 // the field it stopped asking for (#251) — not on a menu that offers the
 // same session again.
@@ -444,14 +461,14 @@ func TestAppModel_ConfigGiveUpShowsTheFailureScreen(t *testing.T) {
 	tm := startConfigJourney(t, engineRunSeams{
 		prepareEngine: engineTwice(),
 		prepareConfig: planned(true, false),
-		startConfig:   scriptedConfig(machineInitScript, machineSecretScript),
+		startConfig:   scriptedConfig(giveUpAfterThreeScript, machineSecretScript),
 		detect:        fakeDetect("https://orbit.example.test"),
 	})
 
 	wait := func(want string) {
 		t.Helper()
 		teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-			return bytes.Contains(out, []byte(want))
+			return strings.Contains(ansi.Strip(string(out)), want)
 		}, teatest.WithDuration(10*time.Second))
 	}
 
@@ -461,10 +478,17 @@ func TestAppModel_ConfigGiveUpShowsTheFailureScreen(t *testing.T) {
 
 	// Three rejected answers exhaust the engine's patience: abort, and
 	// the failure screen says so rather than pretending anything worked.
-	for i := 0; i < 3; i++ {
+	// Each rejection gives its own reason, and the next answer is typed
+	// only once that reason is on screen: a keystroke sent before the
+	// prompt reopens is dropped. (The reasons share no letter in the
+	// same place, and "attempt 2 of 3" -> "attempt 3 of 3" would redraw
+	// a single digit, so the count itself cannot be waited for.)
+	for i, reason := range giveUpReasons {
 		tm.Type("nope")
 		tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-		time.Sleep(100 * time.Millisecond)
+		if i < len(giveUpReasons)-1 {
+			wait(reason)
+		}
 	}
 	wait("Install stopped")
 
