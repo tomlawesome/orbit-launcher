@@ -14,8 +14,10 @@ import (
 // account owning the deployment folder, and the files Repair can't check
 // because another account owns them.
 type Ownership struct {
-	// Account is the folder owner's name, or "uid N" when no account
-	// has that uid.
+	// Account is the folder owner, as chown takes it: the account name,
+	// or the bare numeric uid when no account has that uid (a static
+	// binary reads only /etc/passwd, so an account from a directory
+	// service is unnamed here but its number still works).
 	Account string
 	// Files are the foreign files, relative to the folder and sorted.
 	Files []ForeignFile
@@ -52,7 +54,13 @@ func ForeignOwned(dir string) (Ownership, error) {
 		return n
 	}
 	folder := ownerOf(info)
-	own := Ownership{Account: name(folder)}
+	// Account goes into the chown command, so it is never the shown
+	// "uid N" form: chown accepts a bare uid where no name resolves.
+	account := strconv.Itoa(folder)
+	if u, err := user.LookupId(account); err == nil {
+		account = u.Username
+	}
+	own := Ownership{Account: account}
 	add := func(rel string, info os.FileInfo) bool {
 		uid := ownerOf(info)
 		if uid == folder {
