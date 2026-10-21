@@ -13,6 +13,7 @@
 package live
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -941,6 +943,88 @@ func dockerComposeDown(t *testing.T, dir string) {
 	}
 }
 
+// liveRunLifetime is the longest a run of this suite can hold a stack: both
+// hosts cap the live job at 35 minutes, above go test's own 30m -timeout.
+const liveRunLifetime = 35 * time.Minute
+
+// liveProjectPattern matches the names liveProjectName gives, and nothing
+// else: never "orbit", the project a real Orbit on the host uses.
+var liveProjectPattern = regexp.MustCompile(`^orbit-live-[0-9a-f]{8}$`)
+
+// leftoverLiveProjects picks, from `docker ps --all` lines of project, working
+// directory and creation time (tab-separated), the projects of this suite
+// that no run can still be using: a project is kept while any of its
+// containers is both younger than liveRunLifetime and has a working
+// directory that still exists, which is what a concurrent run on the same
+// daemon looks like. An unreadable time counts as young.
+func leftoverLiveProjects(psOutput string, now time.Time, dirExists func(string) bool) []string {
+	seen, inUse := map[string]bool{}, map[string]bool{}
+	var order []string
+	for _, line := range strings.Split(psOutput, "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(fields) != 3 || !liveProjectPattern.MatchString(fields[0]) {
+			continue
+		}
+		project, workDir := fields[0], fields[1]
+		if !seen[project] {
+			seen[project] = true
+			order = append(order, project)
+		}
+		created, err := time.Parse("2006-01-02 15:04:05 -0700 MST", fields[2])
+		young := err != nil || now.Sub(created) < liveRunLifetime
+		if young && workDir != "" && dirExists(workDir) {
+			inUse[project] = true
+		}
+	}
+	var out []string
+	for _, project := range order {
+		if !inUse[project] {
+			out = append(out, project)
+		}
+	}
+	return out
+}
+
+var sweepOnce sync.Once
+
+// sweepLeftoverLiveStacks removes, once per test binary and before the first
+// test that installs anything, the stacks earlier runs of this suite left
+// on the daemon (TL-S7). A run that hits go test's -timeout panics without
+// running t.Cleanup, so dockerComposeDown never runs for it; on GitLab the
+// daemon's data root outlives the job and Orbit's restart policies bring
+// those containers back, holding ports and disk for the next run. Only
+// projects named like liveProjectName are touched, by the same label-only
+// `compose -p ... down -v` dockerComposeDown uses for a rolled-back install.
+func sweepLeftoverLiveStacks(t *testing.T) {
+	t.Helper()
+	sweepOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "docker", "ps", "--all",
+			"--filter", "label=com.docker.compose.project",
+			"--format", `{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.CreatedAt}}`).Output()
+		if err != nil {
+			t.Logf("leftover sweep: docker ps: %v; nothing swept", err)
+			return
+		}
+		exists := func(dir string) bool { _, err := os.Stat(dir); return err == nil }
+		for _, project := range leftoverLiveProjects(string(out), time.Now(), exists) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "down", "-v", "--remove-orphans")
+			// Outside the repository, so compose finds no file of its own
+			// and works from the project's labels alone.
+			cmd.Dir = os.TempDir()
+			cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+project)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Logf("leftover sweep: docker compose down for %s failed: %v\n%s", project, err, out)
+			} else {
+				t.Logf("leftover sweep: removed %s, left by an earlier run", project)
+			}
+			cancel()
+		}
+	})
+}
+
 // TestLive_InstallHealthyEndpointThenRemove is the real virtualized
 // live test: a real Install (issue #19 — real Docker, real health
 // checks, real HTTP response) followed by a real Remove against that
@@ -952,6 +1036,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -997,6 +1082,7 @@ func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -1272,6 +1358,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -1625,5 +1712,30 @@ func TestScreenWords_ReadsAWrappedReasonBetweenStars(t *testing.T) {
 	}
 	if portBindFailure(screenWords("Docker said: image not found 0.0.0.0:41234"), "41234") {
 		t.Error("portBindFailure accepted a failure that is not about binding")
+	}
+}
+
+// The leftover sweep (TL-S7) removes only this suite's stacks that no run
+// can still be using, and never a real Orbit's.
+func TestLeftoverLiveProjects_SweepsOnlyAbandonedLiveStacks(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	recent := "2026-10-21 11:50:00 +0000 UTC"
+	old := "2026-10-21 10:00:00 +0000 UTC"
+	live := map[string]bool{"/tmp/TestLive_running/001": true, "/tmp/TestLive_stale/001": true}
+	ps := strings.Join([]string{
+		"orbit\t/opt/orbit\t" + old,                                 // a real Orbit: never
+		"orbit-live-0123abcd\t/tmp/TestLive_running/001\t" + recent, // a concurrent run: kept
+		"orbit-live-0123abcd\t/tmp/TestLive_running/001\t" + old,
+		"orbit-live-feedbeef\t/tmp/TestLive_gone/001\t" + recent, // its run's directory is gone
+		"orbit-live-feedbeef\t/tmp/TestLive_gone/001\t" + recent,
+		"orbit-live-c0ffee00\t/tmp/TestLive_stale/001\t" + old, // older than any run
+		"orbit-live-c0ffee00x\t/tmp/x\t" + old,                 // not a name liveProjectName gives
+		"orbit-live-ABCDEF01\t/tmp/x\t" + old,
+		"other-orbit-live-01234567\t/tmp/x\t" + old,
+		"",
+	}, "\n")
+	got := leftoverLiveProjects(ps, now, func(dir string) bool { return live[dir] })
+	if want := []string{"orbit-live-feedbeef", "orbit-live-c0ffee00"}; !slices.Equal(got, want) {
+		t.Errorf("swept %v, want %v", got, want)
 	}
 }
