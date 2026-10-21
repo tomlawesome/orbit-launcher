@@ -597,6 +597,107 @@ func TestNarrow_L_DoneScreenKeepsItsMenuAt80x26(t *testing.T) {
 	}
 }
 
+// r. At 50 columns the done screen keeps its menu on a terminal 24, 26 or
+// 30 rows tall, whatever the folder: the command box gives up rows first.
+func TestNarrow_R_DoneScreenKeepsItsMenuAt50Columns(t *testing.T) {
+	dirs := map[string]string{
+		"quoted c9 path": c9LongDir,
+		"bare long path": narrowBareDir,
+		"apostrophe":     narrowItsDir,
+	}
+	for name, dir := range dirs {
+		for _, h := range []int{24, 26, 30} {
+			s := screen(narrowDoneModel(t, dir, 50, h, &bytes.Buffer{}))
+			lines := strings.Split(s, "\n")
+			for _, label := range []string{"Copy command", "Menu", "Exit"} {
+				at := -1
+				for i, l := range lines {
+					if screenRow(l) == label {
+						at = i
+					}
+				}
+				switch {
+				case at < 0:
+					t.Errorf("%s at 50x%d: no %q row on the screen:\n%s", name, h, label, s)
+				case at >= h:
+					t.Errorf("%s at 50x%d: %q is on row %d:\n%s", name, h, label, at+1, s)
+				}
+			}
+			if len(lines) > h {
+				t.Errorf("%s at 50x%d: the screen is %d rows, want at most %d:\n%s", name, h, len(lines), h, s)
+			}
+			for _, phrase := range []string{"it cannot be undone", "this deletes all mail, documents, and"} {
+				if !strings.Contains(s, phrase) {
+					t.Errorf("%s at 50x%d: the screen lacks %q:\n%s", name, h, phrase, s)
+				}
+			}
+		}
+	}
+}
+
+// s. A box cut for room ends in an ellipsis row, and Copy command still
+// carries the whole command: the cut is display only.
+func TestNarrow_S_ACutBoxEndsInAnEllipsisRowAndCopyStillHasTheWholeCommand(t *testing.T) {
+	var buf bytes.Buffer
+	m := narrowDoneModel(t, c9LongDir, 50, 24, &buf)
+	inside := narrowBoxInside(t, screen(m))
+	if len(inside) < 2 {
+		t.Fatalf("the box has %d rows, want at least 2: %q", len(inside), inside)
+	}
+	if last := strings.TrimSpace(inside[len(inside)-1]); last != "…" {
+		t.Errorf("the box's last row is %q, want %q: %q", last, "…", inside)
+	}
+	for i, r := range inside {
+		if w := lipgloss.Width(r); w > 42 {
+			t.Errorf("box row %d is %d cells, want at most 42: %q", i, w, r)
+		}
+	}
+
+	_, cmd := updateAs(t, m, key(tea.KeyEnter)) // Copy command is the default row
+	if cmd == nil {
+		t.Fatal("Copy command ran nothing")
+	}
+	cmd()
+	const prefix, suffix = "\x1b]52;c;", "\x07"
+	got := buf.String()
+	if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+		t.Fatalf("clipboard write = %q, want an OSC 52 sequence", got)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(got, prefix), suffix))
+	if err != nil {
+		t.Fatalf("payload is not standard base64: %v", err)
+	}
+	if want := strings.Join(removalWords(t, c9LongDir), " "); string(decoded) != want {
+		t.Errorf("copied %q, want the whole one-line command %q", decoded, want)
+	}
+}
+
+// t. Where the whole box fits, it is not cut: the cap only bites when the
+// menu would otherwise go.
+func TestNarrow_T_TheBoxIsNotCutWhereItFits(t *testing.T) {
+	cases := []struct {
+		name          string
+		dir           string
+		width, height int
+	}{
+		{"c9 path at 80x26", c9LongDir, 80, 26},
+		{"c9 path at 120x30", c9LongDir, 120, 30},
+		{"bare path at 50x40", narrowBareDir, 50, 40},
+	}
+	for _, c := range cases {
+		inside := narrowBoxInside(t, screen(narrowDoneModel(t, c.dir, c.width, c.height, &bytes.Buffer{})))
+		for i, r := range inside {
+			if strings.TrimSpace(r) == "…" {
+				t.Errorf("%s: box row %d is an ellipsis: %q", c.name, i, inside)
+			}
+		}
+		want := strings.Join(removalWords(t, c.dir), " ")
+		if got := narrowReadBack(inside); got != want {
+			t.Errorf("%s: box reads back as\n  %q\nwant\n  %q", c.name, got, want)
+		}
+	}
+}
+
 // q. At 80x24 the done screen keeps its menu for a bare path of 46
 // characters and a quoted path of 44: every unit still fits one row at the
 // 72-cell inside. (Longer paths are promised at 80x26 only, DECISIONS.md.)
