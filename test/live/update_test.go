@@ -75,6 +75,7 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}

@@ -13,6 +13,7 @@
 package live
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -941,6 +943,88 @@ func dockerComposeDown(t *testing.T, dir string) {
 	}
 }
 
+// liveRunLifetime is the longest a run of this suite can hold a stack: both
+// hosts cap the live job at 35 minutes, above go test's own 30m -timeout.
+const liveRunLifetime = 35 * time.Minute
+
+// liveProjectPattern matches the names liveProjectName gives, and nothing
+// else: never "orbit", the project a real Orbit on the host uses.
+var liveProjectPattern = regexp.MustCompile(`^orbit-live-[0-9a-f]{8}$`)
+
+// leftoverLiveProjects picks, from `docker ps --all` lines of project, working
+// directory and creation time (tab-separated), the projects of this suite
+// that no run can still be using: a project is kept while any of its
+// containers is both younger than liveRunLifetime and has a working
+// directory that still exists, which is what a concurrent run on the same
+// daemon looks like. An unreadable time counts as young.
+func leftoverLiveProjects(psOutput string, now time.Time, dirExists func(string) bool) []string {
+	seen, inUse := map[string]bool{}, map[string]bool{}
+	var order []string
+	for _, line := range strings.Split(psOutput, "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(fields) != 3 || !liveProjectPattern.MatchString(fields[0]) {
+			continue
+		}
+		project, workDir := fields[0], fields[1]
+		if !seen[project] {
+			seen[project] = true
+			order = append(order, project)
+		}
+		created, err := time.Parse("2006-01-02 15:04:05 -0700 MST", fields[2])
+		young := err != nil || now.Sub(created) < liveRunLifetime
+		if young && workDir != "" && dirExists(workDir) {
+			inUse[project] = true
+		}
+	}
+	var out []string
+	for _, project := range order {
+		if !inUse[project] {
+			out = append(out, project)
+		}
+	}
+	return out
+}
+
+var sweepOnce sync.Once
+
+// sweepLeftoverLiveStacks removes, once per test binary and before the first
+// test that installs anything, the stacks earlier runs of this suite left
+// on the daemon (TL-S7). A run that hits go test's -timeout panics without
+// running t.Cleanup, so dockerComposeDown never runs for it; on GitLab the
+// daemon's data root outlives the job and Orbit's restart policies bring
+// those containers back, holding ports and disk for the next run. Only
+// projects named like liveProjectName are touched, by the same label-only
+// `compose -p ... down -v` dockerComposeDown uses for a rolled-back install.
+func sweepLeftoverLiveStacks(t *testing.T) {
+	t.Helper()
+	sweepOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "docker", "ps", "--all",
+			"--filter", "label=com.docker.compose.project",
+			"--format", `{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.CreatedAt}}`).Output()
+		if err != nil {
+			t.Logf("leftover sweep: docker ps: %v; nothing swept", err)
+			return
+		}
+		exists := func(dir string) bool { _, err := os.Stat(dir); return err == nil }
+		for _, project := range leftoverLiveProjects(string(out), time.Now(), exists) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "down", "-v", "--remove-orphans")
+			// Outside the repository, so compose finds no file of its own
+			// and works from the project's labels alone.
+			cmd.Dir = os.TempDir()
+			cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+project)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Logf("leftover sweep: docker compose down for %s failed: %v\n%s", project, err, out)
+			} else {
+				t.Logf("leftover sweep: removed %s, left by an earlier run", project)
+			}
+			cancel()
+		}
+	})
+}
+
 // TestLive_InstallHealthyEndpointThenRemove is the real virtualized
 // live test: a real Install (issue #19 — real Docker, real health
 // checks, real HTTP response) followed by a real Remove against that
@@ -952,6 +1036,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -997,6 +1082,7 @@ func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -1256,26 +1342,34 @@ func removeAndAssertCleanup(t *testing.T, binPath, dir, appURL string) {
 // and the launcher must land on an honest failure screen while
 // install.sh's own transaction leaves nothing half-changed. The
 // dependency is broken deterministically *before* the run — the test
-// process itself holds the app's port, so the engine's compose phase
-// hits a real "port is already allocated" failure — rather than
-// killing a container mid-install, which issue #57 itself flags as
-// needing timing care to keep non-flaky. Same failure family (the
-// deploy dies after config, at the container layer), none of the
-// race.
+// process itself holds the port the app publishes, so the engine's
+// compose phase hits a real bind failure — rather than killing a
+// container mid-install, which issue #57 itself flags as needing timing
+// care to keep non-flaky. Same failure family (the deploy dies after
+// config, at the container layer), none of the race.
+//
+// The port is one the kernel picks as free, handed to the deployment
+// through ORBIT_PORT (docker-compose.yml publishes
+// ${ORBIT_PORT:-3000}; the job's environment reaches compose through
+// install.sh unchanged and outranks .env-orbit). Holding :3000 itself
+// skipped the test whenever anything else had it, and could collide with
+// another run on the same daemon (#195 TL-S4).
 func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
 
 	// Hold the app's port for the whole test: compose cannot bind it.
-	blocker, err := net.Listen("tcp", ":3000")
+	blocker, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
-		t.Skipf("port 3000 not free to block: %v", err)
+		t.Fatalf("hold a free port for the app to collide with: %v", err)
 	}
 	defer blocker.Close()
+	port := strconv.Itoa(blocker.Addr().(*net.TCPAddr).Port)
 
 	binPath := binaryPath(t)
 	dir := t.TempDir()
@@ -1283,7 +1377,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	t.Cleanup(func() { dockerComposeDown(t, dir) })
 
 	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
-	session := startLive(t, binPath, dir)
+	session := startLiveEnv(t, binPath, dir, "ORBIT_PORT="+port)
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path. Then the deploy
@@ -1292,6 +1386,25 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// with its stacked menu present.
 	installThroughConsole(t, session, appURL, "orbit-launcher-live-failure-test", "ci-live-failure-fake-secret", "Install stopped")
 	session.must("Menu")
+
+	// And it stopped where the port was taken: at `compose up`, whose
+	// failure install.sh reports with this reason. Any earlier failure
+	// would also say "Install stopped" and prove nothing about compose.
+	screen, err := session.expectWithinBudget("the compose-up failure reason", session.screenBudget, func(screen string) bool {
+		return strings.Contains(screenWords(screen), composeUpFailedReason)
+	})
+	if err != nil {
+		t.Fatalf("the failure screen does not give the compose-up reason %q: %v", composeUpFailedReason, err)
+	}
+	// Orbit's install.sh from #1485 on also prints Docker's own words; when
+	// it does, they must be about the held port.
+	if words := screenWords(screen); strings.Contains(words, "Docker said") {
+		if !portBindFailure(words, port) {
+			t.Errorf("Docker's words on the failure screen are not a bind failure on port %s:\n%s", port, screen)
+		}
+	} else {
+		t.Logf("this install.sh prints no Docker words; the compose-up reason alone shows the failure path")
+	}
 
 	// Exit via the failure menu (guided installer, Menu, Exit).
 	session.send("\x1b[B")
@@ -1316,6 +1429,41 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if len(psOut) != 0 {
 		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
 	}
+}
+
+// composeUpFailedReason is the reason install.sh gives when
+// `docker compose up` fails (fail_with docker-host in its readiness wait).
+const composeUpFailedReason = "Orbit services could not be created or started."
+
+// skyGlyphs are the starfield's marks, which share rows with text.
+const skyGlyphs = "·✦●⟡"
+
+// screenWords returns the screen's text as one line of words: the sky's
+// marks and lone "." stars dropped, and every run of spaces or row breaks
+// made one space, so a sentence wrapped across rows reads whole.
+func screenWords(screen string) string {
+	var words []string
+	for _, w := range strings.Fields(strings.Map(func(r rune) rune {
+		if strings.ContainsRune(skyGlyphs, r) {
+			return ' '
+		}
+		return r
+	}, screen)) {
+		if w != "." {
+			words = append(words, w)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// portBindFailure reports whether words hold Docker's refusal to publish
+// port: the kernel's "address already in use" when another process holds
+// it, or Docker's own "port is already allocated" when a container does.
+func portBindFailure(words, port string) bool {
+	if !strings.Contains(words, ":"+port) {
+		return false
+	}
+	return strings.Contains(words, "address already in use") || strings.Contains(words, "port is already allocated")
 }
 
 // The hang diagnosis only ever runs when a release-gate run has already
@@ -1541,5 +1689,53 @@ func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The port-conflict test reads the failure reason and Docker's words off a
+// screen where they wrap across rows between the sky's marks (#195 TL-S4).
+func TestScreenWords_ReadsAWrappedReasonBetweenStars(t *testing.T) {
+	screen := "   ✦     ✗ Install stopped        ·\n" +
+		" .   docker-host — Orbit services could not be      ●\n" +
+		"        created or started. · next: repair    ⟡   .\n" +
+		"  Orbit installer: Docker said: failed to bind host port\n" +
+		"  0.0.0.0:41234/tcp: address already in use\n"
+	words := screenWords(screen)
+	if !strings.Contains(words, composeUpFailedReason) {
+		t.Errorf("screenWords lost the wrapped reason:\n%s", words)
+	}
+	if !portBindFailure(words, "41234") {
+		t.Errorf("portBindFailure missed the bind failure on 41234:\n%s", words)
+	}
+	if portBindFailure(words, "3000") {
+		t.Error("portBindFailure accepted a bind failure on another port")
+	}
+	if portBindFailure(screenWords("Docker said: image not found 0.0.0.0:41234"), "41234") {
+		t.Error("portBindFailure accepted a failure that is not about binding")
+	}
+}
+
+// The leftover sweep (TL-S7) removes only this suite's stacks that no run
+// can still be using, and never a real Orbit's.
+func TestLeftoverLiveProjects_SweepsOnlyAbandonedLiveStacks(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	recent := "2026-10-21 11:50:00 +0000 UTC"
+	old := "2026-10-21 10:00:00 +0000 UTC"
+	live := map[string]bool{"/tmp/TestLive_running/001": true, "/tmp/TestLive_stale/001": true}
+	ps := strings.Join([]string{
+		"orbit\t/opt/orbit\t" + old,                                 // a real Orbit: never
+		"orbit-live-0123abcd\t/tmp/TestLive_running/001\t" + recent, // a concurrent run: kept
+		"orbit-live-0123abcd\t/tmp/TestLive_running/001\t" + old,
+		"orbit-live-feedbeef\t/tmp/TestLive_gone/001\t" + recent, // its run's directory is gone
+		"orbit-live-feedbeef\t/tmp/TestLive_gone/001\t" + recent,
+		"orbit-live-c0ffee00\t/tmp/TestLive_stale/001\t" + old, // older than any run
+		"orbit-live-c0ffee00x\t/tmp/x\t" + old,                 // not a name liveProjectName gives
+		"orbit-live-ABCDEF01\t/tmp/x\t" + old,
+		"other-orbit-live-01234567\t/tmp/x\t" + old,
+		"",
+	}, "\n")
+	got := leftoverLiveProjects(ps, now, func(dir string) bool { return live[dir] })
+	if want := []string{"orbit-live-feedbeef", "orbit-live-c0ffee00"}; !slices.Equal(got, want) {
+		t.Errorf("swept %v, want %v", got, want)
 	}
 }

@@ -7,8 +7,9 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198, #241, #273 and #264 make on purpose, listed in
-// changedBy216, changedBy198, changedBy241, changedBy273 and changedBy264.
+// the ones #216, #198, #241, #273, #264, #236 and #195 make on purpose,
+// listed in changedBy216, changedBy198, changedBy241, changedBy273,
+// changedBy264, changedBy236 and changedBy195.
 package supplychain
 
 import (
@@ -162,6 +163,7 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 			t.Errorf("top-level %q changed (#217)\nwant: %s\n got: %s", k, o, n)
 		}
 	}
+	compareTopLevelVariables(t, oldDoc, newDoc)
 
 	compared := 0
 	for _, name := range topLevelKeysAtCE4B412 {
@@ -228,6 +230,59 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	}
 	if want, _ := oldDoc.effectiveJob("deps"); want.Keys["cache"] == nil || want.Keys["tags"] == nil {
 		t.Fatal("the fixture's `deps` job reads with no cache or no tags: `extends:` or `default:` is not being applied")
+	}
+}
+
+// isToolPinVariable reports whether a top-level variable is a tool pin that
+// Renovate or a toolchain bump moves: an image, a version or a digest. Those
+// are checked against GitHub's copies in ci_hosts_agree_test.go instead.
+func isToolPinVariable(name string) bool {
+	for _, suffix := range []string{"_IMAGE", "_VERSION", "_SHA256"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// compareTopLevelVariables checks the pipeline's `variables:` against the
+// ce4b412 fixture: the same names, and the same value for every one that is
+// not a tool pin. ORBIT_CHANNEL, ORBIT_PROJECT and the rest decide whether the
+// update leg and the manifest check run, so a merge slip there must not pass
+// quietly (#236).
+func compareTopLevelVariables(t *testing.T, oldDoc, newDoc *yamlDoc) {
+	t.Helper()
+	oldV, newV := oldDoc.root.vals["variables"], newDoc.root.vals["variables"]
+	if oldV == nil || oldV.kind != 'm' {
+		t.Fatal("the fixture has no top-level variables mapping: the reader lost it")
+	}
+	if newV == nil || newV.kind != 'm' {
+		t.Fatal(".gitlab-ci.yml has no top-level variables mapping")
+	}
+	names := map[string]string{}
+	for _, m := range []*yamlNode{oldV, newV} {
+		for _, k := range m.keys {
+			names[k] = ""
+		}
+	}
+	compared := 0
+	for _, k := range unionOfKeys(names, nil) {
+		o, inOld := oldV.vals[k]
+		n, inNew := newV.vals[k]
+		switch {
+		case !inNew:
+			t.Errorf("top-level variable %s is gone (#236)\nwas: %s", k, o.dump())
+		case !inOld:
+			t.Errorf("top-level variable %s is new (#236)\nnow: %s", k, n.dump())
+		case isToolPinVariable(k):
+		case o.dump() != n.dump():
+			t.Errorf("top-level variable %s changed (#236)\nwant: %s\n got: %s", k, o.dump(), n.dump())
+		default:
+			compared++
+		}
+	}
+	if compared < 5 {
+		t.Fatalf("compared only %d non-pin variables: the reader is not finding them", compared)
 	}
 }
 
@@ -611,8 +666,47 @@ gitlab_orbit_url() {
 	},
 }
 
+// What #236 changes on purpose: before the live job hands over the verified
+// preview manifest, it checks that the branch tip's install.sh is the one the
+// manifest records. Same form and the same exactly-once rule as changedBy216;
+// these apply last.
+var changedBy236 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old:  `  export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"`,
+		new: `  # install.sh comes from the branch tip, the manifest from the branch's
+  # latest preview pipeline, which trails the tip by minutes. In that
+  # gap the run would pair a newer install.sh with the previous
+  # commit's image, so it stops until the two are one release (#236).
+  [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+    || { echo "install.sh at the tip of ${ORBIT_BRANCH} is not the one the latest signed preview release records: ai/orbit's preview pipeline has not caught up with the branch yet; rerun this job once it has (#236)"; exit 1; }
+  export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"`,
+	},
+}
+
+// What #195 (T2-Q1) changes on purpose: after the coverage gate, `fast` runs
+// the packages whose tests skip as root again as an unprivileged user, so the
+// unreadable-file branches are checked on GitLab too. Same form and the same
+// exactly-once rule as changedBy216.
+var changedBy195 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		old:  `go run ./tools/coveragefloor coverage.out`,
+		new: `go run ./tools/coveragefloor coverage.out
+bash scripts/ci/nonroot-tests.sh`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -626,6 +720,8 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy241...)
 	all = append(all, changedBy273...)
 	all = append(all, changedBy264...)
+	all = append(all, changedBy236...)
+	all = append(all, changedBy195...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
