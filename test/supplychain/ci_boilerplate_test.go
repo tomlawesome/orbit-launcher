@@ -7,8 +7,8 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198 and #241 make on purpose, listed in changedBy216,
-// changedBy198 and changedBy241.
+// the ones #216, #198, #241, #273 and #264 make on purpose, listed in
+// changedBy216, changedBy198, changedBy241, changedBy273 and changedBy264.
 package supplychain
 
 import (
@@ -34,6 +34,20 @@ var topLevelKeysAtCE4B412 = []string{
 	"classify", "fast", "deps", "gitleaks", "visual", "live",
 	"renovate", "release:version", "release:gitlab",
 }
+
+// What #264 does to the two release jobs in that list: release:version and
+// release:gitlab are gone, and each is replaced by a pair for a patch and a
+// minor button on main (releaseJobsAfter264, keyed by the old job they
+// descend from). topLevelKeysAtCE4B412 stays as the fixture has it; every
+// check that reads it knows about this one rename and nothing else.
+var releaseJobsAfter264 = map[string][]string{
+	"release:version": {"release:patch", "release:minor"},
+	"release:gitlab":  {"release:gitlab:patch", "release:gitlab:minor"},
+}
+
+// releaseTemplatesAdded264 are the hidden templates that hold what the four
+// release jobs share, so none of it is copied.
+var releaseTemplatesAdded264 = []string{".release_version", ".release_gitlab"}
 
 func loadCI(t *testing.T, ciYAML string) *yamlDoc {
 	t.Helper()
@@ -101,6 +115,19 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 	typed := map[string]bool{}
 	for _, k := range topLevelKeysAtCE4B412 {
 		typed[k] = true
+		if renamed, ok := releaseJobsAfter264[k]; ok {
+			// #264 retires this job; its successors are named, below.
+			if have[k] {
+				t.Errorf("top-level key %q is still in .gitlab-ci.yml: #264 replaces it with %v", k, renamed)
+			}
+			for _, n := range renamed {
+				typed[n] = true
+				if !have[n] {
+					t.Errorf("%q, which #264 makes from %q, is missing from .gitlab-ci.yml", n, k)
+				}
+			}
+			continue
+		}
 		if !have[k] {
 			t.Errorf("top-level key %q from ce4b412 is gone from .gitlab-ci.yml: job names must not change (#217)", k)
 		}
@@ -108,6 +135,11 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 	for _, k := range doc.root.keys {
 		if !typed[k] && !strings.HasPrefix(k, ".") {
 			t.Errorf("new top-level key %q is not a hidden template (it would be a new job): the restructure may add only `.`-prefixed templates (#217)", k)
+		}
+	}
+	for _, k := range releaseTemplatesAdded264 {
+		if !have[k] {
+			t.Errorf("the hidden template %q that #264's release jobs share is missing", k)
 		}
 	}
 }
@@ -147,34 +179,43 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 		if name == "fast" {
 			want.Script = fastPlaceholderFirst(t, want.Script)
 		}
-		got, err := newDoc.effectiveJob(name)
-		if err != nil {
-			t.Errorf("%s: %v", name, err)
-			continue
+		// A job #264 split is compared once for each job it became, so
+		// every successor must differ from the old job only by what
+		// changedBy264 declares for it.
+		targets := []string{name}
+		if renamed, ok := releaseJobsAfter264[name]; ok {
+			targets = renamed
 		}
-		compared++
-		wantKeys := map[string]string{}
-		for k, v := range want.Keys {
-			wantKeys[k] = jobKeyDump(k, v)
-		}
-		wantKeys["script"] = want.Script
-		applyChangedOnPurpose(t, name, wantKeys)
-		gotKeys := map[string]string{"script": got.Script}
-		for k, v := range got.Keys {
-			gotKeys[k] = jobKeyDump(k, v)
-		}
-		for _, k := range unionOfKeys(wantKeys, gotKeys) {
-			w, okW := wantKeys[k]
-			g, okG := gotKeys[k]
-			switch {
-			case !okG:
-				t.Errorf("job %q: %s is gone (#217)\nwas: %s", name, k, w)
-			case !okW:
-				t.Errorf("job %q: %s is new (#217)\nnow: %s", name, k, g)
-			case w != g && k == "script":
-				t.Errorf("job %q: effective script changed (#217)\nwant:\n%s\n got:\n%s", name, w, g)
-			case w != g:
-				t.Errorf("job %q: effective %s changed (#217)\nwant: %s\n got: %s", name, k, w, g)
+		for _, target := range targets {
+			got, err := newDoc.effectiveJob(target)
+			if err != nil {
+				t.Errorf("%s: %v", target, err)
+				continue
+			}
+			compared++
+			wantKeys := map[string]string{}
+			for k, v := range want.Keys {
+				wantKeys[k] = jobKeyDump(k, v)
+			}
+			wantKeys["script"] = want.Script
+			applyChangedOnPurpose(t, target, wantKeys)
+			gotKeys := map[string]string{"script": got.Script}
+			for k, v := range got.Keys {
+				gotKeys[k] = jobKeyDump(k, v)
+			}
+			for _, k := range unionOfKeys(wantKeys, gotKeys) {
+				w, okW := wantKeys[k]
+				g, okG := gotKeys[k]
+				switch {
+				case !okG:
+					t.Errorf("job %q: %s is gone (#217)\nwas: %s", target, k, w)
+				case !okW:
+					t.Errorf("job %q: %s is new (#217)\nnow: %s", target, k, g)
+				case w != g && k == "script":
+					t.Errorf("job %q: effective script changed (#217)\nwant:\n%s\n got:\n%s", target, w, g)
+				case w != g:
+					t.Errorf("job %q: effective %s changed (#217)\nwant: %s\n got: %s", target, k, w, g)
+				}
 			}
 		}
 	}
@@ -446,17 +487,158 @@ var changedBy241 = []struct {
 	},
 }
 
+// What #264 changes on purpose. The two release jobs become four: a patch
+// and a minor button on main (not dev), each with its own follow-on tagging
+// job, sharing hidden templates. Here `jobs` names the new jobs, whose
+// starting point is the retired job they descend from (releaseJobsAfter264).
+// The script is the old one with the version step choosing -hotfix by
+// RELEASE_BUMP and the tip check reading main and naming it; the follow-on
+// jobs differ only in the button they wait for. A rewrite with an empty
+// `old` and a key adds that key, and fails if the old job already had it.
+// Otherwise the same form and exactly-once rule as changedBy216.
+var changedBy264 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the buttons run on main pipelines, the follow-on jobs too
+		jobs: []string{"release:patch", "release:minor", "release:gitlab:patch", "release:gitlab:minor"},
+		key:  "rules",
+		old:  `$CI_COMMIT_BRANCH == \"dev\"`,
+		new:  `$CI_COMMIT_BRANCH == \"main\"`,
+	},
+	{ // shared through the hidden templates
+		jobs: []string{"release:patch", "release:minor"},
+		key:  "extends",
+		new:  `".release_version"`,
+	},
+	{
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		key:  "extends",
+		new:  `".release_gitlab"`,
+	},
+	{ // the one thing that tells the two buttons apart
+		jobs: []string{"release:patch"},
+		key:  "variables",
+		new:  `{"RELEASE_BUMP": "patch"}`,
+	},
+	{
+		jobs: []string{"release:minor"},
+		key:  "variables",
+		new:  `{"RELEASE_BUMP": "minor"}`,
+	},
+	{ // each follow-on job waits for its own button
+		jobs: []string{"release:gitlab:patch"},
+		key:  "needs",
+		old:  `"job": "release:version"`,
+		new:  `"job": "release:patch"`,
+	},
+	{
+		jobs: []string{"release:gitlab:minor"},
+		key:  "needs",
+		old:  `"job": "release:version"`,
+		new:  `"job": "release:minor"`,
+	},
+	{ // patch takes the hotfix step, minor the ordinary one
+		jobs: []string{"release:patch", "release:minor"},
+		old:  `version="$(go run ./tools/calculateversion)"`,
+		new: `case "$RELEASE_BUMP" in
+  patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
+  minor) version="$(go run ./tools/calculateversion)" ;;
+  *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+esac`,
+	},
+	{ // the tip check reads main
+		jobs: []string{"release:patch", "release:minor"},
+		old:  `dev_sha="$(git ls-remote origin refs/heads/dev | cut -f1)"`,
+		new:  `tip_sha="$(git ls-remote origin refs/heads/main | cut -f1)"`,
+	},
+	{ // and is told which branch that is
+		jobs: []string{"release:patch", "release:minor"},
+		old:  `bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" "$dev_sha" "$CI_COMMIT_SHA" > release.env`,
+		new:  `bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env`,
+	},
+	{ // the check is POSIX sh, so the release-cli image can run it too
+		jobs: []string{"release:patch", "release:minor"},
+		old:  `bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env`,
+		new:  `sh scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env`,
+	},
+	{ // tagging runs one job at a time
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		key:  "resource_group",
+		new:  `"release"`,
+	},
+	{ // and re-checks under that lock, just before release-cli writes the tag
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		old:  `echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
+		new: `sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
+echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
+	},
+}
+
+// What #273 changes on purpose: the live job asks ai/orbit's files endpoint
+// for the branch by its full ref, so a tag of the same name cannot answer, and
+// says why the two artifact reads stay on the plain name. Same form and the
+// same exactly-once rule as changedBy216; these apply after #241's.
+var changedBy273 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the files lookups name the branch by its full ref
+		jobs: []string{"live"},
+		old: `gitlab_orbit_url() {
+  printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
+}`,
+		new: `# The full ref, so a tag with the same name as the branch cannot answer
+# (#273). The files endpoint accepts refs/heads/<branch>.
+gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
+gitlab_orbit_url() {
+  printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$gitlab_orbit_ref"
+}`,
+	},
+	{ // the artifact reads cannot take a full ref
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+		new: `  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched by full ref above (#273).
+  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241 do. Each rewrite for this job must match exactly once; a key it names
-// that the job lacks is a failure too, so no entry can go unused.
+// #198, then #241, then #273, then #264 do. Each rewrite for this job must
+// match exactly once; a key it names that the job lacks is a failure too (bar
+// the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	t.Helper()
-	for _, r := range append(append(changedBy216[:len(changedBy216):len(changedBy216)], changedBy198...), changedBy241...) {
+	all := append([]struct {
+		jobs     []string
+		key      string
+		old, new string
+	}(nil), changedBy216...)
+	all = append(all, changedBy198...)
+	all = append(all, changedBy241...)
+	all = append(all, changedBy273...)
+	all = append(all, changedBy264...)
+	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
 			applies = applies || j == job
 		}
 		if !applies {
+			continue
+		}
+		if r.key != "" && r.old == "" { // an added key
+			if _, has := keys[r.key]; has {
+				t.Fatalf("%s already has %s at ce4b412; the rewrite adding it is wrong", job, r.key)
+			}
+			keys[r.key] = r.new
 			continue
 		}
 		key, from, to, text := r.key, r.old, r.new, ""
@@ -475,6 +657,72 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 			text = text[1 : len(text)-1]
 		}
 		keys[key] = text
+	}
+}
+
+// The four release jobs share their work through two hidden templates (#264):
+// the version script and the release-cli job body are each written once, and
+// each button differs from the other only in RELEASE_BUMP. The check runs
+// once in each template, with sh: the button's, and the tagging job's again
+// under `resource_group: release`, so two presses cannot both tag.
+func TestReleaseJobsShareTheirBodies(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	for needle, want := range map[string]int{
+		"release-tag-check.sh":                       2,
+		"sh scripts/ci/release-tag-check.sh":         2,
+		"bash scripts/ci/release-tag-check.sh":       0,
+		"resource_group:":                            1,
+		"calculateversion -hotfix":                   1,
+		"registry.gitlab.com/gitlab-org/release-cli": 1,
+		"tag_name:": 1,
+	} {
+		if n := countLinesContaining(ci, needle); n != want {
+			t.Errorf("%q is written on %d lines of .gitlab-ci.yml; want exactly %d, inside a release template (#264)", needle, n, want)
+		}
+	}
+	doc := loadCI(t, ci)
+	bump := map[string]string{"release:patch": "patch", "release:minor": "minor"}
+	for job, want := range bump {
+		e, err := doc.effectiveJob(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := e.Keys["variables"].dump(); got != `{"RELEASE_BUMP": "`+want+`"}` {
+			t.Errorf("%s variables are %s, want only RELEASE_BUMP=%s", job, got, want)
+		}
+		if e.Keys["needs"] != nil {
+			t.Errorf("%s has `needs:`; the button must not be playable before every earlier stage passes (#178)", job)
+		}
+		if w := e.Keys["rules"].dump(); !strings.Contains(w, `"when": "manual"`) || !strings.Contains(w, `"allow_failure": "true"`) {
+			t.Errorf("%s must be a manual, allow_failure button: %s", job, w)
+		}
+	}
+	for follow, button := range map[string]string{"release:gitlab:patch": "release:patch", "release:gitlab:minor": "release:minor"} {
+		e, err := doc.effectiveJob(follow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := e.Keys["needs"].dump(), `[{"artifacts": "true", "job": "`+button+`"}]`; got != want {
+			t.Errorf("%s needs %s, want %s", follow, got, want)
+		}
+		if strings.Contains(e.Keys["rules"].dump(), `"when"`) {
+			t.Errorf("%s must run by itself once its button has passed, not be a second button", follow)
+		}
+		if rg := e.Keys["resource_group"]; rg == nil || rg.dump() != `"release"` {
+			t.Errorf("%s has no `resource_group: release`; tagging must run one job at a time (#264)", follow)
+		}
+		if first, _, _ := strings.Cut(e.Script, "\n"); !strings.HasPrefix(first, "sh scripts/ci/release-tag-check.sh ") {
+			t.Errorf("%s does not re-run the tag check first, under its lock; first line is %q (#264)", follow, first)
+		}
+	}
+	for job := range bump {
+		e, err := doc.effectiveJob(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Keys["resource_group"] != nil {
+			t.Errorf("%s has a resource_group; only the tagging jobs take the lock (#264)", job)
+		}
 	}
 }
 
