@@ -53,7 +53,9 @@ func StandDown(ctx context.Context, targetDir string) error {
 	cmd := standDownCommand(ctx, targetDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("docker compose down did not finish within %s: %w: %s", limit, err, out)
+			// The containers stopped so far stay stopped, so a second
+			// stand-down picks up where this one was cut off.
+			return fmt.Errorf("docker compose down did not finish within %s — running Stand down again finishes the job: %w: %s", limit, err, out)
 		}
 		return fmt.Errorf("docker compose down: %w: %s", err, out)
 	}
