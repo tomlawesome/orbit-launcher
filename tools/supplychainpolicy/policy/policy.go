@@ -332,6 +332,28 @@ func VerifyPins(pins []Pin, pol Policy) []Problem {
 		problems = append(problems, Problem{File: f, Line: l, Msg: fmt.Sprintf(format, args...)})
 	}
 
+	// Two workflows pinning one action at different commits is a fault in the
+	// workflows: no policy entry can match both, and deriving the policy keeps
+	// only the last pin, so "regenerate" would hide one of them. Name both
+	// places and leave the policy comparison for the conflicted action until
+	// the workflows agree.
+	firstPin := map[string]Pin{}
+	conflicted := map[string]bool{}
+	for _, p := range pins {
+		if !IsSHA(p.Ref) {
+			continue
+		}
+		first, seen := firstPin[p.Action]
+		if !seen {
+			firstPin[p.Action] = p
+		} else if first.Ref != p.Ref {
+			conflicted[p.Action] = true
+			add(p.File, p.Line, "%s is pinned to %s here but to %s at %s:%d. "+
+				"Workflows must pin one action to one commit; change one of the two to match the other.",
+				p.Action, p.Ref, first.Ref, first.File, first.Line)
+		}
+	}
+
 	used := map[string]bool{}
 	for _, p := range pins {
 		used[p.Action] = true
@@ -353,7 +375,7 @@ func VerifyPins(pins []Pin, pol Policy) []Problem {
 			add(p.File, p.Line, "%s is used in CI but not recorded in the policy.", p.Action)
 			continue
 		}
-		if a.Commit != p.Ref {
+		if a.Commit != p.Ref && !conflicted[p.Action] {
 			add(p.File, p.Line, "%s is pinned to %s but the policy records %s. "+
 				"One of the two is stale; the workflow is what actually runs.", p.Action, p.Ref, a.Commit)
 		}
