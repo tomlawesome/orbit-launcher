@@ -351,7 +351,7 @@ var narrowBoxDirs = map[string]string{
 func TestNarrow_E_BoxIsOneWidthInsideTheScreenEdge(t *testing.T) {
 	for name, dir := range narrowBoxDirs {
 		for _, width := range narrowWidths {
-			s := screen(narrowDoneModel(t, dir, width, 30, &bytes.Buffer{}))
+			s := screen(narrowDoneModel(t, dir, width, 40, &bytes.Buffer{}))
 			rows := boxRowsOf(t, s)
 			top := lipgloss.Width(rows[0])
 			if top > width-4 {
@@ -461,7 +461,7 @@ func TestNarrow_G_RowsReadBackAsTheOneLineCommand(t *testing.T) {
 	for name, dir := range narrowBoxDirs {
 		want := strings.Join(removalWords(t, dir), " ")
 		for _, width := range narrowWidths {
-			inside := narrowBoxInside(t, screen(narrowDoneModel(t, dir, width, 30, &bytes.Buffer{})))
+			inside := narrowBoxInside(t, screen(narrowDoneModel(t, dir, width, 40, &bytes.Buffer{})))
 			if got := narrowReadBack(inside); got != want {
 				t.Errorf("%s box at %d reads back as\n  %q\nwant\n  %q", name, width, got, want)
 			}
@@ -507,7 +507,7 @@ func TestNarrow_I_AndAndStaysOnItsOwnRowAndOptionsKeepTheirValue(t *testing.T) {
 	}
 	for name, dir := range narrowBoxDirs {
 		for _, width := range narrowWidths {
-			inside := narrowBoxInside(t, screen(narrowDoneModel(t, dir, width, 30, &bytes.Buffer{})))
+			inside := narrowBoxInside(t, screen(narrowDoneModel(t, dir, width, 40, &bytes.Buffer{})))
 			narrowCheckAndAnd(t, name+" box at "+itoa(width), inside, narrowLongPath(dir))
 		}
 	}
