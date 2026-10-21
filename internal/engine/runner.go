@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // stderrTailLines bounds how much stderr is kept for the failure
@@ -88,19 +90,53 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 			return nil, nil, err
 		}
 	}
-	stdout, err := cmd.StdoutPipe()
+	// Plain pipes rather than StdoutPipe and StderrPipe: Wait closes
+	// those as soon as the process exits, so it can only be called once
+	// they are read to the end, and a leftover child holding stdout then
+	// keeps Wait, and the bound on the pipes, from ever starting. With
+	// pipes of our own, Wait runs alongside the reading (#236).
+	stdout, outW, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, errW, err := os.Pipe()
 	if err != nil {
+		stdout.Close()
+		outW.Close()
 		return nil, nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	cmd.Stdout, cmd.Stderr = outW, errW
+	err = cmd.Start()
+	// The child holds its own copies; the launcher's write ends must go,
+	// or the readers never see end-of-file.
+	outW.Close()
+	errW.Close()
+	if err != nil {
+		stdout.Close()
+		stderr.Close()
 		return nil, nil, err
 	}
 
 	s := &Stream{C: make(chan any, 64), cmd: cmd, done: make(chan struct{})}
+
+	// Wait as soon as the process exits, then give the readers
+	// cmd.WaitDelay to drain what is left, as exec does for its own
+	// pipes: past it a child still holding the pipes is no longer
+	// waited for.
+	waited := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		s.mu.Lock()
+		s.reaped = true
+		s.mu.Unlock()
+		close(s.done)
+		if cmd.WaitDelay > 0 {
+			limit := time.Now().Add(cmd.WaitDelay)
+			_ = stdout.SetReadDeadline(limit)
+			_ = stderr.SetReadDeadline(limit)
+		}
+		waited <- err
+	}()
 
 	// stderr is drained concurrently into a tail ring so a chatty
 	// stderr can never deadlock the process against a full pipe.
@@ -113,6 +149,7 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 				tail = tail[1:]
 			}
 		})
+		stderr.Close()
 		tailCh <- tail
 	}()
 
@@ -124,17 +161,11 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 				s.C <- RawLineMsg{Text: line}
 			}
 		})
+		stdout.Close()
 
-		// Join the stderr drain before Wait: with StderrPipe, Wait
-		// closes the pipes as soon as the process exits, and on a slow
-		// machine that can cut the drain off mid-read and lose the
-		// tail (seen as a real release-gate failure).
+		// Every line, and the stderr tail, is in before DoneMsg goes out.
 		tail := <-tailCh
-		err := cmd.Wait()
-		s.mu.Lock()
-		s.reaped = true
-		s.mu.Unlock()
-		close(s.done)
+		err := <-waited
 		done := DoneMsg{Err: err, StderrTail: tail}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
