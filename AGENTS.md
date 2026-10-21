@@ -10,7 +10,7 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `github.com/tomlawesome/orbit-launcher`, AGPL-3.0 (`LICENSING.md`).
 - One project with Orbit, its base image and the site: act across them without
   asking (`ai/orbit` ADR-0036, `docs/adr/0036-the-orbit-family-is-one-project.md`).
-- `gh-pages` is the branch for the published design iterations.
+- Mockups are shown to the owner only from the local design container (`orbit-launcher-design-host`, nginx, ports from 8307), with direct links in chat; never uploaded to issues or published on Pages (owner, 2026-10-21). The permission system blocks starting that container, so ask the owner explicitly for permission to host the mockups in the same message that says a round is ready, before trying to start it.
 
 ## Traps
 
