@@ -76,9 +76,11 @@ func TestScreenWait_FindsTextSplitAcrossRedraws(t *testing.T) {
 // has stopped. So the program keeps repainting while the screen is read,
 // and the test times the reads. A read takes the emulator's lock once and
 // about a millisecond; the cell-by-cell read took 20 to 100 ms each under
-// the same load. The ceiling on the mean of 50 reads is ten milliseconds:
-// ten times what a read costs, with room for a busy runner, and well
-// under what the starving read costs.
+// the same load. The ceiling is not a fixed time, because the race
+// detector alone makes every read about 25 times slower: it is five times
+// the mean of 50 reads of the same screen taken in the same run before
+// the repainting starts. A read that takes the lock once stays near that
+// mean under load; one that starves against the lock does not.
 func TestScreenWait_KeepsUpWithFastRepaints(t *testing.T) {
 	term := newTerminal(t)
 
@@ -93,6 +95,25 @@ func TestScreenWait_KeepsUpWithFastRepaints(t *testing.T) {
 		fmt.Fprintf(&frame, "\x1b[38;5;69m│\x1b[0m ⠋ application starting %-91s \x1b[38;5;69m│\x1b[0m\r\n", "")
 	}
 	frame.WriteString("Get into Orbit")
+
+	const reads = 50
+	meanRead := func() time.Duration {
+		start := time.Now()
+		for range reads {
+			if got := Screen(term); !strings.Contains(got, "Get into Orbit") {
+				t.Fatalf("a read lost the marker:\n%s", got)
+			}
+		}
+		return time.Since(start) / reads
+	}
+
+	// The same screen, painted once and left alone, gives what a read
+	// costs in this run on this machine, race detector and all.
+	draw(t, term, frame.String())
+	if _, err := Wait(term, 5*time.Second, ContainsAll("Get into Orbit")); err != nil {
+		t.Fatalf("the quiet frame was not drawn: %v", err)
+	}
+	quiet := meanRead()
 
 	done := make(chan struct{})
 	var written atomic.Int64
@@ -130,18 +151,11 @@ func TestScreenWait_KeepsUpWithFastRepaints(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	const reads = 50
-	const ceiling = 10 * time.Millisecond
-	start := time.Now()
-	for range reads {
-		if got := Screen(term); !strings.Contains(got, "Get into Orbit") {
-			t.Fatalf("a read during the repainting lost the marker:\n%s", got)
-		}
-	}
-	mean := time.Since(start) / reads
-	t.Logf("mean read %s over %d reads while %d bytes were repainted", mean, reads, written.Load())
+	mean := meanRead()
+	ceiling := 5 * quiet
+	t.Logf("mean read %s over %d reads while %d bytes were repainted; %s on the quiet screen", mean, reads, written.Load(), quiet)
 	if mean > ceiling {
-		t.Errorf("a screen read took %s on average while the program repainted without pause, want under %s: the read is starving against the emulator's lock (#181)", mean, ceiling)
+		t.Errorf("a screen read took %s on average while the program repainted without pause, against %s on the quiet screen; want under %s: the read is starving against the emulator's lock (#181)", mean, quiet, ceiling)
 	}
 }
 
