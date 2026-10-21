@@ -171,13 +171,28 @@ func TestDecisionsLows_ClientIDCallbackNoteIsTwoRowsForEveryFittingAddress(t *te
 // ---------------------------------------------------------------------
 
 const (
-	adviceByAnotherAccount = "probably installed by another account"
-	advicePermission1      = "Orbit here was probably installed by another account."
-	advicePermission2      = "Run the launcher as that account, or make the file readable to this one."
-	adviceDirectory        = ".env-orbit is a folder, but it should be a file. Rename or remove the folder, then run Install again."
-	adviceWrongType        = ".env-orbit is the wrong file type. Rename or remove it, then run Install again."
-	adviceTooLong          = "A line in .env-orbit is too long to be a setting, so the file may be damaged. Open it in a text editor and check it."
+	// The one advice line for every cause (owner, 2026-10-21).
+	adviceOneLine = "Check the error above, the file type and the permissions."
 )
+
+// retiredAdvice is every sentence the per-cause advice used to say.
+var retiredAdvice = []string{
+	"probably installed by another account",
+	"Run the launcher as that account",
+	"is a folder, but it should be a file",
+	"is the wrong file type",
+	"too long to be a setting",
+}
+
+// wantOneAdviceLine checks the single advice line is shown once and none
+// of the retired sentences remain.
+func wantOneAdviceLine(t *testing.T, flat, raw string) {
+	t.Helper()
+	if n := strings.Count(flat, adviceOneLine); n != 1 {
+		t.Errorf("screen should say %q exactly once, says it %d times:\n%s", adviceOneLine, n, raw)
+	}
+	wantAdvice(t, flat, raw, nil, retiredAdvice...)
+}
 
 func fifoEnvDir(t *testing.T) string {
 	t.Helper()
@@ -261,32 +276,22 @@ func wantAdvice(t *testing.T, flat, raw string, shown []string, hidden ...string
 	}
 }
 
-func TestDecisionsLows_UnreadableAdviceForAFolderSaysRenameOrRemoveThenInstall(t *testing.T) {
-	unreadableAdvice(t, directoryEnvDir(t), func(t *testing.T, flat, raw string) {
-		wantAdvice(t, flat, raw, []string{adviceDirectory}, adviceByAnotherAccount)
-	})
+func TestDecisionsLows_UnreadableAdviceForAFolderIsTheOneLine(t *testing.T) {
+	unreadableAdvice(t, directoryEnvDir(t), wantOneAdviceLine)
 }
 
-func TestDecisionsLows_UnreadableAdviceForANamedPipeSaysWrongFileType(t *testing.T) {
-	unreadableAdvice(t, fifoEnvDir(t), func(t *testing.T, flat, raw string) {
-		wantAdvice(t, flat, raw, []string{adviceWrongType}, adviceByAnotherAccount)
-	})
+func TestDecisionsLows_UnreadableAdviceForANamedPipeIsTheOneLine(t *testing.T) {
+	unreadableAdvice(t, fifoEnvDir(t), wantOneAdviceLine)
 }
 
-func TestDecisionsLows_UnreadableAdviceForAnOverlongLineSaysTheFileMayBeDamaged(t *testing.T) {
-	unreadableAdvice(t, longLineEnvDir(t), func(t *testing.T, flat, raw string) {
-		wantAdvice(t, flat, raw, []string{adviceTooLong}, adviceByAnotherAccount)
-	})
+func TestDecisionsLows_UnreadableAdviceForAnOverlongLineIsTheOneLine(t *testing.T) {
+	unreadableAdvice(t, longLineEnvDir(t), wantOneAdviceLine)
 }
 
-func TestDecisionsLows_UnreadableAdviceForPermissionDeniedIsUnchanged(t *testing.T) {
-	unreadableAdvice(t, unreadableEnvDir(t), func(t *testing.T, flat, raw string) {
-		wantAdvice(t, flat, raw, []string{advicePermission1, advicePermission2}, adviceDirectory, adviceWrongType, adviceTooLong)
-	})
+func TestDecisionsLows_UnreadableAdviceForPermissionDeniedIsTheOneLine(t *testing.T) {
+	unreadableAdvice(t, unreadableEnvDir(t), wantOneAdviceLine)
 }
 
-func TestDecisionsLows_UnreadableAdviceForAnyOtherErrorKeepsThePermissionSentences(t *testing.T) {
-	unreadableAdvice(t, loopEnvDir(t), func(t *testing.T, flat, raw string) {
-		wantAdvice(t, flat, raw, []string{advicePermission1, advicePermission2}, adviceDirectory, adviceWrongType, adviceTooLong)
-	})
+func TestDecisionsLows_UnreadableAdviceForAnyOtherErrorIsTheOneLine(t *testing.T) {
+	unreadableAdvice(t, loopEnvDir(t), wantOneAdviceLine)
 }

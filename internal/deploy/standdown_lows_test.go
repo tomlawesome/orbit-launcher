@@ -5,29 +5,36 @@ package deploy
 
 import (
 	"context"
-	"strings"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
 
 // 236-18: when Docker hangs and the launcher's own limit ends the
-// stand-down, the error must say that running Stand down again finishes
-// the job. The limit is still named (call_limits_test.go pins that).
-func TestStandDown_TimeoutErrorSaysRunningStandDownAgainFinishesTheJob(t *testing.T) {
+// stand-down, the error is a *StandDownTimeoutError carrying the limit
+// and the command to run by hand, so the screen can say so in its own
+// words (owner, 2026-10-21; replaces the "again finishes the job" text).
+// The limit is still named (call_limits_test.go pins that).
+func TestStandDown_TimeoutErrorIsAStandDownTimeoutErrorWithTheCommand(t *testing.T) {
 	hangingDockerOnPath(t)
 	setStandDownTimeout(t, 200*time.Millisecond)
+	dir := trustedDeployment(t)
 
 	done := make(chan error, 1)
-	go func() { done <- StandDown(context.Background(), trustedDeployment(t)) }()
+	go func() { done <- StandDown(context.Background(), dir) }()
 
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("a stand-down whose docker never finished returned no error")
+		var te *StandDownTimeoutError
+		if !errors.As(err, &te) {
+			t.Fatalf("a stand-down whose docker never finished returned %v (%T), want a *StandDownTimeoutError", err, err)
 		}
-		msg := strings.ToLower(err.Error())
-		if !strings.Contains(msg, "stand down") || !strings.Contains(msg, "again") {
-			t.Errorf("timeout error = %q, want it to say running Stand down again finishes the job", err)
+		if te.Limit != 200*time.Millisecond {
+			t.Errorf("Limit = %v, want 200ms", te.Limit)
+		}
+		if want := StandDownCommandWords(dir); !reflect.DeepEqual(te.Words, want) {
+			t.Errorf("Words = %q, want %q", te.Words, want)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("StandDown did not give up at its limit")

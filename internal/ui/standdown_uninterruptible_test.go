@@ -10,18 +10,19 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
-// cannotStop is the sentence Repair's running screen carries; Remove's
-// working line says the same thing in the same words.
-const cannotStop = "can't be stopped from here"
+// removeWaitLine is the line under "standing down Orbit" on Remove's
+// working screen (owner, 2026-10-21).
+const removeWaitLine = "Please wait — this can't be cancelled. Nothing is being deleted."
 
 // standDownKeys are the two keys a stand-down must ignore.
 var standDownKeys = []struct {
@@ -97,9 +98,9 @@ func TestStandDown_RepeatedPressesStillDoNothing(t *testing.T) {
 	}
 }
 
-// The working line is Repair's: the stand-down line, then a second line
-// saying it can't be stopped from here.
-func TestStandDown_WorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
+// The working line: the stand-down line, then a second line asking the
+// person to wait and saying nothing is being deleted.
+func TestStandDown_WorkingLineAsksToWait(t *testing.T) {
 	m, _ := removeStandingDown(t, standDownOK)
 	lines := strings.Split(screen(m), "\n")
 	working, second := -1, -1
@@ -107,15 +108,15 @@ func TestStandDown_WorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
 		if working < 0 && strings.Contains(l, "standing down Orbit") {
 			working = i
 		}
-		if strings.Contains(l, cannotStop) {
+		if strings.Contains(l, removeWaitLine) {
 			second = i
 		}
 	}
 	if working < 0 || second < 0 {
-		t.Fatalf("working screen lacks the stand-down line or %q:\n%s", cannotStop, screen(m))
+		t.Fatalf("working screen lacks the stand-down line or %q:\n%s", removeWaitLine, screen(m))
 	}
 	if second != working+1 {
-		t.Errorf("%q is on line %d, want the line right under the stand-down line (%d):\n%s", cannotStop, second, working, screen(m))
+		t.Errorf("%q is on line %d, want the line right under the stand-down line (%d):\n%s", removeWaitLine, second, working, screen(m))
 	}
 }
 
@@ -124,7 +125,7 @@ func TestStandDown_WorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
 func TestStandDown_ScreenStillSaysItAfterTheKeys(t *testing.T) {
 	m, _ := removeStandingDown(t, standDownOK)
 	m, _ = updateAs(t, m, ctrlC(), key(tea.KeyEsc))
-	if s := screen(m); !strings.Contains(s, "standing down Orbit") || !strings.Contains(s, cannotStop) {
+	if s := screen(m); !strings.Contains(s, "standing down Orbit") || !strings.Contains(s, removeWaitLine) {
 		t.Fatalf("after Ctrl-C and Esc the working screen reads:\n%s", s)
 	}
 }
@@ -132,12 +133,12 @@ func TestStandDown_ScreenStillSaysItAfterTheKeys(t *testing.T) {
 // The confirm screen and the finished screens say nothing about being
 // unable to stop: the sentence belongs to the working line alone.
 func TestStandDown_OtherScreensDoNotSayIt(t *testing.T) {
-	if s := screen(newTestRemoveModel(standDownOK)); strings.Contains(s, cannotStop) {
+	if s := screen(newTestRemoveModel(standDownOK)); strings.Contains(s, removeWaitLine) {
 		t.Errorf("the confirm screen says it can't be stopped:\n%s", s)
 	}
 	for name, err := range map[string]error{"removed": nil, "failed": errors.New("docker daemon not running")} {
 		m := removeFinished(t, err)
-		if s := screen(m); strings.Contains(s, cannotStop) {
+		if s := screen(m); strings.Contains(s, removeWaitLine) {
 			t.Errorf("the %s screen says it can't be stopped:\n%s", name, s)
 		}
 	}
@@ -219,7 +220,7 @@ func TestStandDown_APressDuringItIsNotRememberedAfterward(t *testing.T) {
 // The five-minute limit still ends on the failed screen, and the keys
 // work there: the stand-down's own timeout error is a result like any.
 func TestStandDown_TheTimeLimitStillEndsOnTheFailedScreen(t *testing.T) {
-	limit := fmt.Errorf("docker compose down did not finish within 5m0s: %w", context.DeadlineExceeded)
+	limit := &deploy.StandDownTimeoutError{Limit: 5 * time.Minute, Words: deploy.StandDownCommandWords("/opt/orbit")}
 	for _, c := range standDownKeys {
 		t.Run(c.name, func(t *testing.T) {
 			m, run := removeStandingDown(t, func(context.Context, string) error { return limit })
@@ -229,10 +230,10 @@ func TestStandDown_TheTimeLimitStillEndsOnTheFailedScreen(t *testing.T) {
 				t.Fatalf("state = %v, want removeStateFailed:\n%s", m.state, screen(m))
 			}
 			s := screen(m)
-			if !strings.Contains(s, "Stand-down stopped") || !strings.Contains(s, "did not finish within 5m0s") {
+			if !strings.Contains(s, "Stand-down stopped") || !strings.Contains(proseOnly(s), "The stack hasn't come down after 5 minutes.") {
 				t.Errorf("failed screen:\n%s", s)
 			}
-			if strings.Contains(s, cannotStop) {
+			if strings.Contains(s, removeWaitLine) {
 				t.Errorf("the failed screen still says it can't be stopped:\n%s", s)
 			}
 		})
@@ -270,10 +271,10 @@ func TestStandDown_AppIgnoresCtrlCAndEscWhileItRuns(t *testing.T) {
 	}
 }
 
-func TestStandDown_AppWorkingLineSaysItCannotBeStoppedFromHere(t *testing.T) {
+func TestStandDown_AppWorkingLineAsksToWait(t *testing.T) {
 	m, _ := appStandingDown(t, standDownOK)
 	m, _ = updateAs(t, m, ctrlC())
-	if s := screen(m); !strings.Contains(s, "standing down Orbit") || !strings.Contains(s, cannotStop) {
+	if s := screen(m); !strings.Contains(s, "standing down Orbit") || !strings.Contains(s, removeWaitLine) {
 		t.Fatalf("working screen through the app:\n%s", s)
 	}
 }
@@ -303,7 +304,7 @@ func TestStandDown_AppKeysWorkAgainOnceTheResultArrives(t *testing.T) {
 }
 
 func TestStandDown_AppTheTimeLimitStillEndsOnTheFailedScreen(t *testing.T) {
-	limit := fmt.Errorf("docker compose down did not finish within 5m0s: %w", context.DeadlineExceeded)
+	limit := &deploy.StandDownTimeoutError{Limit: 5 * time.Minute, Words: deploy.StandDownCommandWords("/opt/orbit")}
 	m, run := appStandingDown(t, func(context.Context, string) error { return limit })
 	m, _ = updateAs(t, m, ctrlC(), key(tea.KeyEsc))
 	m = drive(t, m, run)
