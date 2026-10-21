@@ -2,8 +2,11 @@ package deploy
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -71,5 +74,29 @@ func TestProbeHealth_NotRespondingOnContextTimeout(t *testing.T) {
 func TestProbeHealth_UncheckedOnMalformedURL(t *testing.T) {
 	if got := ProbeHealth(context.Background(), "http://bad\x7fhost/"); got != HealthUnchecked {
 		t.Errorf("an unusable APP_URL = %q, want %q", got, HealthUnchecked)
+	}
+}
+
+func TestTransportReason_DNSFlagsDecide(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want HealthReason
+	}{
+		{"not found", &net.DNSError{Err: "no such host", Name: "orbit.invalid", IsNotFound: true}, HealthAddressNotFound},
+		{"network unreachable", &net.DNSError{Err: "dial udp 192.0.2.53:53: connect: network is unreachable", Name: "orbit.example", IsTemporary: true}, HealthNotResponding},
+		{"timeout", &net.DNSError{Err: "i/o timeout", Name: "orbit.example", IsTimeout: true, IsTemporary: true}, HealthNotResponding},
+		{"server misbehaving", &net.DNSError{Err: "server misbehaving", Name: "orbit.example", IsTemporary: true}, HealthNotResponding},
+		{"no flags", &net.DNSError{Err: "lookup: cannot unmarshal DNS message", Name: "orbit.example"}, HealthNotResponding},
+		{"connection refused", errors.New("connection refused"), HealthNotResponding},
+	}
+	for _, c := range cases {
+		if got := transportReason(c.err); got != c.want {
+			t.Errorf("%s (bare): got %q, want %q", c.name, got, c.want)
+		}
+		wrapped := &url.Error{Op: "Get", URL: "https://orbit.example/", Err: c.err}
+		if got := transportReason(wrapped); got != c.want {
+			t.Errorf("%s (wrapped): got %q, want %q", c.name, got, c.want)
+		}
 	}
 }

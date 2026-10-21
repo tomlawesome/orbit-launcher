@@ -472,7 +472,9 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 		if !r.blank() {
 			text = renderNoticeRow(r, i == l.fadeTop || i == l.fadeBot)
 		}
-		lines = append(lines, gutter+text+strings.Repeat(" ", n.measure-r.width())+track+strings.Repeat(" ", max(blockW-noticeGutter-n.measure-1, 0)))
+		// A row holding a word longer than the measure is wider than it;
+		// clamp so it overruns (clipped at the screen edge) instead of panicking.
+		lines = append(lines, gutter+text+strings.Repeat(" ", max(n.measure-r.width(), 0))+track+strings.Repeat(" ", max(blockW-noticeGutter-n.measure-1, 0)))
 	}
 
 	// One blank row, then the arrow while more is below; it goes once the

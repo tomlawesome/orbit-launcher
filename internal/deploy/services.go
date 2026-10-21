@@ -34,6 +34,14 @@ type ServiceState struct {
 	Service, State, Health string
 }
 
+// Running reports whether the container is up and, where its service
+// has a health check, neither failing it nor still starting. Every
+// screen that counts or lists running services asks this, so none
+// types the rule itself.
+func (s ServiceState) Running() bool {
+	return s.State == ContainerRunning && s.Health != HealthUnhealthy && s.Health != HealthStarting
+}
+
 // ServiceStates lists the deployment's containers, stopped ones
 // included. It is read-only. The folder must be one nobody else could
 // have written (RequireTrustedPath), as for every other Compose call.

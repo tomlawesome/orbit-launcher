@@ -12,3 +12,8 @@ heading.
 ## Unidentified internal/ui failure
 
 - 2026-10-20 · 86a3b52 (plus comment-only edits) · local, full `go test ./internal/ui/` · failed once, output not kept; passed 6 of 6 reruns. Possibly a star drawn inside a line of text, which #270 fixed (that flake's heading was removed: 10 of 10 runs passed after the fix)
+- 2026-10-21 · 8f1f1bb plus a one-line notice.go clamp · local, full `go test ./...` · failed once, output not kept; passed 2 of 2 reruns
+
+## TestServiceStates_SlowDockerIsCutOffAndSaysSo (internal/deploy)
+
+- 2026-10-21 · 2cd89f3 · local, full `go test ./...` on a busy host · error said "996ms" where the test wants "within 1s"; passed on rerun

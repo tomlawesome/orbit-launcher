@@ -20,6 +20,8 @@ package ui
 // and remove_notfound_50 (Remove screens stay inside the screen edge).
 // #247 made the profile screen a table: install_profile_50/80/120 moved.
 // #249 added the notice's scroll track and down arrow: notice_* moved.
+// remove_done_50 moved again when the done screen's box took only the
+// rows the menu leaves it.
 // Any other difference is a regression to look at, never a file to
 // re-record.
 

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"net/url"
 	"strings"
 	"time"
 
@@ -45,24 +44,27 @@ func deploymentIdentity(d *deploy.Deployment) string {
 	case d.AppURL == "":
 		return "deployment detected"
 	}
-	// APP_URL is read from the deployment's own env file: shown escaped,
-	// so a CR or ESC in it cannot forge or restyle the confirm screen.
-	if u, err := url.Parse(d.AppURL); err == nil && u.Host != "" {
-		return visibleText(u.Host)
-	}
-	// Unparseable (a control character does that): take the host by hand,
-	// so a user:password part or a path never reaches the screen (#267
-	// FR3-2). The scheme goes, then everything from the first /, ? or #,
-	// then everything up to the last @.
+	// APP_URL is read from the deployment's own env file, so it is treated
+	// as text, not parsed: the host is what lies between the scheme's "//"
+	// and the first "/", "?" or "#" after the last "@", so nothing before
+	// an "@" (an account part, whatever characters it holds) ever reaches
+	// the screen. url.Parse is not used: it reads "admin:1234#x@host" as
+	// host "admin:1234" and a fragment, which is RFC 3986's reading and
+	// shows the account part. A value this broken may name the wrong
+	// host, as may an "@" in a path; neither shows an account part. Shown
+	// escaped, so a CR or ESC in it cannot forge or restyle the confirm
+	// screen.
 	host := d.AppURL
 	if _, rest, ok := strings.Cut(host, "://"); ok {
 		host = rest
-	}
-	if i := strings.IndexAny(host, "/?#"); i >= 0 {
-		host = host[:i]
+	} else {
+		host = strings.TrimPrefix(host, "//")
 	}
 	if i := strings.LastIndexByte(host, '@'); i >= 0 {
 		host = host[i+1:]
+	}
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
 	}
 	return visibleText(host)
 }

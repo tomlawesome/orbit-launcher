@@ -113,5 +113,7 @@ Both one-shot, both skipped by `ORBIT_LAUNCHER_NO_ANIMATION`:
   of an existing set (owner instruction). The next mockup set is v7.
 - Design iterations publish to the `gh-pages` branch (GitHub Pages), which
   carries only design artifacts; approved sets also land in `design/` here
-  so code comments can reference them in-tree.
+  so code comments can reference them in-tree. *Superseded 2026-10-21
+  (owner): mockups are never published on Pages; they are served only from
+  the local design container — see AGENTS.md.*
 - Owner review happens against cell-truth renders only.

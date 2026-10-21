@@ -10,9 +10,10 @@ import (
 )
 
 // Repair's first screen lists each expected service's state above the
-// findings (#255). The states are read once, through the serviceStates
-// seam, when the diagnosis is first shown, and kept on the model;
-// rendering only reads that copy and never asks Docker.
+// findings (#255). The states are read once per diagnosis, through the
+// serviceStates seam, and kept on the model: the reading is dropped when
+// a run or a fresh diagnosis starts. Rendering only reads that copy and
+// never asks Docker.
 
 // serviceNameWidth is the name column: glyph, space, then this many
 // cells, so every state word starts 16 cells after the glyph.
@@ -97,7 +98,7 @@ func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
 			r.glyph, r.word = style.SymbolWarn, deploy.HealthUnhealthy
 		case found.State == deploy.ContainerRunning && found.Health == deploy.HealthStarting:
 			r.glyph, r.word = style.SymbolWarn, deploy.HealthStarting
-		case found.State == deploy.ContainerRunning:
+		case found.Running():
 			r.glyph, r.word, r.running = style.SymbolSuccess, deploy.ContainerRunning, true
 		case found.State == deploy.ContainerRestarting:
 			r.glyph, r.word = style.SymbolWarn, deploy.ContainerRestarting

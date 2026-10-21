@@ -289,7 +289,7 @@ func (m SplashModel) probeHealthCmd() tea.Cmd {
 		}
 		msg.counted, msg.expected = true, len(expected)
 		for _, row := range rows {
-			if inSet[row.Service] && row.State == deploy.ContainerRunning {
+			if inSet[row.Service] && row.Running() {
 				msg.running++
 			}
 		}
