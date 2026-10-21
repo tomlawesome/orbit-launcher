@@ -192,6 +192,35 @@ func TestParseClaimLink_ComparesAgainstTheGivenAppURL(t *testing.T) {
 	}
 }
 
+// A default port (443 for https, 80 for http) spelled out in either address
+// is no difference; any other port, or another scheme, still is.
+func TestParseClaimLink_ADefaultPortInEitherAddressIsNoDifference(t *testing.T) {
+	cases := []struct {
+		name string
+		link string
+		app  string
+		want string
+	}{
+		{"port 443 in the app address", claimLinkA, "https://mail.example.com:443", claimLinkA},
+		{"port 443 and a path in the app address", claimLinkA, "https://mail.example.com:443/orbit", claimLinkA},
+		{"port 443 in the link", "https://mail.example.com:443/#claim=" + claimCode1, "https://mail.example.com", "https://mail.example.com:443/#claim=" + claimCode1},
+		{"port 80 in the link", "http://mail.example.com:80/#claim=" + claimCode1, "http://mail.example.com", "http://mail.example.com:80/#claim=" + claimCode1},
+		{"port 443 in both (control)", "https://mail.example.com:443/#claim=" + claimCode1, "https://mail.example.com:443", "https://mail.example.com:443/#claim=" + claimCode1},
+		{"another port in the app address", claimLinkA, "https://mail.example.com:8443", ""},
+		{"another port in the link", "https://mail.example.com:8443/#claim=" + claimCode1, "https://mail.example.com", ""},
+		{"port 443 on an http link", "http://mail.example.com:443/#claim=" + claimCode1, "https://mail.example.com", ""},
+		{"bracketed IPv6 host with port 443 in the app address", "https://[::1]/#claim=" + claimCode1, "https://[::1]:443", "https://[::1]/#claim=" + claimCode1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := []byte(jsonNotice(c.link, claimCode1) + "\n")
+			if got := ParseClaimLink(out, c.app); got != c.want {
+				t.Errorf("link %q, appURL %q: got %q, want %q", c.link, c.app, got, c.want)
+			}
+		})
+	}
+}
+
 // --- ReadClaimLink ----------------------------------------------------------
 
 // fakeDockerLoggingAndPrinting puts a docker on PATH that records its
