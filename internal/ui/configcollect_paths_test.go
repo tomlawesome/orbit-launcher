@@ -252,8 +252,8 @@ func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {
 	r.cfg.stream = s
 	r.cfg.stdin = &recordingStdin{}
 	r, _ = r.update(key(tea.KeyEsc)) // the session was cancelled: back to the menu
-	if !r.Done || !r.WantsMenu {
-		t.Fatalf("Done=%v WantsMenu=%v after Esc, want back to the menu", r.Done, r.WantsMenu)
+	if o := outcomeOf(r); !leftForMenu(o) {
+		t.Fatalf("outcome = %+v after Esc, want back to the main menu without success", o)
 	}
 	state := r.state
 	for _, msg := range []tea.Msg{
@@ -263,8 +263,8 @@ func TestConfigCollect_MessagesAfterCancelBelongToNothing(t *testing.T) {
 	} {
 		var cmd tea.Cmd
 		r, cmd = r.update(msg)
-		if cmd != nil || r.state != state || r.state == runFailed || !r.Done || !r.WantsMenu || r.Succeeded {
-			t.Fatalf("%T after cancel changed the run: state = %v Done=%v WantsMenu=%v Succeeded=%v", msg, r.state, r.Done, r.WantsMenu, r.Succeeded)
+		if cmd != nil || r.state != state || r.state == runFailed || !leftForMenu(outcomeOf(r)) {
+			t.Fatalf("%T after cancel changed the run: state = %v outcome = %+v", msg, r.state, outcomeOf(r))
 		}
 	}
 }
