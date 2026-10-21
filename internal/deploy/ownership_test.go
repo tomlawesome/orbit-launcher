@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"os/user"
@@ -506,4 +507,138 @@ func TestChownCommandWords_SpecIsAcceptedByChown(t *testing.T) {
 			t.Errorf("gid = %d, want 0 (root's login group)", got)
 		}
 	})
+}
+
+// fowRefusal checks err is the trust refusal for path, containing reason,
+// and that no advice came with it.
+func fowRefusal(t *testing.T, own Ownership, err error, path, reason string) {
+	t.Helper()
+	var untrusted *UntrustedPathError
+	if !errors.As(err, &untrusted) {
+		t.Fatalf("err = %v, want an *UntrustedPathError", err)
+	}
+	if untrusted.Path != path {
+		t.Errorf("refusal Path = %q, want %q", untrusted.Path, path)
+	}
+	if reason != "" && !strings.Contains(untrusted.Reason, reason) {
+		t.Errorf("refusal Reason = %q, want it to contain %q", untrusted.Reason, reason)
+	}
+	if len(own.Files) != 0 {
+		t.Errorf("Files = %+v, want none with a refusal", own.Files)
+	}
+}
+
+// The chown advice is only for a folder the launcher's account may use.
+// Another account's folder is the trust refusal, with nothing to paste.
+func TestForeignOwned_AnotherAccountsFolderIsRefusedNotAdvised(t *testing.T) {
+	dir := fowOwnDeployment(t)
+	asLauncherUser(t, os.Geteuid()+1)
+	own, err := ForeignOwned(dir)
+	fowRefusal(t, own, err, dir, "not by the user running the launcher")
+	if own.Account != "" {
+		t.Errorf("Account = %q, want empty with a refusal", own.Account)
+	}
+}
+
+// The rule refuses only what the trust check refuses: the owner and root
+// still get the advice.
+func TestForeignOwned_TheOwnerAndRootStillGetTheAdvice(t *testing.T) {
+	for name, uid := range map[string]int{"the folder's owner": os.Geteuid(), "root": 0} {
+		t.Run(name, func(t *testing.T) {
+			dir := fowOwnDeployment(t)
+			asLauncherUser(t, uid)
+			own, err := ForeignOwned(dir)
+			if err != nil {
+				t.Fatalf("ForeignOwned: %v", err)
+			}
+			if want := fowName(fowUID(t, dir)); own.Account != want {
+				t.Errorf("Account = %q, want %q (the folder owner's name)", own.Account, want)
+			}
+			if len(own.Files) != 0 {
+				t.Errorf("Files = %+v, want none", own.Files)
+			}
+		})
+	}
+}
+
+// A folder the trust check refuses for any other reason is refused here
+// too, not walked.
+func TestForeignOwned_RefusesWhatTrustedRootRefuses(t *testing.T) {
+	asLauncherUser(t, os.Geteuid())
+	t.Run("writable by everyone", func(t *testing.T) {
+		dir := fowOwnDeployment(t)
+		chmod(t, dir, 0o777)
+		own, err := ForeignOwned(dir)
+		fowRefusal(t, own, err, dir, "writable by everyone")
+	})
+	t.Run("a symbolic link", func(t *testing.T) {
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(fowOwnDeployment(t), link); err != nil {
+			t.Fatal(err)
+		}
+		own, err := ForeignOwned(link)
+		fowRefusal(t, own, err, link, "symbolic link")
+	})
+}
+
+// Files an operator owns inside another account's folder are not handed
+// over as a chown command for that operator; the folder's owner (and root)
+// are still told.
+func TestForeignOwned_AnOperatorsFilesInAnothersFolderAreNotHandedOver(t *testing.T) {
+	fowRoot(t)
+	const folderUID, fileUID = 54399, 54398
+	dir := fowOwnDeployment(t)
+	fowChown(t, dir, folderUID)
+	entries := []string{
+		".env-orbit",
+		".orbit-secrets",
+		".orbit-secrets/db_password",
+		".orbit-secrets/sub",
+		".orbit-secrets/sub/api_key",
+	}
+	for _, e := range entries {
+		fowChown(t, filepath.Join(dir, e), fileUID)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gid := strconv.Itoa(int(info.Sys().(*syscall.Stat_t).Gid))
+	var wantFiles []ForeignFile
+	for _, e := range entries {
+		wantFiles = append(wantFiles, ForeignFile{e, "uid 54398"})
+	}
+	sort.Slice(wantFiles, func(i, j int) bool { return wantFiles[i].Path < wantFiles[j].Path })
+
+	t.Run("an operator who does not own the folder", func(t *testing.T) {
+		asLauncherUser(t, fileUID)
+		own, err := ForeignOwned(dir)
+		fowRefusal(t, own, err, dir, "")
+		for _, w := range ChownCommandWords(dir, own) {
+			if strings.HasSuffix(w, "/.env-orbit") || strings.HasSuffix(w, "/.orbit-secrets") {
+				t.Errorf("command word %q names an item: nothing should be handed over", w)
+			}
+		}
+	})
+	for name, uid := range map[string]int{"the folder's owner": folderUID, "root": 0} {
+		t.Run(name, func(t *testing.T) {
+			asLauncherUser(t, uid)
+			own, err := ForeignOwned(dir)
+			if err != nil {
+				t.Fatalf("ForeignOwned: %v", err)
+			}
+			if own.Account != "54399" {
+				t.Errorf("Account = %q, want %q", own.Account, "54399")
+			}
+			if own.Group != gid {
+				t.Errorf("Group = %q, want %q (the folder's gid)", own.Group, gid)
+			}
+			if !reflect.DeepEqual(own.Files, wantFiles) {
+				t.Errorf("Files =\n  %+v\nwant\n  %+v", own.Files, wantFiles)
+			}
+			if words := ChownCommandWords(dir, own); len(words) < 4 || words[3] != "54399:"+gid {
+				t.Errorf("words = %q, want the fourth word to be %q", words, "54399:"+gid)
+			}
+		})
+	}
 }
