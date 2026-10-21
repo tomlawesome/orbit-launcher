@@ -38,10 +38,19 @@ type ForeignFile struct {
 // .orbit-secrets and every entry under it: those whose owner differs
 // from the folder's are listed. Each is looked at with Lstat, so a
 // symlink is its own entry and nothing behind it is walked. A missing file is not
-// foreign. The folder is Lstat'd too, as trustedRoot does. An error
-// comes with whatever was read before it.
+// foreign. The folder must pass trustedRoot first; a folder the
+// launcher may not use is returned as that refusal, with no files. An
+// error comes with whatever was read before it.
 func ForeignOwned(dir string) (Ownership, error) {
 	dir = filepath.Clean(dir)
+	// Only a deployment this account may use gets the chown advice:
+	// trustedRoot refuses any other (another account's, a symlink, a
+	// world-writable one) and the engine start repeats that refusal on
+	// the screen, where a command here would give this account's own
+	// files to the folder's owner.
+	if _, err := trustedRoot(dir); err != nil {
+		return Ownership{}, err
+	}
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return Ownership{}, err
