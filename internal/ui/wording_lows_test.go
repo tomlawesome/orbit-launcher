@@ -60,9 +60,12 @@ func TestWordingLows_TimeoutScreenSaysTheStackHasntComeDownAndTheLimit(t *testin
 
 func TestWordingLows_TimeoutScreenShowsTheCommandAfterTheSentence(t *testing.T) {
 	s := failedWith(t, timedOutStandDown(5*time.Minute), 80)
+	// At 80 columns the command may wrap the way every copyable command
+	// here does (a trailing backslash continues the row), so the order is
+	// checked on its start; width 120 pins it whole on one row.
 	flat := proseOnly(s)
 	sentence := strings.Index(flat, "Try again manually later with:")
-	command := strings.Index(flat, standDownCommandLine)
+	command := strings.Index(flat, "docker compose --project-directory /opt/orbit")
 	if sentence < 0 || command < 0 || command < sentence+len("Try again manually later with:") {
 		t.Errorf("the command should come after the sentence (sentence at %d, command at %d):\n%s", sentence, command, s)
 	}

@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
-	"io/fs"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -90,12 +87,17 @@ func viewNoDeployment(star starfield.Model, width, height int, dir string, body 
 	return skyBlock(star, width, height, b.String())
 }
 
+// unreadableEnvAdvice is the one line of advice for a deployment file that
+// Detect could not read, whatever the cause: the OS's own words above it
+// say which.
+const unreadableEnvAdvice = "Check the error above, the file type and the permissions."
+
 // viewUnreadableDeployment is the "it is there but I can't read it"
 // screen Update and Remove share (#238), beside viewNoDeployment and with
 // the same dead-end grammar: the failure glyph in front of a title naming
 // the directory (wrapped, since nobody chose its length), the OS's own
-// words in Tagline as the Stand-down screen shows Docker's, the advice
-// that fits the cause in muted lines, then the dead end's one row.
+// words in Tagline as the Stand-down screen shows Docker's, one line of
+// advice for every cause in muted text, then the dead end's one row.
 func viewUnreadableDeployment(star starfield.Model, width, height int, dir string, err error) string {
 	var b strings.Builder
 	glyph := style.ErrorText.Render(style.SymbolFailure)
@@ -112,42 +114,10 @@ func viewUnreadableDeployment(star starfield.Model, width, height int, dir strin
 	if err != nil {
 		writeWrapped(&b, style.Tagline, visibleLines(err.Error()), measure(width, errorWidth))
 	}
-	// Each sentence is wrapped on its own so a narrow terminal never cuts
-	// the second.
-	for _, sentence := range unreadableEnvAdvice(err) {
-		writeWrapped(&b, style.MutedText, sentence, measure(width, errorWidth))
-	}
+	writeWrapped(&b, style.MutedText, unreadableEnvAdvice, measure(width, errorWidth))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(star, width, height, b.String())
-}
-
-// unreadableEnvAdvice is what to do about a deployment file that Detect could
-// not read, by cause. A permission error, and any cause not named here,
-// gets the account advice.
-func unreadableEnvAdvice(err error) []string {
-	switch {
-	case errors.Is(err, fs.ErrPermission):
-	case errors.Is(err, deploy.ErrEnvIsDir):
-		return []string{
-			deploy.EnvFile + " is a folder, but it should be a file.",
-			"Rename or remove the folder, then run Install again.",
-		}
-	case errors.Is(err, deploy.ErrEnvNotRegular):
-		return []string{
-			deploy.EnvFile + " is the wrong file type.",
-			"Rename or remove it, then run Install again.",
-		}
-	case errors.Is(err, bufio.ErrTooLong):
-		return []string{
-			"A line in " + deploy.EnvFile + " is too long to be a setting, so the file may be damaged.",
-			"Open it in a text editor and check it.",
-		}
-	}
-	return []string{
-		"Orbit here was probably installed by another account.",
-		"Run the launcher as that account, or make the file readable to this one.",
-	}
 }
 
 // drawBar draws the thin progress bar every screen shares: fill cells
