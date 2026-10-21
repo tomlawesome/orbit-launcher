@@ -50,8 +50,9 @@ type Stream struct {
 	cmd *exec.Cmd
 	// Terminate and Kill are each idempotent, and separately so: a Kill
 	// after a Terminate (the grace ran out) must still send SIGKILL.
-	termOnce sync.Once
-	killOnce sync.Once
+	termOnce  sync.Once
+	againOnce sync.Once
+	killOnce  sync.Once
 
 	// mu guards reaped: once cmd.Wait has returned, the PID no longer
 	// names the engine and must not be signalled.
@@ -247,6 +248,14 @@ func (s *Stream) Terminate() {
 // SIGKILL takes effect in milliseconds; the bound is for a process
 // stuck in the kernel, which no signal can hurry.
 const killReapWait = 2 * time.Second
+
+// TerminateAgain sends the group SIGTERM a second time, once. A SIGTERM
+// that lands between bash's fork and a child's exec is lost by that
+// child, which then outlives the stop; a stop that is taking long
+// repeats the signal partway through its grace to reach it.
+func (s *Stream) TerminateAgain() {
+	s.againOnce.Do(func() { s.signal(syscall.SIGTERM, false) })
+}
 
 // Kill ends the engine at once (SIGKILL) — the whole process group,
 // and the process itself in case it is not a group leader — and

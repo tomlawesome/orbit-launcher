@@ -640,11 +640,20 @@ func (r engineRun) beginStop() (engineRun, tea.Cmd) {
 	stream.Terminate()
 	r.state = runStopping
 	return r, func() tea.Msg {
-		select {
-		case <-stream.Done():
-			return engineStoppedMsg{}
-		case <-time.After(grace):
-			return engineStoppedMsg{forced: true}
+		// Halfway through, SIGTERM goes again: one lost to a child's
+		// fork-to-exec window would otherwise cost the whole grace.
+		again := time.NewTimer(grace / 2)
+		defer again.Stop()
+		limit := time.After(grace)
+		for {
+			select {
+			case <-stream.Done():
+				return engineStoppedMsg{}
+			case <-again.C:
+				stream.TerminateAgain()
+			case <-limit:
+				return engineStoppedMsg{forced: true}
+			}
 		}
 	}
 }
