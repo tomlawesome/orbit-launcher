@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,6 +23,9 @@ const dockerQueryTimeout = 5 * time.Second
 // mean explaining a refusal that doesn't happen — or worse, staying
 // silent about one that does.
 const orbitDatabaseVolumePattern = "orbit-db-data"
+
+// volumeName is Docker's own rule for a volume name.
+var volumeName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
 
 // DatabaseVolume is one Orbit database volume that exists on this
 // machine. Name and Project are read verbatim from docker's own output
@@ -78,7 +82,10 @@ func UnownedDatabaseVolumes(ctx context.Context, targetDir string) []DatabaseVol
 		// Split before trimming: trimming first would strip the tab of a
 		// line with an empty name and promote its project to the name.
 		name, project, _ := strings.Cut(line, "\t")
-		if name = strings.TrimSpace(name); name == "" {
+		// A newline inside a label starts a line Docker's name filter
+		// never saw: keep only names Docker could have given a volume
+		// and that still match the Orbit pattern.
+		if name = strings.TrimSpace(name); !volumeName.MatchString(name) || !strings.Contains(name, orbitDatabaseVolumePattern) {
 			continue
 		}
 		volumes = append(volumes, DatabaseVolume{Name: name, Project: strings.TrimSpace(project)})
