@@ -11,7 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// errNotRegularFile is why Detect refuses an EnvFile that is a pipe, a
+// device or a directory.
+var errNotRegularFile = errors.New("not a regular file")
 
 // The deployment's own files, named once here (#208): everything that
 // reads, writes, stands down or describes a deployment spells them
@@ -66,19 +71,22 @@ const defaultComposeProject = "orbit"
 // return means something went wrong trying to read a file that exists.
 func Detect(targetDir string) (*Deployment, error) {
 	envPath := filepath.Join(targetDir, EnvFile)
-	_, err := os.Stat(envPath)
+	// Opened without blocking and then checked: a named pipe someone left
+	// as .env-orbit would otherwise hang the open, and the launcher with
+	// it. Anything but a regular file is refused as unreadable.
+	f, err := os.OpenFile(envPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	f, err := os.Open(envPath)
-	if err != nil {
-		return nil, err
-	}
 	defer f.Close()
+	if info, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, &fs.PathError{Op: "read", Path: envPath, Err: errNotRegularFile}
+	}
 
 	d := &Deployment{TargetDir: targetDir, Project: defaultComposeProject}
 	scanner := bufio.NewScanner(f)
