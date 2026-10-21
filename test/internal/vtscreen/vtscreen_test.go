@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -63,42 +64,85 @@ func TestScreenWait_FindsTextSplitAcrossRedraws(t *testing.T) {
 	}
 }
 
-// TestScreenWait_KeepsUpWithFastRepaints is #159 / #165 in the small:
-// a program repaints launcher-shaped frames far faster than anyone
-// reads them, then shows the success marker. go-expect's rescanning
-// matcher once fell so far behind that output that a finished install
-// looked frozen. A screen wait looks at one screen whatever came
-// before it, so the marker must be found well inside the budget.
+// TestScreenWait_KeepsUpWithFastRepaints is #159 / #165 / #181 in the
+// small: a program repaints a full launcher-shaped screen as fast as the
+// pty takes it, and never stops. go-expect's rescanning matcher once fell
+// so far behind that output that a finished install looked frozen, and a
+// cell-by-cell screen read retook the emulator's lock between every two
+// cells and starved for seconds.
+//
+// A burst of frames that ends before anyone looks (this test's first
+// form) cannot show either fault: the reading starts after the writing
+// has stopped. So the program keeps repainting while the screen is read,
+// and the test times the reads. A read takes the emulator's lock once and
+// about a millisecond; the cell-by-cell read took 20 to 100 ms each under
+// the same load. The ceiling on the mean of 50 reads is ten milliseconds:
+// ten times what a read costs, with room for a busy runner, and well
+// under what the starving read costs.
 func TestScreenWait_KeepsUpWithFastRepaints(t *testing.T) {
 	term := newTerminal(t)
 
-	// One frame is the shape the mission console paints on every engine
-	// event: a boxed, padded, spinner-carrying screen a little over 2 KB.
+	// One frame is a whole 120x40 screen, the shape the mission console
+	// paints on every engine event: a boxed, padded, spinner-carrying
+	// screen, with the marker on its last row. It homes the cursor and
+	// overwrites rather than clearing, so the marker is on screen at every
+	// look.
 	var frame strings.Builder
-	frame.WriteString("\x1b[H\x1b[2J")
-	for range 30 {
-		fmt.Fprintf(&frame, "\x1b[38;5;69m│\x1b[0m ⠋ application starting %-60s │\r\n", "")
+	frame.WriteString("\x1b[H")
+	for range 39 {
+		fmt.Fprintf(&frame, "\x1b[38;5;69m│\x1b[0m ⠋ application starting %-91s \x1b[38;5;69m│\x1b[0m\r\n", "")
 	}
-	const frames = 120
+	frame.WriteString("Get into Orbit")
+
+	done := make(chan struct{})
+	var written atomic.Int64
 	go func() {
-		for range frames {
-			if _, err := io.WriteString(term.Output(), frame.String()); err != nil {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			n, err := io.WriteString(term.Output(), frame.String())
+			if err != nil {
 				return
 			}
+			written.Add(int64(n))
 		}
-		_, _ = io.WriteString(term.Output(), "Get into Orbit\r\n")
 	}()
+	defer close(done)
 
-	const budget = 60 * time.Second
-	start := time.Now()
+	const budget = 10 * time.Second
 	screen, err := Wait(term, budget, ContainsAny("Get into Orbit", "Install stopped"))
 	if err != nil {
-		t.Fatalf("the marker after %d frames (%d bytes) was not reached: %v", frames, frames*frame.Len(), err)
+		t.Fatalf("the marker was not read within %s of the program repainting without pause (%d bytes written meanwhile): %v", budget, written.Load(), err)
 	}
 	if !strings.Contains(screen, "Get into Orbit") {
 		t.Fatalf("returned screen does not carry the marker:\n%s", screen)
 	}
-	t.Logf("marker found after %s", time.Since(start).Round(time.Millisecond))
+
+	// Let the program get properly into its stride before timing: the
+	// first frames are written while the test is still starting.
+	for deadline := time.Now().Add(budget); written.Load() < 1<<20; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the program wrote only %d bytes in %s", written.Load(), budget)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	const reads = 50
+	const ceiling = 10 * time.Millisecond
+	start := time.Now()
+	for range reads {
+		if got := Screen(term); !strings.Contains(got, "Get into Orbit") {
+			t.Fatalf("a read during the repainting lost the marker:\n%s", got)
+		}
+	}
+	mean := time.Since(start) / reads
+	t.Logf("mean read %s over %d reads while %d bytes were repainted", mean, reads, written.Load())
+	if mean > ceiling {
+		t.Errorf("a screen read took %s on average while the program repainted without pause, want under %s: the read is starving against the emulator's lock (#181)", mean, ceiling)
+	}
 }
 
 // syncBuffer is a log the emulator's copy and the test can share.
