@@ -278,8 +278,9 @@ func TestForeignOwned_ListsForeignFilesRelativeAndSorted(t *testing.T) {
 	}
 }
 
-// An owner with no account shows as "uid N", for the folder and files.
-func TestForeignOwned_UnknownAccountsShowAsUID(t *testing.T) {
+// An owner with no account is the bare number for the folder (so the
+// chown command can use it as is) and "uid N" for the files (display).
+func TestForeignOwned_UnknownAccountIsTheBareUIDForChownAndUidNForDisplay(t *testing.T) {
 	fowRoot(t)
 	const folderUID, fileUID = 54399, 54398
 	if _, err := user.LookupId(strconv.Itoa(folderUID)); err == nil {
@@ -297,8 +298,8 @@ func TestForeignOwned_UnknownAccountsShowAsUID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForeignOwned: %v", err)
 	}
-	if own.Account != "uid 54399" {
-		t.Errorf("Account = %q, want %q", own.Account, "uid 54399")
+	if own.Account != "54399" {
+		t.Errorf("Account = %q, want %q", own.Account, "54399")
 	}
 	want := []ForeignFile{{".env-orbit", "uid 54398"}}
 	if !reflect.DeepEqual(own.Files, want) {
@@ -330,5 +331,43 @@ func TestForeignOwned_ForeignSymlinkIsListedNotFollowed(t *testing.T) {
 	want := []ForeignFile{{".orbit-secrets/link", fowName(54331)}}
 	if !reflect.DeepEqual(own.Files, want) {
 		t.Errorf("Files = %+v, want only the link itself: %+v", own.Files, want)
+	}
+}
+
+// The chown command names the owner as one bare word, whether it is an
+// account name or a number, and never carries the display text.
+func TestChownCommandWords_NumericOwnerIsOneBareWord(t *testing.T) {
+	files := []ForeignFile{{".env-orbit", "uid 54398"}}
+	cases := []struct {
+		account string
+		want    []string
+	}{
+		{"54399", []string{"sudo", "chown", "-R", "54399:", "/opt/orbit/.env-orbit"}},
+		{"alice", []string{"sudo", "chown", "-R", "alice:", "/opt/orbit/.env-orbit"}},
+	}
+	for _, c := range cases {
+		got := ChownCommandWords("/opt/orbit", Ownership{Account: c.account, Files: files})
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("account %q: words = %q, want %q", c.account, got, c.want)
+		}
+		for _, w := range got {
+			if strings.Contains(w, " ") || strings.Contains(w, "uid") {
+				t.Errorf("account %q: word %q has a space or the text \"uid\"", c.account, w)
+			}
+		}
+	}
+}
+
+// The folder's owner, as ForeignOwned gives it, is never the display
+// form, so it can go straight into a chown command.
+func TestForeignOwned_AccountIsNeverTheDisplayForm(t *testing.T) {
+	dir := t.TempDir()
+	fowWrite(t, filepath.Join(dir, ".env-orbit"), "A=b\n")
+	own, err := ForeignOwned(dir)
+	if err != nil {
+		t.Fatalf("ForeignOwned: %v", err)
+	}
+	if own.Account == "" || strings.Contains(own.Account, " ") || strings.HasPrefix(own.Account, "uid ") {
+		t.Errorf("Account = %q, want a name or bare number with no space", own.Account)
 	}
 }
