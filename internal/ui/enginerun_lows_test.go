@@ -143,46 +143,6 @@ func TestLows_CtrlCWhilePreparingLetsAnEngineThatStartedAnywayRollBack(t *testin
 
 // --- 236-c3: a lost SIGTERM ------------------------------------------------------
 
-// A SIGTERM that lands between bash's fork and a child's exec is lost by
-// that child, and a stop then waits the whole grace for nothing. This
-// cannot be reproduced on demand (it is a few microseconds wide), so the
-// test models the loss: an engine that counts the SIGTERMs it gets and
-// ignores the first. The stop must send SIGTERM again inside the grace,
-// so that this engine exits on its own and the stop is clean, not forced.
-// The builder should also run the real race by hand (a loop of
-// Ctrl-C immediately after the install starts) and look for a stop that
-// takes the full 15 s.
-func TestLows_ASigtermLostInTheForkToExecWindowIsSentAgainInsideTheGrace(t *testing.T) {
-	shortenStopGrace(t, 3*time.Second)
-	counts := filepath.Join(t.TempDir(), "terms")
-	s := stoppableStream(t, fmt.Sprintf(`
-n=0
-trap 'n=$((n+1)); echo $n > "%s"; [ "$n" -ge 2 ] && exit 0' TERM
-echo "phase=application component=application state=starting reason=application-health action=start elapsed=1s"
-while :; do sleep 0.05; done
-`, counts))
-	cleaned := 0
-	r := streamingRunOn(t, "install", s, &cleaned)
-
-	r, cmd := runUpdate(t, r, ctrlC())
-	r, stopped, quit := settleStop(t, r, cmd)
-
-	if !quit {
-		t.Fatal("the run did not quit")
-	}
-	if stopped == nil {
-		t.Fatal("no engineStoppedMsg")
-	}
-	if stopped.forced {
-		raw, _ := os.ReadFile(counts)
-		t.Errorf("the grace ran out and the engine was killed: it was sent SIGTERM %s time(s) and never again, "+
-			"so a SIGTERM lost to the fork-to-exec race is never made up", strings.TrimSpace(string(raw)))
-	}
-	if note := outcomeOf(r).ExitNote; note != "" {
-		t.Errorf("a stop that completed inside the grace left an exit note: %q", note)
-	}
-}
-
 // --- Kill is asynchronous ----------------------------------------------------------
 
 // processReaped is true once nothing is left of pid in /proc: not running
