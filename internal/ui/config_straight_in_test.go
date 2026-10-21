@@ -227,8 +227,13 @@ func startStraightFlowUntil(t *testing.T, name string, seams engineRunSeams, wha
 		notShowingRemovedScreen(t, screen(f.model))
 		return next
 	})
-	f.loop.settle(cmd, what, func() bool { return cond(f) })
+	f.loop.settle(cmd, what, f.holding(cond))
 	return f
+}
+
+// holding is cond as a condition on the flow f, for a wait.
+func (f *straightFlow) holding(cond func(*straightFlow) bool) func() bool {
+	return func() bool { return cond(f) }
 }
 
 // countingPlan is planned() with a count of the session's own cleanup
