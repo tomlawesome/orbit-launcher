@@ -354,6 +354,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 		m.repair.engineRunSeams = m.flowSeams
 		m.repair.serviceStates = realServiceStates
+		m.repair.foreignOwned = deploy.ForeignOwned
 		m.repair.send = m.flowSend
 		m.state = appStateRepair
 		return m, tea.Batch(sizeCmd, m.repair.Init())

@@ -73,6 +73,17 @@ type RepairModel struct {
 	// reading; see loadServices.
 	serviceStates func(dir string) ([]deploy.ServiceState, error)
 	services      *serviceReading
+	// foreignOwned says which of the deployment's configuration files
+	// another account owns (#265); asked at every run start (see
+	// startDiagnosis). Nil checks nothing: the c9 harness leaves it
+	// unset. foreign is the answer that stopped the run.
+	foreignOwned func(dir string) (deploy.Ownership, error)
+	foreign      deploy.Ownership
+	// clipboard is where the stop screen's Copy command writes its OSC 52
+	// sequence: nil in production, which means os.Stdout. copied is that
+	// row having copied.
+	clipboard io.Writer
+	copied    bool
 	// frame is the working lines' spinner frame, advanced on every tick.
 	frame int
 	// menu is the cursor on whichever menu screen is showing; each screen
@@ -116,6 +127,9 @@ const (
 	// repairNotFound is the engine's exit 5: no Orbit deployment in the
 	// directory. It is the one no-deployment screen (#229), a dead end.
 	repairNotFound
+	// repairForeign is the stop screen for files another account owns
+	// (#265): no engine ran.
+	repairForeign
 )
 
 type (
@@ -183,7 +197,7 @@ func (m RepairModel) Outcome() flowOutcome {
 // read-only by the script's own contract, so there is nothing to
 // confirm first.
 func (m RepairModel) Init() tea.Cmd {
-	return m.startRun(m.mode)
+	return m.startDiagnosis(m.mode)
 }
 
 // startRun launches one read-only repair invocation in the given mode.
@@ -299,6 +313,17 @@ func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stream = msg.stream
 		return m, readEngineStream(m.send, m.stream, repairStream)
+
+	case repairForeignMsg:
+		if m.quitting {
+			// The start was cancelled, and it started nothing.
+			return m, tea.Quit
+		}
+		m.state = repairForeign
+		m.foreign = msg.own
+		m.copied = false
+		m.menu = menu{}
+		return m, nil
 
 	case repairRotateReadyMsg:
 		if m.quitting {
@@ -610,6 +635,9 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case repairExecuted:
 		return m.handleExecutedMenu(msg)
 
+	case repairForeign:
+		return m.handleForeignKey(msg)
+
 	case repairError:
 		if m.stoppedMutation() {
 			return m.handleExecutedMenu(msg)
@@ -636,7 +664,7 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			m.planActions, m.planSummary = nil, nil
 			m.state = repairPreparing
 			m.mode = deploy.RepairPlan
-			return m, m.startRun(deploy.RepairPlan)
+			return m, m.startDiagnosis(deploy.RepairPlan)
 		case "Menu":
 			m.Done = true
 			m.WantsMenu = true
@@ -726,6 +754,8 @@ func (m RepairModel) view() string {
 		return m.viewExecuted()
 	case repairUnavailable:
 		return m.viewUnavailable()
+	case repairForeign:
+		return m.viewForeign()
 	case repairError:
 		return m.viewError()
 	case repairNotFound:
