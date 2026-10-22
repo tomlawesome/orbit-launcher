@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 )
@@ -325,6 +326,7 @@ func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	placeRepairScript(t, dir, fakeRepairPlan)
 	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
@@ -361,6 +363,7 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	placeRepairScript(t, dir, fakeRepairCheckOnly)
 	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
@@ -404,6 +407,7 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	// No scripts/repair.sh in the deployment — one from before the
 	// repair diagnosis. The source still offers one, where the launcher
 	// used to fetch it from; it must not be taken (#190).
@@ -457,6 +461,7 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	placeRepairScript(t, dir, fakeRepairModal)
 	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)

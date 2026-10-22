@@ -1119,7 +1119,7 @@ func TestDefaultPrepareRepair_AbsentScriptIsUnavailable(t *testing.T) {
 // reaches the shared no-deployment screen, not "needs a newer Orbit".
 func TestRepairModel_EmptyDirectoryReachesTheNoDeploymentScreen(t *testing.T) {
 	requests := countingScriptSource(t)
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	m := NewRepairModel(dir, "v0.6.0") // no seam: the real default
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
 	m = updated.(RepairModel)

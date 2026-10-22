@@ -1426,7 +1426,20 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 		t.Logf("this install.sh prints no Docker words; the compose-up reason alone shows the failure path")
 	}
 
-	// Exit via the failure menu (guided installer, Menu, Exit).
+	// The installer rolled the attempt back, and the stopped screen says
+	// so and offers to install again (#257); the guided installer would
+	// only run the same install.sh into the same port.
+	if _, err := session.expectWithinBudget("the rolled-back sentence and Install again", session.screenBudget, func(screen string) bool {
+		words := screenWords(screen)
+		return strings.Contains(words, "was undone") && strings.Contains(words, "Install again")
+	}); err != nil {
+		t.Fatalf("the stopped screen does not say the install was undone and offer Install again: %v", err)
+	}
+	if words := screenWords(session.expectWithin("the stopped screen", vtscreen.ContainsAny("Install stopped"))); strings.Contains(words, "Open the guided installer") || strings.Contains(words, "next:") {
+		t.Errorf("the stopped screen offers the guided installer or shows next:\n%s", words)
+	}
+
+	// Exit via the stopped screen's rows (Install again, Menu, Exit).
 	session.send("\x1b[B")
 	session.send("\x1b[B")
 	session.send("\r")
@@ -1449,6 +1462,60 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if len(psOut) != 0 {
 		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
 	}
+}
+
+// TestLive_InstallNotEmptyFolderNamesItAndInstallsAgain is #257's leg: a
+// stray file in the folder makes install.sh refuse before it writes
+// anything. The stopped screen names the file and offers Install again;
+// once the file is moved out, Install again runs the install on to the
+// sign-in question, with no profile or notice in between.
+func TestLive_InstallNotEmptyFolderNamesItAndInstallsAgain(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	sweepLeftoverLiveStacks(t)
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	binPath := binaryPath(t)
+	dir := t.TempDir()
+	t.Cleanup(func() { dockerComposeDown(t, dir) })
+	stray := filepath.Join(dir, "stray-notes.txt")
+	if err := os.WriteFile(stray, []byte("left here by hand\n"), 0o600); err != nil {
+		t.Fatalf("write the stray file: %v", err)
+	}
+
+	session := startLive(t, binPath, dir)
+	session.mustSoon("Install")
+	session.choose("Install")
+	session.mustSoon("Choose a deployment profile")
+	session.send("\r") // Standard
+	session.passNotice()
+	session.runStarted()
+
+	screen, err := session.expectWithinBudget("the not-empty stopped screen", session.screenBudget, func(screen string) bool {
+		words := screenWords(screen)
+		return strings.Contains(words, "Install stopped") &&
+			strings.Contains(words, "in the folder: stray-notes.txt") &&
+			strings.Contains(words, "Install again")
+	})
+	if err != nil {
+		t.Fatalf("the stopped screen does not name the stray file and offer Install again: %v", err)
+	}
+	words := screenWords(screen)
+	if !strings.Contains(words, "Nothing was changed in") {
+		t.Errorf("the stopped screen does not say nothing was changed:\n%s", screen)
+	}
+	if strings.Contains(words, "next:") || strings.Contains(words, "docker-host") {
+		t.Errorf("the stopped screen shows the engine's vocabulary:\n%s", screen)
+	}
+
+	if err := os.Remove(stray); err != nil {
+		t.Fatalf("move the stray file out: %v", err)
+	}
+	session.send("\r") // Install again, preselected
+	session.mustSoon("How will people sign in?")
 }
 
 // composeUpFailedReason is the reason install.sh gives when

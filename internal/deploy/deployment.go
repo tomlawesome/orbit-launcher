@@ -32,6 +32,14 @@ const (
 	// SecretsDir is the directory beside EnvFile holding one file per
 	// secret.
 	SecretsDir = ".orbit-secrets"
+	// BackupsDir is where the installer keeps a failed install's
+	// leftovers (ai/orbit#1456). Only a real directory of that name is
+	// the installer's own; it refuses a file or link there.
+	BackupsDir = "orbit-install-backups"
+	// ComposeFile is the Compose file install.sh writes beside EnvFile
+	// once it commits to an install; EnvFile alone can be
+	// pre-provisioned.
+	ComposeFile = "docker-compose.yml"
 )
 
 // orbitImageFile names the Orbit image configure.sh pulls and runs its
@@ -126,6 +134,17 @@ func Detect(targetDir string) (*Deployment, error) {
 	}
 
 	return d, nil
+}
+
+// Installed reports whether targetDir holds an installed deployment rather
+// than only a pre-provisioned configuration: a failed fresh install is
+// rolled back to that configuration (ai/orbit#1456), and the engine
+// refuses an Update there (#261). Only a clean absence of the Compose
+// file counts as not installed; anything there by that name, or a
+// failure to look, keeps the folder read as installed, as before.
+func Installed(targetDir string) bool {
+	_, err := os.Lstat(filepath.Join(targetDir, ComposeFile))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // envValue is the one rule for an EnvFile value, Compose's own for an

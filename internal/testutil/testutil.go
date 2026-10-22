@@ -66,6 +66,16 @@ func WriteEnvOrbit(t testing.TB, path string, extra ...string) {
 	}
 }
 
+// WriteComposeFile writes a minimal Compose file to path, which makes a
+// folder holding an EnvOrbit an installed deployment rather than a
+// pre-provisioned one. The caller names it with deploy's ComposeFile.
+func WriteComposeFile(t testing.TB, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("name: orbit\nservices: {}\n"), 0o600); err != nil {
+		t.Fatalf("write the compose fixture: %v", err)
+	}
+}
+
 // File is one file of a tree StageTree writes: its path from the tree's
 // root ("scripts/repair.sh", ".env-orbit.example"), its body and its mode.
 type File struct {

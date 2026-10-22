@@ -21,7 +21,10 @@ package ui
 // #247 made the profile screen a table: install_profile_50/80/120 moved.
 // #249 added the notice's scroll track and down arrow: notice_* moved.
 // remove_done_50 moved again when the done screen's box took only the
-// rows the menu leaves it.
+// rows the menu leaves it. #257 moved enginerun_failed_* (the stopped
+// screen says what happened to the folder, no phase heading, no next:)
+// and added enginerun_failed_recovery_* and enginerun_failed_abort_*,
+// built from full engine streams.
 // Any other difference is a regression to look at, never a file to
 // re-record.
 
@@ -114,6 +117,16 @@ func c9Screens(t *testing.T) map[string]string {
 		run.lastFailed = nil
 		run.runErr = errors.New(c9LongErr)
 		out["enginerun_failed_err_"+tag] = run.view(w, 30)
+
+		// #257: the stopped screen after an unfinished rollback that left
+		// a recovery command, and after an abort with a long block.
+		out["enginerun_failed_recovery_"+tag] = c9StoppedRun(t, w,
+			hostDone, rollbackRunning,
+			engine.RawLineMsg{Text: "recovery-command: " + engineCommand},
+			parsedEvent(t, retryEvent),
+			exit1(retryStderr(engineCommand)...))
+		out["enginerun_failed_abort_"+tag] = c9StoppedRun(t, w,
+			append([]any{hostDone, rollbackRunning, appAborted}, exit1(abortLines(12)...))...)
 	}
 
 	// install: the stale-volume screen lists volume names in plain ink.
@@ -200,6 +213,24 @@ func c9Screens(t *testing.T) map[string]string {
 		out[fmt.Sprintf("console_bar_%d_rollback", w)] = rb.view(w, 26)
 	}
 	return out
+}
+
+// c9StoppedRun is an Install's engine run in a fixed fake folder, fed
+// msgs as its stream delivers them, drawn at w x 30 on the screen it
+// stops on. The clock is fixed so the screen is the same every pass.
+func c9StoppedRun(t *testing.T, w int, msgs ...any) string {
+	t.Helper()
+	run := newEngineRun("install", rollbackFolder, "Install — Standard", "v1").
+		withSeams(engineRunSeams{now: func() time.Time { return time.Time{} }})
+	run, _ = run.start(w, 30)
+	run.state = runStreaming
+	for _, msg := range msgs {
+		run, _ = run.update(engineStreamMsg{msg: msg})
+	}
+	if run.state != runFailed {
+		t.Fatalf("the run did not stop (state %v)", run.state)
+	}
+	return run.view(w, 30)
 }
 
 func TestScreenGrammarC9_ScreensRenderByteForByteAsBefore(t *testing.T) {

@@ -598,7 +598,12 @@ in-console configuration is unavailable. No
 config field enters Go, ever. Outcomes are keyed off events plus exit
 codes, never scraped prose; a legacy engine (orbit main today) that
 emits no events has its output displayed verbatim and is judged by exit
-code alone, with the guided installer offered from the failure screen.
+code alone. The guided installer is offered from the stopped screen only
+for an installer that reports nothing, or one that refuses configuration
+again after guided configuration; anywhere else it would run the same
+`install.sh` into the same refusal (#257). Every other stop says what
+happened to the folder and offers only what can work: Install again (or
+Update again), Open Repair, or Menu and Exit.
 Success concludes on `internal/ui/success.go`: the splash's scene with
 the wordmark in alive-green, the deployment URL in the identity slot,
 "Orbit achieved in Nm NNs" from the console's real clock, and

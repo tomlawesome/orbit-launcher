@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -114,6 +115,9 @@ type engineRunSeams struct {
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
 	prepareRotate  prepareRotateFunc
+	// listFolder reads the folder for the stopped screen's listing;
+	// nil is os.ReadDir.
+	listFolder func(dir string) ([]os.DirEntry, error)
 }
 
 // withSend gives the run its way back into the event loop.

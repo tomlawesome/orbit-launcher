@@ -106,7 +106,32 @@ func grammarScreens() []grammarScreen {
 		{name: "Remove failed", build: removeFailedScreen, rows: []string{"Menu", "Exit"}},
 		{name: "Install success", build: installSuccessScreen, rows: []string{"Get into Orbit", "Terminal", "Menu"}},
 		{name: "Repair error", build: repairErrorScreen, tail: []string{"Menu", "Exit"}},
+		// The stopped screens (#257): the rows that can work, then Menu,
+		// then Exit; Esc goes to the main menu.
+		{name: "Install stopped, nothing changed", build: stoppedInstallScreen(hostRefused, exit1(notEmptyStderr...)), rows: rowsAgain},
+		{name: "Install stopped, undone", build: stoppedInstallScreen(hostDone, rollbackRunning, rollbackDone, composeFailed, exit1("Orbit installer: Orbit services could not be created or started.")), rows: rowsAgain},
+		{name: "Install stopped, abort", build: stoppedInstallScreen(hostDone, rollbackRunning, appAborted, exit1("Orbit installer: One entry could not be moved back.")), rows: rowsLeave},
+		{name: "Install stopped, services left running", build: stoppedInstallScreen(hostDone, appRepair, exit1("Orbit installer: The web service did not become ready in time.")), rows: rowsRepair},
+		{name: "Install stopped, died", build: stoppedInstallScreen(hostDone, composeRunning), rows: rowsAgain},
+		{name: "Install stopped, no events", build: stoppedInstallScreen(exit1("Orbit installer: something went wrong.")), rows: rowsGuided},
+		{name: "Install stopped, could not start", build: func(t *testing.T) tea.Model {
+			m, _ := stoppedInstallIn(t, folderWith(t), 80, 26, cannotStart(errors.New("fetch install.sh: connection refused")))
+			return m
+		}, rows: rowsAgain},
+		{name: "Update stopped, retry", build: stoppedUpdateScreen(hostDone, imageRetry, exit1("Orbit installer: Could not pull the image.")), rows: rowsUpdate},
+		{name: "Update stopped, repair", build: stoppedUpdateScreen(hostDone, appRepair, exit1("Orbit installer: The web service did not become ready in time.")), rows: rowsRepair},
+		{name: "Update stopped, abort", build: stoppedUpdateScreen(hostAborted, exit1("Orbit installer: Update requires a recognized existing Orbit deployment.")), rows: rowsLeave},
 	}
+}
+
+// stoppedInstallScreen and stoppedUpdateScreen build a flow on the
+// stopped screen its engine's msgs lead to, in a folder holding a file.
+func stoppedInstallScreen(msgs ...any) func(t *testing.T) tea.Model {
+	return func(t *testing.T) tea.Model { return stoppedInstall(t, folderWith(t, "notes.txt"), msgs...) }
+}
+
+func stoppedUpdateScreen(msgs ...any) func(t *testing.T) tea.Model {
+	return func(t *testing.T) tea.Model { return stoppedUpdate(t, folderWith(t, "notes.txt"), msgs...) }
 }
 
 func (c grammarScreen) hasRows() bool { return c.rows != nil || c.tail != nil }
@@ -329,8 +354,9 @@ func TestMenuGrammar_EngineRunAfterScreensEndMenuThenExit(t *testing.T) {
 	t.Run("failed", func(t *testing.T) {
 		r := startedRun(t, "install", engineRunSeams{})
 		r, _ = runUpdate(t, r, engineReadyMsg{err: errors.New("boom")})
-		if got := screenLabels(runScreen(r)); !slices.Equal(got, []string{"Open the guided installer", "Menu", "Exit"}) {
-			t.Errorf("rows = %q, want the guided installer, Menu, Exit", got)
+		// The launcher could not start the installer: Install again (#257).
+		if got := screenLabels(runScreen(r)); !slices.Equal(got, []string{"Install again", "Menu", "Exit"}) {
+			t.Errorf("rows = %q, want Install again, Menu, Exit", got)
 		}
 		for _, k := range []tea.KeyPressMsg{runeKey('x'), runeKey('q'), runeKey('5'), key(tea.KeyLeft)} {
 			r2, cmd := runUpdate(t, r, k)

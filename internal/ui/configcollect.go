@@ -534,10 +534,11 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	// The retry is a new engine run with its own configuration tree.
 	r.releaseRunFiles()
 	r.configRefused = false
-	r.lastFailed = nil
-	r.stderrTail = nil
+	r.waiting, r.completed, r.completion = nil, false, nil
+	r.forgetStop()
 	r.runErr = nil
 	r.handoffErr = nil
+	r.handoffByHand = false
 	r.menu = menu{}
 	return r.start(r.width, r.height)
 }

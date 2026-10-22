@@ -291,10 +291,14 @@ func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
 		t.Fatalf("run state = %v, want runFailed", m.run.state)
 	}
 	view := m.View().Content
-	for _, want := range []string{"Install stopped", "image-registry", "Could not pull"} {
+	for _, want := range []string{"Install stopped", "Could not pull"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("failure view missing %q", want)
 		}
+	}
+	// #257: the reason token is engine vocabulary and stays off screen.
+	if strings.Contains(view, "image-registry") {
+		t.Errorf("failure view shows the raw reason token image-registry")
 	}
 
 	// Menu is the second option — choosing it asks for the splash back.
