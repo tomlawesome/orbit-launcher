@@ -55,7 +55,7 @@ func StandDown(ctx context.Context, targetDir string) error {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			// The containers stopped so far stay stopped, so a second
 			// stand-down picks up where this one was cut off.
-			return fmt.Errorf("docker compose down did not finish within %s — running Stand down again finishes the job: %w: %s", limit, err, out)
+			return &StandDownTimeoutError{Limit: limit, Words: StandDownCommandWords(targetDir), Err: err, Output: string(out)}
 		}
 		return fmt.Errorf("docker compose down: %w: %s", err, out)
 	}
@@ -66,10 +66,45 @@ func StandDown(ctx context.Context, targetDir string) error {
 // out so its arguments (not just its behaviour once actually executed
 // against a real deployment) are directly, cheaply testable.
 func standDownCommand(ctx context.Context, targetDir string) *exec.Cmd {
-	envFile := filepath.Join(targetDir, EnvFile)
-	return dockerCommand(ctx, "compose",
-		"--project-directory", targetDir, "--env-file", envFile, "down")
+	return dockerCommand(ctx, standDownArgs(targetDir)...)
 }
+
+// standDownArgs is the command's arguments after "docker", the one list
+// both standDownCommand and StandDownCommandWords are built from.
+func standDownArgs(targetDir string) []string {
+	return []string{"compose",
+		"--project-directory", targetDir,
+		"--env-file", filepath.Join(targetDir, EnvFile), "down"}
+}
+
+// StandDownCommandWords returns the command StandDown runs as shell
+// words, each already quoted, so a person can run it by hand when the
+// stand-down timed out.
+func StandDownCommandWords(targetDir string) []string {
+	args := standDownArgs(targetDir)
+	words := make([]string, 0, len(args)+1)
+	words = append(words, "docker")
+	for _, a := range args {
+		words = append(words, shellQuote(a))
+	}
+	return words
+}
+
+// StandDownTimeoutError is StandDown's answer when it was cut off at its
+// limit. Words is the command to run by hand; Err and Output are what
+// Docker and the cut-off left, kept for logs.
+type StandDownTimeoutError struct {
+	Limit  time.Duration
+	Words  []string
+	Err    error
+	Output string
+}
+
+func (e *StandDownTimeoutError) Error() string {
+	return fmt.Sprintf("docker compose down did not finish within %s: %v: %s", e.Limit, e.Err, e.Output)
+}
+
+func (e *StandDownTimeoutError) Unwrap() error { return e.Err }
 
 // ErrNoTargetDir is returned for a stop or removal asked of no
 // directory: a removal command only ever names a deployment the

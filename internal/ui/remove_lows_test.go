@@ -28,7 +28,7 @@ func lowsRemoveModel(d *deploy.Deployment, standDown func(context.Context, strin
 
 // 236-1: a stand-down is reversible, so its working screen must not
 // borrow Repair's "stopping halfway is the one unsafe step". It still says
-// it cannot be stopped from here (standdown_uninterruptible_test.go).
+// to wait, it cannot be cancelled (standdown_uninterruptible_test.go).
 func TestRemove_WorkingScreenDoesNotCallStoppingUnsafe(t *testing.T) {
 	m, _ := removeStandingDown(t, standDownOK)
 	s := strings.ToLower(screen(m))
@@ -40,8 +40,8 @@ func TestRemove_WorkingScreenDoesNotCallStoppingUnsafe(t *testing.T) {
 			t.Errorf("the Remove working screen says %q, which is untrue for a reversible stand-down:\n%s", bad, s)
 		}
 	}
-	if !strings.Contains(s, cannotStop) {
-		t.Errorf("the working screen no longer says %q:\n%s", cannotStop, s)
+	if !strings.Contains(screen(m), removeWaitLine) {
+		t.Errorf("the working screen no longer says %q:\n%s", removeWaitLine, s)
 	}
 }
 

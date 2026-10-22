@@ -339,10 +339,10 @@ func (m RemoveModel) viewConfirm() string {
 }
 
 // removeCannotStopLine is the stand-down's second working line. It keeps
-// Repair's "can't be stopped from here" (#227) but not Repair's reason:
-// a stand-down deletes nothing and is undone by starting Orbit again,
-// so stopping it halfway is not unsafe.
-const removeCannotStopLine = "can't be stopped from here — nothing is deleted, and it ends on its own"
+// Repair's "can't be stopped" (#227) but not Repair's reason: a
+// stand-down deletes nothing and is undone by starting Orbit again, so
+// stopping it halfway is not unsafe.
+const removeCannotStopLine = "Please wait — this can't be cancelled. Nothing is being deleted."
 
 func (m RemoveModel) viewStandingDown() string {
 	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", removeCannotStopLine))
@@ -440,7 +440,21 @@ func (m RemoveModel) refusedFolder() string {
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Stand-down stopped")
-	if m.standDownErr != nil {
+	var timedOut *deploy.StandDownTimeoutError
+	if errors.As(m.standDownErr, &timedOut) {
+		// Docker's words would say only that it was killed: the screen
+		// gives the limit and the command to run by hand instead. The
+		// rows are escaped for the terminal like the removal command's.
+		writeWrapped(&b, style.Tagline, "The stack hasn't come down after "+limitWords(timedOut.Limit)+". Try again manually later with:", measure(m.width, errorWidth))
+		words := make([]string, len(timedOut.Words))
+		for i, w := range timedOut.Words {
+			words[i] = visibleText(w)
+		}
+		for _, row := range wrapShellCommand(words, m.width-8) {
+			fmt.Fprintln(&b, style.MutedText.Render(row))
+		}
+		fmt.Fprintln(&b)
+	} else if m.standDownErr != nil {
 		// Docker's words, wrapped so the reason is never cut at the
 		// screen's edge. Compose adds a progress line per container
 		// (about 36 for Orbit), which would push Menu and Exit off a
@@ -454,4 +468,17 @@ func (m RemoveModel) viewFailed() string {
 	}
 	m.after.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// limitWords names a time limit in whole minutes where it is one, else in
+// whole seconds: "1 minute", "5 minutes", "90 seconds".
+func limitWords(d time.Duration) string {
+	unit, n := "second", int(d.Round(time.Second)/time.Second)
+	if d >= time.Minute && d%time.Minute == 0 {
+		unit, n = "minute", int(d/time.Minute)
+	}
+	if n != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("%d %s", n, unit)
 }
