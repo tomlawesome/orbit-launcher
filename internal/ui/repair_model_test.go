@@ -768,7 +768,10 @@ func TestRepairModel_UnsummarisedPlanNeedsAttention(t *testing.T) {
 	)
 	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4})
 	s := screen(m)
-	if !strings.Contains(s, "Needs your attention") || !strings.Contains(s, "re-run guided configuration — required fields aren't ready") {
+	// The plan line wraps at the prose measure (56 cells at 80 columns),
+	// so "ready" goes to the next row.
+	if !strings.Contains(s, "Needs your attention") || !strings.Contains(s, "re-run guided configuration — required fields aren't") ||
+		!strings.Contains(strings.Join(skyWords(s), " "), "required fields aren't ready") {
 		t.Fatalf("screen:\n%s", s)
 	}
 }
@@ -831,6 +834,38 @@ func TestFindingLine_WordsForEveryContractEnum(t *testing.T) {
 		if !strings.HasSuffix(got, "database — "+want) {
 			t.Errorf("class %q renders %q, want it to end %q", class, got, want)
 		}
+	}
+}
+
+// #204: Orbit reports Docker being unreachable against the
+// configuration target. That is a Docker problem, and must never read
+// as the broken-configuration finding.
+func TestRepairModel_DockerUnavailableOnConfigurationReadsAsDocker(t *testing.T) {
+	const line = "finding class=docker-unavailable target=configuration severity=info"
+	const dockerWords = "configuration — docker couldn't be reached for this check"
+	const brokenWords = "unreadable or structurally broken"
+
+	f, ok := engine.ParseFinding(line)
+	if !ok {
+		t.Fatalf("ParseFinding(%q) rejected the line", line)
+	}
+	got := ansi.Strip(findingLine(f))
+	if !strings.Contains(got, dockerWords) {
+		t.Errorf("finding renders %q, want %q", got, dockerWords)
+	}
+	if strings.Contains(got, brokenWords) {
+		t.Errorf("finding renders %q, which reads as a broken configuration", got)
+	}
+
+	m := sizedRepair(t)
+	m = repairLines(t, m, line, "diagnosis result=failed checked=1 skipped=0")
+	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: 4, Err: errors.New("exit status 4")})
+	s := screen(m)
+	if !strings.Contains(s, dockerWords) {
+		t.Errorf("screen lacks %q:\n%s", dockerWords, s)
+	}
+	if strings.Contains(s, brokenWords) {
+		t.Errorf("screen reads as a broken configuration:\n%s", s)
 	}
 }
 

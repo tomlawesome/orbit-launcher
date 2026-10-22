@@ -10,7 +10,8 @@
 > Wave 3, and the "immediate next steps" in section 7. The current
 > release process is in [releasing.md](releasing.md); GitLab and
 > `.gitlab-ci.yml` are the CI gate, and the live test runs when asked for
-> or when a change moves the pins it installs with. The module layout also omits `internal/engine` and `internal/notices`.
+> or when a change moves the pins it installs with. The module layout also omits `internal/ansi`, `internal/engine`,
+> `internal/notices` and `internal/testutil`.
 
 
 ## Purpose
@@ -138,6 +139,10 @@ I can responsibly set up without legal advice:
   author, which is what makes the dual-license model sound without any
   extra process. If that changes later, a CLA becomes a real prerequisite
   again at that point, not before.
+
+The commercial-license offer was dropped on 2026-10-21 (#195): AGPL-3.0
+cannot restrict commercial use, a commercial license would only sell an
+exception to its copyleft, and none is offered for now.
 
 ---
 
@@ -522,12 +527,12 @@ keep working. Two things follow from that:
   current `install.sh` fresh from orbit's stable branch at the moment
   Install or Update is confirmed — not a copy checked into this repo,
   not a pinned revision. `install.sh` itself resolves every other asset
-  it needs (compose files, `configure.sh`, `configuration.sh`) from the
+  it needs (compose files, `configure.sh`, `.orbit-image`) from the
   exact source revision recorded in the Docker image's own OCI labels,
   so fetching only this one file is sufficient. The one exception is
   `ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH`: when set, `FetchInstallScript`
   reads that local file instead of downloading anything. It isn't
-  vendoring — it's how `scripts/get-orbit-launcher.sh` hands over the
+  vendoring — it's how Orbit's `scripts/get-orbit.sh` hands over the
   exact copy it already fetched and verified against Orbit's signed
   manifest (ADR-0031), so the launcher doesn't re-fetch something
   already checked. `install.sh` is the only script the launcher ever
@@ -586,8 +591,10 @@ TUI, and with incomplete configuration it refuses before Compose
 (`reason=configuration-failure`), rolling the target back via its own
 file transaction (verified empirically against both orbit dev and
 main). That refusal is precisely where #51's handoff survives: the flow
-offers "Continue — guided configuration" and hands the real terminal to
-interactive `install.sh` via the same `tea.ExecProcess` mechanism. No
+goes straight into guided configuration (Esc returns to the main menu; an
+engine give-up shows the stopped screen), and the real terminal is handed to
+interactive `install.sh` via the same `tea.ExecProcess` mechanism only when
+in-console configuration is unavailable. No
 config field enters Go, ever. Outcomes are keyed off events plus exit
 codes, never scraped prose; a legacy engine (orbit main today) that
 emits no events has its output displayed verbatim and is judged by exit

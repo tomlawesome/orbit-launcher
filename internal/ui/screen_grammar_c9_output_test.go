@@ -6,6 +6,24 @@ package ui
 // code as it stood BEFORE the change, escapes and all, and stored under
 // testdata/c9; they must keep rendering byte for byte. A difference
 // here is a defect in the change, never a reason to refresh a file.
+//
+// Later, deliberate changes have moved goldens, and only those: #231
+// itself moved the console bar (console_bar_*_none, _phase11, _rollback);
+// #238 added the unreadable-settings screens (remove_unreadable_*); #253
+// moved repair_diagnosis (the manual steps wrap); #248 dropped the "Ready
+// to install" screen, so install_confirm_* were deleted and
+// install_profile_* added (the profile screen now names the folder). #252
+// moved prompt_secret_* (the mask) and #269 moved prompt_*_40 (hints and
+// notes wrap). #270 blanked the one sky cell beside text in
+// console_bar_50_*, enginerun_failed_*, install_profile_50,
+// install_stale_volume and remove_done_*. #271 moved remove_done_50/80/120
+// and remove_notfound_50 (Remove screens stay inside the screen edge).
+// #247 made the profile screen a table: install_profile_50/80/120 moved.
+// #249 added the notice's scroll track and down arrow: notice_* moved.
+// remove_done_50 moved again when the done screen's box took only the
+// rows the menu leaves it.
+// Any other difference is a regression to look at, never a file to
+// re-record.
 
 import (
 	"errors"
@@ -54,10 +72,9 @@ func c9Screens(t *testing.T) map[string]string {
 	for _, w := range c9Widths {
 		tag := fmt.Sprintf("%d", w)
 
-		// install: confirm names the directory at proseWidth.
+		// install: the profile screen names the directory at proseWidth.
 		in := c9Size(t, NewInstallModel(c9LongDir, "v1"), w)
-		in.state = installStateConfirm
-		out["install_confirm_"+tag] = in.View().Content
+		out["install_profile_"+tag] = in.View().Content
 
 		// remove: not found (header wraps the directory), done (prose and
 		// the removal command), failed (error at errorWidth).

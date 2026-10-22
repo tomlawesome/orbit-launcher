@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // In-console guided configuration — orbit docs/engine-events.md
@@ -508,15 +509,28 @@ func (c ConfigCheck) Unfixable() []string {
 	return out
 }
 
+// configCheckTimeout bounds RunConfigCheck. The check reads the
+// configuration tree and answers in seconds; a check still running
+// after two minutes is hung, and a failure that says so beats a
+// working line that never ends. A var only so its test can shorten it.
+var configCheckTimeout = 2 * time.Minute
+
 // RunConfigCheck runs configure.sh --check in the configuration tree and
 // parses its readiness report. A non-zero exit with a parseable report
 // is the normal "something's missing" answer, not an error; an error
 // means the check itself couldn't run (structural failure, legacy
 // script misbehaviour). Cancelling ctx stops the check and everything
 // it started, and returns without waiting on a pipe a child still holds
-// (detachedCommand).
+// (detachedCommand). It gives up after configCheckTimeout, or sooner if
+// ctx ends, and the error names the limit that applied.
 func RunConfigCheck(ctx context.Context, configTree string) (ConfigCheck, error) {
+	limit := limitApplied(ctx, configCheckTimeout)
+	ctx, cancel := context.WithTimeout(ctx, configCheckTimeout)
+	defer cancel()
 	out, runErr := detachedCommand(ctx, configTree, "bash", filepath.Join(scriptsDir, configureScript), "--check").Output()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return ConfigCheck{}, fmt.Errorf("configuration check did not finish within %s: %w", limit, ctx.Err())
+	}
 
 	var check ConfigCheck
 	sawReport := false

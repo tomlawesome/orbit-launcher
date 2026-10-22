@@ -9,7 +9,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -124,21 +123,20 @@ func TestRemoveFailure_OutputEndingInANewlineAddsNoBlankRow(t *testing.T) {
 	}
 }
 
-// Long runs of spaces wrap in linear time. The bounds are generous; the
-// quadratic join took seconds.
+// Long runs of spaces wrap in linear time: four times the text takes
+// about four times as long, not sixteen. The quadratic join took seconds
+// at the larger size. The test compares two sizes rather than timing one
+// against a fixed number of milliseconds, so a loaded host cannot fail it.
 func TestWrapWords_LongWhitespaceRunsAreLinear(t *testing.T) {
-	cases := map[string]string{
-		"mostly spaces":   "a" + strings.Repeat(" ", 112000),
-		"only whitespace": strings.Repeat(" ", 120000),
-		"spaced words":    strings.Repeat("a          ", 11000),
+	cases := map[string]func(n int) string{
+		"mostly spaces":   func(n int) string { return "a" + strings.Repeat(" ", n) },
+		"only whitespace": func(n int) string { return strings.Repeat(" ", n) },
+		"spaced words":    func(n int) string { return strings.Repeat("a          ", n/11) },
 	}
-	for name, text := range cases {
-		start := time.Now()
-		rows := wrapWords(text, 72)
-		if d := time.Since(start); d > 500*time.Millisecond {
-			t.Errorf("%s: wrapping %d characters took %v", name, len(text), d)
-		}
-		for _, row := range rows {
+	const small, big = 28000, 112000
+	for name, build := range cases {
+		requireNearLinear(t, name, small, big, func(n int) { wrapWords(build(n), 72) })
+		for _, row := range wrapWords(build(big), 72) {
 			if w := lipgloss.Width(row); w > 72 {
 				t.Errorf("%s: a row is %d cells, past 72", name, w)
 				break

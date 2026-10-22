@@ -119,6 +119,11 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Outside a run a signal is the Ctrl-C key: nothing is working.
+	if _, ok := msg.(SignalQuitMsg); ok {
+		return m.handleKey(ctrlCPress)
+	}
+
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		return m.handleKey(key)
 	}
@@ -152,8 +157,10 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.left = true
 	case chosen == "Update Orbit":
 		m.state = updateStateRunning
+		// Only an address names the deployment in the title; without
+		// one, "deployment detected" adds nothing to a plain "Update".
 		title := "Update"
-		if m.deployment != nil {
+		if m.deployment != nil && m.deployment.AppURL != "" {
 			title = "Update — " + deploymentIdentity(m.deployment)
 		}
 		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
@@ -200,13 +207,18 @@ func (m UpdateModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Pull the latest Orbit and update this deployment")
 
-	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
+	prose := measure(m.width, proseWidth)
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt, prose)))
 	if image := m.deploymentImage(); image != "" {
-		fmt.Fprintln(&b, style.Tagline.Render(image))
+		fmt.Fprintln(&b, style.Tagline.Render(endCut(visibleText(image), prose)))
 	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.MutedText.Render("The update runs inside the mission console, right here."))
-	fmt.Fprintln(&b, style.MutedText.Render("Your existing configuration is preserved. Nothing is deleted."))
+	// Each line wraps on its own, as Remove's do (#271), but at the
+	// screen's edge rather than proseWidth: the second line is 60 cells
+	// and stays one row from 64 columns up, as it always has (#274).
+	edge := measure(m.width, m.width)
+	writeWrapped(&b, style.MutedText, "The update runs inside the mission console, right here.", edge)
+	writeWrapped(&b, style.MutedText, "Your existing configuration is preserved. Nothing is deleted.", edge)
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())

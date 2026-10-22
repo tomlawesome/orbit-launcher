@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
-// This file is the development notice (#175): the screen between "Ready
-// to install" and the mission console that says, in the owner's own
+// This file is the development notice (#175): the screen between the
+// profile choice (#248) and the mission console that says, in the owner's own
 // words, what Orbit is and is not, and asks for a typed acknowledgement
 // before an install starts. The copy, emphasis, countdown, phrase and
 // layout were approved in design/mockups-v7-notice.html; its
@@ -21,9 +22,11 @@ import (
 // supplies the clock and the duration, and only wires keys and ticks.
 
 const (
-	// noticeDefaultDuration is the reading countdown: 257 words at 238
-	// words a minute is 64.8 s, rounded up to the next ten.
-	noticeDefaultDuration = 70 * time.Second
+	// noticeDefaultDuration is the reading countdown: a flat 20 s the
+	// owner chose (2026-10-17, #250), not a reading-speed estimate, so it
+	// stays 20 s when the notice's words change. The other gate, the
+	// whole notice on screen, is unchanged.
+	noticeDefaultDuration = 20 * time.Second
 
 	// noticeTickInterval redraws the countdown. The sky's own tick chain
 	// stops under ORBIT_LAUNCHER_NO_ANIMATION and the countdown is not a
@@ -52,7 +55,8 @@ var noticeParagraphs = []string{
 	"If you find it useful, that's great. Please understand though that you use it at your own risk: it comes with no warranty, and there's no one on call to support it.",
 	"Everything Orbit stores stays on your own machine, and backing it up is up to you.",
 	"Because Orbit is in alpha, upgrading it is not guaranteed to keep your data. Always back up before you upgrade.",
-	"Orbit sends no data or telemetry about you or your installation anywhere. It does reach the internet for a few things, and sends none of your data when it does: installing and upgrading downloads files from GitHub and Docker Hub, the launcher checks GitHub for a newer version when it starts, and the virus scanner downloads new signatures.",
+	"Orbit sends no data or telemetry about you or your installation anywhere. It does reach the internet for a few things, and sends none of your data when it does: installing and upgrading downloads files from GitHub and Docker Hub, choosing the full local stack downloads a language model from Ollama's library once, the launcher checks GitHub for a newer version when it starts, and the virus scanner downloads new signatures.",
+	"Orbit can use Ollama, a program that runs language models on this machine, to read your uploads. It has no route to the internet, so nothing leaves this machine and nothing is used to train anything. The model is downloaded once at install, only if you choose the full local stack.",
 	"I've poured significant effort and resources into trying to make it as robust and secure as I can, but you should not trust that it is safe to expose to the internet.",
 	"Never expose Orbit directly to the internet. Keep it on your own network, and reach it from outside through a VPN back to that network.",
 	"If you find a security problem, please report it privately on GitHub at github.com/tomlawesome/orbit/security, not in a public issue.",
@@ -107,7 +111,7 @@ const (
 
 // noticeTickMsg redraws the countdown. It carries the start of the
 // notice that armed it, so a chain left over from an earlier visit
-// (Back, then Install now again) is recognised and dropped.
+// (Back, then Standard again) is recognised and dropped.
 type noticeTickMsg struct{ start time.Time }
 
 func noticeTick(start time.Time) tea.Cmd {
@@ -158,7 +162,11 @@ func (n noticeModel) resize(width, height int) noticeModel {
 
 func (n noticeModel) viewport() int { return max(n.height-noticeHeaderRows-noticePinnedRows, 1) }
 
-func (n noticeModel) maxOffset() int { return max(len(n.doc)-n.viewport(), 0) }
+// prose is the rows the text gets: the viewport less the blank and the
+// down arrow below it (#249).
+func (n noticeModel) prose() int { return max(n.viewport()-2, 1) }
+
+func (n noticeModel) maxOffset() int { return max(len(n.doc)-n.prose(), 0) }
 
 // scrollTo clamps the offset and opens the scroll gate the first time
 // the end is on screen. The gate never closes again.
@@ -172,7 +180,7 @@ func (n noticeModel) scrollTo(offset int) noticeModel {
 
 func (n noticeModel) scrollBy(delta int) noticeModel { return n.scrollTo(n.offset + delta) }
 
-func (n noticeModel) page() int { return max(n.viewport()-1, 1) }
+func (n noticeModel) page() int { return max(n.prose()-1, 1) }
 
 func (n noticeModel) timerDone(now time.Time, d time.Duration) bool {
 	return now.Sub(n.start) >= d
@@ -193,7 +201,7 @@ type noticeLayout struct {
 
 func (n noticeModel) layout() noticeLayout {
 	l := noticeLayout{fadeTop: -1, fadeBot: -1}
-	vp := n.viewport()
+	vp := n.prose()
 	if len(n.doc) <= vp {
 		l.rows = n.doc
 		l.endOnScreen = true
@@ -280,15 +288,15 @@ func (n noticeModel) handleKey(msg tea.KeyPressMsg, now func() time.Time, d time
 		return n.scrollBy(n.page()), noticeStay
 	}
 	// The rest is typing (inputLine). Typing is what claims the box,
-	// and is ignored while either gate is open; erasing edits only a
-	// focused box.
+	// and is ignored while either gate is open; erasing and moving the
+	// cursor edit only a focused box.
 	switch typed, edit := n.typed.edit(msg); edit {
 	case lineTyped:
 		if awake() {
 			n.focus = noticeFocusField
 			n.typed = typed
 		}
-	case lineErased:
+	case lineErased, lineMoved:
 		if n.focus == noticeFocusField {
 			n.typed = typed
 		}
@@ -447,13 +455,37 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	)
 
 	// Prose.
+	// A track in the right gutter shows where the window sits (#249).
 	l := n.layout()
+	p, total, maxOff := n.prose(), len(n.doc), n.maxOffset()
+	thumbLen, thumbTop := p, 0
+	if maxOff > 0 {
+		thumbLen = max(1, int(math.Round(float64(p*p)/float64(total))))
+		thumbTop = int(math.Round(float64(n.offset) / float64(maxOff) * float64(p-thumbLen)))
+	}
+	trackStyle := lipgloss.NewStyle().Foreground(style.Border)
 	for i, r := range l.rows {
-		if r.blank() {
-			lines = append(lines, blank)
-			continue
+		track := trackStyle.Render("│")
+		if i >= thumbTop && i < thumbTop+thumbLen {
+			track = mutedStyle.Render("┃")
 		}
-		lines = append(lines, pad(gutter+renderNoticeRow(r, i == l.fadeTop || i == l.fadeBot), noticeGutter+r.width()))
+		text := ""
+		if !r.blank() {
+			text = renderNoticeRow(r, i == l.fadeTop || i == l.fadeBot)
+		}
+		// A row holding a word longer than the measure is wider than it;
+		// clamp so it overruns (clipped at the screen edge) instead of panicking.
+		lines = append(lines, gutter+text+strings.Repeat(" ", max(n.measure-r.width(), 0))+track+strings.Repeat(" ", max(blockW-noticeGutter-n.measure-1, 0)))
+	}
+
+	// One blank row, then the arrow while more is below; it goes once the
+	// whole notice has been on screen.
+	lines = append(lines, blank)
+	if n.endSeen || n.offset >= maxOff {
+		lines = append(lines, blank)
+	} else {
+		left := noticeGutter + n.measure/2
+		lines = append(lines, pad(strings.Repeat(" ", left)+mutedStyle.Render("↓"), left+1))
 	}
 
 	// Countdown: blank once the gate is passed — the gate is gone, so
@@ -492,8 +524,11 @@ func (n noticeModel) view(now time.Time, d time.Duration) string {
 	phrase := []rune(noticePhrase)
 	switch {
 	case focused && !n.typed.empty():
-		shown := n.typed.tail(inner - 1) // the tail, so the cursor stays visible
-		content = textStyle.Render(shown) + style.AccentText.Render(style.SymbolCursor)
+		before, after := n.typed.around(inner - 1) // the part around the cursor, so it stays visible
+		content = textStyle.Render(before) + style.AccentText.Render(style.SymbolCursor)
+		if after != "" { // a cursor at the end draws the box byte for byte as before
+			content += textStyle.Render(after)
+		}
 	case focused:
 		example := phrase[:min(len(phrase), inner-1)]
 		content = style.AccentText.Render(style.SymbolCursor) + faintStyle.Render(string(example))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -113,10 +114,72 @@ type configCollect struct {
 	// authMode is the answer, once chosen, threaded into BuildConfigureCommand
 	// for the --init step it gates. Empty until the person chooses.
 	authMode deploy.AuthMode
+
+	// late is shared with the prepare and start commands still running.
+	late *configLate
+
+	// ctx is the session's lifetime: the configure.sh --check runs it
+	// starts are cancelled by close, so leaving stops them.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-// close releases the session's process and what it collected.
+// configLate settles who releases what a prepare or start command
+// produced. Leaving the session can happen while the command runs, and
+// in the app its result then reaches the main menu, not this run, so a
+// result made after leaving is released by the command itself, and one
+// handed over but not yet taken is released by the leaving.
+type configLate struct {
+	mu      sync.Mutex
+	stopped bool
+	held    func()
+}
+
+// hand is a command's result arriving; release frees it. It reports
+// whether the session is still there to take it.
+func (l *configLate) hand(release func()) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stopped {
+		release()
+		return false
+	}
+	l.held = release
+	return true
+}
+
+// take is the session receiving a handed result: it owns it from now
+// on. False means the result was already released.
+func (l *configLate) take() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.held == nil {
+		return false
+	}
+	l.held = nil
+	return true
+}
+
+// stop ends the session for every command result still to come.
+func (l *configLate) stop() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.stopped = true
+	if l.held != nil {
+		l.held()
+		l.held = nil
+	}
+}
+
+// close releases the session's process and what it collected, and
+// whatever a command still running for it goes on to produce.
 func (c *configCollect) close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.late != nil {
+		c.late.stop()
+	}
 	if c.stream != nil {
 		c.stream.Kill()
 		c.stream = nil
@@ -165,14 +228,37 @@ func defaultStartConfig(configTree string, step deploy.ConfigStep, mode deploy.A
 // the background while the screen shows the working state.
 func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	r.state = runConfigCollect
-	r.cfg = configCollect{}
+	late := &configLate{}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cfg = configCollect{late: late, ctx: ctx, cancel: cancel}
 	prepare := r.prepareConfig
 	if prepare == nil {
 		prepare = defaultPrepareConfig
 	}
 	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
-		return prepare(context.Background(), targetDir, configTree)
+		msg := prepare(ctx, targetDir, configTree)
+		if !late.hand(func() { releaseConfigMsg(msg) }) {
+			return nil
+		}
+		return msg
+	}
+}
+
+// releaseConfigMsg frees what a prepare or start command produced.
+func releaseConfigMsg(msg tea.Msg) {
+	switch msg := msg.(type) {
+	case configStepMsg:
+		if msg.stream != nil {
+			msg.stream.Kill()
+		}
+		if msg.stdin != nil {
+			msg.stdin.Close()
+		}
+	case configPlanMsg:
+		if msg.plan.cleanup != nil {
+			msg.plan.cleanup()
+		}
 	}
 }
 
@@ -202,8 +288,23 @@ func (r engineRun) fallbackToHandoff(reason string) (engineRun, tea.Cmd) {
 func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 	if r.state != runConfigCollect {
 		// A cancelled session's process can still deliver its queued
-		// messages; they belong to nothing now.
+		// messages; they belong to nothing now. A process or plan that
+		// was still being started when the session was left is stopped
+		// or cleaned up here, unless leaving already did.
+		switch msg.(type) {
+		case configStepMsg, configPlanMsg:
+			if r.cfg.late == nil || r.cfg.late.take() {
+				releaseConfigMsg(msg)
+			}
+		}
 		return r, nil
+	}
+	switch msg.(type) {
+	case configStepMsg, configPlanMsg:
+		if r.cfg.late != nil && !r.cfg.late.take() {
+			// Released already: it belongs to a session left before.
+			return r, nil
+		}
 	}
 	switch msg := msg.(type) {
 	case configPlanMsg:
@@ -233,6 +334,8 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 				// is enough to tell this apart from a missing tree.
 				reason = fmt.Sprintf("%s (%d)", fallbackUnfixable, len(msg.plan.unfixable))
 			}
+			// Stored first so close runs the plan's cleanup (#266).
+			r.cfg.plan = msg.plan
 			r.cfg.close()
 			return r.fallbackToHandoff(reason)
 		}
@@ -303,12 +406,16 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 		if msg.err != nil {
 			r.cfg.close()
 			r.releaseRunFiles()
+			r.lastFailed = nil
+			r.stderrTail = nil
 			r.runErr = msg.err
 			r.state = runFailed
 			r.menu = menu{}
 			return r, nil
 		}
 		r.cfg.close()
+		// One retry per run after configuration (see handleStream).
+		r.retriedAfterConfig = true
 		return r.retryEngine()
 	}
 	return r, nil
@@ -331,10 +438,14 @@ func (r engineRun) startNextConfigStep() (engineRun, tea.Cmd) {
 	if start == nil {
 		start = defaultStartConfig
 	}
-	configTree, mode := r.cfg.plan.configTree, r.cfg.authMode
+	configTree, mode, late := r.cfg.plan.configTree, r.cfg.authMode, r.cfg.late
 	return r, func() tea.Msg {
 		stream, stdin, err := start(configTree, step, mode)
-		return configStepMsg{stream: stream, stdin: stdin, err: err}
+		msg := configStepMsg{stream: stream, stdin: stdin, err: err}
+		if late != nil && !late.hand(func() { releaseConfigMsg(msg) }) {
+			return nil
+		}
+		return msg
 	}
 }
 
@@ -349,9 +460,12 @@ func (r engineRun) recheckAfterInit() (engineRun, tea.Cmd) {
 	if recheck == nil {
 		recheck = deploy.RunConfigCheck
 	}
-	configTree := r.cfg.plan.configTree
+	configTree, ctx := r.cfg.plan.configTree, r.cfg.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return r, func() tea.Msg {
-		check, err := recheck(context.Background(), configTree)
+		check, err := recheck(ctx, configTree)
 		return configRecheckMsg{check: check, err: err}
 	}
 }
@@ -360,7 +474,7 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.RawLineMsg:
 		// A prompt-abort exits through the engine's refusal path;
-		// DoneMsg routes back to the refusal menu.
+		// DoneMsg routes to the failure screen.
 		r.cfg.session, _ = r.cfg.session.applyLine(m.Text)
 		return r, nil
 
@@ -387,9 +501,14 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 			// configure.sh. The terminal handoff is the honest path.
 			return r.fallbackToHandoff(fallbackLegacyEngine)
 		}
-		// The engine aborted (rejections exhausted or input closed) —
-		// back to the refusal menu; the person decides what's next.
-		r.state = runConfigPrompt
+		// The engine gave up (rejections exhausted or input closed):
+		// the failure screen says on which field. configure.sh's own
+		// output can carry answers, so none of it is ever shown.
+		r.releaseRunFiles()
+		r.lastFailed = nil
+		r.stderrTail = nil
+		r.runErr = shownText(r.cfg.session.giveUpWords(r.cfg.origin))
+		r.state = runFailed
 		r.menu = menu{}
 		return r, nil
 	}
@@ -418,21 +537,32 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
+	r.handoffErr = nil
 	r.menu = menu{}
 	return r.start(r.width, r.height)
+}
+
+// cancelConfigToMenu is Esc anywhere in the session: the configuration
+// process is stopped, the run's files released, and the run left for
+// the main menu. runLeft takes it out of runConfigCollect, so whatever
+// the stopped process still delivers belongs to nothing.
+func (r engineRun) cancelConfigToMenu() (engineRun, tea.Cmd) {
+	r.cfg.close()
+	r.releaseRunFiles()
+	r.state = runLeft
+	r.Done = true
+	r.WantsMenu = true
+	return r, nil
 }
 
 // handleConfigSignInModeKey drives the sign-in-mode screen (issue #154):
 // up/down move the highlight between the two rows, enter chooses it and
 // starts --init with that mode, esc cancels the whole session back to
-// the refusal menu — the same cancel handleConfigKey gives the rest of
+// the main menu — the same cancel handleConfigKey gives the rest of
 // this session.
 func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		r.cfg.close()
-		r.state = runConfigPrompt
-		r.menu = menu{}
-		return r, nil
+		return r.cancelConfigToMenu()
 	}
 	var chosen string
 	r.cfg.signIn, chosen = r.cfg.signIn.over(configSignInLabels()).update(msg)
@@ -449,13 +579,10 @@ func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, te
 
 // handleConfigKey is the typing surface (promptSession.key: typing,
 // and Enter submits the answer line); esc cancels the whole session
-// back to the refusal menu.
+// back to the main menu.
 func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
-		r.cfg.close()
-		r.state = runConfigPrompt
-		r.menu = menu{}
-		return r, nil
+		return r.cancelConfigToMenu()
 	}
 	var field, answer string
 	r.cfg.session, field, answer = r.cfg.session.key(msg, r.cfg.stdin)
@@ -468,7 +595,7 @@ func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 // promptWords maps protocol field names to the same human labels
 // install.sh's own TTY prompts use, plus the guidance a person actually
 // needs to answer at that moment. An unknown field renders its protocol
-// name — honest, never guessed at.
+// name, control codes shown as text — honest, never guessed at.
 //
 // notes carry worked examples, because naming a field is not the same as
 // telling someone where to find its value: "your identity provider's
@@ -508,16 +635,18 @@ func promptWords(field, origin string) (label, hint string, notes []string) {
 	case "safe-batch":
 		return "Run the safe repairs?", "y to proceed", nil
 	default:
-		return field, "", nil
+		// The engine's own word: drawn, never obeyed.
+		return visibleText(field), "", nil
 	}
 }
 
 // callbackNote names the redirect URI this deployment will actually sign
 // in through, which is the value the identity provider's registration
 // needs and the one most often got wrong. origin is the answer already
-// given for APP_URL; when it is missing or long enough to break the
-// 80-cell bar, the note falls back to the shape rather than a truncated
-// address someone might paste.
+// given for APP_URL. The note is two rows: what to do, then the address
+// alone, so it can be copied whole. When the origin is missing or the
+// address is wider than a prose row on an 80-cell screen, the note falls
+// back to the shape rather than a wrapped address someone might paste.
 func callbackNote(origin string) []string {
 	const callbackPath = "/api/auth/callback"
 	generic := []string{"register <your Orbit URL>" + callbackPath, "as the redirect URI in your provider"}
@@ -525,15 +654,15 @@ func callbackNote(origin string) []string {
 	if origin == "" || !strings.HasPrefix(origin, "https://") {
 		return generic
 	}
-	line := "register " + origin + callbackPath
-	if len(line) > 76 {
+	address := origin + callbackPath
+	if len(address) > measure(80, errorWidth) {
 		return generic
 	}
-	return []string{line, "as the redirect URI in your provider"}
+	return []string{"Register the redirect URI with your provider", address}
 }
 
 // rejectionWords maps the engine's rejection reason classes to honest
-// words. Unknown classes render verbatim.
+// words. Unknown classes render as given, control codes shown as text.
 func rejectionWords(reason string) string {
 	switch reason {
 	case "empty":
@@ -549,7 +678,8 @@ func rejectionWords(reason string) string {
 	case "too-large":
 		return "too large"
 	default:
-		return reason
+		// The engine's own word: drawn, never obeyed.
+		return visibleText(reason)
 	}
 }
 

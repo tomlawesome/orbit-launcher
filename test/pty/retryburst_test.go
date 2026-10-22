@@ -66,14 +66,11 @@ func TestConfig_RealPTY_RetriedRunSurvivesAnOverlongEngineLine(t *testing.T) {
 
 	driveToInstallNow(t, console)
 
-	must("Orbit needs your configuration")
-	must("Continue — guided configuration")
-	send("\r")
-
 	// The sign-in-mode screen (issue #154), asked before --init ever
 	// runs. fakeMachineConfigure's --init doesn't branch on the answer,
 	// so the default (local accounts) is fine here.
 	must("How will people sign in?")
+	expectNoRemovedConfigScreen(t, console)
 	send("\r")
 
 	must("Public Orbit origin")

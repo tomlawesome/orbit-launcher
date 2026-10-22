@@ -42,6 +42,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"regexp"
 	"sort"
@@ -194,6 +195,11 @@ func ParseFloors(r io.Reader) (map[string]Floor, error) {
 		if err != nil {
 			return nil, fmt.Errorf("floors file line %d: floor %q for %s is not a number: %w", l.No, fields[1], fields[0], err)
 		}
+		// `!(pct >= 0)` rather than `pct < 0`: NaN is neither below nor
+		// above anything, so a NaN floor would otherwise pass every check.
+		if !(pct >= 0) {
+			return nil, fmt.Errorf("floors file line %d: floor %q for %s is not a percentage of zero or more", l.No, fields[1], fields[0])
+		}
 		if prev, dup := floors[fields[0]]; dup {
 			return nil, fmt.Errorf("floors file line %d: %s already has a floor, set on line %d", l.No, fields[0], prev.Line)
 		}
@@ -203,6 +209,16 @@ func ParseFloors(r io.Reader) (map[string]Floor, error) {
 		return nil, fmt.Errorf("floors file has no '<import path> <percent>' lines")
 	}
 	return floors, nil
+}
+
+// roundDown1 rounds a percentage down to one decimal place, the way the
+// floors file records its numbers. Checking and printing the same rounded
+// figure means a printed value can be copied into the file as a floor and
+// pass, and a report never reads "got 85.0%, floor 85.0%" and fails. The
+// small addition absorbs float error so an exact tenth is not rounded below
+// itself.
+func roundDown1(p float64) float64 {
+	return math.Floor(p*10+1e-9) / 10
 }
 
 // Result is one measured package's coverage, and the floor (if any) it
@@ -226,7 +242,7 @@ func Check(measured map[string]Coverage, floors map[string]Floor) (results []Res
 	sort.Strings(pkgs)
 
 	for _, pkg := range pkgs {
-		got := measured[pkg].Percent()
+		got := roundDown1(measured[pkg].Percent())
 		r := Result{Package: pkg, Got: got}
 		if f, ok := floors[pkg]; ok {
 			r.HasFloor = true

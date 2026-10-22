@@ -25,15 +25,14 @@ func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 // openNotice builds an install model at width×height on a fake clock and
-// takes it to the notice: Standard, then Install now.
+// takes it to the notice: Enter on Standard.
 func openNotice(t *testing.T, width, height int, seams engineRunSeams) (InstallModel, *fakeClock, tea.Cmd) {
 	t.Helper()
 	clock := newFakeClock()
 	seams.now = clock.now
 	m, _ := newTestInstallModel(seams)
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: height})
-	m, _ = updateAs(t, m, key(tea.KeyEnter)) // Standard -> confirm
-	updated, cmd := m.Update(key(tea.KeyEnter))
+	updated, cmd := m.Update(key(tea.KeyEnter)) // Standard -> notice
 	m = updated.(InstallModel)
 	if m.state != installStateNotice {
 		t.Fatalf("state = %v, want installStateNotice", m.state)
@@ -89,18 +88,18 @@ func TestNotice_InstallNowOpensTheNoticeAndStartsNoEngine(t *testing.T) {
 		t.Errorf("tick start = %v, want the notice's %v", msg.start, m.notice.start)
 	}
 	if engineCalled {
-		t.Error("Install now must open the notice, not start the engine")
+		t.Error("Standard must open the notice, not start the engine")
 	}
 }
 
-func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
+func TestNotice_EscAndGoBackReturnToProfileAndReentryIsFresh(t *testing.T) {
 	t.Parallel()
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
 	first := m.notice.start
 
 	m, _ = updateAs(t, m, key(tea.KeyEsc))
-	if m.state != installStateConfirm || m.confirm.sel != 0 {
-		t.Fatalf("Esc: state = %v, confirm.sel = %d; want confirm with Install now selected", m.state, m.confirm.sel)
+	if m.state != installStateProfile || m.profile.sel != 0 {
+		t.Fatalf("Esc: state = %v, profile.sel = %d; want the profile screen with Standard selected", m.state, m.profile.sel)
 	}
 
 	clock.advance(30 * time.Second)
@@ -112,8 +111,8 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 	if !m.notice.start.Equal(clock.now()) || m.notice.start.Equal(first) {
 		t.Errorf("re-entry start = %v, want a fresh start at %v", m.notice.start, clock.now())
 	}
-	if !strings.Contains(screen(m), "1:10") {
-		t.Error("re-entry must restart the countdown at 1:10")
+	if !strings.Contains(screen(m), "0:20") {
+		t.Error("re-entry must restart the countdown at 0:20")
 	}
 	if tick, ok := cmd().(noticeTickMsg); !ok || !tick.start.Equal(m.notice.start) {
 		t.Errorf("re-entry tick = %#v, want one carrying the new start", tick)
@@ -126,8 +125,8 @@ func TestNotice_EscAndGoBackReturnToConfirmAndReentryIsFresh(t *testing.T) {
 	}
 
 	m, _ = updateAs(t, m, key(tea.KeyEnter)) // the caret starts on Back
-	if m.state != installStateConfirm {
-		t.Errorf("Enter on Back: state = %v, want installStateConfirm", m.state)
+	if m.state != installStateProfile {
+		t.Errorf("Enter on Back: state = %v, want installStateProfile", m.state)
 	}
 }
 
@@ -152,8 +151,8 @@ func TestNotice_WrapsTheApprovedCopy(t *testing.T) {
 			t.Errorf("row %d is %d cells, over the %d measure: %q", i, r.width(), noticeMeasure, r.plain())
 		}
 	}
-	if len(doc) != 39 || prose != 31 || gaps != 8 {
-		t.Errorf("doc = %d rows (%d prose, %d gaps), want 39 (31, 8) as the mockup renders", len(doc), prose, gaps)
+	if len(doc) != 47 || prose != 38 || gaps != 9 {
+		t.Errorf("doc = %d rows (%d prose, %d gaps), want 47 (38, 9) as the mockup renders", len(doc), prose, gaps)
 	}
 
 	// The emphasised sentence breaks across two rows; both carry it.
@@ -192,7 +191,7 @@ func TestNotice_WrapsTheApprovedCopy(t *testing.T) {
 func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
 	view := screen(m)
-	for _, want := range []string{noticeTitle, "Project state: alpha", "1:10", "Back", "To install, type  " + noticePhrase} {
+	for _, want := range []string{noticeTitle, "Project state: alpha", "0:20", "Back", "To install, type  " + noticePhrase} {
 		if !strings.Contains(view, want) {
 			t.Errorf("first view lacks %q", want)
 		}
@@ -201,8 +200,8 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Errorf("view is %d rows, want 26", len(lines))
 	}
 	l := m.notice.layout()
-	if len(l.rows) != 12 {
-		t.Errorf("prose viewport = %d rows, want 12", len(l.rows))
+	if len(l.rows) != 10 {
+		t.Errorf("prose viewport = %d rows, want 10", len(l.rows))
 	}
 	if l.fadeBot != len(l.rows)-1 || l.fadeTop != -1 {
 		t.Errorf("fades = top %d, bottom %d; want only the last row faded", l.fadeTop, l.fadeBot)
@@ -216,9 +215,9 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 		t.Fatal("End must show the end and open the scroll gate")
 	}
 
-	clock.advance(69 * time.Second)
+	clock.advance(19 * time.Second)
 	if !strings.Contains(screen(m), "0:01") {
-		t.Error("at 69 s the countdown must read 0:01")
+		t.Error("at 19 s the countdown must read 0:01")
 	}
 	m, _ = updateAs(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusBack || !m.notice.typed.empty() {
@@ -227,9 +226,9 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 
 	clock.advance(time.Second)
 	block := strings.Split(m.notice.view(m.now(), m.noticeDur()), "\n")
-	countdown := block[noticeHeaderRows+len(m.notice.layout().rows)]
+	countdown := block[noticeHeaderRows+len(m.notice.layout().rows)+2]
 	if strings.TrimSpace(ansi.Strip(countdown)) != "" {
-		t.Errorf("at 70 s the countdown row must be blank, got %q", ansi.Strip(countdown))
+		t.Errorf("at 20 s the countdown row must be blank, got %q", ansi.Strip(countdown))
 	}
 	m, _ = updateAs(t, m, runeKey('I'))
 	if m.notice.focus != noticeFocusField || m.notice.typed.String() != "I" {
@@ -238,19 +237,19 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 }
 
 func TestNotice_TallTerminalFitsWithoutScrolling(t *testing.T) {
-	m, _, _ := openNotice(t, 120, 53, engineRunSeams{})
+	m, _, _ := openNotice(t, 120, 65, engineRunSeams{})
 	if !m.notice.endSeen {
 		t.Error("when everything fits the scroll gate is open on entry")
 	}
-	if l := m.notice.layout(); len(l.rows) != 39 || l.fadeTop != -1 || l.fadeBot != -1 {
-		t.Errorf("layout = %d rows, fades %d/%d; want all 39 unfaded", len(l.rows), l.fadeTop, l.fadeBot)
+	if l := m.notice.layout(); len(l.rows) != 47 || l.fadeTop != -1 || l.fadeBot != -1 {
+		t.Errorf("layout = %d rows, fades %d/%d; want all 47 unfaded", len(l.rows), l.fadeTop, l.fadeBot)
 	}
 }
 
 func TestNotice_ThreeHiddenRowsNeedThreeDowns(t *testing.T) {
-	m, _, _ := openNotice(t, 120, 50, engineRunSeams{})
+	m, _, _ := openNotice(t, 120, 60, engineRunSeams{})
 	if m.notice.endSeen {
-		t.Fatal("three rows hang below at 120×50")
+		t.Fatal("three rows hang below at 120×60")
 	}
 	for range 3 {
 		m, _ = updateAs(t, m, key(tea.KeyDown))
@@ -275,7 +274,7 @@ func TestNotice_GapIsNeverTheLastRowWhileMoreFollows(t *testing.T) {
 
 func TestNotice_ScrollGateIsSticky(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
-	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 53})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 65})
 	if !m.notice.endSeen {
 		t.Fatal("a resize that reveals the end must open the scroll gate")
 	}
@@ -296,17 +295,17 @@ func TestNotice_ScrollKeysAndWheel(t *testing.T) {
 		t.Error("the notice turns mouse reporting on so the wheel scrolls")
 	}
 	m, _ = updateAs(t, m, key(tea.KeyPgDown))
-	if m.notice.offset != 11 {
-		t.Errorf("PgDn: offset = %d, want viewport-1 = 11", m.notice.offset)
+	if m.notice.offset != 9 {
+		t.Errorf("PgDn: offset = %d, want prose-1 = 9", m.notice.offset)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyPgUp))
 	m, _ = updateAs(t, m, key(tea.KeySpace))
-	if m.notice.offset != 11 || !m.notice.typed.empty() {
+	if m.notice.offset != 9 || !m.notice.typed.empty() {
 		t.Errorf("Space while asleep: offset = %d, typed %q; want a page down", m.notice.offset, m.notice.typed.String())
 	}
 	m, _ = updateAs(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if m.notice.offset != 8 {
-		t.Errorf("wheel up: offset = %d, want 8", m.notice.offset)
+	if m.notice.offset != 6 {
+		t.Errorf("wheel up: offset = %d, want 6", m.notice.offset)
 	}
 	m, _ = updateAs(t, m, key(tea.KeyHome))
 	if m.notice.offset != 0 {
@@ -405,7 +404,7 @@ func TestPhraseMatches(t *testing.T) {
 }
 
 func TestNotice_ExtremeSizesDoNotPanic(t *testing.T) {
-	for _, size := range [][2]int{{40, 10}, {200, 60}, {10, 3}} {
+	for _, size := range [][2]int{{40, 10}, {200, 60}, {10, 3}, {41, 26}} {
 		m, clock, _ := openNotice(t, size[0], size[1], engineRunSeams{})
 		_ = m.View()
 		clock.advance(noticeDefaultDuration)
@@ -414,6 +413,29 @@ func TestNotice_ExtremeSizesDoNotPanic(t *testing.T) {
 		}
 		m = typeText(t, m, strings.Repeat("long text ", 10))
 		_ = m.View()
+		m, _ = updateAs(t, m, key(tea.KeyEnd))
+		_ = m.View()
+	}
+}
+
+// The row holding the longest unbreakable word may overrun a narrow
+// terminal (the screen edge clips it), but rendering it must never panic,
+// whatever the width, height or scroll offset.
+func TestNotice_NarrowTerminalsNeverPanicAtAnyOffset(t *testing.T) {
+	for w := 10; w < 80; w++ {
+		for _, h := range []int{3, 10, 24, 26} {
+			n := newNotice(time.Now(), w, h)
+			for off := 0; off <= n.maxOffset(); off++ {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							t.Fatalf("view panicked at width %d, height %d, offset %d: %v", w, h, off, r)
+						}
+					}()
+					_ = n.scrollTo(off).view(time.Now(), noticeDefaultDuration)
+				}()
+			}
+		}
 	}
 }
 
@@ -435,8 +457,6 @@ func TestNotice_TeaTest_PassesTheNoticeAt80x26(t *testing.T) {
 	}
 
 	wait("Choose a deployment profile")
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	wait("Ready to install")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	passNotice(t, tm)
 	wait("Install — Standard")

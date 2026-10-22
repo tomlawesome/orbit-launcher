@@ -193,7 +193,10 @@ func TestInputLine_ModifierKeysTypeNothing(t *testing.T) {
 			{"ctrl+b", tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}},
 			{"alt+b", tea.KeyPressMsg{Code: 'b', Mod: tea.ModAlt}},
 			{"ctrl+alt+b", tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl | tea.ModAlt}},
-			{"ctrl+a", tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}},
+			// Ctrl+A now jumps to the start of the line (#258), and the
+			// rig reads only the text before the cursor; Ctrl+Q means
+			// nothing in a field.
+			{"ctrl+q", tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl}},
 		} {
 			rig.press(mk.k)
 			if got := rig.typed(); got != "a" {
@@ -282,16 +285,16 @@ func TestInputLine_NothingReachesTheEngineUntilEnter(t *testing.T) {
 
 // Esc stays with each caller: the shared line must not swallow it, and
 // typed text does not change what it does. Passed already; it guards
-// the merge. Configuration kills the stream and leaves the session,
+// the merge. Configuration kills the stream and goes to the menu,
 // rotation closes stdin and waits for the engine, the notice goes back
-// to the confirm screen.
+// to the profile screen.
 func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
-	t.Run("notice goes back to confirm", func(t *testing.T) {
+	t.Run("notice goes back to the profile screen", func(t *testing.T) {
 		m := awakeNotice(t, engineRunSeams{})
 		m = typeText(t, m, "I've")
 		m, _ = updateAs(t, m, key(tea.KeyEsc))
-		if m.state != installStateConfirm {
-			t.Fatalf("state = %v, want installStateConfirm", m.state)
+		if m.state != installStateProfile {
+			t.Fatalf("state = %v, want installStateProfile", m.state)
 		}
 	})
 
@@ -314,7 +317,7 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 		}
 	})
 
-	t.Run("configuration kills the stream and leaves the session", func(t *testing.T) {
+	t.Run("configuration kills the stream and goes to the menu", func(t *testing.T) {
 		r := collectingRun(t, engineRunSeams{})
 		s := sleepingStream(t)
 		stdin := &recordingStdin{}
@@ -323,8 +326,8 @@ func TestInputLine_EscKeepsEachCallersMeaning(t *testing.T) {
 		r, _ = r.update(configStreamMsg{msg: engine.RawLineMsg{Text: "prompt field=OIDC_CLIENT_ID kind=text required=true attempt=1"}})
 		r, _ = r.update(runeKey('a'))
 		r, _ = r.update(key(tea.KeyEsc))
-		if r.state != runConfigPrompt {
-			t.Fatalf("state = %v, want runConfigPrompt (the session was cancelled)", r.state)
+		if o := outcomeOf(r); !leftForMenu(o) {
+			t.Fatalf("outcome = %+v, want back to the main menu without success (the session was cancelled)", o)
 		}
 		awaitEnd(t, s)
 		if stdin.String() != "" {

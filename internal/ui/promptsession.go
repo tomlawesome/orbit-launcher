@@ -7,10 +7,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
+
+// secretMaskWidth is how many bullets a secret prompt's mask shows.
+const secretMaskWidth = 8
 
 // promptSession is one machine-prompt session (#211): the engine asks
 // for a field, the person types an answer, the engine rejects, accepts
@@ -20,6 +24,10 @@ import (
 type promptSession struct {
 	prompt *engine.Prompt // non-nil while one answer is being typed
 	reason string         // honest words for the last rejection
+	// last and aborted name the field last asked for and not yet
+	// accepted, and the one the engine gave up on (its prompt-abort
+	// line); "" until they happen.
+	last, aborted string
 	// sawPrompt records that the engine spoke the protocol at all:
 	// configuration tells a legacy configure.sh apart by its absence.
 	sawPrompt bool
@@ -37,6 +45,7 @@ func (s promptSession) applyLine(text string) (_ promptSession, ok bool) {
 	case engine.Prompt:
 		prompt := p
 		s.prompt = &prompt
+		s.last = p.Field
 		s.sawPrompt = true
 		s.input = inputLine{}
 	case engine.PromptReject:
@@ -45,9 +54,13 @@ func (s promptSession) applyLine(text string) (_ promptSession, ok bool) {
 	case engine.PromptAccept:
 		s.reason = ""
 		s.prompt = nil
+		// An accepted field is no longer being asked for, so a later
+		// give-up must not name it.
+		s.last = ""
 	case engine.PromptAbort:
 		// The engine gives up (third rejection or closed input) and
 		// exits through its refusal path.
+		s.aborted = p.Field
 		s.prompt = nil
 	}
 	return s, true
@@ -102,26 +115,57 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 
 	label, hint, notes := promptWords(p.Field, origin)
 	fmt.Fprintln(b, style.Ink.Render(label))
+	// The hint and each note wrap at spaces to the screen's width, as
+	// other prose does (#269); an unsized screen (width 0) prints them
+	// whole. wrapWords keeps a word wider than the screen whole (a long
+	// example URL), so it is cut at the screen's edge here; a URL that
+	// fits stays on one line.
+	prose := func(ink lipgloss.Style, text string) {
+		if width <= 0 {
+			fmt.Fprintln(b, ink.Render(text))
+			return
+		}
+		for _, row := range wrapWords(text, measure(width, errorWidth)) {
+			for _, part := range strings.Split(xansi.Hardwrap(row, width, true), "\n") {
+				fmt.Fprintln(b, ink.Render(part))
+			}
+		}
+	}
 	if hint != "" {
-		fmt.Fprintln(b, style.Tagline.Render(hint))
+		prose(style.Tagline, hint)
 	}
 	for _, note := range notes {
-		fmt.Fprintln(b, style.MutedText.Render(note))
+		prose(style.MutedText, note)
 	}
 	fmt.Fprintln(b)
 
-	// The input row. A secret is never echoed — not even its length.
+	// The input row. A secret is never echoed — not even its length: once
+	// the answer holds anything the row shows a fixed mask of eight
+	// bullets, however long the answer is (#252).
 	caret := style.MenuCaret.Render(style.SymbolSelected) + " "
 	cursor := style.AccentText.Render(style.SymbolCursor)
-	var shown string
+	// Nor, for a secret, where the cursor sits (#258): it stays drawn
+	// in one place (after the mask, if any), wherever the editing keys
+	// have moved it.
+	var before, after string
+	inkBefore := style.Ink
 	switch {
-	case p.Kind == "secret": // shown stays empty
+	case p.Kind == "secret":
+		// after stays empty, so the cursor stays drawn after the mask.
+		if !s.input.empty() {
+			before = strings.Repeat(style.SymbolMasked, secretMaskWidth)
+			inkBefore = style.MutedText
+		}
 	case width > 0:
-		shown = s.input.tail(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
+		before, after = s.input.around(max(width-lipgloss.Width(caret)-lipgloss.Width(cursor), 0))
 	default:
-		shown = s.input.String()
+		before, after = s.input.around(lipgloss.Width(s.input.String()))
 	}
-	fmt.Fprintln(b, caret+style.Ink.Render(shown)+cursor)
+	row := caret + inkBefore.Render(before) + cursor
+	if after != "" { // a cursor at the end draws the row byte for byte as before
+		row += style.Ink.Render(after)
+	}
+	fmt.Fprintln(b, row)
 
 	if s.reason != "" {
 		fmt.Fprintln(b)
@@ -130,4 +174,32 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	if p.Attempt > 1 {
 		fmt.Fprintln(b, style.Tagline.Render(fmt.Sprintf("attempt %d of %d", p.Attempt, engine.PromptMaxAttempts)))
 	}
+}
+
+// shownText is an error whose text is ready for the screen: every
+// outside value in it already went through visibleText.
+type shownText string
+
+func (e shownText) Error() string { return string(e) }
+
+// giveUpWords is the failure screen's reason when the engine gave up: the
+// field it stopped asking for (the abort line's, else the last one asked)
+// and, if it had rejected an answer, the rejection's words on a row
+// of their own. origin is as
+// for view.
+func (s promptSession) giveUpWords(origin string) string {
+	field := s.aborted
+	if field == "" {
+		field = s.last
+	}
+	if field == "" {
+		return "Orbit's setup stopped before the configuration was finished."
+	}
+	label, _, _ := promptWords(field, origin)
+	words := "Orbit's setup stopped asking for " + label + "."
+	if s.reason != "" {
+		// Its own row, so wrapping never splits the reason.
+		words += "\nLast answer: " + s.reason
+	}
+	return words
 }

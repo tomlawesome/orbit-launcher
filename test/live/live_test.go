@@ -13,6 +13,7 @@
 package live
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -26,10 +27,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
 	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
@@ -88,6 +91,10 @@ type liveSession struct {
 	// deadline is go test's own -timeout deadline, from t.Deadline; zero
 	// means there is none. Every wait ends cleanupReserve before it.
 	deadline time.Time
+	// signIn is the answer acceptMenusUntil gives an M7 installer's own
+	// sign-in question, set by chooseSSO or chooseLocalAccounts so the
+	// two never disagree; empty means "oidc", as before #246.
+	signIn string
 }
 
 // healthClient bounds each request to the deployed app, so one that never
@@ -156,6 +163,20 @@ func (s *liveSession) expectWithin(what string, match vtscreen.Match) string {
 	return out
 }
 
+// removedConfigScreenText is what the screen the engine's configuration
+// stop used to land on showed (#251): the stop goes straight into guided
+// configuration now. Every wait fails if one of these comes up.
+var removedConfigScreenText = []string{"The engine stopped before touching anything", "Continue — guided configuration"}
+
+func showsRemovedConfigScreen(screen string) (string, bool) {
+	for _, gone := range removedConfigScreenText {
+		if strings.Contains(screen, gone) {
+			return gone, true
+		}
+	}
+	return "", false
+}
+
 // expectWithinErr holds all of expectWithin's logic but returns the
 // failure instead of calling t.Fatalf, so the timeout/diagnose path can
 // be exercised and asserted on by a test.
@@ -184,7 +205,13 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, matc
 		return "", fmt.Errorf("%s: test deadline is within cleanupReserve (%s); failing now so cleanup can run", what, cleanupReserve)
 	}
 	start := time.Now()
-	screen, err := vtscreen.Wait(s.term, budget, match)
+	// The removed configuration screen would be on the way to the one
+	// waited for, and replaced by it, so a check of the screen the wait
+	// ends on could never see it: it ends the wait here instead.
+	screen, err := vtscreen.Wait(s.term, budget, func(sc string) bool {
+		_, removed := showsRemovedConfigScreen(sc)
+		return removed || match(sc)
+	})
 	if err != nil {
 		// A cut budget's timeout would otherwise read like a budget bug.
 		if budget < requested {
@@ -195,6 +222,9 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, matc
 	}
 	// The evidence screenBudget is calibrated against (#166).
 	s.t.Logf("%s: matched after %s (budget %s)", what, time.Since(start).Round(100*time.Millisecond), budget)
+	if gone, removed := showsRemovedConfigScreen(screen); removed {
+		return "", fmt.Errorf("the removed configuration screen is shown (%q). Screen:\n%s", gone, screen)
+	}
 	return screen, nil
 }
 
@@ -234,11 +264,11 @@ func (s *liveSession) send(str string) {
 	vtscreen.Send(s.term, str)
 }
 
-// noticeWait outlasts the development notice's 70 s countdown (#175). The
+// noticeWait outlasts the development notice's 20 s countdown (#175, #250). The
 // binary keeps its full countdown -- nothing outside it can shorten an
-// approved gate -- so a run through Install now waits it out, exactly as
+// approved gate -- so a run through Standard waits it out, exactly as
 // test/pty does.
-const noticeWait = 72 * time.Second
+const noticeWait = 22 * time.Second
 
 // passNotice gets past the development notice the way a person does: End
 // shows the whole notice, the countdown runs out, the phrase is typed and
@@ -255,7 +285,7 @@ func (s *liveSession) passNotice() {
 }
 
 // runStarted waits, under screenBudget, for the mission console to say the
-// engine run has begun. It sits in each test right after Install now, not
+// engine run has begun. It sits in each test right after Standard, not
 // inside passNotice, so a run stuck before the console -- a notice that
 // never lets go, as on pipeline 2063 -- fails in screenBudget instead of
 // in the 600 s engine wait that follows (#166).
@@ -269,7 +299,7 @@ func (s *liveSession) runStarted() {
 	s.t.Helper()
 	const what = "expected the mission console"
 	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
-		"Contacting the engine", "ORBIT · Install", "Orbit needs your configuration", "Install stopped")); err != nil {
+		"Contacting the engine", "ORBIT · Install", "How will people sign in?", "Install stopped")); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
@@ -284,6 +314,19 @@ func (s *liveSession) chooseSSO() {
 	s.mustSoon("Local accounts")
 	s.send("\x1b[B") // Down to Single sign-on (SSO)
 	s.send("\r")
+	s.signIn = "oidc"
+}
+
+// chooseLocalAccounts answers the same question with its default row,
+// Local accounts, the way test/pty's local sign-in journey does: no
+// arrow press, so --init runs with ORBIT_CONFIGURE_AUTH_MODE=local and
+// asks for APP_URL only (#246).
+func (s *liveSession) chooseLocalAccounts() {
+	s.t.Helper()
+	s.mustSoon("How will people sign in?")
+	s.mustSoon("Local accounts")
+	s.send("\r")
+	s.signIn = "local"
 }
 
 // choose selects a top-level menu row by its digit rather than by counting
@@ -737,10 +780,11 @@ func recordScreens(t *testing.T, term *vtscreen.Terminal, path string) {
 // One question is not a menu: an M7 installer (orbit !908, ADR-0023 §1)
 // opens the guided configuration by asking "Sign in with local accounts
 // only, or also with an identity provider? [local/oidc] (default:
-// local)". Enter there would pick local-only, and the OIDC prompts this
-// suite drives next would never come, so it is answered "oidc" — the
-// flow every assertion below was written for. A pre-M7 installer never
-// asks, and never matches.
+// local)". Enter there would pick local-only, and the OIDC prompts the
+// SSO journeys drive next would never come, so it is answered with the
+// mode the launcher's own sign-in screen was given (liveSession.signIn),
+// "oidc" unless the Local-accounts journey chose otherwise. A pre-M7
+// installer never asks, and never matches.
 //
 // stopScreenReasonPattern matches the installer's own reason line on its
 // failure screen, e.g. "Orbit installer: Could not fetch
@@ -799,7 +843,11 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		}
 		acted = result
 		if strings.Contains(result, signInModeMarker) {
-			session.send("oidc\r")
+			answer := session.signIn
+			if answer == "" {
+				answer = "oidc"
+			}
+			session.send(answer + "\r")
 			continue
 		}
 		session.send("\r")
@@ -918,6 +966,88 @@ func dockerComposeDown(t *testing.T, dir string) {
 	}
 }
 
+// liveRunLifetime is the longest a run of this suite can hold a stack: both
+// hosts cap the live job at 35 minutes, above go test's own 30m -timeout.
+const liveRunLifetime = 35 * time.Minute
+
+// liveProjectPattern matches the names liveProjectName gives, and nothing
+// else: never "orbit", the project a real Orbit on the host uses.
+var liveProjectPattern = regexp.MustCompile(`^orbit-live-[0-9a-f]{8}$`)
+
+// leftoverLiveProjects picks, from `docker ps --all` lines of project, working
+// directory and creation time (tab-separated), the projects of this suite
+// that no run can still be using: a project is kept while any of its
+// containers is both younger than liveRunLifetime and has a working
+// directory that still exists, which is what a concurrent run on the same
+// daemon looks like. An unreadable time counts as young.
+func leftoverLiveProjects(psOutput string, now time.Time, dirExists func(string) bool) []string {
+	seen, inUse := map[string]bool{}, map[string]bool{}
+	var order []string
+	for _, line := range strings.Split(psOutput, "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(fields) != 3 || !liveProjectPattern.MatchString(fields[0]) {
+			continue
+		}
+		project, workDir := fields[0], fields[1]
+		if !seen[project] {
+			seen[project] = true
+			order = append(order, project)
+		}
+		created, err := time.Parse("2006-01-02 15:04:05 -0700 MST", fields[2])
+		young := err != nil || now.Sub(created) < liveRunLifetime
+		if young && workDir != "" && dirExists(workDir) {
+			inUse[project] = true
+		}
+	}
+	var out []string
+	for _, project := range order {
+		if !inUse[project] {
+			out = append(out, project)
+		}
+	}
+	return out
+}
+
+var sweepOnce sync.Once
+
+// sweepLeftoverLiveStacks removes, once per test binary and before the first
+// test that installs anything, the stacks earlier runs of this suite left
+// on the daemon (TL-S7). A run that hits go test's -timeout panics without
+// running t.Cleanup, so dockerComposeDown never runs for it; on GitLab the
+// daemon's data root outlives the job and Orbit's restart policies bring
+// those containers back, holding ports and disk for the next run. Only
+// projects named like liveProjectName are touched, by the same label-only
+// `compose -p ... down -v` dockerComposeDown uses for a rolled-back install.
+func sweepLeftoverLiveStacks(t *testing.T) {
+	t.Helper()
+	sweepOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "docker", "ps", "--all",
+			"--filter", "label=com.docker.compose.project",
+			"--format", `{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.CreatedAt}}`).Output()
+		if err != nil {
+			t.Logf("leftover sweep: docker ps: %v; nothing swept", err)
+			return
+		}
+		exists := func(dir string) bool { _, err := os.Stat(dir); return err == nil }
+		for _, project := range leftoverLiveProjects(string(out), time.Now(), exists) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "down", "-v", "--remove-orphans")
+			// Outside the repository, so compose finds no file of its own
+			// and works from the project's labels alone.
+			cmd.Dir = os.TempDir()
+			cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+project)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Logf("leftover sweep: docker compose down for %s failed: %v\n%s", project, err, out)
+			} else {
+				t.Logf("leftover sweep: removed %s, left by an earlier run", project)
+			}
+			cancel()
+		}
+	})
+}
+
 // TestLive_InstallHealthyEndpointThenRemove is the real virtualized
 // live test: a real Install (issue #19 — real Docker, real health
 // checks, real HTTP response) followed by a real Remove against that
@@ -929,6 +1059,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -965,6 +1096,69 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	})
 }
 
+// TestLive_InstallLocalAccountsThenRemove is #246: the same Install and
+// Remove as the SSO journey above, but choosing Local accounts. Orbit's
+// v0.3.0 preview refused that path's prepared directory (a lone
+// .env-orbit, no oidc-client-secret) as not a recognisable deployment,
+// and both SSO journeys write the secret, so neither could catch it.
+func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	sweepLeftoverLiveStacks(t)
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	binPath := binaryPath(t)
+	dir := t.TempDir()
+	// Isolated by its own project name, same as the SSO journey.
+	t.Cleanup(func() { dockerComposeDown(t, dir) })
+
+	appURL := fmt.Sprintf("https://orbit-live-local-%d.internal", time.Now().UnixNano())
+
+	installed := t.Run("Install", func(t *testing.T) {
+		session := startLive(t, binPath, dir)
+		installLocalThroughConsole(t, session, appURL, "Get into Orbit")
+		waitHealthy(t, session)
+		quitFromSuccess(session)
+		assertLocalAccountsDeployment(t, dir)
+	})
+
+	t.Run("Remove", func(t *testing.T) {
+		if !installed {
+			t.Skip("Install failed; nothing to remove")
+		}
+		removeAndAssertCleanup(t, binPath, dir, appURL)
+	})
+}
+
+// assertLocalAccountsDeployment proves the install in dir is the
+// Local-accounts one: no OIDC client secret was written, and .env-orbit
+// does not turn OIDC on.
+func assertLocalAccountsDeployment(t *testing.T, dir string) {
+	t.Helper()
+	// Orbit leaves an empty placeholder here for Local accounts, because
+	// its Compose file names the path either way; only a non-empty file
+	// is a written secret.
+	secret := filepath.Join(dir, deploy.SecretsDir, "oidc-client-secret")
+	if info, err := os.Stat(secret); err == nil && info.Size() > 0 {
+		t.Errorf("a Local-accounts install wrote an OIDC client secret to %s (%d bytes)", secret, info.Size())
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Errorf("stat %s: %v", secret, err)
+	}
+	env, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
+	if err != nil {
+		t.Fatalf("read .env-orbit: %v", err)
+	}
+	for _, line := range strings.Split(string(env), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(key) == "ORBIT_AUTH_OIDC" && strings.Trim(strings.TrimSpace(value), `"'`) == "true" {
+			t.Errorf(".env-orbit turns OIDC on for a Local-accounts install: %q", line)
+		}
+	}
+}
+
 // installThroughConsole drives a fresh Install from the splash through the
 // in-console configuration, answering with appURL, the test issuer,
 // clientID and secret, then accepts install.sh's menus until target shows:
@@ -973,25 +1167,7 @@ func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID,
 	t.Helper()
 	sendLine := func(s string) { session.send(s + "\r") }
 
-	session.mustSoon("Install")
-	session.choose("Install") // by digit, not by trusting the preselection
-	session.mustSoon("Choose a deployment profile")
-	sendLine("") // Standard selected by default
-	session.mustSoon("Ready to install")
-	sendLine("") // confirm — the development notice opens first (#175)
-	session.passNotice()
-	session.runStarted() // the mission console's piped engine run starts
-
-	// The piped, terminal-less first attempt cannot prompt, so on a
-	// fresh target it ends in the engine's non-interactive
-	// configuration refusal (target rolled back). A contract-era
-	// engine (orbit develop) reports it as an event and lands on
-	// the styled configuration prompt; a legacy engine (orbit main)
-	// reports nothing and lands on the failure screen. Both
-	// screens' default option leads to the guided configuration.
-	session.expectWithin("expected the configuration prompt or failure screen after the piped attempt",
-		vtscreen.ContainsAny("Orbit needs your configuration", "Install stopped"))
-	sendLine("") // Continue — guided configuration / Open the guided installer
+	openGuidedConfiguration(session)
 	session.chooseSSO()
 
 	// Strict mode is on, so the only guided configuration available
@@ -1024,6 +1200,48 @@ func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID,
 	// waits on it until the budget runs out and the held port is never even
 	// tried (#151).
 	acceptMenusUntil(t, session, target)
+}
+
+// installLocalThroughConsole is installThroughConsole for Local accounts
+// (#246): the same Install up to the sign-in question, then the default
+// row, APP_URL as the only answer, and install.sh's menus accepted until
+// target shows.
+func installLocalThroughConsole(t *testing.T, session *liveSession, appURL, target string) {
+	t.Helper()
+	openGuidedConfiguration(session)
+	session.chooseLocalAccounts()
+	acceptMenusUntil(t, session, inConsolePromptMarker)
+	session.send(appURL + "\r")
+	acceptMenusUntil(t, session, target)
+}
+
+// openGuidedConfiguration drives a fresh Install from the splash to the
+// launcher's sign-in question: past the development notice, through the
+// piped attempt's configuration refusal, into the guided configuration.
+func openGuidedConfiguration(session *liveSession) {
+	session.t.Helper()
+	sendLine := func(s string) { session.send(s + "\r") }
+
+	session.mustSoon("Install")
+	session.choose("Install") // by digit, not by trusting the preselection
+	session.mustSoon("Choose a deployment profile")
+	sendLine("")         // Standard selected by default
+	session.passNotice() // Standard opens the development notice (#175, #248)
+	session.runStarted() // the mission console's piped engine run starts
+
+	// The piped, terminal-less first attempt cannot prompt, so on a
+	// fresh target it ends in the engine's non-interactive
+	// configuration refusal (target rolled back). A contract-era
+	// engine (orbit develop) reports it as an event and the launcher
+	// goes straight into guided configuration, to the sign-in question,
+	// with no key pressed (#251); a legacy engine (orbit main) reports
+	// nothing and lands on the failure screen, whose default option
+	// leads to the guided configuration.
+	screen := session.expectWithin("expected the sign-in question or failure screen after the piped attempt",
+		vtscreen.ContainsAny("How will people sign in?", "Install stopped"))
+	if !strings.Contains(screen, "How will people sign in?") {
+		sendLine("") // Open the guided installer
+	}
 }
 
 // waitHealthy waits for the deployed app to answer 200 on :3000.
@@ -1144,26 +1362,34 @@ func removeAndAssertCleanup(t *testing.T, binPath, dir, appURL string) {
 // and the launcher must land on an honest failure screen while
 // install.sh's own transaction leaves nothing half-changed. The
 // dependency is broken deterministically *before* the run — the test
-// process itself holds the app's port, so the engine's compose phase
-// hits a real "port is already allocated" failure — rather than
-// killing a container mid-install, which issue #57 itself flags as
-// needing timing care to keep non-flaky. Same failure family (the
-// deploy dies after config, at the container layer), none of the
-// race.
+// process itself holds the port the app publishes, so the engine's
+// compose phase hits a real bind failure — rather than killing a
+// container mid-install, which issue #57 itself flags as needing timing
+// care to keep non-flaky. Same failure family (the deploy dies after
+// config, at the container layer), none of the race.
+//
+// The port is one the kernel picks as free, handed to the deployment
+// through ORBIT_PORT (docker-compose.yml publishes
+// ${ORBIT_PORT:-3000}; the job's environment reaches compose through
+// install.sh unchanged and outranks .env-orbit). Holding :3000 itself
+// skipped the test whenever anything else had it, and could collide with
+// another run on the same daemon (#195 TL-S4).
 func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
 
 	// Hold the app's port for the whole test: compose cannot bind it.
-	blocker, err := net.Listen("tcp", ":3000")
+	blocker, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
-		t.Skipf("port 3000 not free to block: %v", err)
+		t.Fatalf("hold a free port for the app to collide with: %v", err)
 	}
 	defer blocker.Close()
+	port := strconv.Itoa(blocker.Addr().(*net.TCPAddr).Port)
 
 	binPath := binaryPath(t)
 	dir := t.TempDir()
@@ -1171,7 +1397,7 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	t.Cleanup(func() { dockerComposeDown(t, dir) })
 
 	appURL := fmt.Sprintf("https://orbit-live-fail-%d.internal", time.Now().UnixNano())
-	session := startLive(t, binPath, dir)
+	session := startLiveEnv(t, binPath, dir, "ORBIT_PORT="+port)
 
 	// The piped attempt's configuration refusal, then guided
 	// configuration — identical to the happy path. Then the deploy
@@ -1180,6 +1406,25 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	// with its stacked menu present.
 	installThroughConsole(t, session, appURL, "orbit-launcher-live-failure-test", "ci-live-failure-fake-secret", "Install stopped")
 	session.must("Menu")
+
+	// And it stopped where the port was taken: at `compose up`, whose
+	// failure install.sh reports with this reason. Any earlier failure
+	// would also say "Install stopped" and prove nothing about compose.
+	screen, err := session.expectWithinBudget("the compose-up failure reason", session.screenBudget, func(screen string) bool {
+		return strings.Contains(screenWords(screen), composeUpFailedReason)
+	})
+	if err != nil {
+		t.Fatalf("the failure screen does not give the compose-up reason %q: %v", composeUpFailedReason, err)
+	}
+	// Orbit's install.sh from #1485 on also prints Docker's own words; when
+	// it does, they must be about the held port.
+	if words := screenWords(screen); strings.Contains(words, "Docker said") {
+		if !portBindFailure(words, port) {
+			t.Errorf("Docker's words on the failure screen are not a bind failure on port %s:\n%s", port, screen)
+		}
+	} else {
+		t.Logf("this install.sh prints no Docker words; the compose-up reason alone shows the failure path")
+	}
 
 	// Exit via the failure menu (guided installer, Menu, Exit).
 	session.send("\x1b[B")
@@ -1204,6 +1449,41 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if len(psOut) != 0 {
 		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
 	}
+}
+
+// composeUpFailedReason is the reason install.sh gives when
+// `docker compose up` fails (fail_with docker-host in its readiness wait).
+const composeUpFailedReason = "Orbit services could not be created or started."
+
+// skyGlyphs are the starfield's marks, which share rows with text.
+const skyGlyphs = "·✦●⟡"
+
+// screenWords returns the screen's text as one line of words: the sky's
+// marks and lone "." stars dropped, and every run of spaces or row breaks
+// made one space, so a sentence wrapped across rows reads whole.
+func screenWords(screen string) string {
+	var words []string
+	for _, w := range strings.Fields(strings.Map(func(r rune) rune {
+		if strings.ContainsRune(skyGlyphs, r) {
+			return ' '
+		}
+		return r
+	}, screen)) {
+		if w != "." {
+			words = append(words, w)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// portBindFailure reports whether words hold Docker's refusal to publish
+// port: the kernel's "address already in use" when another process holds
+// it, or Docker's own "port is already allocated" when a container does.
+func portBindFailure(words, port string) bool {
+	if !strings.Contains(words, ":"+port) {
+		return false
+	}
+	return strings.Contains(words, "address already in use") || strings.Contains(words, "port is already allocated")
 }
 
 // The hang diagnosis only ever runs when a release-gate run has already
@@ -1335,6 +1615,40 @@ func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
 	}
 }
 
+// TestExpectWithin_FailsWhenTheRemovedConfigurationScreenComesUp proves a
+// wait ends, and fails, on the screen the engine's configuration stop used
+// to land on even when what it waits for is shown next, which a check of
+// the screen the wait ends on could never see.
+func TestExpectWithin_FailsWhenTheRemovedConfigurationScreenComesUp(t *testing.T) {
+	sessionShowing := func(t *testing.T, drawn string) *liveSession {
+		t.Helper()
+		term, err := vtscreen.New(80, 24, nil)
+		if err != nil {
+			t.Fatalf("create virtual terminal: %v", err)
+		}
+		t.Cleanup(func() { _ = term.Close() })
+		if _, err := io.WriteString(term.Output(), drawn); err != nil {
+			t.Fatalf("draw: %v", err)
+		}
+		return &liveSession{t: t, term: term, budget: 5 * time.Second, screenBudget: 5 * time.Second}
+	}
+	signIn := vtscreen.ContainsAny("How will people sign in?")
+
+	t.Run("the removed screen fails the wait", func(t *testing.T) {
+		session := sessionShowing(t, "The engine stopped before touching anything\r\n")
+		_, err := session.expectWithinErr("waiting for the sign-in question", signIn)
+		if err == nil || !strings.Contains(err.Error(), "removed configuration screen") {
+			t.Fatalf("error = %v, want the removed configuration screen reported", err)
+		}
+	})
+	t.Run("an ordinary screen still matches", func(t *testing.T) {
+		session := sessionShowing(t, "How will people sign in?")
+		if _, err := session.expectWithinErr("waiting for the sign-in question", signIn); err != nil {
+			t.Fatalf("an ordinary screen did not match: %v", err)
+		}
+	})
+}
+
 func TestCapBudgetLeavesRoomForCleanup(t *testing.T) {
 	now := time.Now()
 	for _, c := range []struct {
@@ -1429,5 +1743,53 @@ func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The port-conflict test reads the failure reason and Docker's words off a
+// screen where they wrap across rows between the sky's marks (#195 TL-S4).
+func TestScreenWords_ReadsAWrappedReasonBetweenStars(t *testing.T) {
+	screen := "   ✦     ✗ Install stopped        ·\n" +
+		" .   docker-host — Orbit services could not be      ●\n" +
+		"        created or started. · next: repair    ⟡   .\n" +
+		"  Orbit installer: Docker said: failed to bind host port\n" +
+		"  0.0.0.0:41234/tcp: address already in use\n"
+	words := screenWords(screen)
+	if !strings.Contains(words, composeUpFailedReason) {
+		t.Errorf("screenWords lost the wrapped reason:\n%s", words)
+	}
+	if !portBindFailure(words, "41234") {
+		t.Errorf("portBindFailure missed the bind failure on 41234:\n%s", words)
+	}
+	if portBindFailure(words, "3000") {
+		t.Error("portBindFailure accepted a bind failure on another port")
+	}
+	if portBindFailure(screenWords("Docker said: image not found 0.0.0.0:41234"), "41234") {
+		t.Error("portBindFailure accepted a failure that is not about binding")
+	}
+}
+
+// The leftover sweep (TL-S7) removes only this suite's stacks that no run
+// can still be using, and never a real Orbit's.
+func TestLeftoverLiveProjects_SweepsOnlyAbandonedLiveStacks(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	recent := "2026-10-21 11:50:00 +0000 UTC"
+	old := "2026-10-21 10:00:00 +0000 UTC"
+	live := map[string]bool{"/tmp/TestLive_running/001": true, "/tmp/TestLive_stale/001": true}
+	ps := strings.Join([]string{
+		"orbit\t/opt/orbit\t" + old,                                 // a real Orbit: never
+		"orbit-live-0123abcd\t/tmp/TestLive_running/001\t" + recent, // a concurrent run: kept
+		"orbit-live-0123abcd\t/tmp/TestLive_running/001\t" + old,
+		"orbit-live-feedbeef\t/tmp/TestLive_gone/001\t" + recent, // its run's directory is gone
+		"orbit-live-feedbeef\t/tmp/TestLive_gone/001\t" + recent,
+		"orbit-live-c0ffee00\t/tmp/TestLive_stale/001\t" + old, // older than any run
+		"orbit-live-c0ffee00x\t/tmp/x\t" + old,                 // not a name liveProjectName gives
+		"orbit-live-ABCDEF01\t/tmp/x\t" + old,
+		"other-orbit-live-01234567\t/tmp/x\t" + old,
+		"",
+	}, "\n")
+	got := leftoverLiveProjects(ps, now, func(dir string) bool { return live[dir] })
+	if want := []string{"orbit-live-feedbeef", "orbit-live-c0ffee00"}; !slices.Equal(got, want) {
+		t.Errorf("swept %v, want %v", got, want)
 	}
 }

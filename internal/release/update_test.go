@@ -140,15 +140,22 @@ func TestCheckForUpdate_NoUpdateOnMalformedJSON(t *testing.T) {
 
 func TestCheckForUpdate_NoUpdateOnOversizedBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// A huge JSON array that never closes before the cap bites, so
-		// decoding fails instead of succeeding on a truncated document.
-		fmt.Fprint(w, `{"launcher": {"tag": "`+strings.Repeat("v0.0.0", maxUpdateCheckResponseBytes)+`"}}`)
+		// A complete, valid manifest naming a newer, well-formed tag,
+		// followed by more padding than the cap allows. Read in full it
+		// decodes and reports an update; cut at the cap it is a JSON
+		// document that stops inside a string. So the only way to get an
+		// error is for the reader to have stopped at the cap, and the
+		// error must be the decode one, not the tag check's.
+		fmt.Fprint(w, `{"launcher": {"tag": "v9.9.9"}, "padding": "`+strings.Repeat("x", maxUpdateCheckResponseBytes)+`"}`)
 	}))
 	defer srv.Close()
 
 	_, hasUpdate, err := checkForUpdate(context.Background(), srv.URL, "0.1.0")
 	if err == nil {
 		t.Fatal("expected an error for a body larger than the cap")
+	}
+	if !strings.Contains(err.Error(), "decode release manifest") {
+		t.Errorf("error = %q, want the decode error that a body cut at the cap gives", err)
 	}
 	if hasUpdate {
 		t.Error("expected hasUpdate = false for a body larger than the cap")

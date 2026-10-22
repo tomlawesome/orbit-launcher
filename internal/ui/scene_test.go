@@ -60,7 +60,7 @@ func TestSkyBlock_LeavesContentLinesIntact(t *testing.T) {
 func TestSkyBlock_KeepsCentreBlocksVerticalRhythm(t *testing.T) {
 	const width, height = 80, 24
 	star := starfield.New(width, height, 1)
-	const content = "Ready to install"
+	const content = "Choose a deployment profile"
 
 	rowOf := func(rendered string) int {
 		for i, row := range strings.Split(rendered, "\n") {

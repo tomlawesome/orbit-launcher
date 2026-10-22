@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -20,7 +21,11 @@ type updateAvailableMsg struct{ version string }
 
 // healthResultMsg carries the deployment health probe's verdict back
 // into the event loop — see SplashModel.probeHealthCmd.
-type healthResultMsg struct{ healthy bool }
+type healthResultMsg struct {
+	reason            deploy.HealthReason
+	running, expected int
+	counted           bool
+}
 
 // deployState is the splash's three-valued status vocabulary
 // (design/mockups-v5.html): dormant (nothing installed), alive
@@ -194,7 +199,20 @@ type SplashModel struct {
 	// entry point opts in (AppModel.WithDeploymentStatus + deploy.
 	// ProbeHealth), and ORBIT_LAUNCHER_NO_HEALTH_PROBE gates it, so
 	// tests stay deterministic and offline.
-	healthProbe func(ctx context.Context, appURL string) bool
+	healthProbe func(ctx context.Context, appURL string) deploy.HealthReason
+
+	// serviceStates is Repair's seam (#255), read by the probe command for
+	// the degraded drawer's services count; targetDir is the folder it
+	// reads. Both are nil/empty unless the real entry point sets them.
+	serviceStates func(dir string) ([]deploy.ServiceState, error)
+	targetDir     string
+
+	// health is the last probe result, kept for the degraded drawer.
+	// onStatusRow puts the caret on the degraded row above the menu;
+	// drawerOpen shows the reason beneath it (#254).
+	health      healthResultMsg
+	onStatusRow bool
+	drawerOpen  bool
 }
 
 // NewSplashModel constructs the splash/main-menu screen.
@@ -251,8 +269,31 @@ func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 // bounds its own request (deploy.ProbeHealth).
 func (m SplashModel) probeHealthCmd() tea.Cmd {
 	probe, appURL := m.healthProbe, m.appURL
+	if probe == nil {
+		return nil
+	}
+	states, dir := m.serviceStates, m.targetDir
 	return func() tea.Msg {
-		return healthResultMsg{healthy: probe(context.Background(), appURL)}
+		msg := healthResultMsg{reason: probe(context.Background(), appURL)}
+		if states == nil {
+			return msg
+		}
+		rows, err := states(dir)
+		if err != nil {
+			return msg
+		}
+		expected := expectedServices(dir)
+		inSet := make(map[string]bool, len(expected))
+		for _, name := range expected {
+			inSet[name] = true
+		}
+		msg.counted, msg.expected = true, len(expected)
+		for _, row := range rows {
+			if inSet[row.Service] && row.Running() {
+				msg.running++
+			}
+		}
+		return msg
 	}
 }
 
@@ -287,7 +328,8 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case healthResultMsg:
-		if msg.healthy {
+		m.health = msg
+		if msg.reason == deploy.HealthResponding {
 			m.state = stateAlive
 		} else {
 			m.state = stateDegraded
@@ -322,7 +364,17 @@ func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.introDone = true
 		return m, nil
 	}
+	if m.onStatusRow {
+		return m.handleStatusRowKey(msg), nil
+	}
 	if msg.Code == tea.KeyEsc {
+		return m, nil
+	}
+
+	// Up from the first row reaches the degraded row above the menu.
+	if msg.Code == tea.KeyUp && m.menu.sel == 0 && m.state == stateDegraded {
+		m.userNavigated = true
+		m.onStatusRow = true
 		return m, nil
 	}
 
@@ -356,6 +408,69 @@ func (m SplashModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleStatusRowKey is the keys on the degraded row (#254). Enter and
+// Right open the drawer; Left, Enter and Esc close it and land on Repair;
+// Up and Down leave the row for the menu's ends; a digit goes to its
+// menu row. Nothing here chooses a menu item or quits.
+func (m SplashModel) handleStatusRowKey(msg tea.KeyPressMsg) SplashModel {
+	leave := func(sel int) SplashModel {
+		m.onStatusRow, m.drawerOpen = false, false
+		m.menu.sel = sel
+		return m
+	}
+	switch msg.Code {
+	case tea.KeyUp:
+		return leave(len(MainMenu) - 1)
+	case tea.KeyDown:
+		return leave(menuInstall)
+	case tea.KeyRight:
+		m.drawerOpen = true
+	case tea.KeyEnter:
+		if !m.drawerOpen {
+			m.drawerOpen = true
+			return m
+		}
+		return leave(menuRepair)
+	case tea.KeyLeft, tea.KeyEsc:
+		if m.drawerOpen {
+			return leave(menuRepair)
+		}
+	}
+	for _, r := range msg.Text {
+		if r >= '1' && r <= '9' && int(r-'1') < len(MainMenu) {
+			return leave(int(r - '1'))
+		}
+	}
+	return m
+}
+
+// statusRow is the degraded word as a row: caret-marked when selected,
+// followed by a faint chevron that points down once the drawer is open.
+func (m SplashModel) statusRow() string {
+	chevron := style.SymbolDrawerClosed
+	if m.drawerOpen {
+		chevron = style.SymbolDrawerOpen
+	}
+	word := style.DegradedText.Render("degraded") + " " + style.Tagline.Render(chevron)
+	if m.onStatusRow {
+		// The same trailing pad as menuRow, so the caret does not shift
+		// the row's centre.
+		return style.MenuCaret.Render(style.SymbolSelected) + " " + word + "  "
+	}
+	return word
+}
+
+// drawerLines are the rows beneath the degraded word while it is open:
+// the reason, then how many services run when Docker answered.
+func (m SplashModel) drawerLines() []string {
+	lines := []string{style.MutedText.Render(string(m.health.reason))}
+	if m.health.counted {
+		lines = append(lines, style.MutedText.Render(fmt.Sprintf("%d of %d services %s",
+			m.health.running, m.health.expected, deploy.ContainerRunning)))
+	}
+	return lines
+}
+
 // markStyle returns the ⟡ mark's style for the current state — the mark
 // carries the deployment's state colour; dormant wears the gold accent
 // (design/mockups-v6-starchart.html).
@@ -379,7 +494,7 @@ func (m SplashModel) footText() string {
 		return ""
 	}
 	if m.orbitVersion != "" {
-		text += style.Separator + "orbit " + m.orbitVersion
+		text += style.Separator + "orbit " + visibleText(m.orbitVersion)
 	}
 	return text
 }
@@ -429,7 +544,10 @@ func (m SplashModel) centreBlockLines() []string {
 		lines = append(lines, style.SuccessText.Render("alive"))
 	case stateDegraded:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
-		lines = append(lines, style.DegradedText.Render("degraded"))
+		lines = append(lines, m.statusRow())
+		if m.drawerOpen {
+			lines = append(lines, m.drawerLines()...)
+		}
 	case stateUnreadable:
 		lines = append(lines, style.Tagline.Render("can't read "+deploy.EnvFile))
 	}
@@ -443,7 +561,7 @@ func (m SplashModel) centreBlockLines() []string {
 		if item.Gap {
 			lines = append(lines, "")
 		}
-		lines = append(lines, menuRow(item.Label, i == m.menu.sel))
+		lines = append(lines, menuRow(item.Label, i == m.menu.sel && !m.onStatusRow))
 	}
 	return lines
 }
@@ -514,7 +632,7 @@ func (m SplashModel) viewIntro() string {
 			a := (s - introMenuStart - float64(i)*introMenuStep) / introMenuFade
 			if a > 0.06 && r >= 0 && r < bodyHeight {
 				if a >= 1 {
-					lines[r] = menuRow(mi.Label, i == m.menu.sel)
+					lines[r] = menuRow(mi.Label, i == m.menu.sel && !m.onStatusRow)
 				} else {
 					lines[r] = rampStyle(style.InkRamp[:4], a).Render(mi.Label)
 				}
