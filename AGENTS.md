@@ -51,4 +51,4 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   default to preview). It fails only if the job falls back to the GitHub mirror,
   which has no release manifest (#194): the job token got 401/403 reading
   ai/orbit (as on Renovate's MRs), or `ORBIT_FILES_SOURCE=github` is set.
-  `orbit_channel`/`orbit_branch` are inputs of the GitHub workflow only.
+  `orbit_branch` is an input of the GitHub workflow only, which is stable-only (#196).

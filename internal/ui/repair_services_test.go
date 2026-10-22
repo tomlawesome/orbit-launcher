@@ -24,8 +24,22 @@ import (
 type svcRow struct{ glyph, name, state string }
 
 // servicesModel is a Repair model at the diagnosis screen, w x h, in a
-// folder whose .env-orbit sets profiles, with the seam returning have.
+// folder whose .env-orbit sets profiles, with the seam returning have
+// and its answer delivered.
 func servicesModel(t *testing.T, profiles string, w, h int, have []deploy.ServiceState, err error) RepairModel {
+	t.Helper()
+	return servicesRead(t, servicesModelUnread(t, profiles, w, h, have, err))
+}
+
+// servicesRead delivers the services read the diagnosis hands back
+// (#277: it runs as a command, never on the screen's thread).
+func servicesRead(t *testing.T, m RepairModel) RepairModel {
+	t.Helper()
+	return drive(t, m, m.readServices())
+}
+
+// servicesModelUnread is servicesModel before the read has run.
+func servicesModelUnread(t *testing.T, profiles string, w, h int, have []deploy.ServiceState, err error) RepairModel {
 	t.Helper()
 	dir := t.TempDir()
 	env := "APP_URL=http://localhost\nCOMPOSE_PROFILES=" + profiles + "\n"
@@ -282,11 +296,12 @@ func TestRepairServices_DiagnoseAgainReadsTheServicesAgain(t *testing.T) {
 		{Service: "orbit-clamav", State: "running", Health: "healthy"},
 	}
 	calls := 0
-	m := servicesModel(t, "", 80, 30, nil, nil)
+	m := servicesModelUnread(t, "", 80, 30, nil, nil)
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) {
 		calls++
 		return have, nil
 	}
+	m = servicesRead(t, m)
 
 	assertRows(t, m, []svcRow{{"✓", "orbit-db", "running"}, {"!", "orbit-app", "stopped"}, {"✓", "orbit-clamav", "running"}})
 	if calls != 1 {
@@ -305,7 +320,8 @@ func TestRepairServices_DiagnoseAgainReadsTheServicesAgain(t *testing.T) {
 
 	have = up("orbit-db", "orbit-app", "orbit-clamav")
 	m = repairLines(t, m, "diagnosis result=healthy checked=15 skipped=0")
-	m, _ = repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitHealthy})
+	m, read := repairDone(t, m, engine.DoneMsg{ExitCode: engine.ExitHealthy})
+	m = drive(t, m, read)
 
 	if calls != 2 {
 		t.Errorf("services read %d times after Diagnose again, want 2", calls)

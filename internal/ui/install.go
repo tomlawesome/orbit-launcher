@@ -28,9 +28,9 @@ const (
 // InstallModel is the Install flow: profile choice, the development
 // notice, then the mission console — the engine's event stream rendered natively
 // inside the TUI (see internal/ui/enginerun.go and design/mockups-v5.html
-// section 02). Only the Standard profile is wired; AI/Full are visible
-// but honestly say they aren't available yet rather than silently doing
-// the wrong thing.
+// section 02). Only the Standard profile is wired; Documents, Agent and
+// Full are visible but honestly say they aren't available yet rather than
+// silently doing the wrong thing.
 //
 // orbit-launcher still never invents Orbit configuration itself
 // (issue #51): the engine run cannot prompt by construction, and when

@@ -207,7 +207,7 @@ func TestLeaveFlow_InstallEscIsOneStepBack(t *testing.T) {
 
 func TestLeaveFlow_InstallUnavailableProfileEscGoesToTheProfileScreenFirst(t *testing.T) {
 	m := profileInstall(t)
-	m, _ = leavePress(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // AI profile
+	m, _ = leavePress(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // Documents profile
 	if !strings.Contains(screen(m.(InstallModel)), "This profile isn't available yet") {
 		t.Fatalf("not on the unavailable screen:\n%s", screen(m.(InstallModel)))
 	}

@@ -23,6 +23,11 @@ name: Live install/remove test (on demand)
 # now comes from having actually run this test suite directly,
 # repeatedly, on a real Debian machine during development (no
 # container involved at all).
+#
+# Stable only. install.sh fetches only stable releases by itself; a preview
+# image needs the release manifest, which this GitHub mirror does not have.
+# So there is no channel input here, and preview runs live on GitLab, where
+# the job hands install.sh the manifest (#194, #196).
 
 on:
   pull_request:
@@ -35,18 +40,7 @@ on:
           default, orbit main). This is the dispatchable way to run a live
           test against a non-default orbit branch's stable install.sh. A
           pre-release branch needs the preview image, which this mirror
-          cannot install (see orbit_channel).
-        required: false
-        default: ""
-      orbit_channel:
-        description: >-
-          orbit image channel to install (empty = install.sh's own default,
-          "latest", which is the production image). Leave it empty here:
-          this GitHub mirror has no release manifest, and install.sh will
-          not install a preview image without one, so "preview" is refused
-          at the start of the run. To live-test a pre-release orbit branch
-          with its preview image, start the GitLab pipeline by hand with
-          RUN_LIVE=true (#194), which hands install.sh the manifest.
+          cannot install: preview runs live on GitLab (RUN_LIVE=true).
         required: false
         default: ""
 
@@ -67,12 +61,6 @@ jobs:
     timeout-minutes: 35
 
     steps:
-      - name: Refuse the preview channel
-        if: inputs.orbit_channel == 'preview'
-        run: |
-          echo "::error::orbit_channel=preview cannot run here: the GitHub mirror has no release manifest, and install.sh only installs a preview image with one. Start the GitLab pipeline by hand with RUN_LIVE=true instead (#194)."
-          exit 1
-
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -86,14 +74,6 @@ jobs:
         run: |
           branch="${{ inputs.orbit_branch }}"
           echo "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=https://raw.githubusercontent.com/tomlawesome/orbit/$branch/scripts/install.sh" >> "$GITHUB_ENV"
-
-      - name: Select the orbit image channel
-        if: inputs.orbit_channel != ''
-        run: |
-          # install.sh reads ORBIT_CHANNEL itself; the launcher never sets
-          # the engine's environment, so the job's own environment reaches
-          # it unchanged through every spawn.
-          echo "ORBIT_CHANNEL=${{ inputs.orbit_channel }}" >> "$GITHUB_ENV"
 
       - name: Build orbit-launcher from source
         run: |

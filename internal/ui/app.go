@@ -70,8 +70,13 @@ type AppModel struct {
 	// (deploy.ReadClaimLink).
 	flowReadClaim func(ctx context.Context, dir, appURL string, since time.Time) (string, error)
 
+	// servicesReader reads the deployment's containers for Repair's
+	// services block and the splash's degraded count (#255); nil is the
+	// real `docker compose ps` (WithServicesReader).
+	servicesReader func(dir string) ([]deploy.ServiceState, error)
+
 	// flowNoticeDuration shortens Install's development-notice countdown
-	// (#175) in tests; zero in production (the 70 s default).
+	// (#175) in tests; zero in production (the 20 s default).
 	flowNoticeDuration time.Duration
 
 	// altScreen puts the program in the terminal's alternate screen
@@ -140,6 +145,26 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 	return m
 }
 
+// WithServicesReader supplies how the services are read, for Repair's
+// services block and the splash's count, in place of the real `docker
+// compose ps` (#277): tests pass a fake, so no app-level test depends on
+// the machine's Docker.
+func (m AppModel) WithServicesReader(read func(dir string) ([]deploy.ServiceState, error)) AppModel {
+	m.servicesReader = read
+	if m.splash.serviceStates != nil {
+		m.splash.serviceStates = read
+	}
+	return m
+}
+
+// readServices is the services reader the app hands its screens.
+func (m AppModel) readServices() func(dir string) ([]deploy.ServiceState, error) {
+	if m.servicesReader != nil {
+		return m.servicesReader
+	}
+	return realServiceStates
+}
+
 // WithSender gives the flows a way to push messages into the event
 // loop from outside it, which the engine stream reader needs (#159).
 // Without it a run cannot read the engine and says so plainly rather
@@ -198,7 +223,7 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 		s.menu.sel = menuInstall
 	}
 	s.healthProbe = m.healthProbe
-	s.serviceStates = realServiceStates
+	s.serviceStates = m.readServices()
 	s.targetDir = m.resolvedTargetDir()
 	return s
 }
@@ -334,7 +359,7 @@ func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 	m.repair.engineRunSeams = m.flowSeams
-	m.repair.serviceStates = realServiceStates
+	m.repair.serviceStates = m.readServices()
 	m.repair.foreignOwned = deploy.ForeignOwned
 	m.repair.send = m.flowSend
 	m.state = appStateRepair

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -95,12 +96,25 @@ func startApp(stdout, stderr io.Writer) int {
 	sender.Attach(program)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
-	stopSignals := forwardSignals(sigs, program.Send)
+	stopSignals, interrupted := watchSignals(sigs, program.Send)
 	final, err := program.Run()
 	signal.Stop(sigs)
 	stopSignals()
+	// Whatever screen ended the program, a removal of a run's staged
+	// files still waiting on a configuration import is finished before
+	// the process exits, or it would die half done (#277).
+	ui.FinishDeferredCleanup()
+	if err == nil && interrupted() {
+		// An interrupt from outside still ends the launcher as one, as
+		// it did when Bubble Tea's handler turned it into ErrInterrupted;
+		// it only waits for the stop to clean up first.
+		err = tea.ErrInterrupted
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "orbit-launcher:", err)
+		if app, ok := final.(ui.AppModel); ok && app.ExitNote() != "" {
+			fmt.Fprintln(stderr, "\norbit-launcher:", app.ExitNote())
+		}
 		return 1
 	}
 	// A Ctrl-C stop's note can only be read once the alternate screen
@@ -118,18 +132,29 @@ func startApp(stdout, stderr io.Writer) int {
 	return 0
 }
 
-// forwardSignals reads sigs and, for SIGHUP (a dropped SSH session) and
-// SIGTERM, hands send a ui.SignalQuitMsg, so the launcher stops the way
-// Ctrl-C stops it: the engine gets its polite stop and grace, and the
-// staged install.sh and configuration tree are removed. Unlike the key,
-// it is not dropped by a step that ignores Ctrl-C: it quits once that
-// step finishes. SIGINT keeps what Bubble Tea's handler did with it: an
-// interrupt (the program ends with an error), except while install.sh
-// holds the terminal, when it is the person's Ctrl-C to install.sh and
-// is dropped. stop ends the forwarding and returns once the goroutine
-// has; it is safe to call twice.
+// forwardSignals reads sigs and hands send the message for each one, so
+// the launcher stops the way Ctrl-C stops it: the engine gets its polite
+// stop and grace, and the staged install.sh and configuration tree are
+// removed. SIGHUP (a dropped SSH session) and SIGTERM are a
+// ui.SignalQuitMsg: unlike the key, it is not dropped by a step that
+// ignores Ctrl-C (it quits once that step finishes), and repeating it
+// never forces a stop under way. SIGINT from outside (kill -INT,
+// timeout -s INT; #277) is the same message the first time, and the
+// Ctrl-C key itself after that, so a second one forces the stop as a
+// second Ctrl-C does. While install.sh holds the terminal, a SIGINT is
+// the person's Ctrl-C to install.sh and is dropped, not counted. stop
+// ends the forwarding and returns once the goroutine has; it is safe to
+// call twice.
 func forwardSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func()) {
+	stop, _ = watchSignals(sigs, send)
+	return stop
+}
+
+// watchSignals is forwardSignals, also reporting whether a SIGINT was
+// forwarded, which makes the launcher's exit an interrupted one.
+func watchSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func(), interrupted func() bool) {
 	quit, done := make(chan struct{}), make(chan struct{})
+	var interrupts atomic.Int32
 	go func() {
 		defer close(done)
 		for {
@@ -141,16 +166,22 @@ func forwardSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func()) {
 				case syscall.SIGHUP, syscall.SIGTERM:
 					send(ui.SignalQuitMsg{})
 				case syscall.SIGINT:
-					if !ui.TerminalHandedOver() {
-						send(tea.InterruptMsg{})
+					if ui.TerminalHandedOver() {
+						continue
+					}
+					if interrupts.Add(1) == 1 {
+						send(ui.SignalQuitMsg{})
+					} else {
+						send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 					}
 				}
 			}
 		}
 	}()
 	var once sync.Once
-	return func() {
+	stop = func() {
 		once.Do(func() { close(quit) })
 		<-done
 	}
+	return stop, func() bool { return interrupts.Load() > 0 }
 }

@@ -365,11 +365,17 @@ func startEngine(ctx context.Context, script []byte, targetDir, action string) e
 // its configuration tree — once nothing needs them any more. A
 // configuration refusal holds them past the run's end, for the
 // configuration session; every way out of that (a retry, the terminal
-// handoff, leaving, quitting, a failure) comes through here.
+// handoff, leaving, quitting, a failure) comes through here. While the
+// configuration session's preparation is still writing into the tree,
+// the removal waits for it to finish (configLate).
 func (r *engineRun) releaseRunFiles() {
 	if r.cleanup != nil {
-		_ = r.cleanup()
+		cleanup := r.cleanup
 		r.cleanup = nil
+		release := func() { _ = cleanup() }
+		if r.cfg.late == nil || !r.cfg.late.releaseRunFilesAfter(release) {
+			release()
+		}
 	}
 	r.configTree = ""
 }
@@ -829,6 +835,9 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 		r.exitNote = forcedStopNote(r.action)
 	}
 	r.cfg.close()
+	// A removal this defers to a configuration preparation still
+	// running is finished before the process exits
+	// (FinishDeferredCleanup, from cmd/orbit-launcher).
 	r.releaseRunFiles()
 	return r, tea.Quit
 }

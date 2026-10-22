@@ -14,11 +14,6 @@ heading.
 - 2026-10-20 · 86a3b52 (plus comment-only edits) · local, full `go test ./internal/ui/` · failed once, output not kept; passed 6 of 6 reruns. Possibly a star drawn inside a line of text, which #270 fixed (that flake's heading was removed: 10 of 10 runs passed after the fix)
 - 2026-10-21 · 8f1f1bb plus a one-line notice.go clamp · local, full `go test ./...` · failed once, output not kept; passed 2 of 2 reruns
 
-## TestAppModel_UnreadableEnvScreensHoldAtEveryWidth (internal/ui)
-
-- 2026-10-21 · 834d2c4 (fix/lows-repair) · local, full `go test ./...` · failed once, output not kept; passed 43 of 43 reruns. Possibly the long-TMPDIR wrap in #279
-- 2026-10-21 · de5debc + fix/lows-decisions work · local, full `go test ./...` · Remove at width 50 showed "permission · denied": a starfield glyph landed in the wrap gap and broke the flattened match. Not #279. Fixed in the test: it now flattens with `proseOnly`, which drops star-only words
-
 ## TestConsole_RealPTY_ClosingTheTerminalMidInstallLetsTheInstallerRollBack (test/pty)
 
 - 2026-10-22 · c4432e7 · pipeline 2896 / fast (`-race`) · the launcher exited 1.1 s after the terminal closed with exit status 1; the installer's EXIT trap left no marker and staged files stayed in TMPDIR. Passed 5 of 5 local `-race` runs on the same commit and 5 of 5 on `dev` aad8058

@@ -235,7 +235,10 @@ func wrapWords(text string, limit int) []string {
 // return keeps the last non-empty segment after it: what a terminal
 // shows once the progress it overwrote has finished, and a CRLF line
 // end loses nothing. A tab is one space (it measures 0 cells but
-// renders as four), and any other control character is dropped.
+// renders as four), and any other control character is dropped. A
+// bidirectional embedding, override or isolate control is shown as
+// visibleText shows it (\u202e), so it cannot turn the rest of the row
+// around (#277).
 func cleanLine(line string) string {
 	if strings.Contains(line, "\r") {
 		segs := strings.Split(line, "\r")
@@ -247,15 +250,25 @@ func cleanLine(line string) string {
 			}
 		}
 	}
-	return strings.Map(func(r rune) rune {
+	var b strings.Builder
+	for _, r := range line {
 		switch {
 		case r == '\t':
-			return ' '
+			b.WriteByte(' ')
 		case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0:
-			return -1
+		case isBidiControl(r):
+			b.WriteString(visibleText(string(r)))
+		default:
+			b.WriteRune(r)
 		}
-		return r
-	}, line)
+	}
+	return b.String()
+}
+
+// isBidiControl reports the embedding and override controls (U+202A to
+// U+202E) and the isolates (U+2066 to U+2069).
+func isBidiControl(r rune) bool {
+	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
 }
 
 // wrapLine is wrapWords for one line of text, in one pass. It breaks

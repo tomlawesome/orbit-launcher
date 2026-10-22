@@ -5,23 +5,39 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
 
 // Repair's first screen lists each expected service's state above the
 // findings (#255). The states are read once per diagnosis, through the
-// serviceStates seam, and kept on the model: the reading is dropped when
-// a run or a fresh diagnosis starts. Rendering only reads that copy and
-// never asks Docker.
+// serviceStates seam, by a command the diagnosis hands back (#277: never
+// on the screen's own thread), and kept on the model: the reading is
+// dropped when a run or a fresh diagnosis starts. Until the answer comes
+// the block says the services are still being checked. Rendering only
+// reads that copy and never asks Docker.
 
 // serviceNameWidth is the name column: glyph, space, then this many
 // cells, so every state word starts 16 cells after the glyph.
 const serviceNameWidth = 14
 
-// serviceReading is what the one read produced.
+// serviceReading is what the one read produced. pending is the read
+// under way, loaded its answer in.
 type serviceReading struct {
+	pending  bool
 	loaded   bool
+	expected []string
+	states   []deploy.ServiceState
+	err      error
+}
+
+// repairServicesMsg is the services read's answer; reading says which
+// diagnosis asked, so an answer that arrives after a run or a fresh
+// diagnosis has replaced it is dropped.
+type repairServicesMsg struct {
+	reading  *serviceReading
 	expected []string
 	states   []deploy.ServiceState
 	err      error
@@ -33,18 +49,33 @@ func realServiceStates(dir string) ([]deploy.ServiceState, error) {
 	return deploy.ServiceStates(context.Background(), dir)
 }
 
-// loadServices reads the services once and keeps the result. A model
-// with no serviceStates seam (the c9 harness) reads nothing and shows
-// no services block at all. The reading lives behind a pointer because
-// the model is copied on every Update.
-func (m RepairModel) loadServices() {
-	if m.serviceStates == nil || m.services == nil || m.services.loaded {
-		return
-	}
+// readServices starts the one read of the services, returning the
+// command that runs it off the screen's thread, or nil when it has
+// started already. A model with no serviceStates seam (the c9 harness)
+// reads nothing and shows no services block at all. The reading lives
+// behind a pointer because the model is copied on every Update; the
+// command never touches it.
+func (m RepairModel) readServices() tea.Cmd {
 	r := m.services
-	r.loaded = true
-	r.states, r.err = m.serviceStates(m.targetDir)
-	r.expected = expectedServices(m.targetDir)
+	if m.serviceStates == nil || r == nil || r.loaded || r.pending {
+		return nil
+	}
+	r.pending = true
+	read, dir := m.serviceStates, m.targetDir
+	return func() tea.Msg {
+		states, err := read(dir)
+		return repairServicesMsg{reading: r, expected: expectedServices(dir), states: states, err: err}
+	}
+}
+
+// gotServices keeps the read's answer if it belongs to the current
+// diagnosis.
+func (m RepairModel) gotServices(msg repairServicesMsg) RepairModel {
+	if msg.reading == nil || msg.reading != m.services {
+		return m
+	}
+	m.services = &serviceReading{loaded: true, expected: msg.expected, states: msg.states, err: msg.err}
+	return m
 }
 
 // expectedServices are the services the deployment's profiles call for,
@@ -117,7 +148,13 @@ func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
 // running rows fold into one `✓ N running` row and every faulted or
 // missing row stays.
 func (m RepairModel) servicesBlock(room int) []string {
-	if m.serviceStates == nil || m.services == nil || !m.services.loaded {
+	if m.serviceStates == nil || m.services == nil {
+		return nil
+	}
+	if !m.services.loaded {
+		if m.services.pending {
+			return []string{style.MutedText.Render("services" + style.Separator + "checking")}
+		}
 		return nil
 	}
 	if m.services.err != nil {

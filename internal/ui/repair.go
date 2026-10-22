@@ -70,7 +70,7 @@ type RepairModel struct {
 	// serviceStates reads the deployment's containers for the services
 	// block (#255). Nil shows no block: the c9 harness leaves it unset,
 	// which keeps its goldens as they were. services holds the one
-	// reading; see loadServices.
+	// reading; see readServices.
 	serviceStates func(dir string) ([]deploy.ServiceState, error)
 	services      *serviceReading
 	// foreignOwned says which of the deployment's configuration files
@@ -389,6 +389,9 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repairStreamMsg:
 		return m.handleStream(msg.msg)
 
+	case repairServicesMsg:
+		return m.gotServices(msg), nil
+
 	case repairStreamEndedMsg:
 		return m.handleStreamEnded(msg)
 
@@ -504,6 +507,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	var readCmd tea.Cmd
 	switch s.ExitCode {
 	case engine.ExitNotInstalled:
 		// "This isn't an Orbit installation", in every mode: the one
@@ -513,7 +517,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 	case engine.ExitHealthy, engine.ExitAttention, engine.ExitFailed:
 		// The contract's outcomes, shared by --check and --plan.
 		m.state = repairDiagnosis
-		m.loadServices()
+		readCmd = m.readServices()
 		if m.mode == deploy.RepairPlan {
 			// The manual guidance lines ride stderr, value-free by
 			// the script's contract.
@@ -535,7 +539,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		m.fail(s.Err)
 	}
 	m.menu = menu{}
-	return m, nil
+	return m, readCmd
 }
 
 // fail ends the run on the error screen, which is titled by the state
@@ -692,11 +696,7 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	return m.handleMenu(msg, executedMenu, func(label string) (tea.Model, tea.Cmd) {
 		switch label {
 		case "Diagnose again":
-			m.startExecution()
-			m.planActions, m.planSummary = nil, nil
-			m.state = repairPreparing
-			m.mode = deploy.RepairPlan
-			return m, m.startDiagnosis(deploy.RepairPlan)
+			return m.diagnoseAgain()
 		case "Menu":
 			m.Done = true
 			m.WantsMenu = true
@@ -705,6 +705,16 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, tea.Quit
 		}
 	})
+}
+
+// diagnoseAgain starts a fresh diagnosis, owner check first, from the
+// after-picture, a stopped mutation or the foreign-files stop.
+func (m RepairModel) diagnoseAgain() (tea.Model, tea.Cmd) {
+	m.startExecution()
+	m.planActions, m.planSummary = nil, nil
+	m.state = repairPreparing
+	m.mode = deploy.RepairPlan
+	return m, m.startDiagnosis(deploy.RepairPlan)
 }
 
 // stoppedMutation says the error screen is showing a safe repair or
@@ -865,7 +875,9 @@ func (m RepairModel) viewExecuted() string {
 		default:
 			refusal := "nothing was changed — the engine refused to run"
 			if m.execSummary.Reason != "" {
-				refusal += " (" + m.execSummary.Reason + ")"
+				// The engine's word, escaped like any other foreign
+				// text before it reaches the terminal (#277).
+				refusal += " (" + visibleText(m.execSummary.Reason) + ")"
 			}
 			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
 		}
@@ -1019,7 +1031,6 @@ func (m RepairModel) viewDiagnosis() string {
 	// themselves but the block should not squeeze them): the full list
 	// when it fits, else the running rows folded. The last row is left
 	// to the sky, as on every scene screen.
-	m.loadServices()
 	rest := head + b.String()
 	svcRoom := math.MaxInt
 	if m.height > 0 {
@@ -1272,7 +1283,7 @@ func planSummaryWords(s *engine.PlanSummary, runnable bool) string {
 	case engine.ResultEmpty:
 		return "nothing to plan"
 	default:
-		return s.Result + " — nothing has run yet"
+		return visibleText(s.Result) + " — nothing has run yet"
 	}
 }
 
