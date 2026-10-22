@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -275,15 +274,9 @@ func TestSuccessClaim_GetIntoOrbitOpensTheClaimLink(t *testing.T) {
 	m := claimModel(t, claimApp, claimLink, 80, &clip)
 	m.openURL = func(url string) error { opened = append(opened, url); return nil }
 
-	t.Setenv("TMPDIR", t.TempDir())
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
-	// #277: the opener gets a redirect file to the claim link, never
-	// the link itself (success_claim_lows_test.go).
-	if len(opened) != 1 {
-		t.Fatalf("opened %q, want exactly one page", opened)
-	}
-	if body, err := os.ReadFile(redirectFile(t, opened[0])); err != nil || !strings.Contains(string(body), claimLink) {
-		t.Errorf("opened %q, want a redirect file to the claim link %q (read err %v)", opened[0], claimLink, err)
+	if len(opened) != 1 || opened[0] != claimLink {
+		t.Errorf("opened %q, want exactly the claim link %q", opened, claimLink)
 	}
 	if cmd != nil || m.Chosen != "" {
 		t.Errorf("Get into Orbit must stay on the screen (cmd = %v, Chosen = %q)", cmd != nil, m.Chosen)
