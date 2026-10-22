@@ -68,6 +68,12 @@ type SuccessModel struct {
 	claimLink string
 	copied    bool
 
+	// claimAnswered is set once readClaim's answer is in. Until then a
+	// screen that reads one keeps a blank row where Copy claim link
+	// would go, so a link arriving late moves no row under the caret
+	// (#277).
+	claimAnswered bool
+
 	// clipboard is where Copy claim link writes its OSC 52 sequence:
 	// nil in production, which means os.Stdout, as for Remove's Copy
 	// command.
@@ -161,9 +167,18 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case claimLinkMsg:
+		m.claimAnswered = true
 		if msg.link != "" {
+			// The caret stays on the row it was on, whose label keeps
+			// its screen row (claimPending).
+			selected := m.menu.selected()
 			m.claimLink = msg.link
 			m.menu = m.menu.over(successClaimMenu)
+			for i, label := range successClaimMenu {
+				if label == selected {
+					m.menu.sel = i
+				}
+			}
 		}
 		return m, nil
 
@@ -288,7 +303,9 @@ func (m SuccessModel) centreBlockLines() []string {
 	if m.appURL != "" {
 		// Escaped for the screen only: open() above still gets the raw
 		// address, as the Remove box shows escaped and runs raw.
-		address := style.AccentText.Render(visibleText(m.appURL))
+		// Without its account part: a user name and password stay off
+		// the screen, as on the confirm screens (#277).
+		address := style.AccentText.Render(visibleText(withoutAccount(m.appURL)))
 		if m.claimLink != "" {
 			// The address a person reads, opening the claim page a
 			// terminal that knows OSC 8 lets them click.
@@ -325,6 +342,9 @@ func (m SuccessModel) centreBlockLines() []string {
 	}
 	for i, label := range rows {
 		lines = append(lines, menuRow(label, i == m.menu.sel))
+		if i == 0 && m.claimPending() {
+			lines = append(lines, "")
+		}
 	}
 	if m.copied {
 		lines = append(lines, "")
@@ -337,6 +357,12 @@ func (m SuccessModel) centreBlockLines() []string {
 		lines = append(lines, style.Tagline.Render("no browser here — copy the URL above"))
 	}
 	return lines
+}
+
+// claimPending reports whether the claim read is still out: the blank
+// slot under Get into Orbit is Copy claim link's, should a link arrive.
+func (m SuccessModel) claimPending() bool {
+	return m.readClaim != nil && !m.claimAnswered
 }
 
 // claimLinkRows lays the claim link out in rows of at most limit cells:
