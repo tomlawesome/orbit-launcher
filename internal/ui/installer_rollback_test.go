@@ -56,12 +56,26 @@ const volumeOnlyCommand = "docker volume rm -- orbit_orbit-db-data"
 // sky, not text.
 var skyOnly = map[string]bool{".": true, "·": true, "✦": true, "●": true, "⟡": true}
 
-// flat is a screen's words with the starfield taken out, joined by single
-// spaces, so a sentence the screen wrapped reads as one.
+// boxGlyphs are the characters a framed box is drawn with.
+const boxGlyphs = "╭╮╰╯│─"
+
+// flat is a screen's words with the starfield, the box edges and the
+// bare continuation "\" a framed command ends its rows with taken out,
+// joined by single spaces, so a sentence the screen wrapped (or a
+// command the box broke between words) reads as one.
 func flat(s string) string {
 	var words []string
 	for _, w := range strings.Fields(s) {
 		if skyOnly[w] || w == "▸" {
+			continue
+		}
+		w = strings.Map(func(r rune) rune {
+			if strings.ContainsRune(boxGlyphs, r) {
+				return -1
+			}
+			return r
+		}, w)
+		if w == "" || w == `\` {
 			continue
 		}
 		words = append(words, w)
