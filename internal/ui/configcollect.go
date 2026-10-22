@@ -535,6 +535,7 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.releaseRunFiles()
 	r.configRefused = false
 	r.waiting, r.completed, r.completion = nil, false, nil
+	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil

@@ -29,6 +29,12 @@ type Event struct {
 	// Simulation is true when the engine appended simulation=true —
 	// a rehearsal run that must never be presented as a real one.
 	Simulation bool
+
+	// Recovery is the trailing recovery= field of a terminal failure:
+	// RecoveryHasCommand when the stdout line just before it was a
+	// recovery-command line (orbit docs/engine-events.md, "Recovery
+	// command (v0)"). Empty on every other event.
+	Recovery string
 }
 
 // The contract's state vocabulary (orbit docs/engine-events.md,
@@ -52,7 +58,28 @@ const (
 	// refuses before starting Compose, and the consumer should re-run
 	// configuration interactively (the terminal handoff stretch).
 	ReasonConfigurationFailure = "configuration-failure"
+
+	// ActionAbort marks a failure no retry can clear: the consumer stops
+	// rather than offer another attempt.
+	ActionAbort = "abort"
+
+	// RecoveryHasCommand is the recovery= value saying a
+	// recovery-command line came just before the event.
+	RecoveryHasCommand = "command"
 )
+
+// recoveryCommandPrefix leads the one stdout line that carries a command
+// for the person to run (orbit docs/engine-events.md, "Recovery command
+// (v0)"): the prefix and one space are fixed, the rest is the command.
+const recoveryCommandPrefix = "recovery-command: "
+
+// RecoveryCommand reads a recovery-command line, returning the command
+// verbatim; ok is false for any other line. The command is shown as it
+// is, never parsed: install.sh has already shell-quoted every word.
+func RecoveryCommand(line string) (command string, ok bool) {
+	command, ok = strings.CutPrefix(line, recoveryCommandPrefix)
+	return command, ok && command != ""
+}
 
 // IsSuccess reports whether e is the contract's success event.
 func (e Event) IsSuccess() bool {
@@ -108,6 +135,7 @@ func ParseEvent(line string) (e Event, ok bool) {
 		Action:         fields["action"],
 		ElapsedSeconds: parseElapsed(fields["elapsed"]),
 		Simulation:     fields["simulation"] == "true",
+		Recovery:       fields["recovery"],
 	}, true
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -232,6 +233,15 @@ type engineRun struct {
 	lastFailed    *engine.Event
 	stderrTail    []string
 	runErr        error
+
+	// pendingCommand is the command of a recovery-command line that was
+	// the last stdout line; recoveryCommand is it adopted by the terminal
+	// failure that followed with recovery=command (orbit
+	// docs/engine-events.md, "Recovery command (v0)"). copiedCommand is
+	// the failure screen's Copy command row having copied it.
+	pendingCommand  string
+	recoveryCommand string
+	copiedCommand   bool
 
 	// handoffByHand is the terminal handoff chosen from the failure
 	// screen rather than reached as a fallback; handoffErr is why its
@@ -522,6 +532,12 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.EventMsg:
 		r.console = r.console.observeEvent(m.Event)
+		// The command counts only when its line came just before the
+		// terminal failure that says it was printed.
+		if m.Event.IsTerminalFailure() && m.Event.Recovery == engine.RecoveryHasCommand {
+			r.recoveryCommand = r.pendingCommand
+		}
+		r.pendingCommand = ""
 		if _, optional := serviceLabels[m.Event.Component]; optional {
 			if r.waiting == nil {
 				r.waiting = map[string]bool{}
@@ -542,6 +558,7 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 
 	case engine.RawLineMsg:
 		r.console = r.console.observeRaw(m.Text)
+		r.pendingCommand, _ = engine.RecoveryCommand(m.Text)
 		if r.completed && len(r.completion) < 2*len(serviceLabels) && serviceLine(m.Text) {
 			r.completion = append(r.completion, m.Text)
 		}
@@ -718,8 +735,17 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		return r.handleConfigKey(msg)
 
 	case runFailed:
-		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
+		return r.handleMenuKey(msg, r.failedRows(), func(label string) (engineRun, tea.Cmd) {
 			switch label {
+			case removeCopy:
+				// Stays on the screen and copies again on every Enter,
+				// as Remove's does.
+				r.copiedCommand = true
+				return r, copyToClipboard(os.Stdout, r.recoveryCommand)
+			case installAgain:
+				// The installer finishes putting the folder back first,
+				// so the next attempt is an ordinary install.
+				return r.retryEngine()
 			case "Open the guided installer":
 				r, cmd := r.beginHandoff()
 				r.handoffByHand = true
@@ -815,6 +841,40 @@ func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose fun
 // from any other exit 1, and the honest remedy is the guided installer.
 var failedMenu = []string{"Open the guided installer", "Menu", "Exit"}
 
+// installAgain is the failure screen's row after an install whose
+// rollback left one command to run (#261).
+const installAgain = "Install again"
+
+// aborted reports whether the installer said no retry can clear this
+// failure (action=abort): neither the guided installer nor another
+// attempt is offered, only the way out.
+func (r engineRun) aborted() bool {
+	return r.lastFailed != nil && r.lastFailed.Action == engine.ActionAbort
+}
+
+// offersInstallAgain is a fresh install whose rollback left a command to
+// run first: once it has run, installing again can work.
+func (r engineRun) offersInstallAgain() bool {
+	return r.recoveryCommand != "" && r.action == deploy.ActionInstall && !r.aborted()
+}
+
+// failedRows are the failure screen's rows for how the run ended.
+func (r engineRun) failedRows() []string {
+	var rows []string
+	if r.recoveryCommand != "" {
+		rows = append(rows, removeCopy)
+	}
+	switch {
+	case r.offersInstallAgain():
+		rows = append(rows, append([]string{installAgain}, failedMenu...)...)
+	case r.aborted():
+		rows = append(rows, failedMenu[1:]...)
+	default:
+		rows = append(rows, failedMenu...)
+	}
+	return rows
+}
+
 // view renders whichever screen the run is on.
 func (r engineRun) view(width, height int) string {
 	if width == 0 {
@@ -868,14 +928,35 @@ func (r engineRun) viewFailed(width, height int) string {
 		}
 		writeWrapped(&b, style.Tagline, text, limit)
 	}
-	for _, line := range tailLines(r.stderrTail, 6) {
+	// An abort's stderr is the installer's whole instruction block, and
+	// nothing else on the screen can stand in for a missing line.
+	tail := tailLines(r.stderrTail, 6)
+	if r.aborted() {
+		tail = r.stderrTail
+	}
+	for _, line := range tail {
 		writeWrapped(&b, style.Tagline, line, limit)
 	}
 	if r.handoffErr != nil {
 		writeWrapped(&b, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
 	}
+	if r.recoveryCommand != "" {
+		// Verbatim, as the contract asks: wrapped between its words only,
+		// so it reads whole; Copy command copies the raw line.
+		fmt.Fprintln(&b)
+		writeWrapped(&b, style.Ink, visibleCommand(r.recoveryCommand), limit)
+		if r.offersInstallAgain() {
+			writeWrapped(&b, style.MutedText, "Run this in a terminal, then choose Install again", limit)
+		}
+	}
 	fmt.Fprintln(&b)
-	r.menu.over(failedMenu).write(&b)
+	// The copy row says so once it has copied; the label Enter answers
+	// with stays the same.
+	rows := r.failedRows()
+	if r.copiedCommand {
+		rows = append([]string{removeCopy + style.Separator + "copied"}, rows[1:]...)
+	}
+	r.menu.over(rows).write(&b)
 	return skyBlock(r.console.sky, width, height, b.String())
 }
 
@@ -886,6 +967,17 @@ func writeStackedMenu(b *strings.Builder, items []string, selected int) {
 	for i, label := range items {
 		fmt.Fprintln(b, menuRow(label, i == selected))
 	}
+}
+
+// visibleCommand is visibleText for a shell-quoted command, keeping its
+// backslashes as they are: they are the quoting printf %q wrote, and
+// doubling them would show a different command from the one copied.
+func visibleCommand(command string) string {
+	parts := strings.Split(command, `\`)
+	for i, p := range parts {
+		parts[i] = visibleText(p)
+	}
+	return strings.Join(parts, `\`)
 }
 
 func flowStoppedTitle(action deploy.Action) string {
