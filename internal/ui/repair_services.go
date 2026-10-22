@@ -194,7 +194,7 @@ func (m RepairModel) servicesBlock(room int) []string {
 		return []string{style.MutedText.Render("services" + style.Separator + "could not check")}
 	}
 	rows := serviceRows(m.services.expected, m.services.states)
-	var folded, faulted []serviceRow
+	var faulted []serviceRow
 	running := 0
 	for _, r := range rows {
 		if r.running {
@@ -203,11 +203,9 @@ func (m RepairModel) servicesBlock(room int) []string {
 			faulted = append(faulted, r)
 		}
 	}
-	if 1+len(rows) > room && running > 0 { // the label, then a row each
-		folded = faulted
-	} else {
-		folded = nil
-	}
+	// Fold when the label and a row each don't fit; a healthy
+	// deployment folds too, to the one running row alone.
+	fold := 1+len(rows) > room && running > 0
 	const plainWidth = 2 + serviceNameWidth
 	width := 0
 	for _, r := range rows {
@@ -228,7 +226,7 @@ func (m RepairModel) servicesBlock(room int) []string {
 		name := r.name + strings.Repeat(" ", max(0, serviceNameWidth-len(r.name)))
 		return glyphStyle.Render(r.glyph) + " " + style.Ink.Render(name) + wordStyle.Render(r.word) + pad(plainWidth+len(r.word))
 	}
-	if folded != nil {
+	if fold {
 		sum := fmt.Sprintf("%s %d %s", style.SymbolSuccess, running, deploy.ContainerRunning)
 		out = append(out, style.SuccessText.Render(style.SymbolSuccess)+style.MutedText.Render(fmt.Sprintf(" %d %s", running, deploy.ContainerRunning))+pad(len([]rune(sum))))
 		for _, r := range faulted {
