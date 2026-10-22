@@ -248,9 +248,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
 	}
-	// Only Remove and Repair have a step that ignores Ctrl-C, so only
-	// they need to tell a signal from the key; elsewhere it is the key.
-	if _, ok := msg.(SignalQuitMsg); ok && m.state != appStateRemove && m.state != appStateRepair {
+	// The splash and success screens have no working step, so a signal is
+	// the Ctrl-C key there; every flow tells the two apart itself.
+	if _, ok := msg.(SignalQuitMsg); ok && (m.state == appStateSplash || m.state == appStateSuccess) {
 		msg = ctrlCPress
 	}
 

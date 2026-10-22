@@ -474,6 +474,16 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return r.handleKey(msg)
 
+	case SignalQuitMsg:
+		// A hangup or terminate that repeats while the stop it asked for
+		// is running is the same request again, not the force a second
+		// Ctrl-C is: the installer keeps its grace to roll back, and the
+		// grace timer still kills one that ignores it.
+		if r.state == runStopping {
+			return r, nil
+		}
+		return r.handleKey(ctrlCPress)
+
 	case tea.PasteMsg:
 		// Only the configuration prompt takes a paste (#222).
 		if r.state == runConfigCollect {

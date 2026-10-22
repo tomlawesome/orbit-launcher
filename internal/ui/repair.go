@@ -99,8 +99,8 @@ type RepairModel struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	quitting bool
-	// signalQuit is a SignalQuitMsg that arrived during the safe
-	// repairs: the launcher quits as soon as they have finished.
+	// signalQuit is a SignalQuitMsg that arrived during the safe repairs
+	// or the rotation: the launcher quits as soon as the engine has ended.
 	signalQuit bool
 
 	// Done/WantsMenu surface the outcome to AppModel, exactly like a
@@ -285,18 +285,27 @@ func (m RepairModel) startRotate() tea.Cmd {
 // Update implements tea.Model.
 func (m RepairModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(SignalQuitMsg); ok {
-		// The safe repairs ignore Ctrl-C (see handleKey), but nobody may
-		// be left to see their result, so the quit waits for them.
-		if m.state == repairExecuting {
+		// The safe repairs ignore Ctrl-C and the rotation only closes
+		// its input (see handleKey), but nobody may be left to see the
+		// result, so the quit waits for the engine to end.
+		if m.inMutation() {
 			m.signalQuit = true
 		}
 		return m.handleKey(ctrlCPress)
 	}
 	updated, cmd := m.update(msg)
-	if r := updated.(RepairModel); r.signalQuit && r.state != repairExecuting {
+	// Not while the step runs: that would drop the update's command
+	// (the tick chain, the stream reader) with it.
+	if r := updated.(RepairModel); r.signalQuit && !r.inMutation() {
 		return r.handleKey(ctrlCPress)
 	}
 	return updated, cmd
+}
+
+// inMutation says a step that changes the deployment is running: the
+// safe repairs or the credential rotation.
+func (m RepairModel) inMutation() bool {
+	return m.state == repairExecuting || m.state == repairRotating
 }
 
 func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
