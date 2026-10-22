@@ -303,7 +303,9 @@ func (m SuccessModel) centreBlockLines() []string {
 	if m.appURL != "" {
 		// Escaped for the screen only: open() above still gets the raw
 		// address, as the Remove box shows escaped and runs raw.
-		address := style.AccentText.Render(visibleText(m.appURL))
+		// Without its account part: a user name and password stay off
+		// the screen, as on the confirm screens (#277).
+		address := style.AccentText.Render(visibleText(withoutAccount(m.appURL)))
 		if m.claimLink != "" {
 			// The address a person reads, opening the claim page a
 			// terminal that knows OSC 8 lets them click.

@@ -54,19 +54,37 @@ func deploymentIdentity(d *deploy.Deployment) string {
 	// host, as may an "@" in a path; neither shows an account part. Shown
 	// escaped, so a CR or ESC in it cannot forge or restyle the confirm
 	// screen.
-	host := d.AppURL
-	if _, rest, ok := strings.Cut(host, "://"); ok {
-		host = rest
-	} else {
-		host = strings.TrimPrefix(host, "//")
-	}
-	if i := strings.LastIndexByte(host, '@'); i >= 0 {
-		host = host[i+1:]
-	}
+	_, host := splitAccount(d.AppURL)
 	if i := strings.IndexAny(host, "/?#"); i >= 0 {
 		host = host[:i]
 	}
 	return visibleText(host)
+}
+
+// splitAccount reads an APP_URL as text the way deploymentIdentity does:
+// scheme is everything up to and including "://" (or a leading "//"),
+// and rest is what follows it with everything up to the last "@" cut
+// away, so an account part, whatever characters it holds, is never in
+// either.
+func splitAccount(appURL string) (scheme, rest string) {
+	rest = appURL
+	if i := strings.Index(rest, "://"); i >= 0 {
+		scheme, rest = rest[:i+3], rest[i+3:]
+	} else if strings.HasPrefix(rest, "//") {
+		scheme, rest = "//", rest[2:]
+	}
+	if i := strings.LastIndexByte(rest, '@'); i >= 0 {
+		rest = rest[i+1:]
+	}
+	return scheme, rest
+}
+
+// withoutAccount is appURL with its user name and password cut out by
+// splitAccount's reading, scheme and path kept: the success screen's
+// address (#277). Not escaped; the caller escapes for the screen.
+func withoutAccount(appURL string) string {
+	scheme, rest := splitAccount(appURL)
+	return scheme + rest
 }
 
 // identityLine is the confirm screens' one line of deployment identity:
