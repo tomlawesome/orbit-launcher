@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -129,10 +130,85 @@ type configCollect struct {
 // in the app its result then reaches the main menu, not this run, so a
 // result made after leaving is released by the command itself, and one
 // handed over but not yet taken is released by the leaving.
+//
+// The preparation also writes into the run's configuration tree (the
+// import), so the tree must not be removed under it: a removal racing
+// the copy can leave an empty folder in TMPDIR that nothing removes
+// (#277). While a preparation runs, the run's release of its files waits
+// here and the preparation runs it on finishing.
 type configLate struct {
 	mu      sync.Mutex
 	stopped bool
 	held    func()
+
+	preparing bool
+	prepared  chan struct{} // closed when the running preparation ends
+	runFiles  func()        // the run's files' release, waiting for it
+}
+
+// begin is a preparation starting. False means the session was left
+// before it started: there is nothing to prepare for.
+func (l *configLate) begin() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stopped {
+		return false
+	}
+	l.preparing = true
+	l.prepared = make(chan struct{})
+	return true
+}
+
+// end is the preparation finished with the tree: a release of the run's
+// files that waited for it runs now.
+func (l *configLate) end() {
+	l.mu.Lock()
+	release := l.runFiles
+	l.runFiles, l.preparing = nil, false
+	close(l.prepared)
+	l.mu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
+// releaseRunFilesAfter keeps release for the running preparation to run
+// once it ends, reporting whether it did; false means none is running
+// and the caller releases now.
+func (l *configLate) releaseRunFilesAfter(release func()) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.preparing {
+		return false
+	}
+	l.runFiles = release
+	return true
+}
+
+// awaitPreparation waits, at most limit, for a running preparation to end
+// (and so to release whatever waited for it). Past the limit, a release
+// still waiting runs anyway: the launcher is quitting and nothing else
+// would run it.
+func (l *configLate) awaitPreparation(limit time.Duration) {
+	l.mu.Lock()
+	if !l.preparing {
+		l.mu.Unlock()
+		return
+	}
+	prepared := l.prepared
+	l.mu.Unlock()
+	select {
+	case <-prepared:
+		return
+	case <-time.After(limit):
+	}
+	l.mu.Lock()
+	release := l.runFiles
+	l.runFiles = nil
+	l.mu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
 // hand is a command's result arriving; release frees it. It reports
@@ -237,8 +313,13 @@ func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	}
 	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
+		if !late.begin() {
+			return nil
+		}
 		msg := prepare(ctx, targetDir, configTree)
-		if !late.hand(func() { releaseConfigMsg(msg) }) {
+		handed := late.hand(func() { releaseConfigMsg(msg) })
+		late.end()
+		if !handed {
 			return nil
 		}
 		return msg
