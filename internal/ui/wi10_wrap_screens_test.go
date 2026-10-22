@@ -71,14 +71,13 @@ func wi10AssertWrapped(t *testing.T, screen, text string) {
 // Wrapping must not eat the text: a short directory stays whole on one
 // row, and so does an unbroken path that fits the terminal (a word is
 // never cut at the screen's edge).
-func TestInstallConfirm_ShortAndUnbrokenPathsStayWhole(t *testing.T) {
+func TestInstallProfile_ShortAndUnbrokenPathsStayWhole(t *testing.T) {
 	for _, dir := range []string{"/opt/orbit", "/srv/containers/mail/orbit-production/with/a/longer/unbroken/path"} {
 		m := NewInstallModel(dir, "v1")
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: wi10Cols, Height: 40})
-		updated, _ = updated.Update(key(tea.KeyEnter)) // Standard -> confirm
 		screen := wi10Plain(updated.View().Content)
 		if !strings.Contains(screen, dir) {
-			t.Errorf("confirm screen lost %q:\n%s", dir, screen)
+			t.Errorf("profile screen lost %q:\n%s", dir, screen)
 		}
 		for i, row := range strings.Split(screen, "\n") {
 			if w := lipgloss.Width(row); w > wi10Cols {
@@ -88,10 +87,9 @@ func TestInstallConfirm_ShortAndUnbrokenPathsStayWhole(t *testing.T) {
 	}
 }
 
-func TestInstallConfirm_LongTargetDirectoryWrapsAt80Columns(t *testing.T) {
+func TestInstallProfile_LongTargetDirectoryWrapsAt80Columns(t *testing.T) {
 	m := NewInstallModel(wi10LongDir, "v1")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: wi10Cols, Height: 40})
-	updated, _ = updated.Update(key(tea.KeyEnter)) // Standard -> confirm
 	wi10AssertWrapped(t, updated.View().Content, wi10LongDir)
 }
 

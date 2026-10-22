@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,6 +84,10 @@ type RemoveModel struct {
 	// of seam as standDown, nil in production, which means os.Stdout. Tests
 	// set it so they neither write to the real terminal nor go unchecked.
 	clipboard io.Writer
+
+	// signalQuit is a SignalQuitMsg that arrived during the stand-down:
+	// the launcher quits as soon as the stand-down's result is in.
+	signalQuit bool
 }
 
 // NewRemoveModel constructs the Remove flow for a detected deployment. A
@@ -154,7 +159,19 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = removeStateDone
 			m.after = newMenu(removeDoneRows...)
 		}
+		if m.signalQuit {
+			return m.handleKey(ctrlCPress)
+		}
 		return m, nil
+
+	case SignalQuitMsg:
+		// The stand-down is not interrupted (see handleKey), but nobody
+		// may be left to see its result, so the quit waits for it.
+		if m.state == removeStateStandingDown {
+			m.signalQuit = true
+			return m, nil
+		}
+		return m.handleKey(ctrlCPress)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -220,7 +237,7 @@ func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.left = true
 		return m, nil
 	case chosen == removeCopy:
-		words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+		words, err := m.removalWords()
 		if err != nil {
 			return m, nil
 		}
@@ -295,18 +312,36 @@ func (m RemoveModel) viewConfirm() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "This stops Orbit and removes its containers")
 
-	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt)))
+	fmt.Fprintln(&b, style.Ink.Render(identityLine(m.deployment, m.installedAt, measure(m.width, proseWidth))))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.MutedText.Render("Your mail, documents, and configuration are not deleted"))
-	fmt.Fprintln(&b, style.MutedText.Render("by this step — they stay on disk, and the next screen"))
-	fmt.Fprintln(&b, style.MutedText.Render("shows exactly how to remove them if you choose to."))
+	// Each hand-broken line wraps on its own, so it stays one row where
+	// it fits and breaks at spaces where it does not.
+	prose := []string{
+		"Your mail, documents, and configuration are not deleted",
+		"by this step — they stay on disk, and the next screen",
+		"shows exactly how to remove them if you choose to.",
+	}
+	// The root or home folder gets no removal command, so nothing is
+	// promised for it.
+	if m.refusedFolder() != "" {
+		prose = []string{prose[0], "by this step — they stay on disk."}
+	}
+	for _, line := range prose {
+		writeWrapped(&b, style.MutedText, line, measure(m.width, proseWidth))
+	}
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
+// removeCannotStopLine is the stand-down's second working line. It keeps
+// Repair's "can't be stopped" (#227) but not Repair's reason: a
+// stand-down deletes nothing and is undone by starting Orbit again, so
+// stopping it halfway is not unsafe.
+const removeCannotStopLine = "Please wait — this can't be cancelled. Nothing is being deleted."
+
 func (m RemoveModel) viewStandingDown() string {
-	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", cannotStopLine))
+	return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "standing down Orbit", removeCannotStopLine))
 }
 
 func (m RemoveModel) viewDone() string {
@@ -314,20 +349,70 @@ func (m RemoveModel) viewDone() string {
 	writeInlineHeader(&b, style.SuccessText.Render(style.SymbolMark), "Orbit has been stood down")
 
 	targetDir := m.deployment.TargetDir
-	fmt.Fprintln(&b, style.MutedText.Render("Containers and networks are stopped. Your files and data"))
-	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.MutedText, "volumes are still on disk at "+targetDir+" —", measure(m.width, proseWidth))
-	fmt.Fprintln(&b, style.MutedText.Render("nothing has been deleted."))
+	prose := measure(m.width, proseWidth)
+	writeWrapped(&b, style.MutedText, "Containers and networks are stopped. Your files and data", prose)
+	// The path is the one word here whose length and characters nobody
+	// chose, so it is escaped for the terminal and cut across rows.
+	for _, row := range wrapHard("volumes are still on disk at "+targetDir+" —", prose, m.width-4, folderRows) {
+		fmt.Fprintln(&b, style.MutedText.Render(row))
+	}
+	writeWrapped(&b, style.MutedText, "nothing has been deleted.", prose)
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("to fully remove Orbit from this machine, copy and run"))
+	// For the root or home folder only the data-volume half is offered:
+	// "sudo rm -rf" there would delete far more than Orbit.
+	refused := m.refusedFolder()
+	if refused != "" {
+		writeWrapped(&b, style.Tagline, "to remove Orbit's data volumes from this machine, copy and run", prose)
+	} else {
+		writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
+	}
 
 	// The command is over 100 cells for a short path, and the box adds
 	// four; a terminal cuts whatever is wider than it, and the cut end is
 	// the half that deletes everything. Wrapped, it reads whole at 80
-	// columns and still runs as typed; Copy command keeps the one-line
-	// form. Both are laid out from the same words.
-	words, _ := deploy.RemovalCommandWords(targetDir)
-	lines := wrapShellCommand(words, m.width-4)
+	// columns, and a word wider than the box is cut across rows (#271).
+	// The box's outside edge is the console's, width-4: four cells for
+	// its frame, so the text gets width-8. Both are laid out from the
+	// same words: the box shows them escaped for the terminal, measured
+	// after escaping, so a folder with control characters reads
+	// differently from what runs; Copy command keeps the raw one-line
+	// form, which is the one to run.
+	raw, _ := m.removalWords()
+	words := make([]string, len(raw))
+	for i, w := range raw {
+		words[i] = visibleText(w)
+	}
+	lines := wrapShellCommand(words, m.width-8)
+
+	// The rows after the box are laid out first, so the box knows how
+	// many rows they need.
+	var tail strings.Builder
+	// errorWidth, not proseWidth: the box's caption reads at the box's measure.
+	wide := measure(m.width, errorWidth)
+	if refused != "" {
+		writeWrapped(&tail, style.DegradedText, "this deletes all mail and documents — it cannot be undone", wide)
+		writeWrapped(&tail, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own. Orbit's files there stay for you to remove.", prose)
+	} else {
+		writeWrapped(&tail, style.DegradedText, "this deletes all mail, documents and configuration, and everything else in the folder, backups included — it cannot be undone", wide)
+	}
+	fmt.Fprintln(&tail)
+	// The copy row says so once it has copied; the menu's own label,
+	// which Enter answers with, stays the same.
+	done := m.after
+	if m.copied {
+		done = done.over(append([]string{removeCopy + style.Separator + "copied"}, removeDoneRows[1:]...))
+	}
+	done.write(&tail)
+
+	// The box gets the rows the screen has left once every other row,
+	// the menu included, has its place: a long folder at a narrow width
+	// must never push Copy command, Menu and Exit off the screen. Rows
+	// past that are stood for by one "…" row; Copy command still
+	// carries the whole command.
+	room := max(m.height-strings.Count(b.String(), "\n")-strings.Count(tail.String(), "\n")-2, 1)
+	if len(lines) > room {
+		lines = append(lines[:room-1:room-1], "  …")
+	}
 	boxW := 0
 	for _, l := range lines {
 		boxW = max(boxW, lipgloss.Width(l))
@@ -335,29 +420,78 @@ func (m RemoveModel) viewDone() string {
 	for _, l := range drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines) {
 		fmt.Fprintln(&b, l)
 	}
-	fmt.Fprintln(&b, style.DegradedText.Render("this deletes all mail, documents, and configuration —"))
-	fmt.Fprintln(&b, style.DegradedText.Render("it cannot be undone"))
-	fmt.Fprintln(&b)
-
-	// The copy row says so once it has copied; the menu's own label,
-	// which Enter answers with, stays the same.
-	done := m.after
-	if m.copied {
-		done = done.over(append([]string{removeCopy + style.Separator + "copied"}, removeDoneRows[1:]...))
-	}
-	done.write(&b)
+	b.WriteString(tail.String())
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// removalWords is the command the removed screen offers: the whole
+// removal, or only its data-volume half for a folder that is not
+// Orbit's own (refusedFolder). Compose removes only this project's
+// volumes, so that half is safe anywhere, and without it the leftover
+// database volume would block every later install.
+func (m RemoveModel) removalWords() ([]string, error) {
+	words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	if errors.Is(err, deploy.ErrRootFolder) || errors.Is(err, deploy.ErrHomeFolder) {
+		return deploy.VolumeRemovalCommandWords(m.deployment.TargetDir)
+	}
+	return words, err
+}
+
+// refusedFolder names the deployment folder when no removal command is
+// built for it ("the root folder", "your home folder"); empty otherwise.
+func (m RemoveModel) refusedFolder() string {
+	_, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	switch {
+	case errors.Is(err, deploy.ErrRootFolder):
+		return "the root folder"
+	case errors.Is(err, deploy.ErrHomeFolder):
+		return "your home folder"
+	}
+	return ""
 }
 
 func (m RemoveModel) viewFailed() string {
 	var b strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), "Stand-down stopped")
-	if m.standDownErr != nil {
-		// Docker's words, at Docker's length: wrapped so the reason is
-		// never cut at the screen's edge.
-		writeWrapped(&b, style.Tagline, m.standDownErr.Error(), measure(m.width, errorWidth))
+	var timedOut *deploy.StandDownTimeoutError
+	if errors.As(m.standDownErr, &timedOut) {
+		// Docker's words would say only that it was killed: the screen
+		// gives the limit and the command to run by hand instead. The
+		// rows are escaped for the terminal like the removal command's.
+		writeWrapped(&b, style.Tagline, "The stack hasn't come down after "+limitWords(timedOut.Limit)+". Try again manually later with:", measure(m.width, errorWidth))
+		words := make([]string, len(timedOut.Words))
+		for i, w := range timedOut.Words {
+			words[i] = visibleText(w)
+		}
+		for _, row := range wrapShellCommand(words, m.width-8) {
+			fmt.Fprintln(&b, style.MutedText.Render(row))
+		}
+		fmt.Fprintln(&b)
+	} else if m.standDownErr != nil {
+		// Docker's words, wrapped so the reason is never cut at the
+		// screen's edge. Compose adds a progress line per container
+		// (about 36 for Orbit), which would push Menu and Exit off a
+		// small terminal: the first line, which holds the reason, stays,
+		// and only the last six after it, as on the engine failure
+		// screen.
+		lines := strings.Split(strings.TrimRight(m.standDownErr.Error(), "\n"), "\n")
+		shown := append([]string{lines[0]}, tailLines(lines[1:], 6)...)
+		writeWrapped(&b, style.Tagline, visibleLines(strings.Join(shown, "\n")), measure(m.width, errorWidth))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// limitWords names a time limit in whole minutes where it is one, else in
+// whole seconds: "1 minute", "5 minutes", "90 seconds".
+func limitWords(d time.Duration) string {
+	unit, n := "second", int(d.Round(time.Second)/time.Second)
+	if d >= time.Minute && d%time.Minute == 0 {
+		unit, n = "minute", int(d/time.Minute)
+	}
+	if n != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("%d %s", n, unit)
 }

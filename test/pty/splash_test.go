@@ -6,8 +6,11 @@
 package pty
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,9 +78,36 @@ func (c *vtConsole) expectScreen(texts ...string) error {
 	return c.expectWithin(c.timeout, vtscreen.ContainsAll(texts...))
 }
 
+// removedConfigScreenText is what the screen the engine's configuration
+// stop used to land on showed (#251): the stop goes straight into guided
+// configuration now.
+var removedConfigScreenText = []string{"The engine stopped before touching anything", "Continue — guided configuration"}
+
+func showsRemovedConfigScreen(screen string) (string, bool) {
+	for _, gone := range removedConfigScreenText {
+		if strings.Contains(screen, gone) {
+			return gone, true
+		}
+	}
+	return "", false
+}
+
+// expectWithin waits for match, and fails if the removed configuration
+// screen comes up first. That screen would be on the way to the one
+// waited for, and replaced by it, so a check of the screen the wait ends
+// on could never see it: it ends the wait here instead.
 func (c *vtConsole) expectWithin(d time.Duration, match vtscreen.Match) error {
-	_, err := vtscreen.Wait(c.term, d, match)
-	return err
+	screen, err := vtscreen.Wait(c.term, d, func(s string) bool {
+		_, removed := showsRemovedConfigScreen(s)
+		return removed || match(s)
+	})
+	if err != nil {
+		return err
+	}
+	if gone, removed := showsRemovedConfigScreen(screen); removed {
+		return fmt.Errorf("the removed configuration screen is shown (%q):\n%s", gone, screen)
+	}
+	return nil
 }
 
 // send types s as raw input, escape sequences and all.
@@ -193,4 +223,29 @@ func TestSplash_RealPTY_ArrowNavigationMovesTheCaret(t *testing.T) {
 	console.send("\x03") // Ctrl-C
 
 	waitForExit(t, cmd)
+}
+
+// A wait ends, and fails, on the screen the engine's configuration stop
+// used to land on even when what it waits for is shown next.
+func TestConsole_ExpectFailsWhenTheRemovedConfigurationScreenComesUp(t *testing.T) {
+	consoleShowing := func(t *testing.T, drawn string) *vtConsole {
+		t.Helper()
+		console := newConsole(t, 80, 24, 5*time.Second)
+		if _, err := io.WriteString(console.term.Output(), drawn); err != nil {
+			t.Fatalf("draw: %v", err)
+		}
+		return console
+	}
+
+	t.Run("the removed screen fails the wait", func(t *testing.T) {
+		err := consoleShowing(t, "The engine stopped before touching anything\r\n").expectString("How will people sign in?")
+		if err == nil || !strings.Contains(err.Error(), "removed configuration screen") {
+			t.Fatalf("error = %v, want the removed configuration screen reported", err)
+		}
+	})
+	t.Run("an ordinary screen still matches", func(t *testing.T) {
+		if err := consoleShowing(t, "How will people sign in?").expectString("How will people sign in?"); err != nil {
+			t.Fatalf("an ordinary screen did not match: %v", err)
+		}
+	})
 }

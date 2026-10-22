@@ -10,7 +10,7 @@
                         [38;2;74;84;104m·[m [38;2;231;233;238mdata-volume[m[38;2;74;84;104m — absent or empty[m             [38;2;74;84;104m·[m           
                                                                                 
                              [38;2;74;84;104m12 checked · 1 skipped[m                             
-                  [38;2;216;180;90m·[m [38;2;231;233;238mrestore safe permissions[m[38;2;74;84;104m — absent or empty[m                  
+            [38;2;216;180;90m·[m [38;2;231;233;238mrestore safe permissions[m[38;2;74;84;104m — a secret is absent or empty[m            
                 [38;2;251;146;60m·[m [38;2;231;233;238mneeds your hands[m[38;2;74;84;104m — secret-stale · backup first[m                
                                                                                 
               [38;2;74;84;104ma safe plan is ready — pick a repair below to run it[m              

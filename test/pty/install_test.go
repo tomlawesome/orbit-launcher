@@ -23,15 +23,13 @@ func TestApp_RealPTY_NavigatingIntoInstallShowsTheProfileScreen(t *testing.T) {
 	}
 
 	console.send("\r") // Enter — Standard is selected by default
-	// Stops here, deliberately: the next screen's Enter hands the real
-	// terminal to install.sh (see internal/ui/handoff.go), which would
-	// fetch from the network and try to run a real install — not
-	// something to trigger from this test tier. Confirming the handoff
-	// screen renders and Escape navigates back is enough; the handoff
-	// mechanism itself (tea.ExecProcess) is proven in internal/ui's unit
-	// tests via an injected fake.
-	if err := console.expectString("Ready to install"); err != nil {
-		t.Fatalf("did not reach the Install confirm screen: %v", err)
+	// Stops here, deliberately: the notice's countdown and typed phrase
+	// come next, and accepting them would start a real install, which
+	// would fetch from the network — not something to trigger from this
+	// test tier. Confirming the notice renders and Escape navigates back
+	// is enough.
+	if err := console.expectString("A note before you install"); err != nil {
+		t.Fatalf("did not reach the development notice: %v", err)
 	}
 
 	console.send("\x1b") // Escape back to profile

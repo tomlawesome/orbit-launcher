@@ -16,7 +16,7 @@ import (
 // Edge and exit paths on the two end screens: the success screen and
 // the Remove flow.
 
-func TestSuccessModel_EveryWayOutLeavesForTheTerminal(t *testing.T) {
+func TestSuccessModel_CtrlCQuitsEscGoesBackToTheMenuAndQDoesNothing(t *testing.T) {
 	// Esc is one step back, to the menu (#225); Ctrl+C quits. There is no
 	// q shortcut (#226).
 	m, cmd := updateAs(t, newTestSuccessModel(), ctrlC())

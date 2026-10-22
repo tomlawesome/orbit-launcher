@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"strings"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestSplashModel_EnterAfterANumberKeyActs(t *testing.T) {
 // The health probe must not fight a caret the digit placed.
 func TestSplashModel_DegradedNeverMovesTheCaretAfterANumberKey(t *testing.T) {
 	m, _ := updateAs(t, seedDeployment(NewSplashModel()), runeKey('4'))
-	m, _ = updateAs(t, m, healthResultMsg{healthy: false})
+	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthNotResponding})
 	if m.menu.sel != 3 {
 		t.Errorf("selected = %d, want 3 — the probe moved the caret a digit had placed", m.menu.sel)
 	}
@@ -386,7 +387,7 @@ func seedDeployment(m SplashModel) SplashModel {
 func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
 	m := seedDeployment(NewSplashModel())
 
-	updated, _ := m.Update(healthResultMsg{healthy: true})
+	updated, _ := m.Update(healthResultMsg{reason: deploy.HealthResponding})
 	m = updated.(SplashModel)
 
 	if m.state != stateAlive {
@@ -400,7 +401,7 @@ func TestSplashModel_HealthResultAliveKeepsUpdatePreselected(t *testing.T) {
 func TestSplashModel_HealthResultDegradedPreselectsRepair(t *testing.T) {
 	m := seedDeployment(NewSplashModel())
 
-	updated, _ := m.Update(healthResultMsg{healthy: false})
+	updated, _ := m.Update(healthResultMsg{reason: deploy.HealthNotResponding})
 	m = updated.(SplashModel)
 
 	if m.state != stateDegraded {
@@ -418,7 +419,7 @@ func TestSplashModel_DegradedNeverMovesTheCaretAfterTheUserNavigates(t *testing.
 	m = updated.(SplashModel)
 	navigatedTo := m.menu.sel
 
-	updated, _ = m.Update(healthResultMsg{healthy: false})
+	updated, _ = m.Update(healthResultMsg{reason: deploy.HealthNotResponding})
 	m = updated.(SplashModel)
 
 	if m.state != stateDegraded {
@@ -445,12 +446,12 @@ func TestSplashModel_ViewShowsIdentityBlockPerState(t *testing.T) {
 		t.Error("unknown-health view must never guess a status word")
 	}
 
-	updated, _ = m.Update(healthResultMsg{healthy: true})
+	updated, _ = m.Update(healthResultMsg{reason: deploy.HealthResponding})
 	if view := updated.(SplashModel).View().Content; !strings.Contains(view, "alive") {
 		t.Error("alive view must show the status word")
 	}
 
-	updated, _ = m.Update(healthResultMsg{healthy: false})
+	updated, _ = m.Update(healthResultMsg{reason: deploy.HealthNotResponding})
 	if view := updated.(SplashModel).View().Content; !strings.Contains(view, "degraded") {
 		t.Error("degraded view must show the status word")
 	}
@@ -541,23 +542,27 @@ func TestSplashModel_ArrivalShowsTheWordsInOrder(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
 	m = updated.(SplashModel)
 
-	var sawGet, sawInto, sawOrbitAlone bool
+	// The tick each beat first shows on. -1 is "never".
+	getAt, intoAt, orbitAt := -1, -1, -1
 	for i := 0; i < 80; i++ {
-		view := m.View().Content
-		if strings.Contains(view, "Get") {
-			sawGet = true
+		view := screen(m)
+		if getAt < 0 && strings.Contains(view, "Get") {
+			getAt = i
 		}
-		if strings.Contains(view, "Into") {
-			sawInto = true
+		if intoAt < 0 && strings.Contains(view, "Into") {
+			intoAt = i
 		}
-		if strings.Contains(view, "O R B I T") && !strings.Contains(view, "Install") {
-			sawOrbitAlone = true
+		if orbitAt < 0 && strings.Contains(view, "O R B I T") && !strings.Contains(view, "Install") {
+			orbitAt = i
 		}
 		updated, _ = m.Update(tickMsg{})
 		m = updated.(SplashModel)
 	}
-	if !sawGet || !sawInto || !sawOrbitAlone {
-		t.Errorf("arrival beats missing: Get=%v Into=%v OrbitAlone=%v", sawGet, sawInto, sawOrbitAlone)
+	if getAt < 0 || intoAt < 0 || orbitAt < 0 {
+		t.Fatalf("arrival beats missing: Get at tick %d, Into at %d, the wordmark alone at %d", getAt, intoAt, orbitAt)
+	}
+	if !(getAt < intoAt && intoAt < orbitAt) {
+		t.Errorf("arrival beats out of order: Get at tick %d, Into at %d, the wordmark alone at %d; want Get, then Into, then Orbit", getAt, intoAt, orbitAt)
 	}
 }
 

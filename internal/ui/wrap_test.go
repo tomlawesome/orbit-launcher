@@ -1,25 +1,11 @@
 package ui
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
 )
-
-// rejoin reads wrapped lines back the way a shell does: a trailing
-// backslash joins the next line, and leading indentation is whitespace.
-func rejoin(lines []string) string {
-	var b strings.Builder
-	for i, l := range lines {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(strings.TrimSpace(strings.TrimSuffix(l, " \\")))
-	}
-	return b.String()
-}
 
 func TestWrapShellCommand_FitsOnOneLineUnchanged(t *testing.T) {
 	cmd := removalLine(t, "/opt/orbit")
@@ -29,26 +15,25 @@ func TestWrapShellCommand_FitsOnOneLineUnchanged(t *testing.T) {
 	}
 }
 
-// Whatever the width, the lines must read back as exactly the command,
-// no line may be wider than the limit (bar a single word that is), and
-// "&&" must lead its own line so the destructive half is a line apart.
+// Whatever the width, the lines must read back as exactly the command
+// (the read-back of #271 criterion g: a row ending " \" joins with a space,
+// one ending "'\" joins directly and drops the doubled quote, one ending
+// in a bare "\" joins directly),
+// no line may be wider than the limit, a single word included, and "&&"
+// must lead its own line so the destructive half is a line apart.
 func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 	for _, dir := range []string{"/opt/orbit", "/srv/containers/mail/orbit-production", "/home/sam/my orbit", "/opt/it's"} {
 		cmd := removalLine(t, dir)
-		units := commandUnits(removalWords(t, dir))
 		for _, limit := range []int{40, 56, 76, 100} {
 			lines := wrapShellCommand(removalWords(t, dir), limit)
-			if got := rejoin(lines); got != cmd {
+			if got := narrowReadBack(lines); got != cmd {
 				t.Errorf("limit %d, dir %q: lines %q read back as\n  %q\nwant\n  %q", limit, dir, lines, got, cmd)
 			}
 			for i, l := range lines {
-				// An option and its value are one unit by design; a line
-				// may only be over the limit when it holds a single unit.
-				content := strings.TrimSpace(strings.TrimSuffix(l, " \\"))
-				if lipgloss.Width(l) > limit && !slices.Contains(units, content) {
-					t.Errorf("limit %d, dir %q: line %d is %d cells with a break available: %q", limit, dir, i, lipgloss.Width(l), l)
+				if lipgloss.Width(l) > limit {
+					t.Errorf("limit %d, dir %q: line %d is %d cells: %q", limit, dir, i, lipgloss.Width(l), l)
 				}
-				if i < len(lines)-1 && !strings.HasSuffix(l, " \\") {
+				if i < len(lines)-1 && !strings.HasSuffix(l, "\\") {
 					t.Errorf("limit %d, dir %q: line %d does not continue with a backslash: %q", limit, dir, i, l)
 				}
 				if strings.Contains(l, "&&") && !strings.HasPrefix(l, "  && ") {
@@ -59,12 +44,21 @@ func TestWrapShellCommand_ReadsBackAsTheSameCommand(t *testing.T) {
 	}
 }
 
-// A quoted path with a space in it is one shell word and must never be
-// broken, however narrow the screen.
-func TestWrapShellCommand_NeverBreaksInsideQuotes(t *testing.T) {
-	for _, l := range wrapShellCommand(removalWords(t, "/home/sam/my orbit"), 30) {
-		if strings.Count(l, "'")%2 != 0 {
-			t.Errorf("line breaks a quoted word: %q", l)
+// A quoted path with a space in it is cut across lines only as a closed
+// and reopened quote: a line ends in "'\" and the next starts with "'",
+// so every line holds whole quotes (#271 criteria f and h).
+func TestWrapShellCommand_BreaksInsideQuotesOnlyAsClosedAndReopened(t *testing.T) {
+	for _, limit := range []int{30, 42, 56} {
+		lines := wrapShellCommand(removalWords(t, "/home/sam/my orbit"), limit)
+		for i, l := range lines {
+			if strings.Count(l, "'")%2 != 0 {
+				t.Errorf("limit %d: line breaks a quoted word without closing it: %q", limit, l)
+			}
+			if strings.HasSuffix(l, "'\\") && !strings.HasSuffix(l, " '\\") {
+				if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "'") {
+					t.Errorf("limit %d: line %q ends in '\\ but the next line does not reopen the quote: %q", limit, l, lines)
+				}
+			}
 		}
 	}
 }
@@ -90,5 +84,46 @@ func TestWrapWords(t *testing.T) {
 	}
 	if got := wrapWords("", 56); len(got) != 0 {
 		t.Errorf("wrapWords(empty) = %q, want nothing", got)
+	}
+}
+
+// dashPath is a folder path of exactly n characters, made of short
+// segments so that it is one word to wrapHard.
+func dashPath(n int) string {
+	p := ""
+	for i := 0; len(p) < n; i++ {
+		p += "/srv/containers/mail/orbit-production-data"[:min(n-len(p), 41)]
+	}
+	return p
+}
+
+func TestWrapHard_LoneDash_TheDashAfterACutPathNeverStandsAloneOnARow(t *testing.T) {
+	const limit, edge, maxRows = 56, 76, 4
+	for _, n := range []int{80, 81, 82, 83} {
+		path := dashPath(n)
+		text := "volumes are still on disk at " + path + " —"
+		rows := wrapHard(text, limit, edge, maxRows)
+		for i, r := range rows {
+			if strings.TrimSpace(r) == "—" {
+				t.Errorf("path of %d: row %d is the dash alone: %q", n, i, rows)
+			}
+			if w := lipgloss.Width(r); w > limit {
+				t.Errorf("path of %d: row %d is %d cells, over %d: %q", n, i, w, limit, r)
+			}
+		}
+		last := rows[len(rows)-1]
+		if !strings.HasSuffix(last, " —") {
+			t.Errorf("path of %d: last row %q does not end in \" —\"", n, last)
+			continue
+		}
+		if tail := strings.TrimSuffix(last, " —"); tail == "" || strings.HasSuffix(tail, " ") {
+			t.Errorf("path of %d: last row %q holds no path before the dash", n, last)
+		}
+		// Read-back, asserted exactly: the only breaks the layout may add
+		// inside the path are cuts, which lose nothing, so joining the rows
+		// with no separator must equal the text with its spaces removed.
+		if got, want := strings.Join(rows, ""), strings.ReplaceAll(text, " ", ""); strings.ReplaceAll(got, " ", "") != want {
+			t.Errorf("path of %d: rows read back %q, want %q", n, got, want)
+		}
 	}
 }

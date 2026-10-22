@@ -79,11 +79,19 @@ func check(root string, stdout io.Writer) error {
 	}
 	if len(problems) > 0 {
 		lines := make([]string, len(problems))
+		conflict := false
 		for i, p := range problems {
 			lines[i] = p.String()
+			conflict = conflict || p.Conflict
 		}
-		return fmt.Errorf("the policy no longer matches the workflows:\n  %s\n\nRegenerate it:\n  go run ./tools/supplychainpolicy -write",
-			strings.Join(lines, "\n  "))
+		// Regenerating keeps only the last of two conflicting pins, hiding the
+		// other, so the workflows must be made to agree first.
+		advice := "Regenerate it:\n  go run ./tools/supplychainpolicy -write"
+		if conflict {
+			advice = "Make the workflows pin each action to one commit, then run this check again."
+		}
+		return fmt.Errorf("the policy no longer matches the workflows:\n  %s\n\n%s",
+			strings.Join(lines, "\n  "), advice)
 	}
 	fmt.Fprintln(stdout, "supply-chain policy matches the workflows")
 	return nil

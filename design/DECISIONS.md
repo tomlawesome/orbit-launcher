@@ -1,9 +1,11 @@
 # Design decisions — the owner-locked visual law
 
 > **Historical record, noted 2026-10-05.** Kept as written. A later mockup
-> set, `mockups-v7-notice.html` (the development notice), came after the
-> lineage listed here, and its screen has shipped. The "next mockup set is
-> v7" line below is out of date.
+> set, `mockups-v7-notice.html` (the development notice), is the v7 in the
+> lineage below, and its screen has shipped. The line that said the next
+> mockup set is v7 has been removed. Sections up to 2026-10-05 are the
+> historical record, kept as written; dated entries after it (such as
+> 2026-10-21) are current decisions.
 
 
 This is the durable record of every visual decision the repository owner has
@@ -14,9 +16,10 @@ earlier one, the reversal is recorded; the archive keeps both.
 
 Companion artifacts: the mockup lineage (v1 `mockups.html` → v6
 `mockups-v6-starchart.html`, all published at
-https://tomlawesome.github.io/orbit-launcher/), the terminal-truth
-acceptance renderer (`mockups-terminal.html`), and the closed handover
-briefs (`handovers/`). Decisions were made 2026-08-11/12 against the v2–v6
+https://tomlawesome.github.io/orbit-launcher/; then v7
+`mockups-v7-notice.html`, the development notice, not published: see
+Process), the terminal-truth acceptance renderer (`mockups-terminal.html`),
+and the closed handover briefs (`handovers/`). Decisions were made 2026-08-11/12 against the v2–v6
 iterations; the delivering PRs are #74 (v5 splash), #75 (mission console +
 success), #77 (v6 starchart).
 
@@ -96,6 +99,17 @@ Both one-shot, both skipped by `ORBIT_LAUNCHER_NO_ANIMATION`:
   visually awkward in terminal"). The plain thin line stays.
 - Success/failure key off events plus exit codes, never scraped prose.
 
+### The install notice (v7)
+
+Proposals 2, 3 and 4 of `design/mockups-v7-notice.html` were accepted as
+shipped (owner, 2026-10-21, #195).
+
+- **Bottom region (2):** the timer row, prompt, text box, feedback row and
+  Back are pinned at the bottom; only the prose scrolls.
+- **Every install (3):** the notice shows on every install, not once per
+  machine.
+- **Keys (4):** PgDn, PgUp, Home, End and the mouse wheel scroll the prose.
+
 ## Rejected, with reasons (do not resurrect for the TUI)
 
 - Ring/sphere around the menu, orbiting planets with occlusion, sun
@@ -110,8 +124,10 @@ Both one-shot, both skipped by `ORBIT_LAUNCHER_NO_ANIMATION`:
 ## Process
 
 - **Every design iteration gets a new version number** — no "rev 2/rev 3"
-  of an existing set (owner instruction). The next mockup set is v7.
+  of an existing set (owner instruction).
 - Design iterations publish to the `gh-pages` branch (GitHub Pages), which
   carries only design artifacts; approved sets also land in `design/` here
-  so code comments can reference them in-tree.
+  so code comments can reference them in-tree. *Superseded 2026-10-21
+  (owner): mockups are never published on Pages; they are served only from
+  the local design container — see AGENTS.md.*
 - Owner review happens against cell-truth renders only.

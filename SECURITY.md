@@ -86,8 +86,8 @@ makes the issue exploitable or requires an orbit-launcher-specific
 mitigation.
 
 Ordinary defects, feature requests and non-sensitive hardening suggestions
-belong in the public
-[issue tracker](https://github.com/tomlawesome/orbit-launcher/issues).
+are not being taken as public reports for now; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Responsible research
 

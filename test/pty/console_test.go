@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
+	"github.com/tomlawesome/orbit-launcher/test/internal/vtscreen"
 )
 
 // fakeEngineScript is a stand-in install.sh that speaks engine event
@@ -31,17 +32,6 @@ echo "phase=complete component=installer state=completed reason=deployment-ready
 exit 0
 `
 
-// fakeRefusalScript is the engine's documented non-interactive
-// configuration refusal: a failed configuration event, guidance on
-// stderr, exit 1, target untouched.
-const fakeRefusalScript = `#!/usr/bin/env bash
-echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
-sleep 0.05
-echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
-echo "Orbit installer: configuration fields requiring attention: APP_URL OIDC_ISSUER." >&2
-exit 1
-`
-
 func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, *exec.Cmd) {
 	t.Helper()
 
@@ -57,7 +47,10 @@ func startConsolePTY(t *testing.T, binPath, dir, scriptURL string) (*vtConsole, 
 	return console, cmd
 }
 
-// driveToInstallNow walks splash -> profile -> confirm and confirms.
+// driveToInstallNow walks splash -> profile -> Standard, which opens the
+// notice (#248), then passes the notice (passNotice): it waits out the
+// 20 s countdown, types the phrase and confirms. It does not stop with
+// the notice open.
 func driveToInstallNow(t *testing.T, console *vtConsole) {
 	t.Helper()
 	must := func(s string) {
@@ -71,15 +64,13 @@ func driveToInstallNow(t *testing.T, console *vtConsole) {
 	console.send("\r")
 	must("Choose a deployment profile")
 	console.send("\r")
-	must("Ready to install")
-	console.send("\r")
 	passNotice(t, console)
 }
 
 // noticeWait outlasts the development notice's countdown (#175). The
-// binary keeps its full 70 s — nothing outside it can shorten an
-// approved gate — so a run through Install now waits it out.
-const noticeWait = 72 * time.Second
+// binary keeps its full 20 s (#250) — nothing outside it can shorten an
+// approved gate — so a run through Standard waits it out.
+const noticeWait = 22 * time.Second
 
 // passNotice gets past the development notice the way a person does:
 // End shows the whole notice, the countdown runs out, the phrase is
@@ -143,29 +134,42 @@ func TestConsole_RealPTY_InstallStreamsEventsToSuccessScreen(t *testing.T) {
 	}
 }
 
-func TestConsole_RealPTY_ConfigurationRefusalShowsStyledPrompt(t *testing.T) {
+// expectNoRemovedConfigScreen fails if the screen now showing is the one
+// the engine's configuration stop used to land on (#251): the stop goes
+// straight into guided configuration. Every wait also fails if that screen
+// comes up while it waits (vtConsole.expectWithin); this is the look at the
+// screen the test is standing on.
+func expectNoRemovedConfigScreen(t *testing.T, console *vtConsole) {
+	t.Helper()
+	screen := vtscreen.Screen(console.term)
+	if gone, removed := showsRemovedConfigScreen(screen); removed {
+		t.Errorf("the removed configuration screen is shown (%q):\n%s", gone, screen)
+	}
+}
+
+func TestConsole_RealPTY_ConfigurationRefusalGoesStraightIntoGuidedConfiguration(t *testing.T) {
 	// Parallel: each run waits out the development notice's real
 	// countdown (passNotice), and six of those in series would
 	// spend most of the package's default timeout.
 	t.Parallel()
 	binPath := launcher.BuildBinary(t)
 	dir := t.TempDir()
-	console, cmd := startConsolePTY(t, binPath, dir, launcher.ServeScript(t, fakeRefusalScript))
+	console, cmd := startConsolePTY(t, binPath, dir, launcher.ServeScript(t, handsOverTree(fakeConfigAwareEngine, fakeMachineConfigure)))
 
 	driveToInstallNow(t, console)
 
-	if err := console.expectString("Orbit needs your configuration"); err != nil {
-		t.Fatalf("expected the styled configuration prompt: %v", err)
+	// No key press: the refusal lands on the guided session's first
+	// screen.
+	if err := console.expectString("How will people sign in?"); err != nil {
+		t.Fatalf("expected guided configuration straight after the refusal: %v", err)
 	}
-	if err := console.expectString("Continue — guided configuration"); err != nil {
-		t.Fatalf("expected the handoff option: %v", err)
-	}
+	expectNoRemovedConfigScreen(t, console)
 
 	// Escape returns to the menu (the refusal rolled the target back;
 	// nothing was changed), and Ctrl-C quits cleanly.
 	console.send("\x1b")
 	if err := console.expectString("▸ Install"); err != nil {
-		t.Fatalf("expected the splash again after Menu: %v", err)
+		t.Fatalf("expected the splash again after Esc: %v", err)
 	}
 	console.send("\x03")
 	waitForExit(t, cmd)

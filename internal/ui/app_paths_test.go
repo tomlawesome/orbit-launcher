@@ -199,7 +199,7 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	m := NewAppModelNoAnimation().
 		WithUpdateCheck(func(context.Context) (string, bool, error) { checks++; return "v9.9.10", true, nil })
 	m.targetDir = dir
-	m = m.WithDeploymentStatus(func(context.Context, string) bool { probes++; return true })
+	m = m.WithDeploymentStatus(func(context.Context, string) deploy.HealthReason { probes++; return deploy.HealthResponding })
 	m.flowSeams = engineRunSeams{prepareRepair: fakeRepairStream(`echo 'diagnosis result=healthy checked=1 skipped=0'; exit 0`)}
 	queue := newSink()
 	m = m.WithSender(queue.Send)

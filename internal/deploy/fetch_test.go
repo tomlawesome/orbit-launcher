@@ -39,13 +39,19 @@ func TestFetchInstallScript_ReturnsBodyOnSuccess(t *testing.T) {
 
 func TestFetchInstallScript_RejectsNon200Status(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A body that would pass every other check, shebang included, so
+		// only the status can be the reason for the refusal.
 		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("#!/usr/bin/env bash\necho hello\n"))
 	}))
 	defer srv.Close()
 
 	_, err := fetchInstallScript(context.Background(), srv.URL)
 	if err == nil {
 		t.Fatal("expected an error for a 404 response")
+	}
+	if !strings.Contains(err.Error(), "unexpected status") {
+		t.Errorf("error = %q, want the status refusal, not another check's", err)
 	}
 }
 

@@ -36,25 +36,59 @@ func TestAdvance_IsPureAndOnlyMovesTheTick(t *testing.T) {
 }
 
 // The sky is rigid: any two stars in the same layer keep a constant
-// angular separation forever — no star ever wanders on its own.
+// angular separation forever — no star ever wanders on its own. Read from
+// the cells the stars are drawn in, because the stored base angle A0 is
+// something Advance never changes: comparing it proves nothing. Two stars
+// per layer sit well inside a large grid, so the whole-cell rounding of
+// where they are drawn moves the measured angle by a few hundredths of a
+// radian at most, far below the tenths of a radian a wandering star
+// drifts.
 func TestStars_AreRigid_AngularSeparationIsConstant(t *testing.T) {
-	m := New(120, 40, 3)
-	var nearIdx []int
-	for i, s := range m.Stars {
-		if !s.Far {
-			nearIdx = append(nearIdx, i)
+	const tolerance = 0.08 // radians; rounding to a cell, see above
+	m := Model{
+		Width: 240, Height: 120, Tick: 0,
+		Stars: []Star{
+			{R: 60, A0: 0.3},
+			{R: 45, A0: 1.9},
+			{R: 60, A0: 3.1, Far: true},
+			{R: 45, A0: 4.4, Far: true},
+		},
+	}
+	angles := func(m Model) [4]float64 {
+		cells := m.StarCells()
+		if len(cells) != len(m.Stars) {
+			t.Fatalf("tick %d: %d of %d stars drawn; the test field must keep them all in bounds", m.Tick, len(cells), len(m.Stars))
+		}
+		var out [4]float64
+		cx, cy := float64(m.Width)/2, float64(m.Height)/2
+		for i, c := range cells {
+			// Cells are half as tall as wide, so the vertical offset doubles.
+			out[i] = math.Atan2(2*(float64(c.Y)-cy), float64(c.X)-cx)
+		}
+		return out
+	}
+	// diff is the signed angle from a to b, wrapped to (-pi, pi].
+	diff := func(a, b float64) float64 { return math.Remainder(b-a, 2*math.Pi) }
+
+	start := angles(m)
+	pairs := [][2]int{{0, 1}, {2, 3}} // near pair, far pair
+	for tick := 1; tick <= 500; tick++ {
+		m = m.Advance()
+		now := angles(m)
+		for _, p := range pairs {
+			was, is := diff(start[p[0]], start[p[1]]), diff(now[p[0]], now[p[1]])
+			if d := math.Abs(diff(was, is)); d > tolerance {
+				t.Fatalf("tick %d: angular separation of stars %d and %d drifted from %.3f to %.3f rad", tick, p[0], p[1], was, is)
+			}
 		}
 	}
-	if len(nearIdx) < 2 {
-		t.Skip("need at least two near-layer stars")
-	}
-	sep := m.Stars[nearIdx[0]].A0 - m.Stars[nearIdx[1]].A0
-	for i := 0; i < 500; i++ {
-		m = m.Advance()
-	}
-	after := m.Stars[nearIdx[0]].A0 - m.Stars[nearIdx[1]].A0
-	if math.Abs(sep-after) > 1e-12 {
-		t.Fatalf("angular separation drifted: %v -> %v", sep, after)
+	// The field really turned: a sky that never moved would pass the
+	// check above.
+	end := angles(m)
+	for i := range end {
+		if math.Abs(diff(start[i], end[i])) < 0.3 {
+			t.Errorf("star %d turned only %.3f rad in 500 ticks; the sky is not rotating", i, diff(start[i], end[i]))
+		}
 	}
 }
 

@@ -40,7 +40,7 @@ type AppModel struct {
 	// returns to the menu) is built exactly like the first one.
 	version       string
 	updateCheck   func(context.Context) (string, bool, error)
-	healthProbe   func(ctx context.Context, appURL string) bool
+	healthProbe   func(ctx context.Context, appURL string) deploy.HealthReason
 	detectOnStart bool
 
 	// targetDir is where an existing deployment, if any, would be found.
@@ -57,9 +57,18 @@ type AppModel struct {
 	// so tests need no Docker daemon; nil in production (real check).
 	flowCheckVolumes func(context.Context, string) []deploy.DatabaseVolume
 
+	// flowNoVolumeCheck is set by WithoutVolumeCheck: Install's Enter
+	// then never waits for the pre-flight.
+	flowNoVolumeCheck bool
+
 	// flowInstalledAt fakes Remove's and Update's install-date lookup
 	// the same way; nil in production (asks Docker).
 	flowInstalledAt func(context.Context, *deploy.Deployment) time.Time
+
+	// flowReadClaim fakes the success screen's claim-link read after an
+	// Install (#259) so tests need no Docker daemon; nil in production
+	// (deploy.ReadClaimLink).
+	flowReadClaim func(ctx context.Context, dir, appURL string, since time.Time) (string, error)
 
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 70 s default).
@@ -124,7 +133,7 @@ func (m AppModel) WithVersion(v string) AppModel {
 // splash's Init (see SplashModel.probeHealthCmd); nil leaves the state
 // at "deployment exists, health unknown", which renders as the FQDN
 // with no status word.
-func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) bool) AppModel {
+func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) deploy.HealthReason) AppModel {
 	m.healthProbe = probe
 	m.detectOnStart = true
 	m.splash = m.applyDeployment(m.splash)
@@ -149,6 +158,7 @@ func (m AppModel) WithSender(send func(tea.Msg)) AppModel {
 // screens: that date is read from the same daemon's volumes.
 func (m AppModel) WithoutVolumeCheck() AppModel {
 	m.flowCheckVolumes = func(context.Context, string) []deploy.DatabaseVolume { return nil }
+	m.flowNoVolumeCheck = true
 	m.flowInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 	return m
 }
@@ -183,6 +193,8 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
 	s.healthProbe = m.healthProbe
+	s.serviceStates = realServiceStates
+	s.targetDir = m.resolvedTargetDir()
 	return s
 }
 
@@ -236,6 +248,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
 	}
+	// The splash and success screens have no working step, so a signal is
+	// the Ctrl-C key there; every flow tells the two apart itself.
+	if _, ok := msg.(SignalQuitMsg); ok && (m.state == appStateSplash || m.state == appStateSuccess) {
+		msg = ctrlCPress
+	}
 
 	switch m.state {
 	case appStateSplash:
@@ -281,13 +298,39 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 	if o.Succeeded {
 		m.success = NewSuccessModel(o.URL, o.Elapsed, m.version)
 		m.success.noAnimation = m.splash.noAnimation
+		if m.state == appStateInstall {
+			m.success.readClaim = m.claimReader(o.URL)
+		}
 		m.state = appStateSuccess
-		return m, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+		sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+		// Not Init: the sky's ticks already run, carried over from the
+		// flow, and a second chain would double their pace.
+		if read := m.success.claimCmd(); read != nil {
+			return m, tea.Batch(sizeCmd, read)
+		}
+		return m, sizeCmd
 	}
 	if o.WantsMenu {
 		return m.refreshSplash()
 	}
 	return m, cmd
+}
+
+// claimReader is the success screen's claim-link read after a finished
+// Install (#259): the app's logs since the install started, in the
+// folder it installed into. Only Install offers it; after an Update
+// Orbit has long been claimed. No address means nothing to compare a
+// link against, so nothing is read.
+func (m AppModel) claimReader(appURL string) func() (string, error) {
+	if appURL == "" {
+		return nil
+	}
+	read := m.flowReadClaim
+	if read == nil {
+		read = deploy.ReadClaimLink
+	}
+	dir, since := m.install.targetDir, m.install.startedAt
+	return func() (string, error) { return read(context.Background(), dir, appURL, since) }
 }
 
 func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -320,6 +363,8 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "Repair":
 		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 		m.repair.engineRunSeams = m.flowSeams
+		m.repair.serviceStates = realServiceStates
+		m.repair.foreignOwned = deploy.ForeignOwned
 		m.repair.send = m.flowSend
 		m.state = appStateRepair
 		return m, tea.Batch(sizeCmd, m.repair.Init())
@@ -327,6 +372,10 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams
 		m.install.checkVolumes = m.flowCheckVolumes
+		if m.install.checkVolumes == nil {
+			m.install.checkVolumes = deploy.UnownedDatabaseVolumes
+		}
+		m.install.noVolumeCheck = m.flowNoVolumeCheck
 		m.install.noticeDuration = m.flowNoticeDuration
 		m.install.send = m.flowSend
 		m.state = appStateInstall

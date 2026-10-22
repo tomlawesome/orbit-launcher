@@ -107,24 +107,6 @@ func openUpdate(t *testing.T, m AppModel, pushed *sink) AppModel {
 	return drive(t, m, cmd, pushed)
 }
 
-// boxRows returns the rows drawn inside the screen's box, border,
-// padding and continuation backslash removed.
-func boxRows(screen string) []string {
-	var rows []string
-	for _, row := range strings.Split(screen, "\n") {
-		row = strings.TrimSpace(row)
-		if !strings.HasPrefix(row, "│") {
-			continue
-		}
-		inner := strings.TrimSpace(strings.Trim(row, "│"))
-		inner = strings.TrimSpace(strings.TrimSuffix(inner, "\\"))
-		if inner != "" {
-			rows = append(rows, inner)
-		}
-	}
-	return rows
-}
-
 // pathPattern finds an absolute path written in prose: a slash at the
 // start of a word, up to the next space, quote or border.
 var pathPattern = regexp.MustCompile(`(?:^|\s)(/[^\s'"│]*)`)
@@ -324,9 +306,9 @@ func removeDone(t *testing.T, dir string, width int) (RemoveModel, *bytes.Buffer
 	return m, &clip, &stoodDown
 }
 
-// The removal box is the command's words laid out on rows, each row a
-// run of whole words (an option may share a row with its value), and the
-// clipboard holds the same words joined. Neither can name a different
+// The removal box is the command's words laid out on rows (a word wider
+// than the box is cut across rows), and the clipboard holds the same
+// words joined. Neither can name a different
 // directory from the other, or from the deployment that was stood down.
 func TestRemoveModel_BoxAndClipboardAreTheSameWords(t *testing.T) {
 	for _, dir := range []string{
@@ -342,22 +324,11 @@ func TestRemoveModel_BoxAndClipboardAreTheSameWords(t *testing.T) {
 				t.Fatalf("RemovalCommand(%q) is not its words joined", dir)
 			}
 
-			i := 0
-			for _, row := range boxRows(s) {
-				matched := false
-				for j := i + 1; j <= len(words); j++ {
-					if strings.Join(words[i:j], " ") == row {
-						i, matched = j, true
-						break
-					}
-				}
-				if !matched {
-					t.Errorf("dir %q at %d columns: box row %q is not the next whole words of %q\n%s", dir, width, row, words, s)
-					break
-				}
-			}
-			if i != len(words) {
-				t.Errorf("dir %q at %d columns: box holds %d of %d words\n%s", dir, width, i, len(words), s)
+			// The box read back (a row ending " \\" joins with a space, "'\\"
+			// joins directly and loses the doubled quote, a bare "\\" joins
+			// directly) is the clipboard's words (#271 criterion g).
+			if got := narrowReadBack(narrowBoxInside(t, s)); got != want {
+				t.Errorf("dir %q at %d columns: box reads back as\n  %q\nwant the words\n  %q\n%s", dir, width, got, want, s)
 			}
 
 			_, copyCmd := updateAs(t, m, key(tea.KeyEnter)) // Copy command is preselected

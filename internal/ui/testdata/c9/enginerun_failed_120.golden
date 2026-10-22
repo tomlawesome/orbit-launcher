@@ -8,7 +8,7 @@
                      [38;2;74;84;104m·[m                         [38;2;74;84;104m·[m   [38;2;248;113;113m✗[m [1;38;2;231;233;238mInstall stopped[m                               [38;2;74;84;104m·[m                    
                                               [38;2;74;84;104m✦[m                                                                         
                           [38;2;248;113;113mFetching deployment assets[m[38;2;74;84;104m — Cannot connect to the Docker daemon at[m                           
-                         [38;2;74;84;104munix:///var/run/docker.sock. Is the docker daemon running? permission[m[38;2;74;84;104m·[m                         
+                         [38;2;74;84;104munix:///var/run/docker.sock. Is the docker daemon running? permission[m                          
                            [38;2;74;84;104mdenied while trying to connect to the docker API and then a second[m                           
                         [38;2;74;84;104msentence so that even the widest terminal has to wrap it onto a further[m   [38;2;74;84;104m·[m                     
                                         [38;2;74;84;104m·[m   [38;2;74;84;104m✦[m      [38;2;74;84;104mrow · next: retry[m                                                    

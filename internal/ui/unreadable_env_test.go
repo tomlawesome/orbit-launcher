@@ -103,7 +103,7 @@ func TestAppModel_UnreadableEnvScreensHoldAtEveryWidth(t *testing.T) {
 			m.targetDir = dir
 			m = open(t, m)
 			m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: w, Height: 30})
-			s := oneLine(screen(m))
+			s := proseOnly(screen(m))
 			if !strings.Contains(s, "Couldn't read .env-orbit in") || !strings.Contains(s, "permission denied") ||
 				strings.Contains(s, "No Orbit deployment found") {
 				t.Errorf("%s at width %d:\n%s", name, w, screen(m))
@@ -130,7 +130,7 @@ func TestAppModel_SplashOnAnUnreadableEnvSaysItCannotReadIt(t *testing.T) {
 	probes := 0
 	m := NewAppModelNoAnimation().WithoutVolumeCheck()
 	m.targetDir = dir
-	m = m.WithDeploymentStatus(func(context.Context, string) bool { probes++; return true })
+	m = m.WithDeploymentStatus(func(context.Context, string) deploy.HealthReason { probes++; return deploy.HealthResponding })
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
 
 	if m.splash.state != stateUnreadable {

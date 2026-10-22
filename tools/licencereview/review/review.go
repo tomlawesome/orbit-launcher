@@ -207,7 +207,8 @@ func readGoFile(name string) (Kind, string, error) {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	inBlock, pastPackage := false, false
+	var st goLexState
+	pastPackage := false
 	var notice string
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -216,24 +217,10 @@ func readGoFile(name string) (Kind, string, error) {
 		if !pastPackage && generatedHeader.MatchString(line) {
 			return Generated, "", nil
 		}
-		if !inBlock && strings.HasPrefix(line, "package ") {
+		if !st.inBlock && !st.inRaw && strings.HasPrefix(line, "package ") {
 			pastPackage = true
 		}
-		comment := ""
-		switch {
-		case inBlock:
-			comment = line
-			if strings.Contains(line, "*/") {
-				inBlock = false
-			}
-		case strings.HasPrefix(line, "/*"):
-			comment = line
-			inBlock = !strings.Contains(line, "*/")
-		default:
-			if i := strings.Index(line, "//"); i >= 0 {
-				comment = line[i:]
-			}
-		}
+		comment := st.comments(line)
 		if notice == "" && comment != "" && provenance.MatchString(comment) {
 			notice = comment
 		}
@@ -245,6 +232,60 @@ func readGoFile(name string) (Kind, string, error) {
 		return Notice, notice, nil
 	}
 	return "", "", nil
+}
+
+// goLexState carries what is open at the end of a line of Go source: a block
+// comment or a raw string, either of which can span lines.
+type goLexState struct{ inBlock, inRaw bool }
+
+// comments returns the comment text on one line and advances the state past
+// it. Comment markers count only outside string and rune literals, so a
+// "//" inside a URL string is not a comment, and a block comment opened
+// after code is read to its close, on this line or a later one.
+func (st *goLexState) comments(line string) string {
+	var out []string
+	for i := 0; i < len(line); {
+		switch {
+		case st.inBlock:
+			end := strings.Index(line[i:], "*/")
+			if end < 0 {
+				out = append(out, line[i:])
+				return strings.Join(out, " ")
+			}
+			out = append(out, line[i:i+end])
+			st.inBlock = false
+			i += end + 2
+		case st.inRaw:
+			end := strings.IndexByte(line[i:], '`')
+			if end < 0 {
+				return strings.Join(out, " ")
+			}
+			st.inRaw = false
+			i += end + 1
+		case strings.HasPrefix(line[i:], "//"):
+			out = append(out, line[i:])
+			return strings.Join(out, " ")
+		case strings.HasPrefix(line[i:], "/*"):
+			st.inBlock = true
+			i += 2
+		case line[i] == '`':
+			st.inRaw = true
+			i++
+		case line[i] == '"' || line[i] == '\'':
+			// An interpreted string or a rune: skip to its closing quote,
+			// honouring backslash escapes. Neither spans lines.
+			q := line[i]
+			for i++; i < len(line) && line[i] != q; i++ {
+				if line[i] == '\\' {
+					i++
+				}
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // Review is one recorded review: every finding of Kind in Module whose

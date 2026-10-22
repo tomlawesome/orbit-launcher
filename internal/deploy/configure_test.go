@@ -642,7 +642,7 @@ func handedOverTree(t *testing.T) string {
 	tree := t.TempDir()
 	scriptTree(t, tree, 0o700,
 		testutil.File{Path: "scripts/configure.sh", Body: "#!/usr/bin/env bash\necho configure\n", Mode: 0o600},
-		testutil.File{Path: "scripts/configuration.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o600},
+		testutil.File{Path: "scripts/installer-ui.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o600},
 		testutil.File{Path: ".env-orbit.example", Body: "APP_URL=\n", Mode: 0o600})
 	return tree
 }

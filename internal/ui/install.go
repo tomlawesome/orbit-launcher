@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -18,14 +19,13 @@ type installState int
 const (
 	installStateProfile installState = iota
 	installStateUnavailableProfile
-	installStateConfirm
 	installStateNotice
 	installStateRunning
 	installStateStaleVolume
 )
 
-// InstallModel is the Install flow: profile choice, confirmation, then
-// the mission console — the engine's event stream rendered natively
+// InstallModel is the Install flow: profile choice, the development
+// notice, then the mission console — the engine's event stream rendered natively
 // inside the TUI (see internal/ui/enginerun.go and design/mockups-v5.html
 // section 02). Only the Standard profile is wired; AI/Full are visible
 // but honestly say they aren't available yet rather than silently doing
@@ -46,7 +46,6 @@ type InstallModel struct {
 	version       string
 
 	profile menu // installProfiles
-	confirm menu // installConfirmRows
 	volume  menu // installVolumeRows
 
 	// left is Esc or Cancel on the flow's first screen: back to the main
@@ -66,8 +65,22 @@ type InstallModel struct {
 	// daemon — production code leaves it nil and gets the real check.
 	checkVolumes func(context.Context, string) []deploy.DatabaseVolume
 
-	// notice is the development notice (#175) between the confirm
-	// screen and the run; rebuilt fresh on every Install now.
+	// noVolumeCheck is set when the pre-flight is disabled
+	// (AppModel.WithoutVolumeCheck): Enter then never waits for it.
+	noVolumeCheck bool
+
+	// volumesAnswered is set when the pre-flight's answer has arrived.
+	// Until then Enter on the profile screen waits (awaiting holds the
+	// row it chose) and the screen shows a working line. The check's own
+	// 5 s limit ends the wait: a timed-out check reports no volumes.
+	volumesAnswered bool
+	awaiting        string
+
+	// frame is the working line's spinner frame, advanced on the shared tick.
+	frame int
+
+	// notice is the development notice (#175) between the profile
+	// screen and the run; rebuilt fresh each time Standard is chosen.
 	notice noticeModel
 
 	// noticeDuration is the notice's reading countdown; zero means
@@ -76,6 +89,10 @@ type InstallModel struct {
 	noticeDuration time.Duration
 
 	run engineRun
+
+	// startedAt is when the engine run began: the success screen reads
+	// the claim link from the app's logs since then (#259).
+	startedAt time.Time
 
 	// Test seams, copied into the engine run at start; nil means real.
 	seams engineRunSeams
@@ -116,24 +133,45 @@ func NewInstallModel(targetDir, version string) InstallModel {
 		targetDir: targetDir,
 		version:   version,
 		profile:   newMenu(installProfiles...),
-		confirm:   newMenu(installConfirmRows...),
 		volume:    newMenu(installVolumeRows...),
 	}
 }
 
-// The profile screen's rows. Only Standard is wired; AI and Full lead to
-// the honest dead end.
-const installStandard = "Standard" + style.Separator + "mail, documents, calendar"
+// The profile screen's rows (#247). Only Standard is wired; Documents
+// (Orbit's "processing" profile, until #260), Agent and Full lead to the
+// honest dead end. The menu holds the names; the table draws the rest.
+const installStandard = "Standard"
 
-var installProfiles = []string{
-	installStandard,
-	"AI" + style.Separator + "adds a local model for search & suggestions",
-	"Full" + style.Separator + "AI features plus every optional service",
+type installProfile struct{ name, adds, avail string }
+
+var installProfileTable = []installProfile{
+	{installStandard, "mail, documents, calendar", "available"},
+	{"Documents", "adds text extraction from attachments", "not yet"},
+	{"Agent", "adds a local model for search & suggestions", "not yet"},
+	{"Full", "documents extraction and the local model", "not yet"},
 }
 
+var installProfiles = func() []string {
+	names := make([]string, len(installProfileTable))
+	for i, p := range installProfileTable {
+		names[i] = p.name
+	}
+	return names
+}()
+
+// Table geometry at width >= installTableMin: two cells of caret column,
+// the name column, a space, the adds column, a space, the availability
+// column.
+const (
+	installNameCol  = 10
+	installAddsCol  = 44
+	installAvailCol = 9
+	installTableW   = 2 + installNameCol + 1 + installAddsCol + 1 + installAvailCol
+	installTableMin = installTableW + 1
+)
+
 var (
-	installConfirmRows = []string{"Install now", "Cancel"}
-	installVolumeRows  = []string{"Continue anyway", "Cancel"}
+	installVolumeRows = []string{"Continue anyway", "Cancel"}
 
 	// installUnavailableRows: the dead end's one row, back to the
 	// profile choice that led in.
@@ -187,13 +225,14 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if _, ok := msg.(tickMsg); ok {
 		m.star = m.star.Advance()
+		m.frame = nextFrame(m.frame)
 		if m.state != installStateRunning {
 			return m, tick()
 		}
 	}
 
 	// The notice's countdown redraws on its own one-second chain. A
-	// tick from an earlier visit (Back, then Install now again)
+	// tick from an earlier visit (Back, then Standard again)
 	// carries that visit's start and is dropped, so two chains never
 	// run; the chain ends when the countdown does.
 	if t, ok := msg.(noticeTickMsg); ok {
@@ -213,14 +252,22 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if found, ok := msg.(staleVolumesMsg); ok {
+		m.volumesAnswered = true
+		chosen := m.awaiting
+		m.awaiting = ""
 		// Only the profile screen is interrupted. The check is async, so
 		// a quick hand can already be past it — and stopping someone
-		// mid-confirm to report a pre-flight finding would be worse than
+		// mid-notice to report a pre-flight finding would be worse than
 		// letting the engine give them the same news.
 		if len(found.volumes) > 0 && m.state == installStateProfile {
 			m.staleVolumes = found.volumes
 			m.state = installStateStaleVolume
 			m.volume = newMenu(installVolumeRows...)
+			return m, nil
+		}
+		// None found: a waiting Enter carries on as it would have.
+		if chosen != "" && m.state == installStateProfile {
+			return m.chooseProfile(chosen)
 		}
 		return m, nil
 	}
@@ -229,6 +276,11 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.run, cmd = m.run.update(msg)
 		return m, cmd
+	}
+
+	// Outside a run a signal is the Ctrl-C key: nothing is working.
+	if _, ok := msg.(SignalQuitMsg); ok {
+		return m.handleKey(ctrlCPress)
 	}
 
 	if key, ok := msg.(tea.KeyPressMsg); ok {
@@ -253,8 +305,6 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.state = installStateProfile
 		}
 		return m, nil
-	case installStateConfirm:
-		return m.handleConfirmKey(msg)
 	case installStateNotice:
 		return m.handleNoticeKey(msg)
 	}
@@ -288,42 +338,43 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	switch {
 	case back:
 		m.left = true
+		m.awaiting = ""
 	case chosen == "": // a move, or a key the menu does not use
-	case chosen == installStandard:
-		m.state = installStateConfirm
-		m.confirm = newMenu(installConfirmRows...)
+		// A move drops a waiting Enter: the row it chose is no longer
+		// the one under the cursor.
+		m.awaiting = ""
+	case m.checkVolumes != nil && !m.volumesAnswered && !m.noVolumeCheck:
+		// The pre-flight has not answered: wait for it rather than
+		// moving on past a finding it is about to report.
+		m.awaiting = chosen
 	default:
-		m.state = installStateUnavailableProfile
+		return m.chooseProfile(chosen)
 	}
 	return m, nil
 }
 
-func (m InstallModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	var chosen string
-	var back bool
-	m.confirm, chosen, back = m.confirm.onScreen(msg)
-	switch {
-	case back, chosen == "Cancel":
-		m.state = installStateProfile
-	case chosen == "Install now":
-		// Install now opens the development notice (#175), fresh every
-		// time: going back and coming again restarts the countdown and
-		// closes the scroll gate.
+// chooseProfile acts on the row Enter chose on the profile screen.
+func (m InstallModel) chooseProfile(chosen string) (tea.Model, tea.Cmd) {
+	if chosen == installStandard {
+		// Standard opens the development notice (#175) directly (#248),
+		// fresh every time: going back and coming again restarts the
+		// countdown and closes the scroll gate.
 		m.state = installStateNotice
 		m.notice = newNotice(m.now(), m.width, m.height)
 		return m, noticeTick(m.notice.start)
 	}
+	m.state = installStateUnavailableProfile
 	return m, nil
 }
 
 // handleNoticeKey wires the notice: Esc or Back returns to the
-// confirm screen, a correct phrase starts the run, nothing else leaves.
+// profile screen, a correct phrase starts the run, nothing else leaves.
 func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var out noticeOutcome
 	m.notice, out = m.notice.handleKey(msg, m.now, m.noticeDur())
 	switch out {
 	case noticeBack:
-		m.state = installStateConfirm
+		m.state = installStateProfile
 		return m, nil
 	case noticeAccept:
 		m.state = installStateRunning
@@ -337,6 +388,9 @@ func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
 	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
+	// The console's own start, so the clock is read once (a later
+	// restart after in-console configuration keeps this first one).
+	m.startedAt = m.run.console.startedAt
 	return m, cmd
 }
 
@@ -379,8 +433,6 @@ func (m InstallModel) view() string {
 		return m.viewProfile()
 	case installStateUnavailableProfile:
 		return m.viewUnavailableProfile()
-	case installStateConfirm:
-		return m.viewConfirm()
 	case installStateNotice:
 		return m.viewNotice()
 	case installStateRunning:
@@ -402,13 +454,14 @@ func (m InstallModel) view() string {
 //
 // Every name shown comes verbatim from docker's own output (see
 // deploy.UnownedDatabaseVolumes), because a person may well act on a
-// volume name they read here.
+// volume name they read here; only a rune that isn't printable is shown
+// as its escape (#272).
 func (m InstallModel) viewStaleVolume() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This machine already has an Orbit database")
 
 	for _, v := range m.staleVolumes {
-		line := v.Name
+		line := visibleText(v.Name)
 		if v.Project != "" {
 			// Named as the Compose label it is, not as "from the
 			// <project> deployment": since Orbit #999/#1043 every
@@ -416,7 +469,7 @@ func (m InstallModel) viewStaleVolume() string {
 			// read as if it identified one install when it never
 			// could. The directory sentence below is what actually
 			// tells them apart.
-			line += style.Separator + "Compose project " + v.Project
+			line += style.Separator + "Compose project " + visibleText(v.Project)
 		}
 		fmt.Fprintln(&b, style.Ink.Render(line))
 	}
@@ -437,17 +490,26 @@ func (m InstallModel) viewStaleVolume() string {
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
-	m.profile.write(&b)
+	// The folder is the one word here whose length and characters nobody
+	// chose: it is escaped so a CR or LF in it cannot forge a row, and
+	// cut across rows rather than off the screen's edge (#248).
+	for _, row := range wrapHard("Orbit installs into "+m.targetDir, measure(m.width, proseWidth), m.width-4, folderRows) {
+		fmt.Fprintln(&b, style.Ink.Render(row))
+	}
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, style.Tagline.Render("only Standard is available so far"))
+	m.writeProfileTable(&b)
+	if m.awaiting != "" {
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, workingLine(m.frame, "Checking for an old Orbit database…", ""))
+	}
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
-	fmt.Fprintln(&b, style.MutedText.Render("AI and Full need local-model configuration that"))
-	fmt.Fprintln(&b, style.MutedText.Render("hasn't been built yet."))
+	fmt.Fprintln(&b, style.MutedText.Render("Documents, Agent and Full aren't wired into this"))
+	fmt.Fprintln(&b, style.MutedText.Render("installer yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -458,17 +520,49 @@ func (m InstallModel) viewNotice() string {
 	return skyBlock(m.star, m.width, m.height, m.notice.view(m.now(), m.noticeDur()))
 }
 
-func (m InstallModel) viewConfirm() string {
-	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Ready to install")
-	fmt.Fprintln(&b, style.MutedText.Render("Orbit's own installer runs inside the mission console —"))
-	fmt.Fprintln(&b, style.MutedText.Render("watch it validate, pull the image, and start the containers"))
-	fmt.Fprintln(&b, style.MutedText.Render("right here. If it needs configuration only you can provide,"))
-	fmt.Fprintln(&b, style.MutedText.Render("it stops safely and asks first."))
-	fmt.Fprintln(&b)
-	// The path is the one word here whose length nobody chose.
-	writeWrapped(&b, style.Tagline, m.targetDir, measure(m.width, proseWidth))
-	fmt.Fprintln(&b)
-	m.confirm.write(&b)
-	return skyBlock(m.star, m.width, m.height, b.String())
+// writeProfileTable draws the profile choice as a table at 68 columns and
+// over, and as two rows per profile below. Every row is padded to the
+// block's width so the sky's per-line centring keeps the block one unit.
+func (m InstallModel) writeProfileTable(b *strings.Builder) {
+	pad := func(styled string, used, w int) string {
+		return styled + strings.Repeat(" ", max(0, w-used))
+	}
+	caret := func(sel bool) string {
+		if sel {
+			return style.MenuCaret.Render(style.SymbolSelected) + " "
+		}
+		return "  "
+	}
+	rowStyle := func(i int, p installProfile) lipgloss.Style {
+		switch {
+		case i == m.profile.sel:
+			return style.Ink
+		case p.avail == "available":
+			return style.MutedText
+		}
+		return style.Tagline
+	}
+	if m.width >= installTableMin {
+		for i, p := range installProfileTable {
+			st := rowStyle(i, p)
+			line := caret(i == m.profile.sel) +
+				pad(st.Render(p.name), len(p.name), installNameCol) + " " +
+				pad(st.Render(p.adds), len([]rune(p.adds)), installAddsCol) + " " +
+				pad(st.Render(p.avail), len(p.avail), installAvailCol)
+			fmt.Fprintln(b, line)
+		}
+		return
+	}
+	w := measure(m.width, proseWidth)
+	for i, p := range installProfileTable {
+		if i > 0 {
+			fmt.Fprintln(b, pad("", 0, w))
+		}
+		st := rowStyle(i, p)
+		head := p.name + style.Separator + p.avail
+		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
+		for _, r := range wrapWords(p.adds, w-2) {
+			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
+		}
+	}
 }

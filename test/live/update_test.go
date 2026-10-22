@@ -75,6 +75,7 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	sweepLeftoverLiveStacks(t)
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -133,25 +134,26 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		session.mustSoon("Pull the latest Orbit and update this deployment")
 		session.send("\r") // Update Orbit, selected by default
 		if _, err := session.expectWithinBudget("expected the mission console", session.screenBudget, vtscreen.ContainsAny(
-			"Contacting the engine", "ORBIT · Update", "Orbit needs your configuration", "Update stopped")); err != nil {
+			"Contacting the engine", "ORBIT · Update", "How will people sign in?", "OIDC client secret", "Update stopped")); err != nil {
 			t.Fatalf("expected the mission console: %v", err)
 		}
 
-		screen := session.expectWithin("expected the update's configuration refusal",
+		// The engine's configuration refusal goes straight into guided
+		// configuration (#251): no screen to dismiss, no key pressed. From
+		// here until the secret prompt only the launcher runs anything:
+		// install.sh's first attempt has exited, and the second starts only
+		// once the secret is in. The guided session's title shows as soon
+		// as the refusal lands, so the window opens after that attempt.
+		session.expectWithin("expected the guided configuration after the refusal",
 			vtscreen.ContainsAny("Orbit needs your configuration", "Update stopped", "Get into Orbit"))
-		if !strings.Contains(screen, "Orbit needs your configuration") {
+		from := time.Now()
+		screen := session.expectWithin("expected the in-console OIDC client secret prompt",
+			vtscreen.ContainsAny("OIDC client secret", "Update stopped", "How will people sign in?", "Get into Orbit"))
+		to := time.Now()
+		if strings.Contains(screen, "Get into Orbit") {
 			t.Fatalf("the update did not stop for configuration, so the launcher never ran configure and this leg proves nothing; "+
 				"the emptied OIDC client secret should have made install.sh refuse. Screen:\n%s", screen)
 		}
-
-		// From here until the secret prompt only the launcher runs
-		// anything: install.sh's first attempt has exited, and the second
-		// starts only once the secret is in.
-		from := time.Now()
-		session.send("\r") // Continue — guided configuration
-		screen = session.expectWithin("expected the in-console OIDC client secret prompt",
-			vtscreen.ContainsAny("OIDC client secret", "Update stopped", "How will people sign in?"))
-		to := time.Now()
 		if !strings.Contains(screen, "OIDC client secret") {
 			// Without the pin this is where an old image lacking the
 			// engine ends up: the evidence says which image ran.

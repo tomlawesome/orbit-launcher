@@ -8,9 +8,9 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 - Not a shell-script wrapper (it supersedes `orbit#260`'s bash command centre):
   changes pushing it back that way are wrong. Module
   `github.com/tomlawesome/orbit-launcher`, AGPL-3.0 (`LICENSING.md`).
-- One project with Orbit, its base image and the site: act across them without
-  asking (`ai/orbit` ADR-0036, `docs/adr/0036-the-orbit-family-is-one-project.md`).
-- `gh-pages` is the branch for the published design iterations.
+- The Orbit family (`ai/orbit`, `ai/orbit-launcher`, `ai/orbit-site`, `ai/orbit-base-image`) is one project (Orbit ADR-0036): each repo's files, layout and scripts are the whole project's own, never designed around as an outside system. The launcher owns install, update, repair and removal; removal work belongs in the launcher, not a separate tool in Orbit.
+- When work here needs a change in another of the four, do not make it from here: file an issue there with the design fully worked out, labelled `cross-repo`, in that repo's nearest open milestone, and link it from this repo's issue, parked as blocked. That repo's session builds and closes it; on resuming, check blocked issues, and bump any pin once the other repo has released. A `cross-repo` issue is ordinary work in its milestone. ADR-0036 still covers reading sibling repos and one-line pin or doc fixes (owner, 2026-10-22: avoids two sessions editing one repo at once).
+- Mockups are shown to the owner only from the local design container (`orbit-launcher-design-host`, nginx, ports from 8307), with direct links in chat; never uploaded to issues or published on Pages (owner, 2026-10-21). Starting it needs no go-ahead: a standing auto-mode rule in the Claude settings allows it.
 
 ## Traps
 
@@ -31,8 +31,8 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   checksum line (#216).
 - GitHub workflow failures are advisory; they never block a GitLab merge. Change
   a check on both hosts together.
-- Only the owner presses `release:version`, which cuts the release tag
-  (`docs/releasing.md`).
+- Only the owner presses `release:patch` or `release:minor` (on `main`
+  pipelines), which cut the release tag (`docs/releasing.md`).
 - A green `go test` without running the TUI is not verified. Say plainly what
   could not be exercised here.
 
@@ -47,3 +47,8 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `ORBIT_FIRST_RECORD_IMAGE_JOB` and `ORBIT_FIRST_SIGN_EVIDENCE_JOB`: the
   `record_image` and `sign_evidence` job IDs of an earlier signed ai/orbit
   preview pipeline. The job token can't list pipelines to find them itself.
+- Every GitLab live run is a preview run (`ORBIT_BRANCH` and `ORBIT_CHANNEL`
+  default to preview). It fails only if the job falls back to the GitHub mirror,
+  which has no release manifest (#194): the job token got 401/403 reading
+  ai/orbit (as on Renovate's MRs), or `ORBIT_FILES_SOURCE=github` is set.
+  `orbit_channel`/`orbit_branch` are inputs of the GitHub workflow only.

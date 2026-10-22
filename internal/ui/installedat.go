@@ -2,10 +2,12 @@ package ui
 
 import (
 	"context"
-	"net/url"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
@@ -42,19 +44,45 @@ func deploymentIdentity(d *deploy.Deployment) string {
 	case d.AppURL == "":
 		return "deployment detected"
 	}
-	if u, err := url.Parse(d.AppURL); err == nil && u.Host != "" {
-		return u.Host
+	// APP_URL is read from the deployment's own env file, so it is treated
+	// as text, not parsed: the host is what lies between the scheme's "//"
+	// and the first "/", "?" or "#" after the last "@", so nothing before
+	// an "@" (an account part, whatever characters it holds) ever reaches
+	// the screen. url.Parse is not used: it reads "admin:1234#x@host" as
+	// host "admin:1234" and a fragment, which is RFC 3986's reading and
+	// shows the account part. A value this broken may name the wrong
+	// host, as may an "@" in a path; neither shows an account part. Shown
+	// escaped, so a CR or ESC in it cannot forge or restyle the confirm
+	// screen.
+	host := d.AppURL
+	if _, rest, ok := strings.Cut(host, "://"); ok {
+		host = rest
+	} else {
+		host = strings.TrimPrefix(host, "//")
 	}
-	return d.AppURL
+	if i := strings.LastIndexByte(host, '@'); i >= 0 {
+		host = host[i+1:]
+	}
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
+	}
+	return visibleText(host)
 }
 
 // identityLine is the confirm screens' one line of deployment identity:
 // deploymentIdentity, and the install date only when Docker has said
-// what it is.
-func identityLine(d *deploy.Deployment, installedAt time.Time) string {
+// what it is. It is always one row of at most limit cells (0 means no
+// limit): a host too wide for the row is cut on grapheme clusters and
+// ends in "…", and the date stays whole, since the host is only that
+// wide when its settings file is corrupt (#271).
+func identityLine(d *deploy.Deployment, installedAt time.Time, limit int) string {
 	identity := deploymentIdentity(d)
+	suffix := ""
 	if d != nil && !installedAt.IsZero() {
-		identity += style.Separator + "installed " + installedAt.Format("2006-01-02")
+		suffix = style.Separator + "installed " + installedAt.Format("2006-01-02")
 	}
-	return identity
+	if limit > 0 && lipgloss.Width(identity+suffix) > limit {
+		identity = xansi.Truncate(identity, max(limit-lipgloss.Width(suffix)-1, 0), "") + "…"
+	}
+	return identity + suffix
 }

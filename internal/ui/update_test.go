@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -164,17 +165,32 @@ func TestUpdateModel_ConfirmRunsTheEngineWithUpdateAction(t *testing.T) {
 	}
 }
 
-func TestUpdateModel_ConfigurationRefusalReachesThePromptToo(t *testing.T) {
+func TestUpdateModel_ConfigurationRefusalGoesStraightIntoGuidedConfigurationToo(t *testing.T) {
 	// A migration can surface missing fields on update as well; the
-	// same handoff stretch applies.
+	// same straight-in stretch applies (#251).
+	prepared := false
 	m, s := newTestUpdateModel(testDeployment(), engineRunSeams{
 		prepareEngine: fakeEngine(nil, configRefusalStream()...),
+		prepareConfig: planned(true, false),
+		prepareInstall: func(context.Context, string) (*exec.Cmd, func() error, error) {
+			prepared = true
+			return exec.Command("true"), func() error { return nil }, nil
+		},
 	})
 	updated, cmd := m.Update(key(tea.KeyEnter))
-	m = drive(t, updated, cmd, s).(UpdateModel)
+	// Watched at every step: the removed configuration screen must never
+	// come up on the way, not merely be absent from the last screen.
+	m = driveWatching(t, updated, cmd, removedConfigScreenText, s).(UpdateModel)
 
-	if m.run.state != runConfigPrompt {
-		t.Fatalf("run state = %v, want runConfigPrompt", m.run.state)
+	if m.run.state != runConfigSignInMode {
+		t.Fatalf("run state = %v, want the guided session's sign-in-mode screen with no key pressed", m.run.state)
+	}
+	if prepared {
+		t.Fatal("the terminal handoff was prepared although the in-console session is available")
+	}
+	v := screen(m)
+	if !strings.Contains(v, "How will people sign in?") {
+		t.Fatalf("not in guided configuration:\n%s", v)
 	}
 }
 

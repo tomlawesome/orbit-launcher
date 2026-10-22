@@ -6,6 +6,8 @@ package ui
 // engine run pushes into.
 
 import (
+	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +64,15 @@ func (s *sink) Send(msg tea.Msg) { s.msgs <- msg }
 // move stars, and a frozen test has no use for an endless chain.
 func drive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, pushed ...*sink) M {
 	t.Helper()
+	return driveWatching(t, m, cmd, nil, pushed...)
+}
+
+// driveWatching is drive that also looks at the screen after every update
+// on the way and fails the test if it ever shows one of never. A check of
+// the screen the drive ends on cannot see a screen that was shown on the
+// way and replaced; this one can.
+func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, pushed ...*sink) M {
+	t.Helper()
 	var queue *sink
 	if len(pushed) > 0 {
 		queue = pushed[0]
@@ -98,6 +109,14 @@ func drive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, pushed ...*sink) M {
 		}
 		var more tea.Cmd
 		m, more = updateAs(t, m, msg)
+		if len(never) > 0 {
+			shown := screen(m)
+			for _, gone := range never {
+				if strings.Contains(shown, gone) {
+					t.Errorf("a screen showing %q came up after %T:\n%s", gone, msg, shown)
+				}
+			}
+		}
 		// Nothing follows the stream ending, so waiting for more would
 		// only spend the timeout above.
 		if _, ended := msg.(engineStreamEndedMsg); ended && more == nil && len(cmds) == 0 {
@@ -124,7 +143,7 @@ func ev(phase, component, state, reason, action string) engine.EventMsg {
 // grammar tests read (#228); screenLabels picks these out of a screen.
 var rowLabels = map[string]bool{
 	"Install": true, "Update": true, "Repair": true, "Remove": true,
-	"Install now": true, "Update Orbit": true, "Stand down Orbit": true,
+	"Update Orbit": true, "Stand down Orbit": true,
 	"Continue anyway": true, "Open the guided installer": true,
 	"Get into Orbit": true, "Copy command": true, "Copy command · copied": true,
 	"Cancel": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
@@ -171,4 +190,64 @@ func moveCaretTo[M tea.Model](t *testing.T, m M, label string) M {
 	}
 	t.Fatalf("the caret never reached %q; rows %q:\n%s", label, screenLabels(screen(m)), screen(m))
 	return m
+}
+
+// recordedOutput wraps a teatest output stream and keeps every byte read
+// through it. teatest.WaitFor consumes what it reads, so a "was X ever
+// shown" check made after a later wait sees only what came after that
+// wait; hand every wait this wrapper instead of tm.Output() and ask it
+// afterwards. everything also reads whatever is still unread.
+type recordedOutput struct {
+	r    io.Reader
+	seen bytes.Buffer
+}
+
+func recordOutput(r io.Reader) *recordedOutput { return &recordedOutput{r: r} }
+
+func (o *recordedOutput) Read(p []byte) (int, error) {
+	n, err := o.r.Read(p)
+	o.seen.Write(p[:n])
+	return n, err
+}
+
+// everything is all the output seen so far with the escape codes
+// removed, so text the renderer wrote in separate pieces reads as one.
+func (o *recordedOutput) everything() string {
+	_, _ = io.Copy(io.Discard, o)
+	return ansi.Strip(o.seen.String())
+}
+
+// bestOf is the shortest of runs timings of f. The shortest is the one a
+// busy host disturbed least, so it stands for the work itself.
+func bestOf(runs int, f func()) time.Duration {
+	best := time.Duration(1<<63 - 1)
+	for range runs {
+		start := time.Now()
+		f()
+		if d := time.Since(start); d < best {
+			best = d
+		}
+	}
+	return best
+}
+
+// requireNearLinear fails if run(big) takes much more than big/small times
+// as long as run(small): twice and a quarter that, so a four-fold input
+// may take up to nine times as long where linear work takes four and
+// quadratic work sixteen. It compares two sizes on the same host in the
+// same breath, so a slow or loaded runner changes both sides and nothing
+// here depends on how long a second is. big must be four times small.
+func requireNearLinear(t *testing.T, what string, small, big int, run func(size int)) {
+	t.Helper()
+	if big != 4*small {
+		t.Fatalf("%s: sizes %d and %d are not four-fold", what, small, big)
+	}
+	run(small) // once to warm up, unmeasured
+	shortest := bestOf(7, func() { run(small) })
+	longest := bestOf(7, func() { run(big) })
+	ratio := float64(longest) / float64(shortest)
+	if ratio > 9 {
+		t.Errorf("%s: %d times the input took %.1f times as long (%v for %d, %v for %d); linear work takes about 4, quadratic about 16",
+			what, big/small, ratio, shortest, small, longest, big)
+	}
 }

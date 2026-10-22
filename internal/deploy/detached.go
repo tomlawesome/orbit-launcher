@@ -13,7 +13,8 @@ import (
 // its output pipes once the command has exited or its context is done.
 // A child the command started can keep stdout open long after the
 // command itself is gone; past this delay Wait closes the pipes and
-// returns instead of waiting on that child (#207).
+// returns instead of waiting on that child (#207). engine.Stream
+// applies the same bound to a streamed run's pipes.
 const pipeWaitDelay = 2 * time.Second
 
 // detachedCommand builds every engine script run: name args... run in

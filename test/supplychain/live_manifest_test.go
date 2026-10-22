@@ -84,3 +84,41 @@ func TestLivePreviewInstallGetsAVerifiedManifest(t *testing.T) {
 		t.Errorf("the `live` job must refuse a preview run whose Orbit files come from the GitHub mirror, saying %q (#194)", refusal)
 	}
 }
+
+// The branch tip's install.sh must be the one the signed preview release
+// records (#236). The job takes install.sh from the tip of ORBIT_BRANCH but
+// the manifest from the branch's latest preview pipeline, which trails the
+// tip by minutes; without this check a run in that gap pairs a newer
+// install.sh with the previous commit's image. The check sits before the
+// manifest is handed over, and a mismatch stops the job.
+func TestLivePreviewInstallScriptMatchesTheManifest(t *testing.T) {
+	job := liveJob(t, readRepoFile(t, ".gitlab-ci.yml"))
+	const (
+		hash     = `sha256sum .live/install-script/install.sh`
+		recorded = `jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json`
+		refusal  = "is not the one the latest signed preview release records"
+	)
+	check, stop, export := -1, -1, -1
+	for i, l := range job {
+		switch {
+		case strings.Contains(l, hash) && strings.Contains(l, recorded):
+			check = i
+		case strings.Contains(l, refusal):
+			stop = i
+			if !strings.Contains(l, "exit 1") {
+				t.Errorf("the install.sh/manifest refusal must exit 1 (#236)\nline: %s", l)
+			}
+		case strings.HasPrefix(l, "export ORBIT_RELEASE_MANIFEST="):
+			export = i
+		}
+	}
+	if check < 0 {
+		t.Fatalf("the `live` job must compare %q with %q before installing (#236)", hash, recorded)
+	}
+	if stop != check+1 {
+		t.Errorf("the line after the install.sh/manifest comparison must refuse with %q (#236)", refusal)
+	}
+	if export < 0 || check > export {
+		t.Error("the install.sh/manifest comparison must come before `export ORBIT_RELEASE_MANIFEST=` (#236)")
+	}
+}

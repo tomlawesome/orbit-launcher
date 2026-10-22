@@ -58,7 +58,7 @@ func TestDetect_QuotedOrPaddedAppURLReachesProbeHealthClean(t *testing.T) {
 				t.Errorf("AppURL = %q, want %q: the value reaches ProbeHealth with its quotes or padding", d.AppURL, srv.URL)
 			}
 			before := requests.Load()
-			if !ProbeHealth(context.Background(), d.AppURL) {
+			if ProbeHealth(context.Background(), d.AppURL) != HealthResponding {
 				t.Errorf("ProbeHealth(%q) = degraded against a healthy server: the probe never reached it", d.AppURL)
 			}
 			if requests.Load() == before {

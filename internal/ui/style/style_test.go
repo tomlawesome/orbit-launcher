@@ -3,6 +3,7 @@ package style
 import (
 	"image/color"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ansi"
@@ -31,16 +32,52 @@ func TestWordmark_TracksLetters(t *testing.T) {
 	}
 }
 
+// sgrOf returns the parameters of the escape sequence a styled string
+// opens with ("1", "38", "2", "231", ... for bold in the text colour),
+// and the visible text after it.
+func sgrOf(t *testing.T, rendered string) (params []string, text string) {
+	t.Helper()
+	const open = "\x1b["
+	if !strings.HasPrefix(rendered, open) {
+		t.Fatalf("%q does not start with an escape sequence", rendered)
+	}
+	end := strings.IndexByte(rendered, 'm')
+	if end < 0 {
+		t.Fatalf("%q: escape sequence never ends", rendered)
+	}
+	return strings.Split(rendered[len(open):end], ";"), rendered[end+1:]
+}
+
+// foregroundOf is the SGR parameters a truecolor foreground c is written
+// as: 38;2;r;g;b.
+func foregroundOf(t *testing.T, c color.Color) []string {
+	t.Helper()
+	rgba, ok := c.(color.RGBA)
+	if !ok {
+		t.Fatalf("%T is not color.RGBA", c)
+	}
+	return []string{"38", "2", strconv.Itoa(int(rgba.R)), strconv.Itoa(int(rgba.G)), strconv.Itoa(int(rgba.B))}
+}
+
 func TestWordmark_AppliesBoldAndTextColour(t *testing.T) {
 	// The rendering must actually be styled, not just the plain text --
 	// otherwise Wordmark degenerates to the letter-spacing loop alone and
-	// the splash's wordmark silently loses its styling.
-	rendered := Wordmark("HI")
-	if rendered == "HI" {
-		t.Fatalf("Wordmark(%q) = %q, applied no styling at all", "HI", rendered)
+	// the splash's wordmark silently loses its styling. Bold and the text
+	// colour are what the wordmark is, so both are read back out of the
+	// escape sequence.
+	params, text := sgrOf(t, Wordmark("HI"))
+	if ansi.Strip(Wordmark("HI")) != "H I" {
+		t.Errorf("Wordmark(%q) visible text = %q, want %q", "HI", ansi.Strip(Wordmark("HI")), "H I")
 	}
-	if ansi.Strip(rendered) != "H I" {
-		t.Errorf("Wordmark(%q) visible text = %q, want %q", "HI", ansi.Strip(rendered), "H I")
+	if !strings.HasPrefix(text, "H I") {
+		t.Errorf("Wordmark(%q) text after the escape = %q, want it to start with %q", "HI", text, "H I")
+	}
+	if len(params) == 0 || params[0] != "1" {
+		t.Errorf("Wordmark is not bold: escape parameters %v, want a leading 1", params)
+	}
+	want := strings.Join(foregroundOf(t, Text), ";")
+	if got := strings.Join(params, ";"); !strings.Contains(got, want) {
+		t.Errorf("Wordmark colour parameters %q do not hold the text colour %q", got, want)
 	}
 }
 
@@ -79,8 +116,9 @@ func TestMarkStyle_RendersAccentColour(t *testing.T) {
 	if ansi.Strip(rendered) != "⟡" {
 		t.Errorf("MarkStyle.Render altered the mark glyph: got %q", ansi.Strip(rendered))
 	}
-	if rendered == "⟡" {
-		t.Error("MarkStyle.Render applied no colour at all")
+	params, _ := sgrOf(t, rendered)
+	if got, want := strings.Join(params, ";"), strings.Join(foregroundOf(t, Accent), ";"); got != want {
+		t.Errorf("MarkStyle colour parameters = %q, want the accent colour %q", got, want)
 	}
 }
 

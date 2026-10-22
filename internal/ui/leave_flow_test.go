@@ -186,17 +186,17 @@ func TestLeaveFlow_LeavingStartsNothing(t *testing.T) {
 // reaches the menu only from the first screen.
 func TestLeaveFlow_InstallEscIsOneStepBack(t *testing.T) {
 	m := profileInstall(t)
-	m, _ = leavePress(t, m, key(tea.KeyEnter)) // profile -> confirm
-	if !strings.Contains(screen(m.(InstallModel)), "Ready to install") {
-		t.Fatalf("not on the confirm screen:\n%s", screen(m.(InstallModel)))
+	m, _ = leavePress(t, m, key(tea.KeyEnter)) // profile -> notice
+	if !strings.Contains(screen(m.(InstallModel)), "A note before you install") {
+		t.Fatalf("not on the notice:\n%s", screen(m.(InstallModel)))
 	}
 
 	m, cmd := leavePress(t, m, key(tea.KeyEsc))
 	if isQuit(cmd) || leaveOutcomeOf(t, m).Done {
-		t.Fatal("Esc on the confirm screen left the flow; it is one step back, to the profile screen")
+		t.Fatal("Esc on the notice left the flow; it is one step back, to the profile screen")
 	}
 	if s := screen(m.(InstallModel)); !strings.Contains(s, "Choose a deployment profile") {
-		t.Fatalf("Esc on confirm should show the profile screen:\n%s", s)
+		t.Fatalf("Esc on the notice should show the profile screen:\n%s", s)
 	}
 
 	m, cmd = leavePress(t, m, key(tea.KeyEsc))
@@ -241,7 +241,7 @@ func TestLeaveFlow_CtrlCQuitsFromEveryScreen(t *testing.T) {
 		return m
 	}
 	cases := append(firstScreens(),
-		leaveCase{"Install confirm", func(t *testing.T) tea.Model {
+		leaveCase{"Install notice", func(t *testing.T) tea.Model {
 			m, _ := leavePress(t, profileInstall(t), key(tea.KeyEnter))
 			return m
 		}},

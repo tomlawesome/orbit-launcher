@@ -7,7 +7,7 @@
 # running the same commands against the same pinned tool versions, so a
 # finding on one host means the same thing on the other. GitHub still runs
 # its workflows on the mirrored push as a second opinion; nothing here
-# publishes or promotes, except the release button below (#178), which the
+# publishes or promotes, except the release buttons below (#178, #264), which the
 # owner presses to cut a version tag.
 #
 # The mirror is set up in the GitLab project settings, not in this file. Its
@@ -73,11 +73,11 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+  GO_IMAGE: golang:1.27.3-bookworm@sha256:32fa283222e2905d9fee971f60c842e5c815fdc036cf7ea599bf36bd7ca8f67f
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
-  GO_VERSION: "1.27.2"
-  GO_SHA256: ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
+  GO_VERSION: "1.27.3"
+  GO_SHA256: 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
   # Ships the exact Chromium that test/visual/package-lock.json's
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
@@ -88,7 +88,7 @@ variables:
   # Debian leg that was tried and dropped).
   UBUNTU_IMAGE: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
   # Same pins as the workflows. A commit on staticcheck's master, not a
-  # release: go1.27.2 writes compiler export data version 5, and every release
+  # release: Go 1.27 writes compiler export data version 5, and every release
   # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
   # so staticcheck fails on every package (#202). Master moved to x/tools
   # v0.51.0 and Go 1.27 on 2026-10-09. Move back to a release tag once one
@@ -108,11 +108,12 @@ variables:
   # GitHub job's `orbit_branch` and `orbit_channel` inputs are.
   #
   # The production pair is `main` and "" (install.sh's own default, `latest`).
-  # Both sit on `preview` until orbit #1016 is fixed by the v1.3.0 release:
-  # the published `latest` names a source revision that no longer exists, so
-  # a default install fails before the launcher is involved (owner,
-  # 2026-09-14). Branch and channel move together because install.sh and the
-  # image must be one generation. Put them back when v1.3.0 ships.
+  # Both sit on `preview` (owner, 2026-09-14): Orbit's `main` still carries
+  # its v1.2.0 release from before its renumbering to 0.x, a generation older
+  # than the configure engine the launcher drives (#204). Branch and channel
+  # move together because install.sh and the image must be one generation.
+  # Put them back once Orbit's next release reaches `main`; #193 pins the
+  # commit for good.
   ORBIT_PROJECT: ai/orbit
   # Orbit's public GitHub mirror, used only when GitLab refuses the job
   # token (Renovate's merge requests, #173) or ORBIT_FILES_SOURCE says so.
@@ -318,6 +319,11 @@ fast:
     # into one profile (#169): see scripts/coverage.sh.
     - scripts/coverage.sh -race
     - go run ./tools/coveragefloor coverage.out
+    # The suite above runs as root, which reads a mode-0000 file, so the
+    # tests that build an unreadable case skip. Run their packages again as
+    # an unprivileged user (#195 T2-Q1). GitHub's runner is not root, so its
+    # own test step already covers them.
+    - bash scripts/ci/nonroot-tests.sh
   artifacts:
     name: coverage
     when: always
@@ -543,8 +549,11 @@ live:
       # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path; with
       # a preview channel that now fails, so prove it on a stable one.
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+      # The full ref, so a tag with the same name as the branch cannot answer
+      # (#273). The files endpoint accepts refs/heads/<branch>.
+      gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
       gitlab_orbit_url() {
-        printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$ORBIT_BRANCH"
+        printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$gitlab_orbit_ref"
       }
       orbit_source="${ORBIT_FILES_SOURCE:-auto}"
       if [ "$orbit_source" = "auto" ]; then
@@ -612,6 +621,9 @@ live:
           head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${ORBIT_BRANCH}"; exit 1; }
         done
         head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${ORBIT_BRANCH}"; exit 1; }
+        # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+        # these two stay on the plain branch name; the pair is verified below
+        # against the cosign.pub fetched by full ref above (#273).
         curl --fail --silent --show-error --location \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json \
@@ -625,6 +637,12 @@ live:
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
+        # install.sh comes from the branch tip, the manifest from the branch's
+        # latest preview pipeline, which trails the tip by minutes. In that
+        # gap the run would pair a newer install.sh with the previous
+        # commit's image, so it stops until the two are one release (#236).
+        [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+          || { echo "install.sh at the tip of ${ORBIT_BRANCH} is not the one the latest signed preview release records: ai/orbit's preview pipeline has not caught up with the branch yet; rerun this job once it has (#236)"; exit 1; }
         export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
         # Install what the manifest names (#241): its image is in the GitLab
         # registry that built it. install.sh ignores the manifest's
@@ -824,52 +842,67 @@ renovate:
       fi
       renovate
 
-# --- Release: the version-tag button (#178) ----------------------------------
+# --- Release: the version-tag buttons (#178, #264) ---------------------------
 #
 # Since #171 nothing here publishes a binary, but Orbit pins launcher tags,
-# so a tag is still how a launcher version is cut. These two jobs are
-# gauntlet's release:version / release:gitlab pair: a manual button on a dev
-# pipeline that tags that commit, so nobody creates a v* tag by hand.
+# so a tag is still how a launcher version is cut. These are gauntlet's
+# release:version / release:gitlab pair, twice over: a manual button on a
+# main pipeline that tags that commit, so nobody creates a v* tag by hand.
+# release:patch takes the hotfix (patch) step, release:minor the ordinary
+# (minor) one. One click on either is all it takes; each has its own
+# follow-on job, and the shared work lives in the two hidden templates.
 #
-# release:version works out the next minor version with
-# tools/calculateversion and refuses unless that tag does not exist yet,
-# sorts above every tag already cut, and the commit is still the tip of dev
-# (scripts/ci/release-tag-check.sh, tested by
+# The button works out the next version with tools/calculateversion and
+# refuses unless that tag does not exist yet, sorts above every tag already
+# cut, the commit carries no v* tag yet (one tag per commit), and it is
+# still the tip of main (scripts/ci/release-tag-check.sh, tested by
 # scripts/test/release-tag-check.bats). It has no `needs:`, so the button is
-# not playable until every earlier stage has passed. release:gitlab then
+# not playable until every earlier stage has passed. The follow-on job then
 # creates the annotated tag and its GitLab release with release-cli, acting
 # with the rights of whoever pressed the button. Tag pipelines run nothing
 # (workflow: above); GitLab's push mirror carries the tag to GitHub.
-release:version:
+#
+# Two presses close together (either button, or one twice) would both pass
+# the check before either tag exists, and could cut two tags on one commit,
+# a lower version possibly landing after a higher one. So the follow-on jobs
+# share `resource_group: release`, which lets only one run at a time, and
+# each runs the check again while it holds that lock, just before
+# release-cli writes the tag; the second finds the first's tag and stops.
+.release_version:
   stage: release
   image:
     <<: *pull_if_not_present
     name: $GO_IMAGE
   interruptible: false
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
       when: manual
       # A manual job is allow_failure by default; forcing it false would
-      # leave every dev pipeline reading "blocked" for a tag nobody intends
+      # leave every main pipeline reading "blocked" for a tag nobody intends
       # to cut yet.
       allow_failure: true
   cache: []
+  # RELEASE_BUMP, set by each button, is `patch` or `minor`.
   script:
     - |
       set -eu
       # calculateversion reads local tags; a CI clone may not hold them all.
       git fetch --quiet --force --tags origin
-      version="$(go run ./tools/calculateversion)"
+      case "$RELEASE_BUMP" in
+        patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
+        minor) version="$(go run ./tools/calculateversion)" ;;
+        *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+      esac
       remote_tags="$(git ls-remote --tags origin)"
-      dev_sha="$(git ls-remote origin refs/heads/dev | cut -f1)"
-      bash scripts/ci/release-tag-check.sh "$version" "$remote_tags" "$dev_sha" "$CI_COMMIT_SHA" > release.env
+      tip_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+      sh scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env
       cat release.env
   artifacts:
     reports:
       dotenv: release.env
     expire_in: 90 days
 
-release:gitlab:
+.release_gitlab:
   stage: release
   # The same pin as gauntlet's release:gitlab, by tag and digest, because
   # this job creates the tag. release-cli is published only on GitLab's own
@@ -879,12 +912,11 @@ release:gitlab:
     name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
   interruptible: false
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
-  needs:
-    - job: release:version
-      artifacts: true
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+  resource_group: release
   cache: []
   script:
+    - sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
     - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG
@@ -896,3 +928,25 @@ release:gitlab:
 
       This repo publishes no binaries (#171): Orbit builds, signs and ships
       the launcher alongside itself.
+
+release:patch:
+  extends: .release_version
+  variables:
+    RELEASE_BUMP: patch
+
+release:minor:
+  extends: .release_version
+  variables:
+    RELEASE_BUMP: minor
+
+release:gitlab:patch:
+  extends: .release_gitlab
+  needs:
+    - job: release:patch
+      artifacts: true
+
+release:gitlab:minor:
+  extends: .release_gitlab
+  needs:
+    - job: release:minor
+      artifacts: true

@@ -100,10 +100,10 @@ func TestAppModel_SelectingInstallLaunchesTheInstallFlow(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard profile is selected by default
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Ready to install"))
+		return bytes.Contains(out, []byte("A note before you install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // confirm -> profile
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // notice -> profile
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEsc}) // profile -> menu
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("model did not quit cleanly: %v", err)
@@ -201,12 +201,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		return bytes.Contains(out, []byte("Choose a deployment profile"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Ready to install"))
-	}, teatest.WithDuration(2*time.Second))
-
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now -> notice
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard -> notice
 	passNotice(t, tm)                            // -> engine runs -> success
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
@@ -250,11 +245,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 	}, teatest.WithDuration(2*time.Second))
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Ready to install"))
-	}, teatest.WithDuration(2*time.Second))
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Install now
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // Standard -> notice
 	passNotice(t, tm)
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {

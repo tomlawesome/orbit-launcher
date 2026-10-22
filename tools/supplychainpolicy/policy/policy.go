@@ -8,9 +8,10 @@
 // Only the fields nobody can derive (an update owner, an explanatory note) are
 // human-authored, and those are carried across a regeneration untouched.
 //
-// Licence and source URL come from the GitHub API and so are fetched only when
-// writing. Checking is deliberately offline: a gate that needs the network to
-// say yes is a gate that fails for reasons unrelated to the thing it guards.
+// The licence comes from the GitHub API and so is fetched only when writing
+// (the source URL is built from the action's name and version). Checking is
+// deliberately offline: a gate that needs the network to say yes is a gate
+// that fails for reasons unrelated to the thing it guards.
 package policy
 
 import (
@@ -27,8 +28,7 @@ import (
 // reviewedOn/reviewBy: a date recording "when a human last looked" could only
 // be moved by hand, and for an action that simply has not released, it went
 // stale while nothing was wrong. Currency is driven by Renovate opening a
-// bump, and by the commit check below refusing a bump that leaves this file
-// behind.
+// bump, and by VerifyPins failing a bump that leaves this file behind.
 const SchemaVersion = 2
 
 const (
@@ -250,8 +250,9 @@ func (e *SchemaError) Error() string {
 }
 
 // DerivedActions returns the mechanical fields for every distinct action the
-// workflows pin, sorted by name. Human-authored fields are left empty; Merge
-// carries those across.
+// workflows pin, sorted by name. Human-authored fields are left empty; the
+// -write command (regenerate in tools/supplychainpolicy) carries those across
+// from the previous file.
 func DerivedActions(pins []Pin) []Action {
 	byName := map[string]Action{}
 	for _, p := range pins {
@@ -303,6 +304,9 @@ type Problem struct {
 	File string
 	Line int
 	Msg  string
+	// Conflict marks two workflows pinning one action at different commits,
+	// which regenerating the policy cannot clear.
+	Conflict bool
 }
 
 func (p Problem) String() string {
@@ -332,6 +336,29 @@ func VerifyPins(pins []Pin, pol Policy) []Problem {
 		problems = append(problems, Problem{File: f, Line: l, Msg: fmt.Sprintf(format, args...)})
 	}
 
+	// Two workflows pinning one action at different commits is a fault in the
+	// workflows: no policy entry can match both, and deriving the policy keeps
+	// only the last pin, so "regenerate" would hide one of them. Name both
+	// places and leave the policy comparison for the conflicted action until
+	// the workflows agree.
+	firstPin := map[string]Pin{}
+	conflicted := map[string]bool{}
+	for _, p := range pins {
+		if !IsSHA(p.Ref) {
+			continue
+		}
+		first, seen := firstPin[p.Action]
+		if !seen {
+			firstPin[p.Action] = p
+		} else if first.Ref != p.Ref {
+			conflicted[p.Action] = true
+			add(p.File, p.Line, "%s is pinned to %s here but to %s at %s:%d. "+
+				"Workflows must pin one action to one commit; change one of the two to match the other.",
+				p.Action, p.Ref, first.Ref, first.File, first.Line)
+			problems[len(problems)-1].Conflict = true
+		}
+	}
+
 	used := map[string]bool{}
 	for _, p := range pins {
 		used[p.Action] = true
@@ -353,7 +380,7 @@ func VerifyPins(pins []Pin, pol Policy) []Problem {
 			add(p.File, p.Line, "%s is used in CI but not recorded in the policy.", p.Action)
 			continue
 		}
-		if a.Commit != p.Ref {
+		if a.Commit != p.Ref && !conflicted[p.Action] {
 			add(p.File, p.Line, "%s is pinned to %s but the policy records %s. "+
 				"One of the two is stale; the workflow is what actually runs.", p.Action, p.Ref, a.Commit)
 		}
