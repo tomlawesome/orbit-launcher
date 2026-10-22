@@ -71,7 +71,7 @@ type AppModel struct {
 	flowReadClaim func(ctx context.Context, dir, appURL string, since time.Time) (string, error)
 
 	// flowNoticeDuration shortens Install's development-notice countdown
-	// (#175) in tests; zero in production (the 70 s default).
+	// (#175) in tests; zero in production (the 20 s default).
 	flowNoticeDuration time.Duration
 
 	// altScreen puts the program in the terminal's alternate screen

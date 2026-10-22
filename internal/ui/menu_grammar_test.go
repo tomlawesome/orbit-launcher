@@ -76,7 +76,7 @@ func removeNotFound(t *testing.T) tea.Model {
 
 func installUnavailableProfile(t *testing.T) tea.Model {
 	t.Helper()
-	m, _ := updateAs(t, profileInstall(t), key(tea.KeyDown), key(tea.KeyEnter)) // AI
+	m, _ := updateAs(t, profileInstall(t), key(tea.KeyDown), key(tea.KeyEnter)) // Documents
 	if !strings.Contains(screen(m), "This profile isn't available yet") {
 		t.Fatalf("not on the unavailable-profile screen:\n%s", screen(m))
 	}
