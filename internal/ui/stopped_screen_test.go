@@ -887,3 +887,22 @@ func TestStoppedScreen_UpdateNeverSaysUndoneOrListsTheFolder(t *testing.T) {
 		})
 	}
 }
+
+// A retry whose event says recovery=command but whose recovery-command
+// line never arrived is still a rollback that left something in Docker:
+// the screen must not say the folder and Docker are as they were.
+func TestStoppedScreen_RetryWithRecoveryButNoCommandLineIsNotUndone(t *testing.T) {
+	m, _ := installApp(t, failedScript(
+		[]string{rollbackRunningLine}, retryEvent, retryStderr(engineCommand)), 80, 40)
+	s := screen(m)
+	words := flat(s)
+	if !strings.Contains(words, stopUndoneButDocker) {
+		t.Errorf("%q is missing:\n%s", stopUndoneButDocker, s)
+	}
+	if strings.Contains(words, "are as they were") {
+		t.Errorf("the screen says the install was fully undone:\n%s", s)
+	}
+	if want := []string{"Install again", "Menu", "Exit"}; !slices.Equal(screenLabels(s), want) {
+		t.Errorf("rows = %q, want %q", screenLabels(s), want)
+	}
+}

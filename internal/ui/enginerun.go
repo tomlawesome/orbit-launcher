@@ -940,8 +940,12 @@ func (r engineRun) stopKind() stopKind {
 // failedKind reads a terminal failure by its action. An action the
 // launcher does not know is read as abort: never a rerun it cannot
 // vouch for.
+//
+// recovery=command alone counts as a command left to run, even when its
+// recovery-command line never arrived: the folder or Docker is not as it
+// was, so the screen must not say it is.
 func (r engineRun) failedKind(e engine.Event) stopKind {
-	command := r.recoveryCommand != ""
+	command := r.recoveryCommand != "" || e.Recovery == engine.RecoveryHasCommand
 	switch e.Action {
 	case engine.ActionRetry:
 		switch {
