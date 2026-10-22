@@ -428,30 +428,108 @@ func TestRepairForeign_CommandUsesTheAccountColonForm(t *testing.T) {
 func TestRepairForeign_MenuRowsAndOrder(t *testing.T) {
 	m, _ := rfStop(t, rfDir, rfOwn(rfEnv))
 	s := screen(m)
-	if got := strings.Join(screenLabels(s), "|"); got != "Copy command|Menu|Exit" {
-		t.Errorf("menu rows = %q, want Copy command, Menu, Exit:\n%s", got, s)
+	// #277: the muted row says "then diagnose again", so the screen offers
+	// it, above Menu and Exit.
+	if got := strings.Join(rfStopRows(s), "|"); got != "Copy command|Diagnose again|Menu|Exit" {
+		t.Errorf("menu rows = %q, want Copy command, Diagnose again, Menu, Exit:\n%s", got, s)
 	}
-	if got := caretLabel(s); got != "Copy command" {
+	if got := rfStopCaret(s); got != "Copy command" {
 		t.Errorf("caret on %q, want Copy command:\n%s", got, s)
 	}
-	if strings.Contains(s, "Diagnose again") {
-		t.Errorf("the stop screen offers Diagnose again; the way back is Menu:\n%s", s)
+}
+
+// rfStopRowLabels are the rows the stop screen may carry.
+var rfStopRowLabels = map[string]bool{
+	"Copy command": true, "Copy command · copied": true, "Diagnose again": true, "Menu": true, "Exit": true,
+}
+
+// rfStopRows are the stop screen's rows, top to bottom, by label.
+func rfStopRows(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if row := screenRow(line); rfStopRowLabels[row] {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// rfStopCaret is the label of the stop screen's selected row, or "".
+func rfStopCaret(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if row := screenRow(line); strings.Contains(line, "▸") && rfStopRowLabels[row] {
+			return row
+		}
+	}
+	return ""
+}
+
+// #277: choosing Diagnose again on the stop screen runs the diagnosis
+// again: the owner check first, then the engine once the files are back;
+// a file still foreign brings the stop screen back.
+func TestRepairForeign_DiagnoseAgainFromTheStopRunsTheDiagnosisAgain(t *testing.T) {
+	cases := []struct {
+		name     string
+		now      deploy.Ownership
+		wantStop bool
+		calls    []string
+	}{
+		{"handed back", deploy.Ownership{Account: "alice"}, false, []string{"check", "engine"}},
+		{"still foreign", rfOwn(rfEnv), true, []string{"check"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewRepairModel(t.TempDir(), "v0.6.0")
+			m.clipboard = &bytes.Buffer{}
+			p := &rfProbe{own: rfOwn(rfEnv)}
+			p.wire(&m)
+			m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 40}, repairForeignMsg{own: p.own})
+			for i := 0; i < 5 && rfStopCaret(screen(m)) != "Diagnose again"; i++ {
+				m, _ = updateAs(t, m, key(tea.KeyDown))
+			}
+			if got := rfStopCaret(screen(m)); got != "Diagnose again" {
+				t.Fatalf("the caret never reached Diagnose again; rows %q:\n%s", rfStopRows(screen(m)), screen(m))
+			}
+
+			p.own = tc.now
+			m, cmd := updateAs(t, m, key(tea.KeyEnter))
+			if m.Done {
+				t.Fatalf("Diagnose again left Repair (WantsMenu=%v)", m.WantsMenu)
+			}
+			if cmd == nil {
+				t.Fatal("Diagnose again started nothing")
+			}
+			if m.state != repairPreparing {
+				t.Errorf("state = %v, want repairPreparing:\n%s", m.state, screen(m))
+			}
+			if len(p.calls) != 0 {
+				t.Fatalf("the check ran before the command did: %v", p.calls)
+			}
+			msg := cmd()
+			rfCallsAre(t, p, tc.calls...)
+			if _, stopped := msg.(repairForeignMsg); stopped != tc.wantStop {
+				t.Fatalf("Diagnose again produced %#v; want a repairForeignMsg: %v", msg, tc.wantStop)
+			}
+			if tc.wantStop {
+				m, _ = updateAs(t, m, msg)
+				if !strings.Contains(plain(m), "✗ Repair can't check these files") {
+					t.Errorf("the stop screen did not come back:\n%s", screen(m))
+				}
+			}
+		})
 	}
 }
 
 func TestRepairForeign_MenuAndExitRows(t *testing.T) {
 	m, _ := rfStop(t, rfDir, rfOwn(rfEnv))
 
-	toMenu, _ := updateAs(t, m, key(tea.KeyDown))
+	toMenu := moveCaretTo(t, m, "Menu")
 	toMenu, _ = updateAs(t, toMenu, key(tea.KeyEnter))
 	if !toMenu.Done || !toMenu.WantsMenu {
 		t.Errorf("Menu row: Done=%v WantsMenu=%v, want both", toMenu.Done, toMenu.WantsMenu)
 	}
 
-	exit, _ := updateAs(t, m, key(tea.KeyDown), key(tea.KeyDown))
-	if got := caretLabel(screen(exit)); got != "Exit" {
-		t.Fatalf("two Downs left the caret on %q, want Exit", got)
-	}
+	exit := moveCaretTo(t, m, "Exit")
 	if _, cmd := updateAs(t, exit, key(tea.KeyEnter)); !isQuit(cmd) {
 		t.Error("the Exit row did not quit")
 	}
