@@ -143,10 +143,11 @@ func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
 
 // servicesBlock returns the block's rows, or nil when there is none to
 // show. room is the rows the screen has left for it once the rest of
-// the screen, the plan included, has its rows (label and the blank row
-// after it included); the full list is used if it fits, otherwise the
-// running rows fold into one `✓ N running` row and every faulted or
-// missing row stays.
+// the screen, the plan included, has its rows. The block draws its label
+// and one row per service, nothing more (viewDiagnosis joins it straight
+// onto the findings), so the full list is used when those rows fit room
+// (#277); otherwise the running rows fold into one `✓ N running` row and
+// every faulted or missing row stays.
 func (m RepairModel) servicesBlock(room int) []string {
 	if m.serviceStates == nil || m.services == nil {
 		return nil
@@ -170,7 +171,7 @@ func (m RepairModel) servicesBlock(room int) []string {
 			faulted = append(faulted, r)
 		}
 	}
-	if len(rows)+2 > room && running > 0 {
+	if 1+len(rows) > room && running > 0 { // the label, then a row each
 		folded = faulted
 	} else {
 		folded = nil
