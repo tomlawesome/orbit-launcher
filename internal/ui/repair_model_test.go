@@ -449,7 +449,8 @@ func TestRepairModel_RefusedDangerousBatchSaysNothingWasRotated(t *testing.T) {
 			if m.state != repairExecuted {
 				t.Fatalf("exit 6 is an outcome, not an error: state = %v", m.state)
 			}
-			s := screen(m)
+			// The refusal wraps at the screen's width (#287): match its words.
+			s := proseOnly(screen(m))
 			if !strings.Contains(s, "credentials left as they were — nothing was rotated") {
 				t.Fatalf("refusal not stated:\n%s", s)
 			}
@@ -996,7 +997,8 @@ func TestRepairModel_RefusedSafeRunSaysWhy(t *testing.T) {
 	if m.state != repairExecuted {
 		t.Fatalf("exit 6 is an outcome, not an error: state = %v", m.state)
 	}
-	s := screen(m)
+	// The refusal wraps at the screen's width (#287): match its words.
+	s := proseOnly(screen(m))
 	for _, want := range []string{"Repair refused", "too old to repair here", "then diagnose again"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("refused run lacks %q:\n%s", want, s)

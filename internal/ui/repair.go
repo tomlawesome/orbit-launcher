@@ -855,6 +855,8 @@ func (m RepairModel) viewExecuted() string {
 		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repair run ended"
 	}
 	writeInlineHeader(&b, glyph, title)
+	// The refusal lines wrap at the screen's width, never past it (#287).
+	limit := measure(m.width, errorWidth)
 
 	for _, e := range m.executeResults {
 		fmt.Fprintln(&b, executeLine(e))
@@ -870,8 +872,8 @@ func (m RepairModel) viewExecuted() string {
 		// enum says why, and the exit code alone cannot.
 		switch m.execSummary.Reason {
 		case "deployment-version-unsupported":
-			fmt.Fprintln(&b, style.DegradedText.Render("nothing was changed — this deployment's Orbit release is too old to repair here"))
-			fmt.Fprintln(&b, style.DegradedText.Render("upgrade or reinstall it with a supported release, then diagnose again"))
+			writeWrapped(&b, style.DegradedText, "nothing was changed — this deployment's Orbit release is too old to repair here", limit)
+			writeWrapped(&b, style.DegradedText, "upgrade or reinstall it with a supported release, then diagnose again", limit)
 		default:
 			refusal := "nothing was changed — the engine refused to run"
 			if m.execSummary.Reason != "" {
@@ -879,7 +881,7 @@ func (m RepairModel) viewExecuted() string {
 				// text before it reaches the terminal (#277).
 				refusal += " (" + visibleText(m.execSummary.Reason) + ")"
 			}
-			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+			writeWrapped(&b, style.DegradedText, refusal, limit)
 		}
 	}
 	if m.dangerous != nil && m.dangerous.Result == engine.ResultRefused {
@@ -891,7 +893,7 @@ func (m RepairModel) viewExecuted() string {
 		if m.dangerous.Reason == "non-interactive" {
 			refusal += " (no terminal was available to approve it)"
 		}
-		fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+		writeWrapped(&b, style.DegradedText, refusal, limit)
 	}
 
 	// The after-picture: the executor's own honest re-diagnosis.

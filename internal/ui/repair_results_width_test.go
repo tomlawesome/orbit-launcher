@@ -37,7 +37,7 @@ func TestRepairResults_NoLineRunsPastTheScreen(t *testing.T) {
 					}
 				}
 				if strings.Contains(name, "dangerous_refused") {
-					if flat := strings.Join(strings.Fields(plain), " "); !strings.Contains(flat, refusedRotationText) {
+					if flat := proseOnly(plain); !strings.Contains(flat, refusedRotationText) {
 						t.Errorf("the refused-rotation text is not there in full:\n%s", plain)
 					}
 				}
