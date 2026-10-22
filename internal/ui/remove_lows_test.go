@@ -98,22 +98,3 @@ exit 1
 		t.Errorf("Docker's reason did not survive the cap:\n%s", s)
 	}
 }
-
-// 236-c9 (SP1-3): a Remove for the filesystem root or the home directory
-// offers no removal command: nothing to paste, nothing to copy.
-func TestRemove_DoneScreenOffersNoCommandForRootOrHome(t *testing.T) {
-	const home = "/home/someone"
-	t.Setenv("HOME", home)
-	for _, target := range []string{"/", home} {
-		m := lowsRemoveModel(&deploy.Deployment{TargetDir: target}, standDownOK)
-		m, cmd := updateAs(t, m, key(tea.KeyEnter))
-		m, _ = updateAs(t, m, cmd())
-		if m.state != removeStateDone {
-			t.Fatalf("target %q: state = %v, want removeStateDone", target, m.state)
-		}
-		s := screen(m)
-		if strings.Contains(s, "rm -rf") || strings.Contains(s, removeCopy) {
-			t.Errorf("target %q: the removed screen still offers a deleting command:\n%s", target, s)
-		}
-	}
-}

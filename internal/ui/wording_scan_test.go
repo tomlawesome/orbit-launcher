@@ -291,7 +291,7 @@ func TestWording_RemoveWarningKeepsItsWeight(t *testing.T) {
 	m := newTestRemoveModel(func(context.Context, string) error { return nil })
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	m, _ = updateAs(t, m, cmd())
-	if s := screen(m); !strings.Contains(s, "it cannot be undone") {
+	if s := screen(m); !strings.Contains(proseOnly(s), "it cannot be undone") {
 		t.Errorf("the stood-down screen lost its warning:\n%s", s)
 	}
 }
