@@ -134,8 +134,11 @@ type configCollect struct {
 // The preparation also writes into the run's configuration tree (the
 // import), so the tree must not be removed under it: a removal racing
 // the copy can leave an empty folder in TMPDIR that nothing removes
-// (#277). While a preparation runs, the run's release of its files waits
-// here and the preparation runs it on finishing.
+// (#277). Leaving cancels the preparation (close cancels its context,
+// which the import checks before every file), and while it runs the
+// run's release of its files waits here; the preparation runs it once
+// it has returned, so nothing is written into the tree after it is
+// removed.
 type configLate struct {
 	mu      sync.Mutex
 	stopped bool
@@ -263,8 +266,10 @@ func (s *releaseSet) list() []*configLate {
 
 // deferredCleanupWait bounds how long the launcher's exit waits for a
 // configuration preparation still writing into a run's configuration
-// tree (its configure.sh --check is cancelled by then, so only a copy
-// in progress is left to finish).
+// tree. It is a backstop only: leaving the session cancels the
+// preparation's context, its import stops within one file and its
+// configure.sh --check is stopped, so the wait is normally that one
+// file.
 const deferredCleanupWait = 2 * time.Second
 
 // FinishDeferredCleanup is for the launcher's exit, once the program has
@@ -347,7 +352,7 @@ func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) con
 	if err != nil {
 		return configPlanMsg{err: err}
 	}
-	if err := deploy.ImportTargetConfig(configTree, targetDir); err != nil {
+	if err := deploy.ImportTargetConfigContext(ctx, configTree, targetDir); err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
 	}

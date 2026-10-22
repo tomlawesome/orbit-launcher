@@ -125,7 +125,6 @@ var dockerFuncs = template.FuncMap{
 	"join":  strings.Join,
 	"lower": strings.ToLower,
 	"upper": strings.ToUpper,
-	"title": strings.Title, //nolint:staticcheck // as the docker CLI does
 	"pad": func(s string, l, r int) string {
 		return strings.Repeat(" ", l) + s + strings.Repeat(" ", r)
 	},
