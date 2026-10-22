@@ -24,7 +24,9 @@ import (
 // owns; own is the check's answer.
 type repairForeignMsg struct{ own deploy.Ownership }
 
-var foreignMenu = []string{removeCopy, "Menu", "Exit"}
+// foreignMenu is the stop screen's rows: Diagnose again is what the
+// screen tells the person to do once the files are back (#277).
+var foreignMenu = []string{removeCopy, "Diagnose again", "Menu", "Exit"}
 
 // startDiagnosis is startRun for a run start (Init, "Diagnose again"):
 // the foreignOwned check runs first, inside the same command, so the
@@ -56,6 +58,8 @@ func (m RepairModel) handleForeignKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.copied = true
 			words := deploy.ChownCommandWords(m.targetDir, m.foreign)
 			return m, copyToClipboard(m.clipboardWriter(), strings.Join(words, " "))
+		case "Diagnose again":
+			return m.diagnoseAgain()
 		case "Menu":
 			m.Done = true
 			m.WantsMenu = true
