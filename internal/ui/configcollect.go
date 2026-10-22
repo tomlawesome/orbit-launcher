@@ -142,8 +142,11 @@ type configLate struct {
 	held    func()
 
 	preparing bool
-	prepared  chan struct{} // closed when the running preparation ends
-	runFiles  func()        // the run's files' release, waiting for it
+	// ended is closed once the running preparation has ended and the
+	// release that waited for it, if any, has finished.
+	ended     chan struct{}
+	runFiles  func() // the run's files' release, waiting for it
+	releasing bool   // end is running runFiles
 }
 
 // begin is a preparation starting. False means the session was left
@@ -155,21 +158,23 @@ func (l *configLate) begin() bool {
 		return false
 	}
 	l.preparing = true
-	l.prepared = make(chan struct{})
+	l.ended = make(chan struct{})
 	return true
 }
 
 // end is the preparation finished with the tree: a release of the run's
-// files that waited for it runs now.
+// files that waited for it runs now, and only once it has finished is
+// anyone waiting on the preparation let go, so nothing quits in the
+// middle of the removal.
 func (l *configLate) end() {
 	l.mu.Lock()
 	release := l.runFiles
-	l.runFiles, l.preparing = nil, false
-	close(l.prepared)
+	l.runFiles, l.preparing, l.releasing = nil, false, release != nil
 	l.mu.Unlock()
 	if release != nil {
 		release()
 	}
+	close(l.ended)
 }
 
 // releaseRunFilesAfter keeps release for the running preparation to run
@@ -185,29 +190,34 @@ func (l *configLate) releaseRunFilesAfter(release func()) bool {
 	return true
 }
 
-// awaitPreparation waits, at most limit, for a running preparation to end
-// (and so to release whatever waited for it). Past the limit, a release
-// still waiting runs anyway: the launcher is quitting and nothing else
-// would run it.
+// awaitPreparation returns once a preparation that has started has
+// ended and the release that waited for it has finished, waiting at
+// most limit for the preparation itself. Past the limit, a release
+// still waiting runs here instead, and is finished before this returns:
+// the launcher is quitting and nothing else would run it. A release the
+// preparation has already begun is waited for to its end; a preparation
+// with no release waiting is not waited for past the limit.
 func (l *configLate) awaitPreparation(limit time.Duration) {
 	l.mu.Lock()
-	if !l.preparing {
-		l.mu.Unlock()
+	ended := l.ended
+	l.mu.Unlock()
+	if ended == nil {
 		return
 	}
-	prepared := l.prepared
-	l.mu.Unlock()
 	select {
-	case <-prepared:
+	case <-ended:
 		return
 	case <-time.After(limit):
 	}
 	l.mu.Lock()
-	release := l.runFiles
+	release, releasing := l.runFiles, l.releasing
 	l.runFiles = nil
 	l.mu.Unlock()
-	if release != nil {
+	switch {
+	case release != nil:
 		release()
+	case releasing:
+		<-ended
 	}
 }
 
