@@ -309,7 +309,7 @@ func stopCases() []stopCase {
 			build:    installCase([]string{"notes.txt"}, []any{hostDone, composeRunning, rollbackRunning, rollbackDone, composeFailed, exit1(compose...)}),
 			sentence: stopUndone, steps: []string{stepFixNamedAbove},
 			absent: []string{"in the folder", stepAnotherFolder, stepMoveThemOut},
-			stage:  stageAfter(hostDone, composeRunning, rollbackRunning, rollbackDone, composeFailed),
+			stage:  stageAfter(hostDone, composeRunning, composeFailed), // rollback events left out: the line names the step that failed
 			rows:   rowsAgain, caret: "Install again", last: composeFailed.Event,
 		},
 		{
@@ -317,7 +317,7 @@ func stopCases() []stopCase {
 			build:    installCase([]string{"notes.txt"}, []any{hostDone, rollbackRunning, appAborted, exit1("Orbit installer: One entry could not be moved back.")}),
 			sentence: stopNotFullyUndone, steps: []string{stepDoWhatLinesSay},
 			absent: []string{"in the folder", "Install again", "Open the guided installer"},
-			stage:  stageAfter(hostDone, rollbackRunning, appAborted), rows: rowsLeave, last: appAborted.Event,
+			stage:  stageAfter(hostDone, appAborted), rows: rowsLeave, last: appAborted.Event,
 		},
 		{
 			name:     "install abort before writing",
@@ -371,14 +371,14 @@ func stopCases() []stopCase {
 		{
 			name:     "update retry",
 			build:    updateCase([]string{"notes.txt"}, []any{hostDone, rollbackRunning, rollbackDone, imageRetry, exit1("Orbit installer: Could not pull the image.")}),
-			sentence: stopUpdateNotChanged, stage: stageAfter(hostDone, rollbackRunning, rollbackDone, imageRetry),
+			sentence: stopUpdateNotChanged, stage: stageAfter(hostDone, imageRetry),
 			absent: []string{"undone", "in the folder", "Install again"},
 			rows:   rowsUpdate, caret: "Update again", last: imageRetry.Event,
 		},
 		{
 			name:     "update repair",
 			build:    updateCase([]string{"notes.txt"}, []any{hostDone, rollbackRunning, rollbackDone, appRepair, exit1(web...)}),
-			sentence: stopUpdateChanged, stage: stageAfter(hostDone, rollbackRunning, rollbackDone, appRepair),
+			sentence: stopUpdateChanged, stage: stageAfter(hostDone, appRepair),
 			absent: []string{"undone", "in the folder"},
 			rows:   rowsRepair, caret: "Open Repair", last: appRepair.Event,
 		},
@@ -458,6 +458,20 @@ func TestStoppedScreen_EachCaseSaysWhatHappenedAndOffersItsRows(t *testing.T) {
 				t.Errorf("the screen takes %d rows of 26:\n%s", n, s)
 			}
 		})
+	}
+}
+
+// Owner answer 2a (issue #257): the stage line names the step that
+// failed, never "Rolling back", even when rollback events arrived between.
+func TestStoppedScreen_StageNamesTheStepThatFailedNotTheRollback(t *testing.T) {
+	m := stoppedInstall(t, folderWith(t, "notes.txt"), hostDone, composeRunning, rollbackRunning, rollbackDone, composeFailed, exit1("Orbit installer: Orbit services could not be created or started."))
+	s := screen(m)
+	words := flat(s)
+	if strings.Contains(words, "stage: Rolling back") {
+		t.Errorf("the stage line names the rollback, not the step that failed:\n%s", s)
+	}
+	if want := stageAfter(composeFailed); !strings.Contains(words, want) {
+		t.Errorf("the stage line %q is missing:\n%s", want, s)
 	}
 }
 
