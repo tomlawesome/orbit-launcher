@@ -18,9 +18,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// claimCode is the one-time code inside claimLink and wiringLink.
-const claimCode = "Zm9yLXRlc3Qtb25seS1ub3QtYS1yZWFsLWNvZGU"
-
 // --- 1. The menu holds still ------------------------------------------------
 
 // A success screen whose claim read is still out, then the same screen
