@@ -128,13 +128,22 @@ func TestEngineRun_HandoffThatCannotBePreparedReachesFailed(t *testing.T) {
 	}
 }
 
+// Narrowed by #257 to the one failure the guided installer is offered
+// for: an installer that reported no event at all and exited 1 (an older
+// install.sh). A launcher that could not start the installer now offers
+// Install again instead.
 func TestEngineRun_FailedScreenOpensTheRealInstallerByDefault(t *testing.T) {
 	t.Setenv(requireInConsoleEnv, "")
 	installScriptAt(t, "#!/bin/bash\nexit 0\n")
 	dir := t.TempDir()
 	r := newEngineRun("install", dir, "Install", "v")
 	r, _ = r.start(80, 26)
-	r, _ = runUpdate(t, r, engineReadyMsg{err: errors.New("boom")})
+	r.state = runStreaming
+	r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"),
+		StderrTail: []string{"Orbit installer: something went wrong."}}})
+	if r.state != runFailed {
+		t.Fatalf("state = %v, want runFailed", r.state)
+	}
 
 	// "Open the guided installer" is preselected; no seam means the
 	// real install.sh is fetched and staged for the terminal handoff.

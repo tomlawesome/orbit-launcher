@@ -145,6 +145,7 @@ var rowLabels = map[string]bool{
 	"Install": true, "Update": true, "Repair": true, "Remove": true,
 	"Update Orbit": true, "Stand down Orbit": true,
 	"Continue anyway": true, "Open the guided installer": true,
+	"Install again": true, "Update again": true, "Open Repair": true,
 	"Get into Orbit": true, "Copy command": true, "Copy command · copied": true,
 	"Cancel": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
 }
