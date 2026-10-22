@@ -14,19 +14,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // fakeDocker puts a `docker` first on PATH that records that it was run
 // and fails, and returns the marker file it writes.
 func fakeDocker(t *testing.T) string {
 	t.Helper()
-	bin := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "docker-was-run")
-	script := "#!/bin/sh\necho \"$@\" >> '" + marker + "'\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.FakeExecutable(t, "docker", "#!/bin/sh\necho \"$@\" >> '"+marker+"'\nexit 1\n")
 	return marker
 }
 
