@@ -2,7 +2,7 @@
                                                   
     [38;2;231;233;238mThe install was undone in the folder, but[m     
   [38;2;231;233;238msomething it started in Docker is still there.[m  
-               [38;2;124;134;153mstage: Rolling back[m                
+              [38;2;124;134;153mstage: Starting Orbit[m               
                         [38;2;74;84;104m…[m                         
      [38;2;74;84;104mOrbit installer: Install again to finish[m     
     [38;2;74;84;104mputting the folder back. If the containers[m    

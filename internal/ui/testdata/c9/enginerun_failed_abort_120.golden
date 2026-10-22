@@ -4,7 +4,7 @@
                                                    [38;2;248;113;113m✗[m [1;38;2;231;233;238mInstall stopped[m                                                    
                           [38;2;74;84;104m✦[m          [38;2;74;84;104m✦[m                                                                                  
                         [38;2;231;233;238mThe install couldn't be fully undone; the lines below say what is left.[m                         
-               [38;2;74;84;104m·[m                                  [38;2;124;134;153mstage: Rolling back[m                [38;2;143;184;255m●[m                 [38;2;216;180;90m●[m               [38;2;74;84;104m·[m
+               [38;2;74;84;104m·[m                                 [38;2;124;134;153mstage: Starting Orbit[m               [38;2;143;184;255m●[m                 [38;2;216;180;90m●[m               [38;2;74;84;104m·[m
                      [38;2;74;84;104m·[m               [38;2;74;84;104mOrbit installer: cleanup step 01 is left to do[m                [38;2;74;84;104m·[m                    
                                      [38;2;74;84;104mOrbit installer: cleanup step 02 is left to do[m                                     
                                      [38;2;74;84;104mOrbit installer: cleanup step 03 is left to do[m                                     

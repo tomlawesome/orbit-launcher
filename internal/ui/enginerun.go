@@ -1177,8 +1177,8 @@ func (r engineRun) viewFailed(width, height int) string {
 		}
 	default:
 		if r.sawEvent {
-			// The word the stage bar showed when the run stopped.
-			writeWrapped(&b, style.MutedText, "stage: "+r.console.stageWord(), limit)
+			// The step that failed, not "Rolling back" (#257, owner 2a).
+			writeWrapped(&b, style.MutedText, "stage: "+r.console.progressWord(), limit)
 		}
 	}
 	if r.handoffErr != nil {

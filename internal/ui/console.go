@@ -189,6 +189,12 @@ func (c ConsoleModel) stageWord() string {
 	if c.rollback {
 		return "Rolling back"
 	}
+	return c.progressWord()
+}
+
+// progressWord is the furthest stage the run reached, a rollback aside:
+// the step that failed, as the stopped screen names it (#257, owner 2a).
+func (c ConsoleModel) progressWord() string {
 	if c.unknownStage != "" {
 		return c.unknownStage
 	}
