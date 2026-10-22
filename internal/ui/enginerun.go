@@ -835,19 +835,12 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 		r.exitNote = forcedStopNote(r.action)
 	}
 	r.cfg.close()
+	// A removal this defers to a configuration preparation still
+	// running is finished before the process exits
+	// (FinishDeferredCleanup, from cmd/orbit-launcher).
 	r.releaseRunFiles()
-	// The process ends with the quit, so a removal waiting for the
-	// configuration preparation is waited for here (it was cancelled
-	// by close, so only a copy in progress is left to finish).
-	if r.cfg.late != nil {
-		r.cfg.late.awaitPreparation(preparationQuitWait)
-	}
 	return r, tea.Quit
 }
-
-// preparationQuitWait bounds how long quitting waits for a configuration
-// preparation still writing into the run's configuration tree.
-const preparationQuitWait = 2 * time.Second
 
 // forcedStopNote is the owner's wording for a stop whose installer was
 // still undoing its work when the launcher ended it. A stopped update

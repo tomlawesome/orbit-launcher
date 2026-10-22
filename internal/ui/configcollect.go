@@ -175,6 +175,7 @@ func (l *configLate) end() {
 		release()
 	}
 	close(l.ended)
+	deferredReleases.drop(l)
 }
 
 // releaseRunFilesAfter keeps release for the running preparation to run
@@ -187,6 +188,7 @@ func (l *configLate) releaseRunFilesAfter(release func()) bool {
 		return false
 	}
 	l.runFiles = release
+	deferredReleases.add(l)
 	return true
 }
 
@@ -216,8 +218,65 @@ func (l *configLate) awaitPreparation(limit time.Duration) {
 	switch {
 	case release != nil:
 		release()
+		deferredReleases.drop(l)
 	case releasing:
 		<-ended
+	}
+}
+
+// deferredReleases are the sessions whose preparation still holds a
+// release of the run's files. Whatever screen ends the launcher, the
+// process must not exit before they are done (FinishDeferredCleanup):
+// a session left with Esc during the import is no longer on any screen
+// when the menu quits.
+var deferredReleases releaseSet
+
+type releaseSet struct {
+	mu   sync.Mutex
+	held map[*configLate]struct{}
+}
+
+func (s *releaseSet) add(l *configLate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held == nil {
+		s.held = map[*configLate]struct{}{}
+	}
+	s.held[l] = struct{}{}
+}
+
+func (s *releaseSet) drop(l *configLate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.held, l)
+}
+
+func (s *releaseSet) list() []*configLate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ls []*configLate
+	for l := range s.held {
+		ls = append(ls, l)
+	}
+	return ls
+}
+
+// deferredCleanupWait bounds how long the launcher's exit waits for a
+// configuration preparation still writing into a run's configuration
+// tree (its configure.sh --check is cancelled by then, so only a copy
+// in progress is left to finish).
+const deferredCleanupWait = 2 * time.Second
+
+// FinishDeferredCleanup is for the launcher's exit, once the program has
+// ended: it waits, at most deferredCleanupWait in all, for every removal
+// of a run's files that is waiting on a configuration preparation, and
+// past that runs the ones still waiting itself; it returns once all have
+// finished (the pattern of a graceful shutdown draining in-flight work
+// before the process ends).
+func FinishDeferredCleanup() {
+	deadline := time.Now().Add(deferredCleanupWait)
+	for _, l := range deferredReleases.list() {
+		l.awaitPreparation(time.Until(deadline))
 	}
 }
 

@@ -100,6 +100,10 @@ func startApp(stdout, stderr io.Writer) int {
 	final, err := program.Run()
 	signal.Stop(sigs)
 	stopSignals()
+	// Whatever screen ended the program, a removal of a run's staged
+	// files still waiting on a configuration import is finished before
+	// the process exits, or it would die half done (#277).
+	ui.FinishDeferredCleanup()
 	if err == nil && interrupted() {
 		// An interrupt from outside still ends the launcher as one, as
 		// it did when Bubble Tea's handler turned it into ErrInterrupted;
