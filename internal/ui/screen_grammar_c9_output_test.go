@@ -28,10 +28,10 @@ package ui
 // #220 added a golden for every screen that had none (the splash and its
 // states, the profile choice's other screens, the stopped screens'
 // other endings, the configuration screens, Update's dead ends, Remove's
-// stand-down, and Repair's working, stop and result screens), so a moved
-// blank line or row anywhere fails here; the success screen is left out
-// until its redesign lands. Those were recorded from the code as it
-// stood, and no earlier golden moved.
+// stand-down, and Repair's working, stop and result screens, and the
+// success screen's four states), so a moved blank line or row anywhere
+// fails here. Those were recorded from the code as it stood, and no
+// earlier golden moved.
 // Any other difference is a regression to look at, never a file to
 // re-record.
 
@@ -265,13 +265,12 @@ func (e c9Dir) Type() fs.FileMode          { return 0 }
 func (e c9Dir) Info() (fs.FileInfo, error) { return nil, errors.ErrUnsupported }
 
 // c9OtherScreens renders every screen the cases above do not (#220),
-// each at the widths the families above use. The success screen is not
-// here: it is about to change (its own branch), and gets its goldens
-// with that change.
+// each at the widths the families above use.
 func c9OtherScreens(t *testing.T, out map[string]string) {
 	t.Helper()
 	for _, w := range c9Widths {
 		c9OtherScreensAt(t, out, w)
+		c9SuccessScreens(t, out, w)
 	}
 	c9RemoveScreens(t, out)
 }
@@ -520,6 +519,34 @@ func c9ExecutedScreens(t *testing.T, out map[string]string, w int, rp func() Rep
 		}
 		out["repair_executed_"+name+"_"+tag] = m.View().Content
 	}
+}
+
+// c9SuccessScreens is the success screen at width w: before the claim
+// link has been read (the blank slot under Get into Orbit), with a claim
+// link, after the read found none, and an address with an account part
+// (hidden on screen). The sky is the shared fixed seed and the screen is
+// not animated.
+func c9SuccessScreens(t *testing.T, out map[string]string, w int) {
+	t.Helper()
+	tag := fmt.Sprintf("%d", w)
+	build := func(appURL string, read bool) SuccessModel {
+		m := NewSuccessModel(appURL, 3*time.Minute+42*time.Second, "v1")
+		m.noAnimation = true
+		if read {
+			m.readClaim = func() (string, error) { return "", nil }
+		}
+		return c9Size(t, m, w)
+	}
+	const address = "https://mail.example.com"
+	m := build(address, true)
+	out["success_claim_pending_"+tag] = m.View().Content
+	m, _ = updateAs(t, m, claimLinkMsg{link: address + "/#claim=Zm9yLXRlc3RzLW9ubHk"})
+	out["success_claim_link_"+tag] = m.View().Content
+	m = build(address, true)
+	m, _ = updateAs(t, m, claimLinkMsg{})
+	out["success_claim_none_"+tag] = m.View().Content
+	m = build("https://admin:not-a-password@mail.example.com", false)
+	out["success_account_hidden_"+tag] = m.View().Content
 }
 
 func TestScreenGrammarC9_ScreensRenderByteForByteAsBefore(t *testing.T) {
