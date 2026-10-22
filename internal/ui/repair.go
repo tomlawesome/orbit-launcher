@@ -692,11 +692,7 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	return m.handleMenu(msg, executedMenu, func(label string) (tea.Model, tea.Cmd) {
 		switch label {
 		case "Diagnose again":
-			m.startExecution()
-			m.planActions, m.planSummary = nil, nil
-			m.state = repairPreparing
-			m.mode = deploy.RepairPlan
-			return m, m.startDiagnosis(deploy.RepairPlan)
+			return m.diagnoseAgain()
 		case "Menu":
 			m.Done = true
 			m.WantsMenu = true
@@ -705,6 +701,16 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, tea.Quit
 		}
 	})
+}
+
+// diagnoseAgain starts a fresh diagnosis, owner check first, from the
+// after-picture, a stopped mutation or the foreign-files stop.
+func (m RepairModel) diagnoseAgain() (tea.Model, tea.Cmd) {
+	m.startExecution()
+	m.planActions, m.planSummary = nil, nil
+	m.state = repairPreparing
+	m.mode = deploy.RepairPlan
+	return m, m.startDiagnosis(deploy.RepairPlan)
 }
 
 // stoppedMutation says the error screen is showing a safe repair or
