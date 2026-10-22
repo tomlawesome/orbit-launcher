@@ -235,10 +235,10 @@ func wrapWords(text string, limit int) []string {
 // return keeps the last non-empty segment after it: what a terminal
 // shows once the progress it overwrote has finished, and a CRLF line
 // end loses nothing. A tab is one space (it measures 0 cells but
-// renders as four), and any other control character is dropped. A
-// bidirectional embedding, override or isolate control is shown as
-// visibleText shows it (\u202e), so it cannot turn the rest of the row
-// around (#277).
+// renders as four), and any other control character is dropped. An
+// invisible direction or joining character (see isInvisibleControl) is
+// shown as visibleText shows it (\u202e, \u200b), so it cannot turn the
+// rest of the row around or hide inside a word (#277).
 func cleanLine(line string) string {
 	if strings.Contains(line, "\r") {
 		segs := strings.Split(line, "\r")
@@ -256,7 +256,7 @@ func cleanLine(line string) string {
 		case r == '\t':
 			b.WriteByte(' ')
 		case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0:
-		case isBidiControl(r):
+		case isInvisibleControl(r):
 			b.WriteString(visibleText(string(r)))
 		default:
 			b.WriteRune(r)
@@ -265,10 +265,20 @@ func cleanLine(line string) string {
 	return b.String()
 }
 
-// isBidiControl reports the embedding and override controls (U+202A to
-// U+202E) and the isolates (U+2066 to U+2069).
-func isBidiControl(r rune) bool {
-	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
+// isInvisibleControl reports the characters that draw nothing yet change
+// how the text around them reads: the embedding and override controls
+// (U+202A to U+202E), the isolates (U+2066 to U+2069), the direction
+// marks LRM, RLM and ALM (U+200E, U+200F, U+061C), the zero-width
+// space, non-joiner and joiner (U+200B to U+200D), the word joiner
+// (U+2060) and the byte order mark (U+FEFF).
+func isInvisibleControl(r rune) bool {
+	switch {
+	case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+		return true
+	case r >= '\u200b' && r <= '\u200f':
+		return true
+	}
+	return r == '\u061c' || r == '\u2060' || r == '\ufeff'
 }
 
 // wrapLine is wrapWords for one line of text, in one pass. It breaks
