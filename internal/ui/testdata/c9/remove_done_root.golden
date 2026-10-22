@@ -1,0 +1,30 @@
+                                                         [38;2;74;84;104m.[m                      
+                                                                                
+                                                                                
+                                                                                
+                          [38;2;74;222;128m⟡[m [1;38;2;231;233;238mOrbit has been stood down[m                           
+                                                                                
+            [38;2;124;134;153mContainers and networks are stopped. Your files and data[m            
+                        [38;2;124;134;153mvolumes are still on disk at / —[m                        
+        [38;2;74;84;104m·[m                  [38;2;124;134;153mnothing has been deleted.[m                            
+                                                                    [38;2;74;84;104m·[m           
+             [38;2;74;84;104mto remove Orbit's data volumes from this machine, copy[m             
+                              [38;2;74;84;104m.[m     [38;2;74;84;104mand run[m                                     
+    [38;2;28;36;52m╭─────────────────────────────────────────────────────────────────────╮[m     
+    [38;2;28;36;52m│[m docker compose --project-directory / --env-file /.env-orbit down -v [38;2;28;36;52m│[m     
+    [38;2;28;36;52m╰─────────────────────────────────────────────────────────────────────╯[m     
+           [38;2;251;146;60mthis deletes all mail and documents — it cannot be undone[m            
+            [38;2;74;84;104mThe folder itself is not removed: it is the root folder,[m            
+             [38;2;74;84;104mnot a folder of Orbit's own. Orbit's files there stay[m              
+                            [38;2;74;84;104m.[m  [38;2;74;84;104mfor you to remove.[m                               
+                                                                                
+                             [38;2;74;84;104m·[m  [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command[m                      [38;2;74;84;104m·[m           
+                                      [38;2;124;134;153mMenu[m                                      
+                                      [38;2;124;134;153mExit[m                                      
+             [38;2;203;213;225m●[m  [38;2;251;113;133m·[m                  [38;2;74;84;104m·[m                                            
+                                                                                
+          [38;2;74;84;104m.[m                                                                     
+                                                              [38;2;74;84;104m·[m                 
+                                                                          [38;2;74;84;104m.[m     
+                                                                                
+                [38;2;74;84;104m.[m                                                               

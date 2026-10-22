@@ -1,0 +1,30 @@
+                                                         [38;2;74;84;104m.[m                      
+                                                                                
+                        [38;2;248;113;113m✗[m [1;38;2;231;233;238mRepair can't check these files[m                        
+                                                                                
+    [38;2;231;233;238m.env-orbit — owned by root                                              [m    
+    [38;2;231;233;238m.orbit-secrets/db_password — owned by root                              [m    
+    [38;2;231;233;238m.orbit-secrets/a/rather/long/nested/path/to/a/secret-file-that-is-long —[m    
+    [38;2;231;233;238mowned by someone-else                                                   [m    
+        [38;2;74;84;104m·[m                         [38;2;74;84;104m·[m                                             
+          [38;2;124;134;153mtheir contents can't be checked and nothing can restore them[m          
+              [38;2;124;134;153mgive them back to this account, then diagnose again[m               
+                              [38;2;74;84;104m.[m    [38;2;74;84;104m·[m                                            
+  [38;2;28;36;52m╭──────────────────────────────────────────────────────────────────────────╮[m  
+  [38;2;28;36;52m│[m sudo chown -R orbit: \                                                   [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   '/srv/containers/mail stack/orbit production/with several/long direc'\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 'tories/under the data volume/orbit/.env-orbit' \                        [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   '/srv/containers/mail stack/orbit production/with several/long direc'\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 'tories/under the data volume/orbit/.orbit-secrets'                      [38;2;28;36;52m│[m  
+  [38;2;28;36;52m╰──────────────────────────────────────────────────────────────────────────╯[m  
+                                                                                
+                           [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command · copied[m                  [38;2;74;84;104m·[m           
+                                 [38;2;124;134;153mDiagnose again[m                                 
+                                      [38;2;124;134;153mMenu[m                                      
+             [38;2;203;213;225m●[m  [38;2;251;113;133m·[m                  [38;2;74;84;104m·[m  [38;2;124;134;153mExit[m                                      
+                                                                                
+          [38;2;74;84;104m.[m                                                                     
+                                                              [38;2;74;84;104m·[m                 
+                                                                          [38;2;74;84;104m.[m     
+                                                                                
+                [38;2;74;84;104m.[m                                                               
