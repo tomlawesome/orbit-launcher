@@ -119,10 +119,12 @@ func startPreparation(prepare tea.Cmd) preparation {
 }
 
 // awaitMoment waits until moment says Esc should land, failing if the
-// preparation finishes first.
+// preparation finishes first. The deadline is only for a preparation
+// that hangs: a slow machine (CI under -race) can take well over 5s to
+// copy the secrets a later round waits for.
 func awaitMoment(t *testing.T, p preparation, moment func() bool) {
 	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); !moment(); time.Sleep(time.Millisecond) {
+	for deadline := time.Now().Add(60 * time.Second); !moment(); time.Sleep(time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("setup: the moment for Esc never came")
 		}

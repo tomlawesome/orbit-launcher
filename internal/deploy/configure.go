@@ -71,6 +71,18 @@ func OpenConfigTree(configTree string) (endSession func(), err error) {
 // isn't being asked about. A target with no configuration (fresh
 // install) imports nothing.
 func ImportTargetConfig(configTree, targetDir string) error {
+	return ImportTargetConfigContext(context.Background(), configTree, targetDir)
+}
+
+// ImportTargetConfigContext is ImportTargetConfig that stops when ctx is
+// done: it checks before every file it writes into the tree, so a
+// cancelled import returns, with ctx's error, within one file. That is
+// what lets whoever cancelled it remove the tree once it has returned,
+// knowing nothing more will be written there (#277).
+func ImportTargetConfigContext(ctx context.Context, configTree, targetDir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Nothing is read or tidied in a directory the launcher does not
 	// trust (#191). A target that doesn't exist yet has nothing to
 	// import.
@@ -88,10 +100,21 @@ func ImportTargetConfig(configTree, targetDir string) error {
 	if err := requireTrustedIfPresent(targetDir, EnvFile); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := copyConfigFile(filepath.Join(targetDir, EnvFile), filepath.Join(configTree, EnvFile)); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The check before each secret is copied is also where a cancelled
+	// import stops.
 	return copySecretsDir(filepath.Join(targetDir, SecretsDir), filepath.Join(configTree, SecretsDir), func(name string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return RequireTrustedPath(targetDir, filepath.Join(SecretsDir, name))
 	})
 }
