@@ -13,9 +13,9 @@ import (
 )
 
 // stderrTailLines bounds how much stderr is kept for the failure
-// screen: the engine's guidance messages are short and the useful part
-// is always the end.
-const stderrTailLines = 12
+// screen: the useful part is always the end, and a stop message can be
+// a whole instruction block (#261), which the screen fits to its rows.
+const stderrTailLines = 40
 
 // maxLineBytes bounds how much of a single line is kept — a legacy
 // engine's progress output (docker pull bars) can be long, but nothing

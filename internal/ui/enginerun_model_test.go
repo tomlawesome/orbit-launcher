@@ -94,7 +94,10 @@ func TestEngineRun_UpdateFailureIsTitledUpdateStopped(t *testing.T) {
 	}
 }
 
-func TestEngineRun_FailedScreenShowsOnlyTheLastSixStderrLines(t *testing.T) {
+// The stderr block gets every row the screen has left, not a fixed six
+// (#261 ruling 1): nine lines fit at 80x26 and all of them show, with no
+// "…" row; the overflow case is in installer_rollback_screen_test.go.
+func TestEngineRun_FailedScreenShowsEveryStderrLineThatFits(t *testing.T) {
 	r := startedRun(t, "install", engineRunSeams{})
 	r.state = runStreaming
 	var tail []string
@@ -103,15 +106,13 @@ func TestEngineRun_FailedScreenShowsOnlyTheLastSixStderrLines(t *testing.T) {
 	}
 	r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"), StderrTail: tail}})
 	s := runScreen(r)
-	for i := 1; i <= 3; i++ {
-		if strings.Contains(s, fmt.Sprintf("stderr line %d", i)) {
-			t.Errorf("line %d should have scrolled off the six-line tail:\n%s", i, s)
+	for i := 1; i <= 9; i++ {
+		if !strings.Contains(s, fmt.Sprintf("stderr line %d", i)) {
+			t.Errorf("line %d missing though the screen has room:\n%s", i, s)
 		}
 	}
-	for i := 4; i <= 9; i++ {
-		if !strings.Contains(s, fmt.Sprintf("stderr line %d", i)) {
-			t.Errorf("line %d missing from the tail:\n%s", i, s)
-		}
+	if strings.Contains(s, "…") {
+		t.Errorf("a … row though every line fits:\n%s", s)
 	}
 }
 

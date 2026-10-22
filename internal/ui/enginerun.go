@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -866,7 +867,9 @@ func (r engineRun) failedRows() []string {
 	}
 	switch {
 	case r.offersInstallAgain():
-		rows = append(rows, append([]string{installAgain}, failedMenu...)...)
+		// Installing again is the way on; the guided installer would
+		// meet the same unfinished rollback (#261 ruling 1).
+		rows = append(rows, append([]string{installAgain}, failedMenu[1:]...)...)
 	case r.aborted():
 		rows = append(rows, failedMenu[1:]...)
 	default:
@@ -899,7 +902,9 @@ func (r engineRun) view(width, height int) string {
 }
 
 func (r engineRun) viewFailed(width, height int) string {
-	var b strings.Builder
+	// b is the rows above the installer's message; after is every row
+	// below it, laid out first so the message knows its room.
+	var b, after strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
 	// Docker's words, at Docker's length: wrapped, never cut at the edge.
 	limit := measure(width, errorWidth)
@@ -928,36 +933,163 @@ func (r engineRun) viewFailed(width, height int) string {
 		}
 		writeWrapped(&b, style.Tagline, text, limit)
 	}
-	// An abort's stderr is the installer's whole instruction block, and
-	// nothing else on the screen can stand in for a missing line.
-	tail := tailLines(r.stderrTail, 6)
-	if r.aborted() {
-		tail = r.stderrTail
-	}
-	for _, line := range tail {
-		writeWrapped(&b, style.Tagline, line, limit)
-	}
 	if r.handoffErr != nil {
-		writeWrapped(&b, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
+		writeWrapped(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
 	}
 	if r.recoveryCommand != "" {
-		// Verbatim, as the contract asks: wrapped between its words only,
-		// so it reads whole; Copy command copies the raw line.
-		fmt.Fprintln(&b)
-		writeWrapped(&b, style.Ink, visibleCommand(r.recoveryCommand), limit)
+		// Verbatim, as the contract asks: framed like Remove's box and
+		// broken between its words only, so it reads whole; Copy command
+		// copies the raw line.
+		fmt.Fprintln(&after)
+		if box, ok := commandBox(r.recoveryCommand, width); ok {
+			for _, line := range box {
+				fmt.Fprintln(&after, line)
+			}
+		} else {
+			writeWrapped(&after, style.Ink, visibleCommand(r.recoveryCommand), limit)
+		}
 		if r.offersInstallAgain() {
-			writeWrapped(&b, style.MutedText, "Run this in a terminal, then choose Install again", limit)
+			writeWrapped(&after, style.MutedText, "Run this in a terminal, then choose Install again", limit)
 		}
 	}
-	fmt.Fprintln(&b)
+	fmt.Fprintln(&after)
 	// The copy row says so once it has copied; the label Enter answers
 	// with stays the same.
 	rows := r.failedRows()
 	if r.copiedCommand {
 		rows = append([]string{removeCopy + style.Separator + "copied"}, rows[1:]...)
 	}
-	r.menu.over(rows).write(&b)
+	r.menu.over(rows).write(&after)
+
+	// The installer's message gets the rows the screen has left once
+	// every other row has its place, as Remove's box does: newest lines
+	// kept, one "…" row standing for those dropped (#261 ruling 1). A
+	// line that is the recovery command is not repeated: the box shows it.
+	var stderr []string
+	for _, line := range r.stderrTail {
+		if r.recoveryCommand != "" && strings.TrimSpace(line) == strings.TrimSpace(r.recoveryCommand) {
+			continue
+		}
+		stderr = append(stderr, line)
+	}
+	room := max(height-strings.Count(b.String(), "\n")-strings.Count(after.String(), "\n")-2, 1)
+	for _, line := range fitTail(stderr, limit, room) {
+		fmt.Fprintln(&b, style.Tagline.Render(line))
+	}
+	b.WriteString(after.String())
 	return skyBlock(r.console.sky, width, height, b.String())
+}
+
+// fitTail lays out stderr lines, wrapped at limit, in at most room rows.
+// When they need more, the newest whole lines are kept behind one "…"
+// row; a newest line that alone needs more keeps its last rows.
+func fitTail(lines []string, limit, room int) []string {
+	wrapped := make([][]string, len(lines))
+	total := 0
+	for i, line := range lines {
+		wrapped[i] = wrapWords(line, limit)
+		if len(wrapped[i]) == 0 {
+			wrapped[i] = []string{""}
+		}
+		total += len(wrapped[i])
+	}
+	if total <= room {
+		var out []string
+		for _, w := range wrapped {
+			out = append(out, w...)
+		}
+		return out
+	}
+	keep := room - 1 // the "…" row takes one
+	var kept []string
+	for i := len(wrapped) - 1; i >= 0; i-- {
+		if len(kept)+len(wrapped[i]) > keep {
+			if len(kept) == 0 {
+				kept = wrapped[i][len(wrapped[i])-keep:]
+			}
+			break
+		}
+		kept = append(slices.Clone(wrapped[i]), kept...)
+	}
+	return append([]string{"…"}, kept...)
+}
+
+// commandBox frames a shell command the way printf %q quotes it, like
+// Remove's box: the text gets width-8, and rows break only at a space
+// that is not escaped (one after an even run of backslashes), each
+// continued row ending " \", "&&" starting its own row, continuation
+// rows indented two cells and an option kept with its value where it
+// fits. Words are shown escaped for the terminal, backslashes as
+// written. A command with a word too wide for a row is not boxed
+// (false): the caller wraps it plainly so it still reads whole.
+func commandBox(command string, width int) ([]string, bool) {
+	limit := width - 8
+	const indent, cont = "  ", " \\"
+	words := shellWords(command)
+	for i, w := range words {
+		words[i] = visibleCommand(w)
+	}
+	var lines []string
+	if one := strings.Join(words, " "); lipgloss.Width(one) <= limit {
+		lines = []string{one}
+	} else {
+		fits := func(u string) bool { return lipgloss.Width(indent+u)+len(cont) <= limit }
+		var units []string
+		for i := 0; i < len(words); i++ {
+			u := words[i]
+			if strings.HasPrefix(u, "-") && i+1 < len(words) && !strings.HasPrefix(words[i+1], "-") && words[i+1] != "&&" && fits(u+" "+words[i+1]) {
+				u += " " + words[i+1]
+				i++
+			}
+			if !fits(u) {
+				return nil, false
+			}
+			units = append(units, u)
+		}
+		line := ""
+		for _, u := range units {
+			if line != "" && line != indent && (u == "&&" || lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit) {
+				lines = append(lines, line+cont)
+				line = indent
+			}
+			if line != "" && line != indent {
+				line += " "
+			}
+			line += u
+		}
+		lines = append(lines, line)
+	}
+	boxW := 0
+	for i, l := range lines {
+		boxW = max(boxW, lipgloss.Width(l))
+		lines[i] = style.Ink.Render(l)
+	}
+	return drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines), true
+}
+
+// shellWords splits a printf %q quoted command at its word breaks: the
+// spaces not escaped by a backslash (a space after an odd run of
+// backslashes is part of the word). Runs of spaces are one break.
+func shellWords(command string) []string {
+	var words []string
+	start, run := 0, 0
+	for i := 0; i < len(command); i++ {
+		switch c := command[i]; {
+		case c == '\\':
+			run++
+			continue
+		case c == ' ' && run%2 == 0:
+			if i > start {
+				words = append(words, command[start:i])
+			}
+			start = i + 1
+		}
+		run = 0
+	}
+	if start < len(command) {
+		words = append(words, command[start:])
+	}
+	return words
 }
 
 // writeStackedMenu writes menu rows in the centred grammar: each label
