@@ -99,10 +99,6 @@ func startApp(stdout, stderr io.Writer) int {
 	final, err := program.Run()
 	signal.Stop(sigs)
 	stopSignals()
-	// The claim redirect page goes however the program ended (#277).
-	if app, ok := final.(ui.AppModel); ok {
-		app.CleanUp()
-	}
 	if err != nil {
 		fmt.Fprintln(stderr, "orbit-launcher:", err)
 		return 1

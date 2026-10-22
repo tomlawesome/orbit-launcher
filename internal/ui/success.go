@@ -74,11 +74,6 @@ type SuccessModel struct {
 	// (#277).
 	claimAnswered bool
 
-	// redirect is the private page Get into Orbit hands the opener in
-	// place of the claim link (claimRedirect); shared with AppModel,
-	// which removes it when the launcher quits.
-	redirect *claimRedirect
-
 	// clipboard is where Copy claim link writes its OSC 52 sequence:
 	// nil in production, which means os.Stdout, as for Remove's Copy
 	// command.
@@ -100,7 +95,7 @@ type claimLinkMsg struct{ link string }
 // console's real wall-clock duration; zero renders no footer figure
 // (handover 06: omitted after flows with no meaningful clock).
 func NewSuccessModel(appURL string, elapsed time.Duration, version string) SuccessModel {
-	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version, menu: newMenu(successMenu...), redirect: &claimRedirect{}}
+	return SuccessModel{appURL: appURL, elapsed: elapsed, version: version, menu: newMenu(successMenu...)}
 }
 
 // Outcome surfaces the screen's result to AppModel the way every flow
@@ -196,7 +191,6 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isCtrlC(msg) {
 		m.Chosen = "terminal"
-		m.redirect.remove()
 		return m, tea.Quit
 	}
 
@@ -218,7 +212,6 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, copyToClipboard(m.clipboardWriter(), m.claimLink)
 	case "Terminal":
 		m.Chosen = "terminal"
-		m.redirect.remove()
 		return m, tea.Quit
 	case "Menu":
 		m.Chosen = "menu"
@@ -228,10 +221,6 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// launchURL opens the deployment, or its claim page when there is one.
-// The claim link carries the one-time code, so the opener, whose command
-// line every local account can read, is handed the path of a private
-// page redirecting to it instead (claimRedirect, #277).
 func (m SuccessModel) launchURL() error {
 	open := m.openURL
 	if open == nil {
@@ -246,16 +235,6 @@ func (m SuccessModel) launchURL() error {
 	}
 	if !webAddress(target) {
 		return errors.New("not a web address")
-	}
-	if m.claimLink != "" {
-		if m.redirect == nil {
-			return errors.New("no redirect page")
-		}
-		page, err := m.redirect.write(m.claimLink)
-		if err != nil {
-			return err
-		}
-		return open(page)
 	}
 	return open(target)
 }
@@ -279,8 +258,7 @@ func (m SuccessModel) clipboardWriter() io.Writer {
 	return os.Stdout
 }
 
-// defaultOpenURL launches url, a web address or the absolute path of a
-// claim redirect page, with the platform opener. Start (not Run):
+// defaultOpenURL launches url with the platform opener. Start (not Run):
 // the browser owns its own lifetime, and the TUI must not block on it.
 func defaultOpenURL(url string) error {
 	for _, opener := range []string{"xdg-open", "open"} {

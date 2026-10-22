@@ -84,11 +84,6 @@ type AppModel struct {
 	// once the screen has closed (ExitNote).
 	exitNote string
 
-	// claimRedirect is the success screen's private claim redirect page
-	// (#277), held here so it outlives the screen and goes when the
-	// launcher quits.
-	claimRedirect *claimRedirect
-
 	// flowSend is how a flow's engine stream reader gets its output
 	// back into the event loop (#159). cmd/orbit-launcher supplies the
 	// running program's Send; a test either supplies its own or gets a
@@ -253,25 +248,8 @@ func (m AppModel) resolvedTargetDir() string {
 // Init implements tea.Model.
 func (m AppModel) Init() tea.Cmd { return m.splash.Init() }
 
-// Update implements tea.Model. A screen that ends the launcher takes
-// the claim redirect page with it (CleanUp).
+// Update implements tea.Model.
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	next, cmd := m.route(msg)
-	if quits(cmd) {
-		next.(AppModel).CleanUp()
-	}
-	return next, cmd
-}
-
-// CleanUp removes what the launcher keeps only while it runs: the claim
-// redirect page. Update does it when a screen quits; cmd/orbit-launcher
-// does it again once the program has ended, for any other way out.
-func (m AppModel) CleanUp() {
-	m.claimRedirect.remove()
-}
-
-// route hands msg to the screen that owns it.
-func (m AppModel) route(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if resized, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = resized.Width, resized.Height
 	}
@@ -325,10 +303,6 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 	if o.Succeeded {
 		m.success = NewSuccessModel(o.URL, o.Elapsed, m.version)
 		m.success.noAnimation = m.splash.noAnimation
-		if m.claimRedirect == nil {
-			m.claimRedirect = &claimRedirect{}
-		}
-		m.success.redirect = m.claimRedirect
 		if m.state == appStateInstall {
 			m.success.readClaim = m.claimReader(o.URL)
 			// Only a fresh install ends with optional services still
