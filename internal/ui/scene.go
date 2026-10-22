@@ -80,7 +80,7 @@ func viewNoDeployment(star starfield.Model, width, height int, dir string, body 
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
 		wrapHard("No Orbit deployment found in "+dir, measure(width, proseWidth), width-4, folderRows)...)
 	for _, line := range body {
-		writeWrapped(&b, style.MutedText, line, measure(width, proseWidth))
+		writeWrappedIn(&b, style.MutedText, line, measure(width, proseWidth), textArea(width))
 	}
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
@@ -112,9 +112,9 @@ func viewUnreadableDeployment(star starfield.Model, width, height int, dir strin
 	}
 	fmt.Fprintln(&b)
 	if err != nil {
-		writeWrapped(&b, style.Tagline, visibleLines(err.Error()), measure(width, errorWidth))
+		writeWrappedIn(&b, style.Tagline, visibleLines(err.Error()), measure(width, errorWidth), textArea(width))
 	}
-	writeWrapped(&b, style.MutedText, unreadableEnvAdvice, measure(width, errorWidth))
+	writeWrappedIn(&b, style.MutedText, unreadableEnvAdvice, measure(width, errorWidth), textArea(width))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(star, width, height, b.String())

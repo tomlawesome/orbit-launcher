@@ -112,8 +112,8 @@ func (m RepairModel) viewForeign() string {
 	// prose measure and reads better whole wherever it fits.
 	wide := measure(m.width, errorWidth)
 	fmt.Fprintln(&tail)
-	writeWrapped(&tail, style.MutedText, "their contents can't be checked and nothing can restore them", wide)
-	writeWrapped(&tail, style.MutedText, "give them back to this account, then diagnose again", wide)
+	writeWrappedIn(&tail, style.MutedText, "their contents can't be checked and nothing can restore them", wide, textArea(m.width))
+	writeWrappedIn(&tail, style.MutedText, "give them back to this account, then diagnose again", wide, textArea(m.width))
 	fmt.Fprintln(&tail)
 
 	// The command in a box, as Remove's: the words escaped for the

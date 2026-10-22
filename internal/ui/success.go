@@ -321,7 +321,7 @@ func (m SuccessModel) centreBlockLines() []string {
 	if len(m.serviceNotes) > 0 {
 		lines = append(lines, "")
 		for _, note := range m.serviceNotes {
-			for _, row := range wrapWords(visibleText(note), measure(m.width, errorWidth)) {
+			for _, row := range wrapWordsIn(visibleText(note), measure(m.width, errorWidth), textArea(m.width)) {
 				lines = append(lines, style.MutedText.Render(row))
 			}
 		}

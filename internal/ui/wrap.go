@@ -31,6 +31,13 @@ func measure(width, limit int) int {
 	return max(1, min(width-4, limit))
 }
 
+// textArea is a screen's text area, the edge wrapWordsIn and
+// writeWrappedIn keep a fitting word whole within: the width less the
+// margin measure leaves, never under one cell.
+func textArea(width int) int {
+	return max(1, width-4)
+}
+
 // wrapShellCommand lays a shell command, given as its already-quoted
 // words, out on lines of at most limit cells that a shell reads back as
 // those words joined by spaces: every line that continues ends in " \",
@@ -208,9 +215,21 @@ func commandUnits(words []string) []string {
 // line breaks stay. A line that fits is kept as given; one
 // that does not breaks at spaces, the spaces at a break being the
 // break, while its indent and runs of spaces elsewhere stay. A single
-// word wider than limit stays whole. Trailing line breaks are dropped,
-// and empty text is no lines.
+// word wider than limit is cut across rows at limit, by cells and
+// between escapeUnits (never inside a wide character), every character
+// kept in order (#277). Trailing line breaks are dropped, and empty text
+// is no lines. A screen draws through wrapWordsIn instead, so a word
+// that fits the terminal stays whole.
 func wrapWords(text string, limit int) []string {
+	return wrapWordsIn(text, limit, limit)
+}
+
+// wrapWordsIn is wrapWords for a screen whose text area (textArea) is
+// edge cells wide, the rule wrapHard follows for folder names: a word
+// wider than limit that still fits edge gets a row of its own, whole,
+// since what fits the terminal is never cut; a word wider than edge is
+// cut at limit. An edge under limit counts as limit.
+func wrapWordsIn(text string, limit, edge int) []string {
 	// Trailing line breaks are not rows: command output ends in one.
 	text = strings.TrimRight(ansi.Strip(text), "\r\n")
 	if text == "" {
@@ -218,7 +237,7 @@ func wrapWords(text string, limit int) []string {
 	}
 	var rows []string
 	for _, line := range strings.Split(text, "\n") {
-		rows = append(rows, wrapLine(cleanLine(line), limit)...)
+		rows = append(rows, wrapLine(cleanLine(line), limit, max(edge, limit))...)
 	}
 	// Trailing rows that clean to nothing (a NUL, a tab, spaces) are
 	// not rows either; a blank row inside the text stays.
@@ -287,8 +306,10 @@ func isInvisibleControl(r rune) bool {
 // and elsewhere it is kept as written. The row's width is a running
 // count (a space never joins a grapheme cluster, so widths add), and a
 // run is written only when a word follows it on the same row. An
-// indent stays while it and the first word fit.
-func wrapLine(line string, limit int) []string {
+// indent stays while it and the first word fit. A word wider than edge
+// joins the row (or starts a fresh one when the row has no room left)
+// and is cut at limit by hardCut, as wrapHard cuts a path.
+func wrapLine(line string, limit, edge int) []string {
 	if lipgloss.Width(line) <= limit {
 		return []string{line}
 	}
@@ -310,6 +331,22 @@ func wrapLine(line string, limit int) []string {
 		rest = rest[end:]
 
 		gapW, w := lipgloss.Width(gap), lipgloss.Width(word)
+		if w > edge {
+			if !hasWord || rowW+gapW >= limit { // no room left: the gap is the break
+				if hasWord {
+					rows = append(rows, row.String())
+				}
+				row.Reset()
+				rowW, gap = 0, ""
+			}
+			parts := hardCut(row.String()+gap+word, limit)
+			rows = append(rows, parts[:len(parts)-1]...)
+			last := parts[len(parts)-1]
+			row.Reset()
+			row.WriteString(last)
+			rowW, hasWord = lipgloss.Width(last), true
+			continue
+		}
 		switch {
 		case hasWord && rowW+gapW+w > limit: // the gap is the break
 			rows = append(rows, row.String())
@@ -327,10 +364,16 @@ func wrapLine(line string, limit int) []string {
 }
 
 // writeWrapped writes text that nobody sized — a path, Docker's own
-// words — in ink, as wrapWords lines, so it is never cut at the
-// screen's edge. Blank text is one blank line.
+// words — in ink, as wrapWords lines, so it never runs past limit.
+// Blank text is one blank line. A screen draws through writeWrappedIn.
 func writeWrapped(b *strings.Builder, ink lipgloss.Style, text string, limit int) {
-	lines := wrapWords(text, limit)
+	writeWrappedIn(b, ink, text, limit, limit)
+}
+
+// writeWrappedIn is writeWrapped as wrapWordsIn lays it out, for a
+// screen whose text area is edge cells wide.
+func writeWrappedIn(b *strings.Builder, ink lipgloss.Style, text string, limit, edge int) {
+	lines := wrapWordsIn(text, limit, edge)
 	if len(lines) == 0 {
 		lines = []string{""}
 	}

@@ -217,8 +217,8 @@ func (m UpdateModel) viewConfirm() string {
 	// screen's edge rather than proseWidth: the second line is 60 cells
 	// and stays one row from 64 columns up, as it always has (#274).
 	edge := measure(m.width, m.width)
-	writeWrapped(&b, style.MutedText, "The update runs inside the mission console, right here.", edge)
-	writeWrapped(&b, style.MutedText, "Your existing configuration is preserved. Nothing is deleted.", edge)
+	writeWrappedIn(&b, style.MutedText, "The update runs inside the mission console, right here.", edge, textArea(m.width))
+	writeWrappedIn(&b, style.MutedText, "Your existing configuration is preserved. Nothing is deleted.", edge, textArea(m.width))
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
