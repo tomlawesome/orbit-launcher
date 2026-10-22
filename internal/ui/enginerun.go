@@ -365,11 +365,17 @@ func startEngine(ctx context.Context, script []byte, targetDir, action string) e
 // its configuration tree — once nothing needs them any more. A
 // configuration refusal holds them past the run's end, for the
 // configuration session; every way out of that (a retry, the terminal
-// handoff, leaving, quitting, a failure) comes through here.
+// handoff, leaving, quitting, a failure) comes through here. While the
+// configuration session's preparation is still writing into the tree,
+// the removal waits for it to finish (configLate).
 func (r *engineRun) releaseRunFiles() {
 	if r.cleanup != nil {
-		_ = r.cleanup()
+		cleanup := r.cleanup
 		r.cleanup = nil
+		release := func() { _ = cleanup() }
+		if r.cfg.late == nil || !r.cfg.late.releaseRunFilesAfter(release) {
+			release()
+		}
 	}
 	r.configTree = ""
 }
@@ -830,8 +836,18 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 	}
 	r.cfg.close()
 	r.releaseRunFiles()
+	// The process ends with the quit, so a removal waiting for the
+	// configuration preparation is waited for here (it was cancelled
+	// by close, so only a copy in progress is left to finish).
+	if r.cfg.late != nil {
+		r.cfg.late.awaitPreparation(preparationQuitWait)
+	}
 	return r, tea.Quit
 }
+
+// preparationQuitWait bounds how long quitting waits for a configuration
+// preparation still writing into the run's configuration tree.
+const preparationQuitWait = 2 * time.Second
 
 // forcedStopNote is the owner's wording for a stop whose installer was
 // still undoing its work when the launcher ended it. A stopped update
