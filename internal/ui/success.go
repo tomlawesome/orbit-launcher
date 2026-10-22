@@ -37,6 +37,11 @@ type SuccessModel struct {
 	elapsed time.Duration
 	version string
 
+	// serviceNotes are the installer's lines for optional services still
+	// starting or stopped (ai/orbit#1456): the install succeeded without
+	// them, and the person should know.
+	serviceNotes []string
+
 	menu menu // successMenu
 
 	// Chosen is which action the user picked: "terminal" quits, "menu"
@@ -296,6 +301,14 @@ func (m SuccessModel) centreBlockLines() []string {
 		status += style.Separator + style.DegradedText.Render("unclaimed")
 	}
 	lines = append(lines, status)
+	if len(m.serviceNotes) > 0 {
+		lines = append(lines, "")
+		for _, note := range m.serviceNotes {
+			for _, row := range wrapWords(visibleText(note), measure(m.width, errorWidth)) {
+				lines = append(lines, style.MutedText.Render(row))
+			}
+		}
+	}
 	lines = append(lines, "")
 
 	// The copy row says so once it has copied; the menu's own label,

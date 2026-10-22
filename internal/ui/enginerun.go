@@ -99,6 +99,22 @@ func outcomeOf(r engineRun) flowOutcome {
 	}
 }
 
+// serviceLabels are the names install.sh's completion lines give the
+// optional services (its optional_service_not_ready labels), by the
+// component their events carry. The lines are prose, so they are only
+// ever shown, and only for a service whose events say it ended waiting.
+var serviceLabels = map[string]string{
+	"clamav": "Scanner: ",
+	"tika":   "Document processing: ",
+	"ollama": "Local model service: ",
+}
+
+// optionalStillWaiting reports whether e is an optional service's
+// ending that did not fail the install: still starting, or stopped.
+func optionalStillWaiting(e engine.Event) bool {
+	return e.State == engine.StateWaiting && e.Reason == "optional-status" && e.Action == "continue"
+}
+
 // engineReadyMsg carries the started engine stream (or the error that
 // prevented it — fetch failure, unwritable temp dir).
 type engineReadyMsg struct {
@@ -205,6 +221,13 @@ type engineRun struct {
 	retriedAfterConfig bool
 
 	// Outcome evidence, gathered from events and the exit code.
+	// waiting holds the optional services whose last event was
+	// optionalStillWaiting; completed is the success event seen, after
+	// which completion holds the stdout lines that may name them (a few:
+	// one per service is what the installer prints).
+	waiting       map[string]bool
+	completed     bool
+	completion    []string
 	configRefused bool
 	lastFailed    *engine.Event
 	stderrTail    []string
@@ -226,12 +249,13 @@ type engineRun struct {
 	menu menu
 
 	// Done/Succeeded/WantsMenu are read by the owning flow model and
-	// AppModel. URL and Elapsed feed the success screen.
-	Done      bool
-	Succeeded bool
-	WantsMenu bool
-	URL       string
-	Elapsed   time.Duration
+	// AppModel. URL, Elapsed and ServiceNotes feed the success screen.
+	Done         bool
+	Succeeded    bool
+	WantsMenu    bool
+	URL          string
+	Elapsed      time.Duration
+	ServiceNotes []string
 
 	// send pushes a message into the event loop from outside it, for
 	// the engine stream reader. Production wires this from the program;
@@ -498,6 +522,15 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.EventMsg:
 		r.console = r.console.observeEvent(m.Event)
+		if _, optional := serviceLabels[m.Event.Component]; optional {
+			if r.waiting == nil {
+				r.waiting = map[string]bool{}
+			}
+			r.waiting[m.Event.Component] = optionalStillWaiting(m.Event)
+		}
+		if m.Event.IsSuccess() {
+			r.completed = true
+		}
 		if m.Event.NeedsConfiguration() {
 			r.configRefused = true
 		}
@@ -509,6 +542,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 
 	case engine.RawLineMsg:
 		r.console = r.console.observeRaw(m.Text)
+		if r.completed && len(r.completion) < 2*len(serviceLabels) && serviceLine(m.Text) {
+			r.completion = append(r.completion, m.Text)
+		}
 		return r, nil
 
 	case engine.DoneMsg:
@@ -580,11 +616,36 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 	if d, err := detect(r.targetDir); err == nil && d != nil {
 		r.URL = d.AppURL
 	}
+	r.ServiceNotes = r.serviceNotes()
 	r.Elapsed = r.console.elapsed()
 	r.state = runSucceeded
 	r.Done = true
 	r.Succeeded = true
 	return r, nil
+}
+
+// serviceLine reports whether line starts with an optional service's label.
+func serviceLine(line string) bool {
+	for _, label := range serviceLabels {
+		if strings.HasPrefix(line, label) {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceNotes are the completion lines naming an optional service its
+// events say is still starting or stopped, in the installer's order.
+func (r engineRun) serviceNotes() []string {
+	var notes []string
+	for _, line := range r.completion {
+		for component, label := range serviceLabels {
+			if r.waiting[component] && strings.HasPrefix(line, label) {
+				notes = append(notes, line)
+			}
+		}
+	}
+	return notes
 }
 
 // beginHandoff hands the real terminal to the interactive installer —

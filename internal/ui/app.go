@@ -305,6 +305,9 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 		m.success.noAnimation = m.splash.noAnimation
 		if m.state == appStateInstall {
 			m.success.readClaim = m.claimReader(o.URL)
+			// Only a fresh install ends with optional services still
+			// starting; an update fails on them instead.
+			m.success.serviceNotes = m.install.run.ServiceNotes
 		}
 		m.state = appStateSuccess
 		sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }

@@ -534,6 +534,7 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	// The retry is a new engine run with its own configuration tree.
 	r.releaseRunFiles()
 	r.configRefused = false
+	r.waiting, r.completed, r.completion = nil, false, nil
 	r.lastFailed = nil
 	r.stderrTail = nil
 	r.runErr = nil
