@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -49,12 +51,25 @@ func realServiceStates(dir string) ([]deploy.ServiceState, error) {
 	return deploy.ServiceStates(context.Background(), dir)
 }
 
+// errServicesNoAnswer is the read's answer when the reader has not
+// answered within the model's servicesLimit: the block says it could not
+// check, as for any reader error.
+var errServicesNoAnswer = errors.New("the services reader did not answer in time")
+
 // readServices starts the one read of the services, returning the
 // command that runs it off the screen's thread, or nil when it has
 // started already. A model with no serviceStates seam (the c9 harness)
 // reads nothing and shows no services block at all. The reading lives
 // behind a pointer because the model is copied on every Update; the
 // command never touches it.
+//
+// The command waits at most servicesLimit (#277). The reader runs on a
+// goroutine of its own; when it is late the command answers "no answer"
+// and returns, so nothing on the screen's side waits on it. A reader
+// that never returns keeps its own goroutine (the production reader
+// stops itself at the same limit); it never blocks on its answer, which
+// has a buffered slot, and the answer is dropped: the command has
+// already sent its one message.
 func (m RepairModel) readServices() tea.Cmd {
 	r := m.services
 	if m.serviceStates == nil || r == nil || r.loaded || r.pending {
@@ -62,9 +77,26 @@ func (m RepairModel) readServices() tea.Cmd {
 	}
 	r.pending = true
 	read, dir := m.serviceStates, m.targetDir
+	limit := m.servicesLimit
+	if limit <= 0 {
+		limit = deploy.ServiceStatesTimeout
+	}
 	return func() tea.Msg {
-		states, err := read(dir)
-		return repairServicesMsg{reading: r, expected: expectedServices(dir), states: states, err: err}
+		type answer struct {
+			states []deploy.ServiceState
+			err    error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			states, err := read(dir)
+			answered <- answer{states, err}
+		}()
+		select {
+		case a := <-answered:
+			return repairServicesMsg{reading: r, expected: expectedServices(dir), states: a.states, err: a.err}
+		case <-time.After(limit):
+			return repairServicesMsg{reading: r, expected: expectedServices(dir), err: errServicesNoAnswer}
+		}
 	}
 }
 

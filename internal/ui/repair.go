@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -70,9 +71,12 @@ type RepairModel struct {
 	// serviceStates reads the deployment's containers for the services
 	// block (#255). Nil shows no block: the c9 harness leaves it unset,
 	// which keeps its goldens as they were. services holds the one
-	// reading; see readServices.
+	// reading; see readServices. servicesLimit is how long the read
+	// may take before the block says it could not check (#277); zero is
+	// deploy.ServiceStatesTimeout, the production reader's own limit.
 	serviceStates func(dir string) ([]deploy.ServiceState, error)
 	services      *serviceReading
+	servicesLimit time.Duration
 	// foreignOwned says which of the deployment's configuration files
 	// another account owns (#265); asked at every run start (see
 	// startDiagnosis). Nil checks nothing: the c9 harness leaves it

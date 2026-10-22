@@ -10,11 +10,12 @@ import (
 	"time"
 )
 
-// serviceStatesTimeout bounds the read-only `docker compose ps`: the
+// ServiceStatesTimeout bounds the read-only `docker compose ps`: the
 // answer only decorates Repair's first screen, so an unreachable daemon
 // costs a few seconds, not a wait (#207: the limit lives beside the
-// call, not in the UI).
-const serviceStatesTimeout = 4 * time.Second
+// call, not in the UI). Repair's screen gives up on a reader at the
+// same limit, so a reader that ignores it cannot keep "checking" up.
+const ServiceStatesTimeout = 4 * time.Second
 
 // The state and health words `docker compose ps` reports. The UI
 // compares against these and shows them, so it types none of its own.
@@ -49,8 +50,8 @@ func ServiceStates(ctx context.Context, dir string) ([]ServiceState, error) {
 	if err := RequireTrustedPath(dir, EnvFile); err != nil {
 		return nil, err
 	}
-	limit := limitApplied(ctx, serviceStatesTimeout)
-	ctx, cancel := context.WithTimeout(ctx, serviceStatesTimeout)
+	limit := limitApplied(ctx, ServiceStatesTimeout)
+	ctx, cancel := context.WithTimeout(ctx, ServiceStatesTimeout)
 	defer cancel()
 	out, err := serviceStatesCommand(ctx, dir).Output()
 	if err != nil {

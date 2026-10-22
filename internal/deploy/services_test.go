@@ -128,7 +128,7 @@ func TestServiceStates_SlowDockerIsCutOffAndSaysSo(t *testing.T) {
 	}
 	if named <= 0 || named > slowDockerLimit {
 		t.Errorf("err = %v: names %v, want the caller's deadline (above 0, at most %v), not the launcher's own limit %v",
-			err, named, slowDockerLimit, serviceStatesTimeout)
+			err, named, slowDockerLimit, ServiceStatesTimeout)
 	}
 }
 
