@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"time"
@@ -69,9 +70,14 @@ func UnownedDatabaseVolumes(ctx context.Context, targetDir string) []DatabaseVol
 
 	ctx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
 	defer cancel()
+	// The label is printed JSON-quoted: a label can hold any text,
+	// newlines and tabs included, and printed raw a newline in it would
+	// start a line that reads like another volume (#277). Quoted, it
+	// stays on its volume's line; a name cannot hold either character
+	// (Docker's rule, volumeName), so each line is exactly one volume.
 	cmd := dockerCommand(ctx, "volume", "ls",
 		"--filter", "name="+orbitDatabaseVolumePattern,
-		"--format", `{{.Name}}	{{.Label "com.docker.compose.project"}}`)
+		"--format", `{{.Name}}	{{json (.Label "com.docker.compose.project")}}`)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -82,13 +88,24 @@ func UnownedDatabaseVolumes(ctx context.Context, targetDir string) []DatabaseVol
 		// Split before trimming: trimming first would strip the tab of a
 		// line with an empty name and promote its project to the name.
 		name, project, _ := strings.Cut(line, "\t")
-		// A newline inside a label starts a line Docker's name filter
-		// never saw: keep only names Docker could have given a volume
-		// and that still match the Orbit pattern.
+		// Keep only names Docker could have given a volume and that
+		// match the Orbit pattern: anything else is not a volume line.
 		if name = strings.TrimSpace(name); !volumeName.MatchString(name) || !strings.Contains(name, orbitDatabaseVolumePattern) {
 			continue
 		}
-		volumes = append(volumes, DatabaseVolume{Name: name, Project: strings.TrimSpace(project)})
+		volumes = append(volumes, DatabaseVolume{Name: name, Project: labelValue(project)})
 	}
 	return volumes
+}
+
+// labelValue reads a label docker printed as {{json ...}}: the quoted
+// string, unquoted. A field that is not a JSON string is kept as printed,
+// trimmed; it is shown escaped, so it can only ever read as itself.
+func labelValue(field string) string {
+	field = strings.TrimSpace(field)
+	var value string
+	if err := json.Unmarshal([]byte(field), &value); err == nil {
+		return value
+	}
+	return field
 }
