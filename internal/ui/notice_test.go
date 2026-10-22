@@ -151,8 +151,8 @@ func TestNotice_WrapsTheApprovedCopy(t *testing.T) {
 			t.Errorf("row %d is %d cells, over the %d measure: %q", i, r.width(), noticeMeasure, r.plain())
 		}
 	}
-	if len(doc) != 39 || prose != 31 || gaps != 8 {
-		t.Errorf("doc = %d rows (%d prose, %d gaps), want 39 (31, 8) as the mockup renders", len(doc), prose, gaps)
+	if len(doc) != 47 || prose != 38 || gaps != 9 {
+		t.Errorf("doc = %d rows (%d prose, %d gaps), want 47 (38, 9) as the mockup renders", len(doc), prose, gaps)
 	}
 
 	// The emphasised sentence breaks across two rows; both carry it.
@@ -237,19 +237,19 @@ func TestNotice_At80x26BothGatesMustPass(t *testing.T) {
 }
 
 func TestNotice_TallTerminalFitsWithoutScrolling(t *testing.T) {
-	m, _, _ := openNotice(t, 120, 55, engineRunSeams{})
+	m, _, _ := openNotice(t, 120, 65, engineRunSeams{})
 	if !m.notice.endSeen {
 		t.Error("when everything fits the scroll gate is open on entry")
 	}
-	if l := m.notice.layout(); len(l.rows) != 39 || l.fadeTop != -1 || l.fadeBot != -1 {
-		t.Errorf("layout = %d rows, fades %d/%d; want all 39 unfaded", len(l.rows), l.fadeTop, l.fadeBot)
+	if l := m.notice.layout(); len(l.rows) != 47 || l.fadeTop != -1 || l.fadeBot != -1 {
+		t.Errorf("layout = %d rows, fades %d/%d; want all 47 unfaded", len(l.rows), l.fadeTop, l.fadeBot)
 	}
 }
 
 func TestNotice_ThreeHiddenRowsNeedThreeDowns(t *testing.T) {
-	m, _, _ := openNotice(t, 120, 52, engineRunSeams{})
+	m, _, _ := openNotice(t, 120, 60, engineRunSeams{})
 	if m.notice.endSeen {
-		t.Fatal("three rows hang below at 120×50")
+		t.Fatal("three rows hang below at 120×60")
 	}
 	for range 3 {
 		m, _ = updateAs(t, m, key(tea.KeyDown))
@@ -274,7 +274,7 @@ func TestNotice_GapIsNeverTheLastRowWhileMoreFollows(t *testing.T) {
 
 func TestNotice_ScrollGateIsSticky(t *testing.T) {
 	m, clock, _ := openNotice(t, 80, 26, engineRunSeams{})
-	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 55})
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 120, Height: 65})
 	if !m.notice.endSeen {
 		t.Fatal("a resize that reveals the end must open the scroll gate")
 	}
