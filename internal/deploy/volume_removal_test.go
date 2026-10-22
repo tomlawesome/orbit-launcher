@@ -37,7 +37,7 @@ func TestVolumeRemovalCommandWords_IsTheComposeDownAndNothingElse(t *testing.T) 
 		want := []string{
 			"docker", "compose",
 			"--project-directory", shellQuote(dir),
-			"--env-file", shellQuote(dir + "/.env-orbit"),
+			"--env-file", shellQuote(filepath.Join(dir, EnvFile)),
 			"down", "-v",
 		}
 		if !reflect.DeepEqual(words, want) {
