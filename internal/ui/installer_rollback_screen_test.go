@@ -122,7 +122,7 @@ func TestRollbackScreen_AbortThatFitsHasNoEllipsis(t *testing.T) {
 
 // longQuotedCommand is a recovery command the way printf %q writes it:
 // spaces inside a word are backslash-escaped.
-const longQuotedCommand = `cd /srv/orbit/my\ install\ folder/orbit-install-backups/` + rollbackStamp +
+const longQuotedCommand = `cd /srv/orbit/my\ dir/orbit-install-backups/` + rollbackStamp +
 	`/engine && docker compose --project-name orbit --env-file .env-orbit down --remove-orphans` +
 	` && docker volume rm -- orbit_orbit-db-data orbit_orbit-documents-data orbit_orbit\ search\ data`
 
