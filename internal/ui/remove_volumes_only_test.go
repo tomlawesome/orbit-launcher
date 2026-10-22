@@ -3,8 +3,12 @@ package ui
 import (
 	"bytes"
 	"encoding/base64"
+	"os"
+	"os/user"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -143,5 +147,41 @@ func TestRemove_RefusedScreenWording(t *testing.T) {
 				t.Errorf("target %q: the screen lacks %q:\n%s", c.target, want, s)
 			}
 		}
+	}
+}
+
+// Under sudo or as root, HOME names another account's folder. The
+// account's own home, as the account database records it, still gets
+// the volumes-only screen.
+func TestRemove_DoneScreenForTheOwnersHomeWhateverHOMESays(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot look up the current account: %v", err)
+	}
+	if u.HomeDir == "" {
+		t.Skip("the account database records no home folder")
+	}
+	info, err := os.Stat(u.HomeDir)
+	if err != nil {
+		t.Skipf("cannot stat the home folder: %v", err)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+		t.Skipf("home folder %q is not owned by the running account", u.HomeDir)
+	}
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "root"))
+	s := screen(doneFor(t, u.HomeDir, nil))
+	flat := proseOnly(s)
+	if !strings.Contains(s, "down -v") {
+		t.Errorf("no volume-removal command on the screen:\n%s", s)
+	}
+	if !strings.Contains(s, removeCopy) {
+		t.Errorf("no %q row:\n%s", removeCopy, s)
+	}
+	if strings.Contains(s, "rm -rf") {
+		t.Errorf("the screen offers to delete the owner's home folder:\n%s", s)
+	}
+	const why = "The folder itself is not removed: it is your home folder, not a folder of Orbit's own."
+	if !strings.Contains(flat, why) {
+		t.Errorf("the screen lacks %q:\n%s", why, s)
 	}
 }
