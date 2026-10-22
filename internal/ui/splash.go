@@ -275,7 +275,9 @@ func (m SplashModel) probeHealthCmd() tea.Cmd {
 	states, dir := m.serviceStates, m.targetDir
 	return func() tea.Msg {
 		msg := healthResultMsg{reason: probe(context.Background(), appURL)}
-		if states == nil {
+		// The count is only for the degraded drawer: a healthy answer
+		// never waits on `docker compose ps` (#277).
+		if states == nil || msg.reason == deploy.HealthResponding {
 			return msg
 		}
 		rows, err := states(dir)
