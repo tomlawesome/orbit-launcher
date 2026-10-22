@@ -302,9 +302,16 @@ func TestNarrow_B_DoneProseWrapsAt50AndStaysOneRowWider(t *testing.T) {
 	for _, phrase := range []string{
 		"Containers and networks are stopped. Your files and data",
 		"to fully remove Orbit from this machine, copy and run",
-		"this deletes all mail, documents, and configuration —",
 	} {
 		narrowCheckProse(t, "done", screens, phrase, true)
+	}
+	// The warning is longer now and wraps wherever it likes, so it is
+	// read as running text.
+	const warning = "this deletes all mail, documents and configuration, and everything else in the folder, backups included — it cannot be undone"
+	for _, w := range narrowWidths {
+		if flat := proseOnly(screens[w]); !strings.Contains(flat, warning) {
+			t.Errorf("done at %d: lacks %q:\n%s", w, warning, screens[w])
+		}
 	}
 }
 
@@ -626,8 +633,8 @@ func TestNarrow_R_DoneScreenKeepsItsMenuAt50Columns(t *testing.T) {
 			if len(lines) > h {
 				t.Errorf("%s at 50x%d: the screen is %d rows, want at most %d:\n%s", name, h, len(lines), h, s)
 			}
-			for _, phrase := range []string{"it cannot be undone", "this deletes all mail, documents, and"} {
-				if !strings.Contains(s, phrase) {
+			for _, phrase := range []string{"it cannot be undone", "this deletes all mail, documents and"} {
+				if !strings.Contains(proseOnly(s), phrase) {
 					t.Errorf("%s at 50x%d: the screen lacks %q:\n%s", name, h, phrase, s)
 				}
 			}
