@@ -1145,7 +1145,9 @@ func (r engineRun) view(width, height int) string {
 	case runConfigCollect:
 		return r.viewConfigCollect(width, height)
 	case runHandoffRunning:
-		return lipgloss.NewStyle().Padding(1, 2).Render(style.Tagline.Render("in the installer — you'll return here when it finishes"))
+		// The line wraps inside the padding, never past the screen (#288).
+		lines := wrapWords("in the installer — you'll return here when it finishes", measure(width, proseWidth))
+		return lipgloss.NewStyle().Padding(1, 2).Render(style.Tagline.Render(strings.Join(lines, "\n")))
 	case runFailed:
 		return r.viewFailed(width, height)
 	}
