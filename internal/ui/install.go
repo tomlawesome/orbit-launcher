@@ -278,6 +278,11 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Outside a run a signal is the Ctrl-C key: nothing is working.
+	if _, ok := msg.(SignalQuitMsg); ok {
+		return m.handleKey(ctrlCPress)
+	}
+
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		return m.handleKey(key)
 	}

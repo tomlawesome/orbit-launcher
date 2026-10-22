@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -144,27 +146,72 @@ func RemovalCommand(targetDir string) (string, error) {
 // into a shell, so a directory name with a space or quote must still
 // arrive as one argument.
 func RemovalCommandWords(targetDir string) ([]string, error) {
+	words, err := VolumeRemovalCommandWords(targetDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseSharedFolder(targetDir); err != nil {
+		return nil, err
+	}
+	return append(words, "&&", "sudo", "rm", "-rf", shellQuote(targetDir)), nil
+}
+
+// VolumeRemovalCommandWords is the data-volume half of
+// RemovalCommandWords alone, quoted the same way.
+//
+// Compose removes only the volumes its own project declares, so this half
+// is safe to offer for any folder, the root and home included; without it
+// a leftover database volume refuses every later install.
+func VolumeRemovalCommandWords(targetDir string) ([]string, error) {
 	if targetDir == "" {
 		return nil, ErrNoTargetDir
 	}
-	// Compared after cleaning, so "//", "/." or "home/../home" are
-	// caught too; the command itself still names targetDir as found.
-	clean := filepath.Clean(targetDir)
-	if abs, err := filepath.Abs(targetDir); err == nil {
-		clean = abs
-	}
-	if clean == "/" {
-		return nil, ErrRootFolder
-	}
-	if home, err := os.UserHomeDir(); err == nil && clean == filepath.Clean(home) {
-		return nil, ErrHomeFolder
-	}
-	dir := shellQuote(targetDir)
-	envFile := shellQuote(filepath.Join(targetDir, EnvFile))
 	return []string{
-		"docker", "compose", "--project-directory", dir, "--env-file", envFile, "down", "-v",
-		"&&", "sudo", "rm", "-rf", dir,
+		"docker", "compose", "--project-directory", shellQuote(targetDir),
+		"--env-file", shellQuote(filepath.Join(targetDir, EnvFile)), "down", "-v",
 	}, nil
+}
+
+// refuseSharedFolder returns ErrRootFolder or ErrHomeFolder when
+// targetDir is the root folder, or the home folder of the launcher's
+// session or of the folder's own account, whose "rm -rf" would delete
+// far more than Orbit. Compared after cleaning, so "//", "/." or
+// "home/../home" are caught too; the command still names targetDir as
+// found.
+func refuseSharedFolder(targetDir string) error {
+	c := canonical(targetDir)
+	if c == "/" {
+		return ErrRootFolder
+	}
+	if home, err := os.UserHomeDir(); err == nil && c == canonical(home) {
+		return ErrHomeFolder
+	}
+	// Under sudo or a root login $HOME is root's (Debian's sudo sets
+	// HOME=/root), so a deployment installed straight into a service
+	// account's home would pass the check above. The folder's own
+	// account answers whose home it is: its owner's passwd entry, the
+	// lookup ForeignOwned already makes. A folder that does not exist,
+	// or an owner the account database cannot name, adds no refusal.
+	if info, err := os.Stat(targetDir); err == nil {
+		if u, err := user.LookupId(strconv.Itoa(ownerOf(info))); err == nil && u.HomeDir != "" && c == canonical(u.HomeDir) {
+			return ErrHomeFolder
+		}
+	}
+	return nil
+}
+
+// canonical is p made absolute and cleaned, then followed through links
+// where the path exists: a home reached by another name is still the
+// home. A path that does not exist is compared as spelled.
+func canonical(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
 
 // shellSafe matches values that need no quoting in a POSIX shell.

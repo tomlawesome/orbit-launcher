@@ -14,11 +14,6 @@ heading.
 - 2026-10-20 · 86a3b52 (plus comment-only edits) · local, full `go test ./internal/ui/` · failed once, output not kept; passed 6 of 6 reruns. Possibly a star drawn inside a line of text, which #270 fixed (that flake's heading was removed: 10 of 10 runs passed after the fix)
 - 2026-10-21 · 8f1f1bb plus a one-line notice.go clamp · local, full `go test ./...` · failed once, output not kept; passed 2 of 2 reruns
 
-## TestServiceStates_SlowDockerIsCutOffAndSaysSo (internal/deploy)
-
-- 2026-10-21 · 2cd89f3 · local, full `go test ./...` on a busy host · error said "996ms" where the test wants "within 1s"; passed on rerun
-- 2026-10-21 · fix/lows-decisions work · local, `scripts/coverage.sh -race` · error said "999ms" where the test wants "within 1s"
-
 ## TestAppModel_UnreadableEnvScreensHoldAtEveryWidth (internal/ui)
 
 - 2026-10-21 · 834d2c4 (fix/lows-repair) · local, full `go test ./...` · failed once, output not kept; passed 43 of 43 reruns. Possibly the long-TMPDIR wrap in #279
