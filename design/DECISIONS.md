@@ -3,7 +3,9 @@
 > **Historical record, noted 2026-10-05.** Kept as written. A later mockup
 > set, `mockups-v7-notice.html` (the development notice), is the v7 in the
 > lineage below, and its screen has shipped. The line that said the next
-> mockup set is v7 has been removed.
+> mockup set is v7 has been removed. Sections up to 2026-10-05 are the
+> historical record, kept as written; dated entries after it (such as
+> 2026-10-21) are current decisions.
 
 
 This is the durable record of every visual decision the repository owner has
@@ -15,9 +17,9 @@ earlier one, the reversal is recorded; the archive keeps both.
 Companion artifacts: the mockup lineage (v1 `mockups.html` → v6
 `mockups-v6-starchart.html`, all published at
 https://tomlawesome.github.io/orbit-launcher/; then v7
-`mockups-v7-notice.html`, the development notice), the terminal-truth
-acceptance renderer (`mockups-terminal.html`), and the closed handover
-briefs (`handovers/`). Decisions were made 2026-08-11/12 against the v2–v6
+`mockups-v7-notice.html`, the development notice, not published: see
+Process), the terminal-truth acceptance renderer (`mockups-terminal.html`),
+and the closed handover briefs (`handovers/`). Decisions were made 2026-08-11/12 against the v2–v6
 iterations; the delivering PRs are #74 (v5 splash), #75 (mission console +
 success), #77 (v6 starchart).
 
@@ -103,7 +105,7 @@ Proposals 2, 3 and 4 of `design/mockups-v7-notice.html` were accepted as
 shipped (owner, 2026-10-21, #195).
 
 - **Bottom region (2):** the timer row, prompt, text box, feedback row and
-  Go back are pinned at the bottom; only the prose scrolls.
+  Back are pinned at the bottom; only the prose scrolls.
 - **Every install (3):** the notice shows on every install, not once per
   machine.
 - **Keys (4):** PgDn, PgUp, Home, End and the mouse wheel scroll the prose.
