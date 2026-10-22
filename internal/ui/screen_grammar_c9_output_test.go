@@ -281,202 +281,200 @@ func c9OtherScreensAt(t *testing.T, out map[string]string, w int) {
 	deployment := &deploy.Deployment{TargetDir: c9LongDir, AppURL: "https://mail.example.com", Image: "registry.example.com/orbit:1.2.3"}
 	base := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	fixed := func() time.Time { return base }
-	{
-		tag := fmt.Sprintf("%d", w)
+	tag := fmt.Sprintf("%d", w)
 
-		// splash: the settled menu in each state the identity block has,
-		// and the degraded drawer, and the update notice.
-		splash := func(name string, mutate func(*SplashModel)) {
-			m := NewSplashModelNoAnimation()
-			m.version = "v1"
-			mutate(&m)
-			m = c9Size(t, m, w)
-			out["splash_"+name+"_"+tag] = m.View().Content
-		}
-		known := func(m *SplashModel) {
-			m.fqdn, m.appURL, m.state, m.menu.sel = "mail.example.com", "https://mail.example.com", stateUnknown, menuUpdate
-			m.orbitVersion = "v1.2.0"
-		}
-		splash("dormant", func(*SplashModel) {})
-		splash("unknown", known)
-		splash("alive", func(m *SplashModel) { known(m); m.state = stateAlive })
-		splash("degraded", func(m *SplashModel) {
-			known(m)
-			m.state, m.menu.sel = stateDegraded, menuRepair
-			m.health = healthResultMsg{reason: deploy.HealthNotResponding}
-		})
-		splash("degraded_drawer", func(m *SplashModel) {
-			known(m)
-			m.state, m.onStatusRow, m.drawerOpen = stateDegraded, true, true
-			m.health = healthResultMsg{reason: deploy.HealthNotResponding, running: 2, expected: 4, counted: true}
-		})
-		splash("unreadable", func(m *SplashModel) { m.state = stateUnreadable })
-		splash("update_notice", func(m *SplashModel) { m.updateNotice = "v9.9.9" })
-
-		// install: the profile choice's dead end, the profile screen
-		// while the old-volume check is still answering, and the notice.
-		un := c9Size(t, NewInstallModel("/opt/orbit", "v1"), w)
-		un.state = installStateUnavailableProfile
-		out["install_unavailable_profile_"+tag] = un.View().Content
-		ck := c9Size(t, NewInstallModel("/opt/orbit", "v1"), w)
-		ck.awaiting = installStandard
-		out["install_profile_checking_"+tag] = ck.View().Content
-		nt := c9Size(t, NewInstallModel("/opt/orbit", "v1"), w)
-		nt.seams.now = fixed
-		nt.state = installStateNotice
-		nt.notice = newNotice(base, w, 30)
-		out["install_notice_"+tag] = nt.View().Content
-
-		// update: its two dead ends, as Remove's.
-		uf := c9Size(t, NewUpdateModel(nil, c9LongDir, "v1"), w)
-		out["update_notfound_"+tag] = uf.View().Content
-		uu := c9Size(t, NewUpdateModel(nil, c9LongDir, "v1"), w)
-		uu.detectErr = &fs.PathError{Op: "open", Path: c9LongDir + "/" + deploy.EnvFile, Err: syscall.EACCES}
-		out["update_unreadable_"+tag] = uu.View().Content
-
-		// remove: the working screen between confirm and done.
-		sd := c9Size(t, NewRemoveModel(deployment), w)
-		sd.state = removeStateStandingDown
-		out["remove_standingdown_"+tag] = sd.View().Content
-
-		// the engine run's other screens: stopping, the terminal
-		// handoff, the sign-in choice and the configuration session.
-		run := func() engineRun {
-			r := newEngineRun("install", c9LongDir, "Install — Standard", "v1")
-			r.console = newConsole("Install — Standard", "v1", fixed).setSize(w, 30)
-			return r
-		}
-		r := run()
-		r.state = runStopping
-		out["enginerun_stopping_"+tag] = r.view(w, 30)
-		r = run()
-		r.state = runHandoffRunning
-		out["enginerun_handoff_"+tag] = r.view(w, 30)
-		r = run()
-		r.state = runConfigSignInMode
-		out["enginerun_signin_local_"+tag] = r.view(w, 30)
-		r.cfg.signIn = newMenu(configSignInLabels()...)
-		r.cfg.signIn.sel = len(configSignInLabels()) - 1
-		out["enginerun_signin_last_"+tag] = r.view(w, 30)
-		r = run()
-		r.state = runConfigCollect
-		out["enginerun_config_preparing_"+tag] = r.view(w, 30)
-		p := engine.Prompt{Field: "APP_URL", Kind: "url", Attempt: 2, Required: true}
-		r.cfg.origin = "https://orbit.example.com"
-		r.cfg.session = promptSession{prompt: &p, reason: "that is not a web address", input: inputLine{runes: []rune("orbit.example.com")}}
-		out["enginerun_config_prompt_"+tag] = r.view(w, 30)
-
-		// the stopped screen's other endings (the cases above hold the
-		// refused-before-writing, recovery and abort ones).
-		install := func(msgs ...any) string { return c9StoppedRunAs(t, deploy.ActionInstall, engineRunSeams{}, w, msgs...) }
-		update := func(msgs ...any) string { return c9StoppedRunAs(t, deploy.ActionUpdate, engineRunSeams{}, w, msgs...) }
-		listing := engineRunSeams{listFolder: func(string) ([]os.DirEntry, error) {
-			return []os.DirEntry{c9Dir{"notes.txt", false}, c9Dir{"old-site", true}, c9Dir{"a.txt", false}, c9Dir{"b.txt", false}, c9Dir{deploy.EnvFile, false}}, nil
-		}}
-		out["enginerun_stopped_folder_"+tag] = c9StoppedRunAs(t, deploy.ActionInstall, listing, w, hostRefused, exit1(notEmptyStderr...))
-		out["enginerun_stopped_undone_"+tag] = install(hostDone, composeRunning, rollbackRunning, rollbackDone, composeFailed,
-			exit1("Orbit installer: Orbit services could not be created or started."))
-		out["enginerun_stopped_cannot_"+tag] = install(hostAborted, exit1("Orbit installer: orbit-install-backups is not a folder."))
-		out["enginerun_stopped_notready_"+tag] = install(hostDone, appRepair, exit1("Orbit installer: The web service did not become ready in time."))
-		out["enginerun_stopped_died_"+tag] = install(hostDone, composeRunning, exit1("Killed"))
-		out["enginerun_stopped_saidnothing_"+tag] = install(engine.RawLineMsg{Text: "Pulling ghcr.io/tomlawesome/orbit:latest"}, exit1("Orbit installer: something went wrong."))
-		out["enginerun_stopped_update_retry_"+tag] = update(hostDone, rollbackRunning, rollbackDone, imageRetry, exit1("Orbit installer: Could not pull the image."))
-		out["enginerun_stopped_update_repair_"+tag] = update(hostDone, appRepair, exit1("Orbit installer: The web service did not become ready in time."))
-		out["enginerun_stopped_update_abort_"+tag] = update(hostAborted, exit1("Orbit installer: Update requires a recognized existing Orbit deployment."))
-		out["enginerun_stopped_update_nothing_"+tag] = update(exit1("Orbit installer: something went wrong."))
-		cs := newEngineRun("install", c9LongDir, "Install — Standard", "v1")
-		cs.console = newConsole("Install — Standard", "v1", fixed).setSize(w, 30)
-		cs, _ = cs.update(engineReadyMsg{err: errors.New("fetch install.sh: connection refused")})
-		out["enginerun_stopped_nostart_"+tag] = cs.view(w, 30)
-		hr := run()
-		hr.state, hr.handoffRefused = runFailed, true
-		hr.runErr = errors.New("in-console configuration required — terminal handoff refused")
-		out["enginerun_stopped_handoff_refused_"+tag] = hr.view(w, 30)
-		he := run()
-		he.state, he.handoffErr = runFailed, errors.New(c9LongErr)
-		he.lastFailed = &engine.Event{Phase: "assets", Component: "fetch", State: "failed", Action: "abort"}
-		he.sawEvent = true
-		out["enginerun_stopped_handoff_error_"+tag] = he.view(w, 30)
-
-		// repair: the working screens, the dead ends and the stop.
-		rp := func() RepairModel { return c9Size(t, NewRepairModel("/opt/orbit", "v1"), w) }
-		m := rp()
-		out["repair_preparing_"+tag] = m.View().Content
-		m.state = repairExecuting
-		out["repair_executing_"+tag] = m.View().Content
-		m = rp()
-		m.state = repairUnavailable
-		out["repair_unavailable_"+tag] = m.View().Content
-		m = c9Size(t, NewRepairModel(c9LongDir, "v1"), w)
-		m.state = repairNotFound
-		out["repair_notfound_"+tag] = m.View().Content
-		m = c9Size(t, NewRepairModel(c9LongDir, "v1"), w)
-		m.state = repairForeign
-		m.foreign = deploy.Ownership{Account: "orbit", Files: []deploy.ForeignFile{
-			{Path: deploy.EnvFile, Owner: "root"},
-			{Path: deploy.SecretsDir + "/db_password", Owner: "root"},
-			{Path: deploy.SecretsDir + "/a/rather/long/nested/path/to/a/secret-file-that-is-long", Owner: "someone-else"},
-		}}
-		out["repair_foreign_"+tag] = m.View().Content
-		m.copied = true
-		out["repair_foreign_copied_"+tag] = m.View().Content
-		m = rp()
-		m.state, m.stoppedIn, m.runErr = repairError, repairExecuting, errors.New(c9LongErr)
-		out["repair_error_executing_"+tag] = m.View().Content
-		m.stoppedIn = repairRotating
-		out["repair_error_rotating_"+tag] = m.View().Content
-
-		// the credential rotation: asking, and backing out.
-		m = rp()
-		m.state = repairRotating
-		rot := engine.Prompt{Field: "CHECKPOINT_PASSPHRASE", Kind: "secret", Attempt: 1, Required: true}
-		m.rot = promptSession{prompt: &rot, input: inputLine{runes: []rune("hunter2")}}
-		out["repair_rotating_"+tag] = m.View().Content
-		m.rot = promptSession{}
-		m.stream = &engine.Stream{}
-		out["repair_rotating_stopping_"+tag] = m.View().Content
-
-		// repair: the plan and the results at every width, and the
-		// diagnosis in its other endings.
-		m = rp()
-		m.state = repairDiagnosis
-		m.diagnosis = &engine.Diagnosis{Result: engine.ResultAttention, Checked: 12, Skipped: 1}
-		m.findings = []engine.Finding{
-			{Class: "secret-missing", Target: "compose-file", Severity: "fail"},
-			{Class: "secret-stale", Target: "env-file", Severity: "warn"},
-		}
-		m.planActions = []engine.PlanAction{
-			{Action: "fix-permissions", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
-			{Action: "manual", Resolves: "secret-stale", Mutation: "none", Backup: "required"},
-		}
-		m.manualNotes = []string{"manual step: Restore the secret from your own backup and keep it somewhere only you can read it. (resolves=secret-stale)"}
-		m.planSummary = &engine.PlanSummary{Result: engine.ResultManualRequired, Actions: 2}
-		m.exitCode = engine.ExitPlanAvailable
-		out["repair_diagnosis_manual_"+tag] = m.View().Content
-		m.serviceStates = func(string) ([]deploy.ServiceState, error) { return nil, nil }
-		m.services = &serviceReading{loaded: true, expected: []string{"web", "db", "worker"}, states: []deploy.ServiceState{
-			{Service: "web", State: deploy.ContainerRunning},
-			{Service: "db", State: deploy.ContainerRunning, Health: deploy.HealthUnhealthy},
-		}}
-		out["repair_diagnosis_services_"+tag] = m.View().Content
-
-		m = rp()
-		m.state = repairDiagnosis
-		m.diagnosis = &engine.Diagnosis{Result: engine.ResultHealthy, Checked: 12}
-		m.exitCode = engine.ExitHealthy
-		out["repair_diagnosis_clear_"+tag] = m.View().Content
-		m = rp()
-		m.state = repairDiagnosis
-		m.findings = []engine.Finding{{Class: "secret-missing", Target: "compose-file", Severity: "fail"}}
-		out["repair_diagnosis_problems_"+tag] = m.View().Content
-
-		c9ExecutedScreens(t, out, w, rp)
-		m = rp()
-		m.state = repairExecuted
-		m.execSummary = &engine.ExecutionSummary{Result: engine.ResultComplete}
-		m.dangerous = &engine.Dangerous{Result: engine.ResultRefused, Reason: "non-interactive"}
-		out["repair_executed_dangerous_refused_"+tag] = m.View().Content
+	// splash: the settled menu in each state the identity block has,
+	// and the degraded drawer, and the update notice.
+	splash := func(name string, mutate func(*SplashModel)) {
+		m := NewSplashModelNoAnimation()
+		m.version = "v1"
+		mutate(&m)
+		m = c9Size(t, m, w)
+		out["splash_"+name+"_"+tag] = m.View().Content
 	}
+	known := func(m *SplashModel) {
+		m.fqdn, m.appURL, m.state, m.menu.sel = "mail.example.com", "https://mail.example.com", stateUnknown, menuUpdate
+		m.orbitVersion = "v1.2.0"
+	}
+	splash("dormant", func(*SplashModel) {})
+	splash("unknown", known)
+	splash("alive", func(m *SplashModel) { known(m); m.state = stateAlive })
+	splash("degraded", func(m *SplashModel) {
+		known(m)
+		m.state, m.menu.sel = stateDegraded, menuRepair
+		m.health = healthResultMsg{reason: deploy.HealthNotResponding}
+	})
+	splash("degraded_drawer", func(m *SplashModel) {
+		known(m)
+		m.state, m.onStatusRow, m.drawerOpen = stateDegraded, true, true
+		m.health = healthResultMsg{reason: deploy.HealthNotResponding, running: 2, expected: 4, counted: true}
+	})
+	splash("unreadable", func(m *SplashModel) { m.state = stateUnreadable })
+	splash("update_notice", func(m *SplashModel) { m.updateNotice = "v9.9.9" })
+
+	// install: the profile choice's dead end, the profile screen
+	// while the old-volume check is still answering, and the notice.
+	un := c9Size(t, NewInstallModel("/opt/orbit", "v1"), w)
+	un.state = installStateUnavailableProfile
+	out["install_unavailable_profile_"+tag] = un.View().Content
+	ck := c9Size(t, NewInstallModel("/opt/orbit", "v1"), w)
+	ck.awaiting = installStandard
+	out["install_profile_checking_"+tag] = ck.View().Content
+	nt := c9Size(t, NewInstallModel("/opt/orbit", "v1"), w)
+	nt.seams.now = fixed
+	nt.state = installStateNotice
+	nt.notice = newNotice(base, w, 30)
+	out["install_notice_"+tag] = nt.View().Content
+
+	// update: its two dead ends, as Remove's.
+	uf := c9Size(t, NewUpdateModel(nil, c9LongDir, "v1"), w)
+	out["update_notfound_"+tag] = uf.View().Content
+	uu := c9Size(t, NewUpdateModel(nil, c9LongDir, "v1"), w)
+	uu.detectErr = &fs.PathError{Op: "open", Path: c9LongDir + "/" + deploy.EnvFile, Err: syscall.EACCES}
+	out["update_unreadable_"+tag] = uu.View().Content
+
+	// remove: the working screen between confirm and done.
+	sd := c9Size(t, NewRemoveModel(deployment), w)
+	sd.state = removeStateStandingDown
+	out["remove_standingdown_"+tag] = sd.View().Content
+
+	// the engine run's other screens: stopping, the terminal
+	// handoff, the sign-in choice and the configuration session.
+	run := func() engineRun {
+		r := newEngineRun("install", c9LongDir, "Install — Standard", "v1")
+		r.console = newConsole("Install — Standard", "v1", fixed).setSize(w, 30)
+		return r
+	}
+	r := run()
+	r.state = runStopping
+	out["enginerun_stopping_"+tag] = r.view(w, 30)
+	r = run()
+	r.state = runHandoffRunning
+	out["enginerun_handoff_"+tag] = r.view(w, 30)
+	r = run()
+	r.state = runConfigSignInMode
+	out["enginerun_signin_local_"+tag] = r.view(w, 30)
+	r.cfg.signIn = newMenu(configSignInLabels()...)
+	r.cfg.signIn.sel = len(configSignInLabels()) - 1
+	out["enginerun_signin_last_"+tag] = r.view(w, 30)
+	r = run()
+	r.state = runConfigCollect
+	out["enginerun_config_preparing_"+tag] = r.view(w, 30)
+	p := engine.Prompt{Field: "APP_URL", Kind: "url", Attempt: 2, Required: true}
+	r.cfg.origin = "https://orbit.example.com"
+	r.cfg.session = promptSession{prompt: &p, reason: "that is not a web address", input: inputLine{runes: []rune("orbit.example.com")}}
+	out["enginerun_config_prompt_"+tag] = r.view(w, 30)
+
+	// the stopped screen's other endings (the cases above hold the
+	// refused-before-writing, recovery and abort ones).
+	install := func(msgs ...any) string { return c9StoppedRunAs(t, deploy.ActionInstall, engineRunSeams{}, w, msgs...) }
+	update := func(msgs ...any) string { return c9StoppedRunAs(t, deploy.ActionUpdate, engineRunSeams{}, w, msgs...) }
+	listing := engineRunSeams{listFolder: func(string) ([]os.DirEntry, error) {
+		return []os.DirEntry{c9Dir{"notes.txt", false}, c9Dir{"old-site", true}, c9Dir{"a.txt", false}, c9Dir{"b.txt", false}, c9Dir{deploy.EnvFile, false}}, nil
+	}}
+	out["enginerun_stopped_folder_"+tag] = c9StoppedRunAs(t, deploy.ActionInstall, listing, w, hostRefused, exit1(notEmptyStderr...))
+	out["enginerun_stopped_undone_"+tag] = install(hostDone, composeRunning, rollbackRunning, rollbackDone, composeFailed,
+		exit1("Orbit installer: Orbit services could not be created or started."))
+	out["enginerun_stopped_cannot_"+tag] = install(hostAborted, exit1("Orbit installer: orbit-install-backups is not a folder."))
+	out["enginerun_stopped_notready_"+tag] = install(hostDone, appRepair, exit1("Orbit installer: The web service did not become ready in time."))
+	out["enginerun_stopped_died_"+tag] = install(hostDone, composeRunning, exit1("Killed"))
+	out["enginerun_stopped_saidnothing_"+tag] = install(engine.RawLineMsg{Text: "Pulling ghcr.io/tomlawesome/orbit:latest"}, exit1("Orbit installer: something went wrong."))
+	out["enginerun_stopped_update_retry_"+tag] = update(hostDone, rollbackRunning, rollbackDone, imageRetry, exit1("Orbit installer: Could not pull the image."))
+	out["enginerun_stopped_update_repair_"+tag] = update(hostDone, appRepair, exit1("Orbit installer: The web service did not become ready in time."))
+	out["enginerun_stopped_update_abort_"+tag] = update(hostAborted, exit1("Orbit installer: Update requires a recognized existing Orbit deployment."))
+	out["enginerun_stopped_update_nothing_"+tag] = update(exit1("Orbit installer: something went wrong."))
+	cs := newEngineRun("install", c9LongDir, "Install — Standard", "v1")
+	cs.console = newConsole("Install — Standard", "v1", fixed).setSize(w, 30)
+	cs, _ = cs.update(engineReadyMsg{err: errors.New("fetch install.sh: connection refused")})
+	out["enginerun_stopped_nostart_"+tag] = cs.view(w, 30)
+	hr := run()
+	hr.state, hr.handoffRefused = runFailed, true
+	hr.runErr = errors.New("in-console configuration required — terminal handoff refused")
+	out["enginerun_stopped_handoff_refused_"+tag] = hr.view(w, 30)
+	he := run()
+	he.state, he.handoffErr = runFailed, errors.New(c9LongErr)
+	he.lastFailed = &engine.Event{Phase: "assets", Component: "fetch", State: "failed", Action: "abort"}
+	he.sawEvent = true
+	out["enginerun_stopped_handoff_error_"+tag] = he.view(w, 30)
+
+	// repair: the working screens, the dead ends and the stop.
+	rp := func() RepairModel { return c9Size(t, NewRepairModel("/opt/orbit", "v1"), w) }
+	m := rp()
+	out["repair_preparing_"+tag] = m.View().Content
+	m.state = repairExecuting
+	out["repair_executing_"+tag] = m.View().Content
+	m = rp()
+	m.state = repairUnavailable
+	out["repair_unavailable_"+tag] = m.View().Content
+	m = c9Size(t, NewRepairModel(c9LongDir, "v1"), w)
+	m.state = repairNotFound
+	out["repair_notfound_"+tag] = m.View().Content
+	m = c9Size(t, NewRepairModel(c9LongDir, "v1"), w)
+	m.state = repairForeign
+	m.foreign = deploy.Ownership{Account: "orbit", Files: []deploy.ForeignFile{
+		{Path: deploy.EnvFile, Owner: "root"},
+		{Path: deploy.SecretsDir + "/db_password", Owner: "root"},
+		{Path: deploy.SecretsDir + "/a/rather/long/nested/path/to/a/secret-file-that-is-long", Owner: "someone-else"},
+	}}
+	out["repair_foreign_"+tag] = m.View().Content
+	m.copied = true
+	out["repair_foreign_copied_"+tag] = m.View().Content
+	m = rp()
+	m.state, m.stoppedIn, m.runErr = repairError, repairExecuting, errors.New(c9LongErr)
+	out["repair_error_executing_"+tag] = m.View().Content
+	m.stoppedIn = repairRotating
+	out["repair_error_rotating_"+tag] = m.View().Content
+
+	// the credential rotation: asking, and backing out.
+	m = rp()
+	m.state = repairRotating
+	rot := engine.Prompt{Field: "CHECKPOINT_PASSPHRASE", Kind: "secret", Attempt: 1, Required: true}
+	m.rot = promptSession{prompt: &rot, input: inputLine{runes: []rune("hunter2")}}
+	out["repair_rotating_"+tag] = m.View().Content
+	m.rot = promptSession{}
+	m.stream = &engine.Stream{}
+	out["repair_rotating_stopping_"+tag] = m.View().Content
+
+	// repair: the plan and the results at every width, and the
+	// diagnosis in its other endings.
+	m = rp()
+	m.state = repairDiagnosis
+	m.diagnosis = &engine.Diagnosis{Result: engine.ResultAttention, Checked: 12, Skipped: 1}
+	m.findings = []engine.Finding{
+		{Class: "secret-missing", Target: "compose-file", Severity: "fail"},
+		{Class: "secret-stale", Target: "env-file", Severity: "warn"},
+	}
+	m.planActions = []engine.PlanAction{
+		{Action: "fix-permissions", Resolves: "secret-missing", Mutation: "reversible", Backup: "not-required"},
+		{Action: "manual", Resolves: "secret-stale", Mutation: "none", Backup: "required"},
+	}
+	m.manualNotes = []string{"manual step: Restore the secret from your own backup and keep it somewhere only you can read it. (resolves=secret-stale)"}
+	m.planSummary = &engine.PlanSummary{Result: engine.ResultManualRequired, Actions: 2}
+	m.exitCode = engine.ExitPlanAvailable
+	out["repair_diagnosis_manual_"+tag] = m.View().Content
+	m.serviceStates = func(string) ([]deploy.ServiceState, error) { return nil, nil }
+	m.services = &serviceReading{loaded: true, expected: []string{"web", "db", "worker"}, states: []deploy.ServiceState{
+		{Service: "web", State: deploy.ContainerRunning},
+		{Service: "db", State: deploy.ContainerRunning, Health: deploy.HealthUnhealthy},
+	}}
+	out["repair_diagnosis_services_"+tag] = m.View().Content
+
+	m = rp()
+	m.state = repairDiagnosis
+	m.diagnosis = &engine.Diagnosis{Result: engine.ResultHealthy, Checked: 12}
+	m.exitCode = engine.ExitHealthy
+	out["repair_diagnosis_clear_"+tag] = m.View().Content
+	m = rp()
+	m.state = repairDiagnosis
+	m.findings = []engine.Finding{{Class: "secret-missing", Target: "compose-file", Severity: "fail"}}
+	out["repair_diagnosis_problems_"+tag] = m.View().Content
+
+	c9ExecutedScreens(t, out, w, rp)
+	m = rp()
+	m.state = repairExecuted
+	m.execSummary = &engine.ExecutionSummary{Result: engine.ResultComplete}
+	m.dangerous = &engine.Dangerous{Result: engine.ResultRefused, Reason: "non-interactive"}
+	out["repair_executed_dangerous_refused_"+tag] = m.View().Content
 }
 
 // c9RemoveScreens is Remove's screens that need one width only: the root
@@ -578,7 +576,7 @@ func TestScreenGrammarC9_ScreensRenderByteForByteAsBefore(t *testing.T) {
 			continue
 		}
 		if got != string(golden) {
-			t.Errorf("%s no longer renders as it did before #231 (screens must not move):\nwant %q\ngot  %q", name, string(golden), got)
+			t.Errorf("%s no longer renders as it did before #231 (screens must not move): %s", name, firstRowDiff(string(golden), got))
 		}
 	}
 	for name := range screens {
@@ -586,4 +584,24 @@ func TestScreenGrammarC9_ScreensRenderByteForByteAsBefore(t *testing.T) {
 			t.Errorf("screen %s has no golden file", name)
 		}
 	}
+}
+
+// firstRowDiff names the first row where got differs from want, with
+// that row from each side quoted, so a moved row is found at a glance
+// rather than by reading two whole screens (#277).
+func firstRowDiff(want, got string) string {
+	w, g := strings.Split(want, "\n"), strings.Split(got, "\n")
+	for i := 0; i < max(len(w), len(g)); i++ {
+		var wr, gr string
+		if i < len(w) {
+			wr = w[i]
+		}
+		if i < len(g) {
+			gr = g[i]
+		}
+		if i >= len(w) || i >= len(g) || wr != gr {
+			return fmt.Sprintf("row %d of %d (want) / %d (got) differs:\nwant %q\ngot  %q", i+1, len(w), len(g), wr, gr)
+		}
+	}
+	return "the screens differ only in a way no row shows"
 }
