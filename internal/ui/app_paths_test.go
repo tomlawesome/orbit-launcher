@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // AppModel's options and routing edges, driven by plain Update calls.
@@ -195,6 +196,7 @@ func TestAppModel_NoTargetDirDetectsInTheWorkingDirectory(t *testing.T) {
 func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	dir := t.TempDir()
 	writeEnv(t, dir, "APP_URL=https://mail.example.test\n")
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	probes, checks := 0, 0
 	m := NewAppModelNoAnimation().
 		WithUpdateCheck(func(context.Context) (string, bool, error) { checks++; return "v9.9.10", true, nil })

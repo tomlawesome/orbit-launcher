@@ -192,6 +192,11 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
+	if !deploy.Installed(m.resolvedTargetDir()) {
+		// Only the pre-provisioned configuration, as a rolled-back
+		// install leaves it: Install is what the engine will accept.
+		s.menu.sel = menuInstall
+	}
 	s.healthProbe = m.healthProbe
 	s.serviceStates = realServiceStates
 	s.targetDir = m.resolvedTargetDir()

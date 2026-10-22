@@ -51,6 +51,7 @@ func TestApp_RealPTY_UpdateWithNoDeploymentShowsNotFound(t *testing.T) {
 func TestApp_RealPTY_UpdateWithAnExistingDeploymentShowsTheConfirmScreen(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 
 	binPath := launcher.BuildBinary(t)
 	console, cmd := startUnderPTYInDir(t, binPath, dir)
