@@ -21,9 +21,9 @@
   [38;2;28;36;52m│[m 'ectories/under the data volume/orbit/.e'\ [38;2;28;36;52m│[m  
   [38;2;28;36;52m│[m   …                                        [38;2;28;36;52m│[m  
   [38;2;28;36;52m╰────────────────────────────────────────────╯[m  
-      [38;2;251;146;60mthis deletes all mail, documents, and[m     [38;2;74;84;104m.[m 
-                 [38;2;251;146;60mconfiguration —[m                  
-        [38;2;74;84;104m.[m      [38;2;251;146;60mit cannot be undone[m                
+       [38;2;251;146;60mthis deletes all mail, documents and[m     [38;2;74;84;104m.[m 
+    [38;2;251;146;60mconfiguration, and everything else in the[m     
+  [38;2;251;146;60mfolder, backups included — it cannot be undone[m  
                                                   
                  [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command[m                   
                        [38;2;124;134;153mMenu[m                       

@@ -158,10 +158,6 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state = removeStateDone
 			m.after = newMenu(removeDoneRows...)
-			if m.refusedFolder() != "" {
-				// No command to copy for a folder that is not Orbit's own.
-				m.after = newMenu(removeDoneRows[1:]...)
-			}
 		}
 		if m.signalQuit {
 			return m.handleKey(ctrlCPress)
@@ -241,7 +237,7 @@ func (m RemoveModel) handleDoneKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.left = true
 		return m, nil
 	case chosen == removeCopy:
-		words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+		words, err := m.removalWords()
 		if err != nil {
 			return m, nil
 		}
@@ -362,16 +358,14 @@ func (m RemoveModel) viewDone() string {
 	}
 	writeWrapped(&b, style.MutedText, "nothing has been deleted.", prose)
 	fmt.Fprintln(&b)
-	// "sudo rm -rf" of the root or home folder would delete far more than
-	// Orbit, so no command is built or offered for it: one plain sentence
-	// says why instead.
-	if refused := m.refusedFolder(); refused != "" {
-		writeWrapped(&b, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own.", prose)
-		fmt.Fprintln(&b)
-		m.after.write(&b)
-		return skyBlock(m.star, m.width, m.height, b.String())
+	// For the root or home folder only the data-volume half is offered:
+	// "sudo rm -rf" there would delete far more than Orbit.
+	refused := m.refusedFolder()
+	if refused != "" {
+		writeWrapped(&b, style.Tagline, "to remove Orbit's data volumes from this machine, copy and run", prose)
+	} else {
+		writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
 	}
-	writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
 
 	// The command is over 100 cells for a short path, and the box adds
 	// four; a terminal cuts whatever is wider than it, and the cut end is
@@ -383,7 +377,7 @@ func (m RemoveModel) viewDone() string {
 	// after escaping, so a folder with control characters reads
 	// differently from what runs; Copy command keeps the raw one-line
 	// form, which is the one to run.
-	raw, _ := deploy.RemovalCommandWords(targetDir)
+	raw, _ := m.removalWords()
 	words := make([]string, len(raw))
 	for i, w := range raw {
 		words[i] = visibleText(w)
@@ -393,8 +387,14 @@ func (m RemoveModel) viewDone() string {
 	// The rows after the box are laid out first, so the box knows how
 	// many rows they need.
 	var tail strings.Builder
-	writeWrapped(&tail, style.DegradedText, "this deletes all mail, documents, and configuration —", prose)
-	writeWrapped(&tail, style.DegradedText, "it cannot be undone", prose)
+	// errorWidth, not proseWidth: the box's caption reads at the box's measure.
+	wide := measure(m.width, errorWidth)
+	if refused != "" {
+		writeWrapped(&tail, style.DegradedText, "this deletes all mail and documents — it cannot be undone", wide)
+		writeWrapped(&tail, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own. Orbit's files there stay for you to remove.", prose)
+	} else {
+		writeWrapped(&tail, style.DegradedText, "this deletes all mail, documents and configuration, and everything else in the folder, backups included — it cannot be undone", wide)
+	}
 	fmt.Fprintln(&tail)
 	// The copy row says so once it has copied; the menu's own label,
 	// which Enter answers with, stays the same.
@@ -422,6 +422,19 @@ func (m RemoveModel) viewDone() string {
 	}
 	b.WriteString(tail.String())
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// removalWords is the command the removed screen offers: the whole
+// removal, or only its data-volume half for a folder that is not
+// Orbit's own (refusedFolder). Compose removes only this project's
+// volumes, so that half is safe anywhere, and without it the leftover
+// database volume would block every later install.
+func (m RemoveModel) removalWords() ([]string, error) {
+	words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	if errors.Is(err, deploy.ErrRootFolder) || errors.Is(err, deploy.ErrHomeFolder) {
+		return deploy.VolumeRemovalCommandWords(m.deployment.TargetDir)
+	}
+	return words, err
 }
 
 // refusedFolder names the deployment folder when no removal command is
