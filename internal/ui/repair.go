@@ -865,7 +865,9 @@ func (m RepairModel) viewExecuted() string {
 		default:
 			refusal := "nothing was changed — the engine refused to run"
 			if m.execSummary.Reason != "" {
-				refusal += " (" + m.execSummary.Reason + ")"
+				// The engine's word, escaped like any other foreign
+				// text before it reaches the terminal (#277).
+				refusal += " (" + visibleText(m.execSummary.Reason) + ")"
 			}
 			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
 		}
@@ -1272,7 +1274,7 @@ func planSummaryWords(s *engine.PlanSummary, runnable bool) string {
 	case engine.ResultEmpty:
 		return "nothing to plan"
 	default:
-		return s.Result + " — nothing has run yet"
+		return visibleText(s.Result) + " — nothing has run yet"
 	}
 }
 
