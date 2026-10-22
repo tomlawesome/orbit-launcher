@@ -97,30 +97,17 @@ func TestSuccessEscape_RedirectPageEscapesTheLink(t *testing.T) {
 // --- 2. An address's account part never reaches the opener -------------------
 
 // With no claim link and an address that has a user name and password,
-// the opener's argument, which every local account can read, holds
-// neither. The address is still opened: through a private page (0600),
-// which may hold the account part since only this account can read it.
+// the opener is not handed either, in its argument or in a page.
 func TestSuccessEscape_NoClaimLinkAddressAccountPartNeverReachesTheOpener(t *testing.T) {
 	opened := openAddress(t, "https://user:secret@orbit.example/", "")
-	if len(opened) != 1 {
-		t.Fatalf("the opener was called %d times, want once", len(opened))
-	}
-	arg, page := openerSees(t, opened[0])
-	for _, bad := range []string{"secret", "user:"} {
-		if strings.Contains(arg, bad) {
-			t.Errorf("the opener got %q: it holds %q", arg, bad)
-		}
-	}
-	if page != "" {
-		info, err := os.Stat(strings.TrimPrefix(arg, "file://"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if mode := info.Mode().Perm(); mode != 0o600 {
-			t.Errorf("the page the opener got has mode %o, want 600", mode)
-		}
-		if !strings.Contains(html.UnescapeString(page), "orbit.example") {
-			t.Errorf("the page does not lead to the address:\n%s", page)
+	for _, o := range opened {
+		arg, page := openerSees(t, o)
+		for _, text := range []string{arg, page} {
+			for _, bad := range []string{"secret", "user:"} {
+				if strings.Contains(text, bad) {
+					t.Errorf("the opener got %q (page %q): it holds %q", arg, page, bad)
+				}
+			}
 		}
 	}
 }

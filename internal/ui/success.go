@@ -229,10 +229,9 @@ func (m SuccessModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // launchURL opens the deployment, or its claim page when there is one.
-// The claim link carries the one-time code, and an address may carry a
-// user name and password, so the opener, whose command line every local
-// account can read, is handed the path of a private page redirecting to
-// either instead (claimRedirect, #277).
+// The claim link carries the one-time code, so the opener, whose command
+// line every local account can read, is handed the path of a private
+// page redirecting to it instead (claimRedirect, #277).
 func (m SuccessModel) launchURL() error {
 	open := m.openURL
 	if open == nil {
@@ -248,11 +247,11 @@ func (m SuccessModel) launchURL() error {
 	if !webAddress(target) {
 		return errors.New("not a web address")
 	}
-	if m.claimLink != "" || withoutAccount(target) != target {
+	if m.claimLink != "" {
 		if m.redirect == nil {
 			return errors.New("no redirect page")
 		}
-		page, err := m.redirect.write(target)
+		page, err := m.redirect.write(m.claimLink)
 		if err != nil {
 			return err
 		}
