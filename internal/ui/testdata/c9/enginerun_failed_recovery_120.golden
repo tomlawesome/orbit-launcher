@@ -1,0 +1,30 @@
+                                                [38;2;74;84;104m.[m                                                                    [38;2;74;84;104m.[m  
+                                                   [38;2;248;113;113m✗[m [1;38;2;231;233;238mInstall stopped[m                                                    
+                                                                                                                        
+                        [38;2;231;233;238mThe install was undone in the folder, but something it started in Docker[m                        
+                          [38;2;74;84;104m✦[m          [38;2;74;84;104m✦[m              [38;2;231;233;238mis still there.[m                                                     
+                                 [38;2;74;84;104m.[m                [38;2;124;134;153mstage: Rolling back[m                                                   
+               [38;2;74;84;104m·[m           [38;2;74;84;104mOrbit installer: This install could not be fully rolled back: the[m           [38;2;216;180;90m●[m               [38;2;74;84;104m·[m
+                     [38;2;74;84;104m·[m                      [38;2;74;84;104mcontainers could not be stopped.[m                       [38;2;74;84;104m·[m                    
+                        [38;2;74;84;104mOrbit installer: Install again to finish putting the folder back. If the[m                        
+                           [38;2;74;84;104mcontainers still will not stop, run this in a terminal first, then[m                           
+                                                [38;2;74;84;104m.[m    [38;2;74;84;104minstall again:[m                           [38;2;74;84;104m·[m                         
+                        [38;2;74;84;104mOrbit installer: .env-orbit and .orbit-secrets will be put back exactly[m                         
+                        [38;2;74;84;104mas they were before this install; anything changed in them while it ran[m   [38;2;74;84;104m·[m                     
+                             [38;2;74;84;104mis replaced. A copy of this folder's original files is kept in[m                             
+                              [38;2;74;84;104m/srv/orbit/orbit-install-backups/20261020T101010Z/originals.[m                              
+                              [38;2;74;84;104m✦[m                                     [38;2;74;84;104m.[m                                                   
+                [38;2;28;36;52m╭──────────────────────────────────────────────────────────────────────────────────────╮[m                
+                [38;2;28;36;52m│[m [38;2;231;233;238mcd /srv/orbit/orbit-install-backups/20261020T101010Z/engine \[m                        [38;2;28;36;52m│[m                
+                [38;2;28;36;52m│[m [38;2;231;233;238m  && docker compose --project-name orbit --env-file .env-orbit down --remove-orphans[m [38;2;28;36;52m│[m                
+                [38;2;28;36;52m╰──────────────────────────────────────────────────────────────────────────────────────╯[m                
+                                   [38;2;124;134;153mRun this in a terminal, then choose Install again[m                                    
+                                              [38;2;74;84;104m·[m         [38;2;74;84;104m✦[m             [38;2;74;84;104m·[m                                                 
+                                                [38;2;74;84;104m✦[m   [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command[m                                                      
+                   [38;2;203;213;225m●[m    [38;2;251;113;133m·[m                            [38;2;124;134;153mInstall again[m                                 [38;2;74;84;104m·[m                    
+                                                          [38;2;124;134;153mMenu[m                                                          
+                                                          [38;2;124;134;153mExit[m                                                          
+                                                     [38;2;74;84;104m··[m                                                                 
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        

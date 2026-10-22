@@ -589,6 +589,9 @@ func installAgainRestarts[M interface {
 		t.Fatalf("the caret is on %q, want %q:\n%s", got, row, screen(m))
 	}
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	// isQuit runs the command, and so would prepare the engine a second
+	// time before drive did: the command runs once.
+	cmd = onceCmd(cmd)
 	if isQuit(cmd) {
 		t.Fatalf("%s quit the launcher", row)
 	}
@@ -606,6 +609,21 @@ func installAgainRestarts[M interface {
 		}
 	}
 	return m
+}
+
+// onceCmd runs cmd at most once, handing back its message each time.
+func onceCmd(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	var msg tea.Msg
+	ran := false
+	return func() tea.Msg {
+		if !ran {
+			msg, ran = cmd(), true
+		}
+		return msg
+	}
 }
 
 // Install again reruns the engine in-flow: no profile or notice again.

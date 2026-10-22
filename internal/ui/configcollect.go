@@ -535,11 +535,10 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	r.releaseRunFiles()
 	r.configRefused = false
 	r.waiting, r.completed, r.completion = nil, false, nil
-	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
-	r.lastFailed = nil
-	r.stderrTail = nil
+	r.forgetStop()
 	r.runErr = nil
 	r.handoffErr = nil
+	r.handoffByHand = false
 	r.menu = menu{}
 	return r.start(r.width, r.height)
 }

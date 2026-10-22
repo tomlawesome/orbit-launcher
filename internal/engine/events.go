@@ -53,15 +53,28 @@ const (
 
 	PhaseComplete = "complete"
 
+	// PhaseRollback is the phase of the events a failed fresh install's
+	// rollback emits (ai/orbit#1456): running while it puts the folder
+	// back, completed once it has.
+	PhaseRollback = "rollback"
+
 	// ReasonConfigurationFailure is the non-interactive refusal the
 	// contract documents for incomplete configuration: the engine
 	// refuses before starting Compose, and the consumer should re-run
 	// configuration interactively (the terminal handoff stretch).
 	ReasonConfigurationFailure = "configuration-failure"
 
-	// ActionAbort marks a failure no retry can clear: the consumer stops
-	// rather than offer another attempt.
-	ActionAbort = "abort"
+	// The contract's action vocabulary on a terminal failure (orbit
+	// docs/engine-events.md, "action"): ActionRetry is a failure another
+	// attempt can clear once its cause is fixed; ActionRepair leaves a
+	// deployment whose services are in place, for Repair; ActionAbort
+	// marks a failure no retry can clear, so the consumer stops rather
+	// than offer another attempt. ActionContinue is an optional
+	// service's ending that does not fail the run.
+	ActionRetry    = "retry"
+	ActionRepair   = "repair"
+	ActionAbort    = "abort"
+	ActionContinue = "continue"
 
 	// RecoveryHasCommand is the recovery= value saying a
 	// recovery-command line came just before the event.

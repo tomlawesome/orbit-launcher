@@ -119,7 +119,7 @@ const maxConsoleEntries = 200
 // observeEvent records a parsed engine event.
 func (c ConsoleModel) observeEvent(e engine.Event) ConsoleModel {
 	c.entries = appendEntry(c.entries, consoleEntry{isEvent: true, event: e})
-	if e.Phase == "rollback" {
+	if e.Phase == engine.PhaseRollback {
 		c.rollback = true
 		return c
 	}

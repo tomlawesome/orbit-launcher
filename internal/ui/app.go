@@ -318,10 +318,27 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 		}
 		return m, sizeCmd
 	}
+	if o.WantsRepair {
+		// The stopped screen's Open Repair: Repair on the same folder.
+		return m.startRepair()
+	}
 	if o.WantsMenu {
 		return m.refreshSplash()
 	}
 	return m, cmd
+}
+
+// startRepair opens Repair on the launcher's folder, from the splash or
+// from a stopped Install or Update that left its services in place.
+func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
+	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
+	m.repair.engineRunSeams = m.flowSeams
+	m.repair.serviceStates = realServiceStates
+	m.repair.foreignOwned = deploy.ForeignOwned
+	m.repair.send = m.flowSend
+	m.state = appStateRepair
+	return m, tea.Batch(sizeCmd, m.repair.Init())
 }
 
 // claimReader is the success screen's claim-link read after a finished
@@ -369,13 +386,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// pre-flight it starts with the flow.
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
-		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
-		m.repair.engineRunSeams = m.flowSeams
-		m.repair.serviceStates = realServiceStates
-		m.repair.foreignOwned = deploy.ForeignOwned
-		m.repair.send = m.flowSend
-		m.state = appStateRepair
-		return m, tea.Batch(sizeCmd, m.repair.Init())
+		return m.startRepair()
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		m.install.seams = m.flowSeams

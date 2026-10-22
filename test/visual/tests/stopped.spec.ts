@@ -135,9 +135,11 @@ async function sizeTerminal(page: Page, cols: number, rows: number): Promise<voi
       };
     });
     if (s.cols === cols && s.rows === rows) return;
+    // Only a dimension that is off moves: the half cell of slack, added
+    // again to one already right, piles up into a whole extra cell.
     await page.setViewportSize({
-      width: Math.round(s.vw + (cols - s.cols) * s.cw + s.cw / 2),
-      height: Math.round(s.vh + (rows - s.rows) * s.ch + s.ch / 2),
+      width: s.cols === cols ? s.vw : Math.round(s.vw + (cols - s.cols) * s.cw + s.cw / 2),
+      height: s.rows === rows ? s.vh : Math.round(s.vh + (rows - s.rows) * s.ch + s.ch / 2),
     });
     await page
       .waitForFunction(([c, r]) => (window as any).term.cols === c && (window as any).term.rows === r, [cols, rows], { timeout: 2000 })

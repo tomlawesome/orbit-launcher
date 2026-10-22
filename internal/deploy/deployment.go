@@ -32,6 +32,10 @@ const (
 	// SecretsDir is the directory beside EnvFile holding one file per
 	// secret.
 	SecretsDir = ".orbit-secrets"
+	// BackupsDir is where the installer keeps a failed install's
+	// leftovers (ai/orbit#1456). Only a real directory of that name is
+	// the installer's own; it refuses a file or link there.
+	BackupsDir = "orbit-install-backups"
 	// ComposeFile is the Compose file install.sh writes beside EnvFile
 	// once it commits to an install; EnvFile alone can be
 	// pre-provisioned.
