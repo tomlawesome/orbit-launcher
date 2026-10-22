@@ -1125,7 +1125,9 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			// on the end: drop the tag (the plan line above already
 			// names the problem) and wrap the rest, so it is never cut
 			// at the screen's edge (#253).
-			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), textArea(m.width))
+			// Copyable text stays whole until the layout call on #277 group B:
+			// a step can name a path or command to run.
+			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), math.MaxInt)
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
