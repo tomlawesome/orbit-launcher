@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // standDownTimeout bounds StandDown. `docker compose down` stops each
@@ -219,6 +220,11 @@ var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%+=:,./_-]+$`)
 
 // shellQuote applies POSIX single-quote escaping (as Python's shlex.quote
 // does), leaving the value bare when it only has shell-safe characters.
+// A value holding a character the screen would have to escape (a
+// control character, a bidi override, an invalid byte) is quoted in
+// bash's ANSI-C $'...' form instead (ansiCQuote), so the quoted word is
+// printable: what the box shows and what Copy command copies are then
+// the same bytes, and the shell still receives the raw value (#277 W2).
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
@@ -226,5 +232,52 @@ func shellQuote(s string) string {
 	if shellSafe.MatchString(s) {
 		return s
 	}
+	if !printableWord(s) {
+		return ansiCQuote(s)
+	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// printableWord reports whether every rune of s is printable (Go's
+// strconv.IsPrint, which counts the plain space but not other blanks),
+// the test the UI's visibleText escapes by; a backslash is printable.
+func printableWord(s string) bool {
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 || !strconv.IsPrint(r) {
+			return false
+		}
+		i += n
+	}
+	return true
+}
+
+// ansiCQuote quotes s in bash's $'...' form with the escapes the screen
+// already shows: \\ and \' for a backslash and a quote, a printable rune
+// as itself, any other rune as its Go escape (\n, \x1b, \u202e), and an
+// invalid byte as \xff. Each of those reads back in bash and zsh as the
+// same byte or character: \x takes at most two hex digits, \u four and
+// \U eight, and Go always writes them in full.
+func ansiCQuote(s string) string {
+	var b strings.Builder
+	b.WriteString("$'")
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '\'':
+			b.WriteString(`\'`)
+		case strconv.IsPrint(r):
+			b.WriteRune(r)
+		default:
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+		}
+		i += n
+	}
+	b.WriteString("'")
+	return b.String()
 }

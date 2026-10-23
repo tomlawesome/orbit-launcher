@@ -116,13 +116,10 @@ func (m RepairModel) viewForeign() string {
 	writeWrappedIn(&tail, style.MutedText, "give them back to this account, then diagnose again", wide, textArea(m.width))
 	fmt.Fprintln(&tail)
 
-	// The command in a box, as Remove's: the words escaped for the
-	// screen, Copy command keeping the quoted raw line to run.
-	raw := deploy.ChownCommandWords(m.targetDir, m.foreign)
-	words := make([]string, len(raw))
-	for i, w := range raw {
-		words[i] = visibleText(w)
-	}
+	// The command in a box, as Remove's: the words drawn as they are
+	// (an odd folder's word is already in printable $'...' form), so the
+	// box and Copy command's line are the same bytes (#277 W2).
+	words := deploy.ChownCommandWords(m.targetDir, m.foreign)
 	lines := wrapShellCommand(words, m.width-8)
 	boxW := 0
 	for _, l := range lines {
