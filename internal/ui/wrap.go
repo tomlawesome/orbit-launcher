@@ -51,7 +51,6 @@ func textArea(width int) int {
 // (§2.2.1: a backslash-newline continues a line; §2.2.2: adjacent quoted
 // strings join into one word; see cutUnit). The next unit starts a fresh row.
 func wrapShellCommand(words []string, limit int) []string {
-	words = shownQuotes(words)
 	if cmd := strings.Join(words, " "); lipgloss.Width(cmd) <= limit {
 		return []string{cmd}
 	}
@@ -115,19 +114,6 @@ func endCut(text string, limit int) string {
 // escapedQuote is how shellQuote writes an apostrophe inside a quoted
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`
-
-// shownQuotes puts back the escaped apostrophes visibleText doubled the
-// backslash of in words shown on screen: they are the shell's quoting,
-// not text from the folder, so the box writes them as the shell does
-// and cutUnit still knows them. Inside a quoted word every apostrophe
-// is a quote or part of one, so the doubled form is never anything else.
-func shownQuotes(words []string) []string {
-	out := make([]string, len(words))
-	for i, w := range words {
-		out[i] = strings.ReplaceAll(w, `'\\''`, escapedQuote)
-	}
-	return out
-}
 
 // cutUnit cuts a unit too wide for one row (an option with its value, or
 // a word) into rows that read back as it. It returns every row but the
