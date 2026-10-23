@@ -11,9 +11,9 @@
   [38;2;74;84;104mdeployment or safe pre-provisioned bootstrap.[m   
     [38;2;74;84;104mOrbit installer: Refusing to install here.[m    
    [38;2;124;134;153min the folder: a.txt, b.txt, notes.txt and 1[m   
-         [38;2;74;84;104m·[m             [38;2;124;134;153mmore[m                       
-    [38;2;124;134;153mmove them out of the folder, then install[m     
-                      [38;2;124;134;153magain[m                       
+       [38;2;124;134;153mmore — the installer needs it empty[m        
+     [38;2;124;134;153mfix what the installer names above, then[m     
+                  [38;2;124;134;153minstall again[m                   
      [38;2;124;134;153mto use another folder, exit and run the[m      
                [38;2;124;134;153mlauncher from there[m                
                                                   

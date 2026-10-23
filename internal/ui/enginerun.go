@@ -1025,13 +1025,14 @@ func (r engineRun) readFolder() []string {
 }
 
 // folderListing is the stopped screen's line about the folder: a few
-// names, then how many more (owner, 15a), never a long list.
+// names, then how many more (owner, 15a), never a long list, ending in
+// the fact that holds whichever check refused (#277 W5).
 func folderListing(names []string) string {
-	const shown = 3
+	const shown, tail = 3, " — the installer needs it empty"
 	if len(names) <= shown {
-		return "in the folder: " + strings.Join(names, ", ")
+		return "in the folder: " + strings.Join(names, ", ") + tail
 	}
-	return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown)
+	return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown) + tail
 }
 
 // stoppedRows are the stopped screen's rows for how the run stopped.
@@ -1106,11 +1107,10 @@ func (r engineRun) nextSteps(kind stopKind) []string {
 	const fixNamed = "fix what the installer names above, then install again"
 	switch kind {
 	case stoppedBeforeWriting:
-		first := fixNamed
-		if len(r.folderEntries) > 0 {
-			first = "move them out of the folder, then install again"
-		}
-		return []string{first, "to use another folder, exit and run the launcher from there"}
+		// Never "move them out" as the cause: the launcher can't tell a
+		// Docker refusal from a not-empty one, so the listing carries the
+		// folder's fact and this line stays the general one (#277 W5).
+		return []string{fixNamed, "to use another folder, exit and run the launcher from there"}
 	case stoppedUndone:
 		return []string{fixNamed}
 	case stoppedUndoneButDocker:
