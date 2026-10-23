@@ -2,11 +2,13 @@ package ui
 
 import (
 	"context"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // The exit wait's backstop paths (#277). Leaving a session cancels its
@@ -83,6 +85,7 @@ func TestConfigLate_PastTheLimitARemovalUnderWayIsWaitedFor(t *testing.T) {
 func TestAppModel_WithServicesReaderAfterTheStatusProbeIsWhatTheSplashCounts(t *testing.T) {
 	dir := t.TempDir()
 	writeEnv(t, dir, "APP_URL=https://mail.example.test\n")
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile)) // installed: only then is there a probe
 	reader := &readerRecord{have: readerAppHave}
 	m := NewAppModelNoAnimation()
 	m.targetDir = dir

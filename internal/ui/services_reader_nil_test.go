@@ -68,6 +68,7 @@ func TestServicesReaderNil_TheSplashDoesNotCount(t *testing.T) {
 			marker := fakeDocker(t)
 			dir := t.TempDir()
 			writeEnv(t, dir, "APP_URL=https://mail.example.test\n")
+			testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile)) // installed: only then is there a probe
 			m := NewAppModelNoAnimation()
 			m.targetDir = dir
 			m = build(m)
