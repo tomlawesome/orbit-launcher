@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -1146,7 +1147,7 @@ func (r engineRun) view(width, height int) string {
 		return r.viewConfigCollect(width, height)
 	case runHandoffRunning:
 		// The line wraps inside the padding, never past the screen (#288).
-		lines := wrapWords("in the installer — you'll return here when it finishes", measure(width, proseWidth))
+		lines := wrapWordsIn("in the installer — you'll return here when it finishes", measure(width, proseWidth), textArea(width))
 		return lipgloss.NewStyle().Padding(1, 2).Render(style.Tagline.Render(strings.Join(lines, "\n")))
 	case runFailed:
 		return r.viewFailed(width, height)
@@ -1184,16 +1185,16 @@ func (r engineRun) viewFailed(width, height int) string {
 			if !errors.As(r.runErr, &shown) {
 				text = visibleLines(text)
 			}
-			writeWrapped(&b, style.Tagline, text, limit)
+			writeWrappedIn(&b, style.Tagline, text, limit, textArea(width))
 		}
 	default:
 		if r.sawEvent {
 			// The step that failed, not "Rolling back" (#257, owner 2a).
-			writeWrapped(&b, style.MutedText, "stage: "+r.console.progressWord(), limit)
+			writeWrappedIn(&b, style.MutedText, "stage: "+r.console.progressWord(), limit, textArea(width))
 		}
 	}
 	if r.handoffErr != nil {
-		writeWrapped(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
+		writeWrappedIn(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit, textArea(width))
 	}
 	if len(r.folderEntries) > 0 {
 		for _, row := range wrapHard(folderListing(r.folderEntries), limit, width-4, folderRows) {
@@ -1210,11 +1211,12 @@ func (r engineRun) viewFailed(width, height int) string {
 				fmt.Fprintln(&after, line)
 			}
 		} else {
-			writeWrapped(&after, style.Ink, visibleCommand(r.recoveryCommand), limit)
+			// copyable text stays whole until the layout call on #277 group B
+			writeWrappedIn(&after, style.Ink, visibleCommand(r.recoveryCommand), limit, math.MaxInt)
 		}
 	}
 	for _, step := range r.nextSteps(kind) {
-		writeWrapped(&after, style.MutedText, step, limit)
+		writeWrappedIn(&after, style.MutedText, step, limit, textArea(width))
 	}
 	fmt.Fprintln(&after)
 	// The copy row says so once it has copied; the label Enter answers
@@ -1237,21 +1239,24 @@ func (r engineRun) viewFailed(width, height int) string {
 		stderr = append(stderr, line)
 	}
 	room := max(height-strings.Count(b.String(), "\n")-strings.Count(after.String(), "\n")-2, 1)
-	for _, line := range fitTail(stderr, limit, room) {
+	// copyable text stays whole until the layout call on #277 group B
+	// (the installer's lines carry the backup folder's path)
+	for _, line := range fitTail(stderr, limit, math.MaxInt, room) {
 		fmt.Fprintln(&b, style.Tagline.Render(line))
 	}
 	b.WriteString(after.String())
 	return skyBlock(r.console.sky, width, height, b.String())
 }
 
-// fitTail lays out stderr lines, wrapped at limit, in at most room rows.
+// fitTail lays out stderr lines, wrapped at limit within a text area edge
+// cells wide (wrapWordsIn), in at most room rows.
 // When they need more, the newest whole lines are kept behind one "…"
 // row; a newest line that alone needs more keeps its last rows.
-func fitTail(lines []string, limit, room int) []string {
+func fitTail(lines []string, limit, edge, room int) []string {
 	wrapped := make([][]string, len(lines))
 	total := 0
 	for i, line := range lines {
-		wrapped[i] = wrapWords(line, limit)
+		wrapped[i] = wrapWordsIn(line, limit, edge)
 		if len(wrapped[i]) == 0 {
 			wrapped[i] = []string{""}
 		}

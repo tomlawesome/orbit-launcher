@@ -565,7 +565,7 @@ func (m InstallModel) writeProfileTable(b *strings.Builder) {
 		st := rowStyle(i, p)
 		head := p.name + style.Separator + p.avail
 		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
-		for _, r := range wrapWords(p.adds, w-2) {
+		for _, r := range wrapWordsIn(p.adds, w-2, textArea(m.width)-2) {
 			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
 		}
 	}

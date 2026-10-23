@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -70,9 +71,12 @@ type RepairModel struct {
 	// serviceStates reads the deployment's containers for the services
 	// block (#255). Nil shows no block: the c9 harness leaves it unset,
 	// which keeps its goldens as they were. services holds the one
-	// reading; see readServices.
+	// reading; see readServices. servicesLimit is how long the read
+	// may take before the block says it could not check (#277); zero is
+	// deploy.ServiceStatesTimeout, the production reader's own limit.
 	serviceStates func(dir string) ([]deploy.ServiceState, error)
 	services      *serviceReading
+	servicesLimit time.Duration
 	// foreignOwned says which of the deployment's configuration files
 	// another account owns (#265); asked at every run start (see
 	// startDiagnosis). Nil checks nothing: the c9 harness leaves it
@@ -872,8 +876,8 @@ func (m RepairModel) viewExecuted() string {
 		// enum says why, and the exit code alone cannot.
 		switch m.execSummary.Reason {
 		case "deployment-version-unsupported":
-			writeWrapped(&b, style.DegradedText, "nothing was changed — this deployment's Orbit release is too old to repair here", limit)
-			writeWrapped(&b, style.DegradedText, "upgrade or reinstall it with a supported release, then diagnose again", limit)
+			writeWrappedIn(&b, style.DegradedText, "nothing was changed — this deployment's Orbit release is too old to repair here", limit, textArea(m.width))
+			writeWrappedIn(&b, style.DegradedText, "upgrade or reinstall it with a supported release, then diagnose again", limit, textArea(m.width))
 		default:
 			refusal := "nothing was changed — the engine refused to run"
 			if m.execSummary.Reason != "" {
@@ -881,7 +885,7 @@ func (m RepairModel) viewExecuted() string {
 				// text before it reaches the terminal (#277).
 				refusal += " (" + visibleText(m.execSummary.Reason) + ")"
 			}
-			writeWrapped(&b, style.DegradedText, refusal, limit)
+			writeWrappedIn(&b, style.DegradedText, refusal, limit, textArea(m.width))
 		}
 	}
 	if m.dangerous != nil && m.dangerous.Result == engine.ResultRefused {
@@ -893,7 +897,7 @@ func (m RepairModel) viewExecuted() string {
 		if m.dangerous.Reason == "non-interactive" {
 			refusal += " (no terminal was available to approve it)"
 		}
-		writeWrapped(&b, style.DegradedText, refusal, limit)
+		writeWrappedIn(&b, style.DegradedText, refusal, limit, textArea(m.width))
 	}
 
 	// The after-picture: the executor's own honest re-diagnosis.
@@ -952,11 +956,11 @@ func (m RepairModel) viewError() string {
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), title)
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
-		writeWrapped(&b, style.Tagline, visibleLines(m.runErr.Error()), measure(m.width, errorWidth))
+		writeWrappedIn(&b, style.Tagline, visibleLines(m.runErr.Error()), measure(m.width, errorWidth), textArea(m.width))
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
-		writeWrapped(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth))
+		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
 		rows = executedMenu
 	}
 	if m.runErr != nil || m.stoppedMutation() {
@@ -1076,7 +1080,7 @@ func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) 
 	shown := len(steps)
 	var more []string
 	for {
-		more = wrapWords(fmt.Sprintf("and %d more — make the terminal taller to see them", len(steps)-shown), measure(m.width, proseWidth))
+		more = wrapWordsIn(fmt.Sprintf("and %d more — make the terminal taller to see them", len(steps)-shown), measure(m.width, proseWidth), textArea(m.width))
 		used := len(more)
 		for _, step := range steps[:shown] {
 			used += len(step)
@@ -1113,7 +1117,7 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 	// The plan rows' text wraps at the same measure as the manual
 	// steps below, so the two never break at different widths.
 	for _, p := range m.planActions {
-		steps = append(steps, planRows(p, measure(m.width, proseWidth)))
+		steps = append(steps, planRowsIn(p, measure(m.width, proseWidth), textArea(m.width)))
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
@@ -1121,7 +1125,9 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			// on the end: drop the tag (the plan line above already
 			// names the problem) and wrap the rest, so it is never cut
 			// at the screen's edge (#253).
-			lines := wrapWords(manualStepWords(step), measure(m.width, proseWidth))
+			// Copyable text stays whole until the layout call on #277 group B:
+			// a step can name a path or command to run.
+			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), math.MaxInt)
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
@@ -1145,13 +1151,19 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 // too long for the row wraps as wrapWords does, its continuation rows
 // indented under the text after the glyph, so it is never cut at the
 // edge and "backup first" stays on screen. The action words keep their
-// ink on whichever rows they land.
+// ink on whichever rows they land. A screen draws through planRowsIn.
 func planRows(p engine.PlanAction, limit int) []string {
+	return planRowsIn(p, limit, limit)
+}
+
+// planRowsIn is planRows wrapped as wrapWordsIn wraps, for a screen whose
+// text area is edge cells wide.
+func planRowsIn(p engine.PlanAction, limit, edge int) []string {
 	glyph := style.AccentText.Render(style.SymbolQueued)
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
-	lines := wrapWords(planText(p), limit)
+	lines := wrapWordsIn(planText(p), limit, edge)
 	// The action words lead the text; wrapWords drops only the space at
 	// each break, so each row's ink is what it shares with the action
 	// words not yet drawn (matched, not counted, as an unknown action

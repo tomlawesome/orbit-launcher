@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -49,12 +51,25 @@ func realServiceStates(dir string) ([]deploy.ServiceState, error) {
 	return deploy.ServiceStates(context.Background(), dir)
 }
 
+// errServicesNoAnswer is the read's answer when the reader has not
+// answered within the model's servicesLimit: the block says it could not
+// check, as for any reader error.
+var errServicesNoAnswer = errors.New("the services reader did not answer in time")
+
 // readServices starts the one read of the services, returning the
 // command that runs it off the screen's thread, or nil when it has
 // started already. A model with no serviceStates seam (the c9 harness)
 // reads nothing and shows no services block at all. The reading lives
 // behind a pointer because the model is copied on every Update; the
 // command never touches it.
+//
+// The command waits at most servicesLimit (#277). The reader runs on a
+// goroutine of its own; when it is late the command answers "no answer"
+// and returns, so nothing on the screen's side waits on it. A reader
+// that never returns keeps its own goroutine (the production reader
+// stops itself at the same limit); it never blocks on its answer, which
+// has a buffered slot, and the answer is dropped: the command has
+// already sent its one message.
 func (m RepairModel) readServices() tea.Cmd {
 	r := m.services
 	if m.serviceStates == nil || r == nil || r.loaded || r.pending {
@@ -62,9 +77,26 @@ func (m RepairModel) readServices() tea.Cmd {
 	}
 	r.pending = true
 	read, dir := m.serviceStates, m.targetDir
+	limit := m.servicesLimit
+	if limit <= 0 {
+		limit = deploy.ServiceStatesTimeout
+	}
 	return func() tea.Msg {
-		states, err := read(dir)
-		return repairServicesMsg{reading: r, expected: expectedServices(dir), states: states, err: err}
+		type answer struct {
+			states []deploy.ServiceState
+			err    error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			states, err := read(dir)
+			answered <- answer{states, err}
+		}()
+		select {
+		case a := <-answered:
+			return repairServicesMsg{reading: r, expected: expectedServices(dir), states: a.states, err: a.err}
+		case <-time.After(limit):
+			return repairServicesMsg{reading: r, expected: expectedServices(dir), err: errServicesNoAnswer}
+		}
 	}
 }
 
@@ -143,10 +175,11 @@ func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
 
 // servicesBlock returns the block's rows, or nil when there is none to
 // show. room is the rows the screen has left for it once the rest of
-// the screen, the plan included, has its rows (label and the blank row
-// after it included); the full list is used if it fits, otherwise the
-// running rows fold into one `✓ N running` row and every faulted or
-// missing row stays.
+// the screen, the plan included, has its rows. The block draws its label
+// and one row per service, nothing more (viewDiagnosis joins it straight
+// onto the findings), so the full list is used when those rows fit room
+// (#277); otherwise the running rows fold into one `✓ N running` row and
+// every faulted or missing row stays.
 func (m RepairModel) servicesBlock(room int) []string {
 	if m.serviceStates == nil || m.services == nil {
 		return nil
@@ -161,7 +194,7 @@ func (m RepairModel) servicesBlock(room int) []string {
 		return []string{style.MutedText.Render("services" + style.Separator + "could not check")}
 	}
 	rows := serviceRows(m.services.expected, m.services.states)
-	var folded, faulted []serviceRow
+	var faulted []serviceRow
 	running := 0
 	for _, r := range rows {
 		if r.running {
@@ -170,11 +203,9 @@ func (m RepairModel) servicesBlock(room int) []string {
 			faulted = append(faulted, r)
 		}
 	}
-	if len(rows)+2 > room && running > 0 {
-		folded = faulted
-	} else {
-		folded = nil
-	}
+	// Fold when the label and a row each don't fit; a healthy
+	// deployment folds too, to the one running row alone.
+	fold := 1+len(rows) > room && running > 0
 	const plainWidth = 2 + serviceNameWidth
 	width := 0
 	for _, r := range rows {
@@ -195,7 +226,7 @@ func (m RepairModel) servicesBlock(room int) []string {
 		name := r.name + strings.Repeat(" ", max(0, serviceNameWidth-len(r.name)))
 		return glyphStyle.Render(r.glyph) + " " + style.Ink.Render(name) + wordStyle.Render(r.word) + pad(plainWidth+len(r.word))
 	}
-	if folded != nil {
+	if fold {
 		sum := fmt.Sprintf("%s %d %s", style.SymbolSuccess, running, deploy.ContainerRunning)
 		out = append(out, style.SuccessText.Render(style.SymbolSuccess)+style.MutedText.Render(fmt.Sprintf(" %d %s", running, deploy.ContainerRunning))+pad(len([]rune(sum))))
 		for _, r := range faulted {

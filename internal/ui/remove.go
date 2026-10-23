@@ -327,7 +327,7 @@ func (m RemoveModel) viewConfirm() string {
 		prose = []string{prose[0], "by this step — they stay on disk."}
 	}
 	for _, line := range prose {
-		writeWrapped(&b, style.MutedText, line, measure(m.width, proseWidth))
+		writeWrappedIn(&b, style.MutedText, line, measure(m.width, proseWidth), textArea(m.width))
 	}
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
@@ -350,21 +350,21 @@ func (m RemoveModel) viewDone() string {
 
 	targetDir := m.deployment.TargetDir
 	prose := measure(m.width, proseWidth)
-	writeWrapped(&b, style.MutedText, "Containers and networks are stopped. Your files and data", prose)
+	writeWrappedIn(&b, style.MutedText, "Containers and networks are stopped. Your files and data", prose, textArea(m.width))
 	// The path is the one word here whose length and characters nobody
 	// chose, so it is escaped for the terminal and cut across rows.
 	for _, row := range wrapHard("volumes are still on disk at "+targetDir+" —", prose, m.width-4, folderRows) {
 		fmt.Fprintln(&b, style.MutedText.Render(row))
 	}
-	writeWrapped(&b, style.MutedText, "nothing has been deleted.", prose)
+	writeWrappedIn(&b, style.MutedText, "nothing has been deleted.", prose, textArea(m.width))
 	fmt.Fprintln(&b)
 	// For the root or home folder only the data-volume half is offered:
 	// "sudo rm -rf" there would delete far more than Orbit.
 	refused := m.refusedFolder()
 	if refused != "" {
-		writeWrapped(&b, style.Tagline, "to remove Orbit's data volumes from this machine, copy and run", prose)
+		writeWrappedIn(&b, style.Tagline, "to remove Orbit's data volumes from this machine, copy and run", prose, textArea(m.width))
 	} else {
-		writeWrapped(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose)
+		writeWrappedIn(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose, textArea(m.width))
 	}
 
 	// The command is over 100 cells for a short path, and the box adds
@@ -390,10 +390,10 @@ func (m RemoveModel) viewDone() string {
 	// errorWidth, not proseWidth: the box's caption reads at the box's measure.
 	wide := measure(m.width, errorWidth)
 	if refused != "" {
-		writeWrapped(&tail, style.DegradedText, "this deletes all mail and documents — it cannot be undone", wide)
-		writeWrapped(&tail, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own. Orbit's files there stay for you to remove.", prose)
+		writeWrappedIn(&tail, style.DegradedText, "this deletes all mail and documents — it cannot be undone", wide, textArea(m.width))
+		writeWrappedIn(&tail, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own. Orbit's files there stay for you to remove.", prose, textArea(m.width))
 	} else {
-		writeWrapped(&tail, style.DegradedText, "this deletes all mail, documents and configuration, and everything else in the folder, backups included — it cannot be undone", wide)
+		writeWrappedIn(&tail, style.DegradedText, "this deletes all mail, documents and configuration, and everything else in the folder, backups included — it cannot be undone", wide, textArea(m.width))
 	}
 	fmt.Fprintln(&tail)
 	// The copy row says so once it has copied; the menu's own label,
@@ -458,7 +458,7 @@ func (m RemoveModel) viewFailed() string {
 		// Docker's words would say only that it was killed: the screen
 		// gives the limit and the command to run by hand instead. The
 		// rows are escaped for the terminal like the removal command's.
-		writeWrapped(&b, style.Tagline, "The stack hasn't come down after "+limitWords(timedOut.Limit)+". Try again manually later with:", measure(m.width, errorWidth))
+		writeWrappedIn(&b, style.Tagline, "The stack hasn't come down after "+limitWords(timedOut.Limit)+". Try again manually later with:", measure(m.width, errorWidth), textArea(m.width))
 		words := make([]string, len(timedOut.Words))
 		for i, w := range timedOut.Words {
 			words[i] = visibleText(w)
@@ -476,7 +476,7 @@ func (m RemoveModel) viewFailed() string {
 		// screen.
 		lines := strings.Split(strings.TrimRight(m.standDownErr.Error(), "\n"), "\n")
 		shown := append([]string{lines[0]}, tailLines(lines[1:], 6)...)
-		writeWrapped(&b, style.Tagline, visibleLines(strings.Join(shown, "\n")), measure(m.width, errorWidth))
+		writeWrappedIn(&b, style.Tagline, visibleLines(strings.Join(shown, "\n")), measure(m.width, errorWidth), textArea(m.width))
 		fmt.Fprintln(&b)
 	}
 	m.after.write(&b)

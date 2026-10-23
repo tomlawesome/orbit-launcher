@@ -71,9 +71,11 @@ type AppModel struct {
 	flowReadClaim func(ctx context.Context, dir, appURL string, since time.Time) (string, error)
 
 	// servicesReader reads the deployment's containers for Repair's
-	// services block and the splash's degraded count (#255); nil is the
-	// real `docker compose ps` (WithServicesReader).
-	servicesReader func(dir string) ([]deploy.ServiceState, error)
+	// services block and the splash's degraded count (#255). Until
+	// WithServicesReader sets it (servicesReaderSet), the real `docker
+	// compose ps` is used; once set, nil means no reading anywhere (#277).
+	servicesReader    func(dir string) ([]deploy.ServiceState, error)
+	servicesReaderSet bool
 
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 20 s default).
@@ -148,18 +150,21 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 // WithServicesReader supplies how the services are read, for Repair's
 // services block and the splash's count, in place of the real `docker
 // compose ps` (#277): tests pass a fake, so no app-level test depends on
-// the machine's Docker.
+// the machine's Docker. Nil reads nothing: the splash does not count and
+// Repair shows no services block, whichever order this and
+// WithDeploymentStatus are given in.
 func (m AppModel) WithServicesReader(read func(dir string) ([]deploy.ServiceState, error)) AppModel {
-	m.servicesReader = read
-	if m.splash.serviceStates != nil {
+	m.servicesReader, m.servicesReaderSet = read, true
+	if m.splash.targetDir != "" { // a deployment was applied already
 		m.splash.serviceStates = read
 	}
 	return m
 }
 
-// readServices is the services reader the app hands its screens.
+// readServices is the services reader the app hands its screens: the
+// one WithServicesReader set, nil included, else the real one.
 func (m AppModel) readServices() func(dir string) ([]deploy.ServiceState, error) {
-	if m.servicesReader != nil {
+	if m.servicesReaderSet {
 		return m.servicesReader
 	}
 	return realServiceStates
