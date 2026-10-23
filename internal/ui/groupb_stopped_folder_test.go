@@ -78,6 +78,10 @@ func gbStAnswers(entries ...os.DirEntry) *gbStFolderSeam {
 // read is out and feed the answer when it likes. Whatever else is pending
 // is driven as drive does. Any call of the folder seam inside Update (as
 // opposed to a command) is an error.
+//
+// The loop is split across gbStNext (run one command, holding the read's
+// answer) and gbStFeed (one Update, checked), so drive in helpers_test.go
+// stays the one command driver (TestOneDriverExpandsBatches).
 func gbStDrive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, q *sink, seam *gbStFolderSeam, hold bool) (M, tea.Msg) {
 	t.Helper()
 	var held tea.Msg
@@ -89,14 +93,10 @@ func gbStDrive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, q *sink, seam *gbStF
 		var msg tea.Msg
 		switch {
 		case len(cmds) > 0:
-			next := cmds[0]
+			var ok bool
+			msg, ok = gbStNext(cmds[0], seam, hold && held == nil)
 			cmds = cmds[1:]
-			if next == nil {
-				continue
-			}
-			before := seam.calls.Load()
-			msg = next()
-			if hold && held == nil && seam.calls.Load() > before {
+			if !ok {
 				held = msg
 				continue
 			}
@@ -116,17 +116,39 @@ func gbStDrive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, q *sink, seam *gbStF
 		if _, ok := msg.(tickMsg); ok || msg == nil {
 			continue
 		}
-		before := seam.calls.Load()
 		var more tea.Cmd
-		m, more = updateAs(t, m, msg)
-		if seam.calls.Load() != before {
-			t.Errorf("the folder seam was called inside Update (handling %T); it may only be called from a command", msg)
-		}
+		m, more = gbStFeed(t, m, msg, seam)
 		if _, ended := msg.(engineStreamEndedMsg); ended && more == nil && len(cmds) == 0 {
 			return m, held
 		}
 		cmds = append(cmds, more)
 	}
+}
+
+// gbStNext runs one command. With hold, a message produced by a command
+// that called the folder seam is returned with ok false: held, not fed.
+func gbStNext(next tea.Cmd, seam *gbStFolderSeam, hold bool) (msg tea.Msg, ok bool) {
+	if next == nil {
+		return nil, true
+	}
+	before := seam.calls.Load()
+	msg = next()
+	if hold && seam.calls.Load() > before {
+		return msg, false
+	}
+	return msg, true
+}
+
+// gbStFeed hands msg to the model, failing the test if the folder seam
+// was called while the model handled it.
+func gbStFeed[M tea.Model](t *testing.T, m M, msg tea.Msg, seam *gbStFolderSeam) (M, tea.Cmd) {
+	t.Helper()
+	before := seam.calls.Load()
+	m, more := updateAs(t, m, msg)
+	if seam.calls.Load() != before {
+		t.Errorf("the folder seam was called inside Update (handling %T); it may only be called from a command", msg)
+	}
+	return m, more
 }
 
 // gbStInstallStopped runs an Install in dir through to the stopped
