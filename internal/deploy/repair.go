@@ -49,6 +49,11 @@ const repairScript = "repair.sh"
 // restored rather than refused, and its exit 5 reaches the same
 // no-deployment screen (ui maps engine.ExitNotInstalled).
 func RepairCommand(targetDir string, mode RepairMode) (*exec.Cmd, error) {
+	// The folder's name before anything else: nothing is read from or
+	// run in a folder whose name holds a control character (#277 W3).
+	if err := checkFolder(targetDir); err != nil {
+		return nil, err
+	}
 	// The owner rule before the settings are read: another account's
 	// folder is refused as such, not as a file it cannot open (#277).
 	if err := requireLauncherOwnsIfDir(targetDir); err != nil {

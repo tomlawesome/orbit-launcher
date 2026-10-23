@@ -1112,7 +1112,13 @@ func (r engineRun) stoppedRows() []string {
 		rows = append(rows, removeCopy)
 	}
 	switch r.stopKind() {
-	case stoppedBeforeWriting, stoppedUndone, stoppedUndoneButDocker, stoppedDied, stoppedCouldNotStart:
+	case stoppedCouldNotStart:
+		if errors.Is(r.runErr, deploy.ErrFolderNameControl) {
+			// A rerun from the same folder fails the same way (#277 W3).
+			break
+		}
+		fallthrough
+	case stoppedBeforeWriting, stoppedUndone, stoppedUndoneButDocker, stoppedDied:
 		again := installAgain
 		if r.action == deploy.ActionUpdate {
 			again = updateAgain
@@ -1248,14 +1254,7 @@ func (r engineRun) viewFailed(width, height int) string {
 	switch kind {
 	case stoppedCouldNotStart, stoppedOther, stoppedHandoffRefused:
 		if r.runErr != nil {
-			text := r.runErr.Error()
-			// visibleText is not idempotent (a backslash is shown doubled),
-			// so text that was escaped as it was built is not escaped again.
-			var shown shownText
-			if !errors.As(r.runErr, &shown) {
-				text = visibleLines(text)
-			}
-			writeWrappedIn(&b, style.Tagline, text, limit, textArea(width))
+			writeWrappedIn(&b, style.Tagline, errorWords(r.runErr), limit, textArea(width))
 		}
 	default:
 		if r.sawEvent {
@@ -1319,6 +1318,19 @@ func (r engineRun) viewFailed(width, height int) string {
 	}
 	b.WriteString(after.String())
 	return skyBlock(r.console.sky, width, height, b.String())
+}
+
+// errorWords is an error's text as a screen shows it: visibleLines,
+// except for text escaped as it was built, since visibleText is not
+// idempotent (a backslash is shown doubled). That is a shownText, and
+// deploy's refusal of a folder whose name holds a control character,
+// which names the character as its escape and holds no raw one.
+func errorWords(err error) string {
+	var shown shownText
+	if errors.As(err, &shown) || errors.Is(err, deploy.ErrFolderNameControl) {
+		return err.Error()
+	}
+	return visibleLines(err.Error())
 }
 
 // fitTail lays out stderr lines, wrapped at limit within a text area edge

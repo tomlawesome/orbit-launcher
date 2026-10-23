@@ -956,7 +956,7 @@ func (m RepairModel) viewError() string {
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), title)
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
-		writeWrappedIn(&b, style.Tagline, visibleLines(m.runErr.Error()), measure(m.width, errorWidth), textArea(m.width))
+		writeWrappedIn(&b, style.Tagline, errorWords(m.runErr), measure(m.width, errorWidth), textArea(m.width))
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
