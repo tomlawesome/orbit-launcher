@@ -645,17 +645,23 @@ func TestNarrow_R_DoneScreenKeepsItsMenuAt50Columns(t *testing.T) {
 	}
 }
 
-// s. A box cut for room ends in an ellipsis row, and Copy command still
-// carries the whole command: the cut is display only.
-func TestNarrow_S_ACutBoxEndsInAnEllipsisRowAndCopyStillHasTheWholeCommand(t *testing.T) {
+// s. A box cut for room starts with an ellipsis row and keeps the
+// command's end (#277 L2), and Copy command still carries the whole
+// command: the cut is display only.
+func TestNarrow_S_ACutBoxStartsWithAnEllipsisRowAndCopyStillHasTheWholeCommand(t *testing.T) {
 	var buf bytes.Buffer
 	m := narrowDoneModel(t, c9LongDir, 50, 24, &buf)
 	inside := narrowBoxInside(t, screen(m))
 	if len(inside) < 2 {
 		t.Fatalf("the box has %d rows, want at least 2: %q", len(inside), inside)
 	}
-	if last := strings.TrimSpace(inside[len(inside)-1]); last != "…" {
-		t.Errorf("the box's last row is %q, want %q: %q", last, "…", inside)
+	// The end of the command is kept, behind one "…" row (#277 L2).
+	if first := strings.TrimSpace(inside[0]); first != "…" {
+		t.Errorf("the box's first row is %q, want %q: %q", first, "…", inside)
+	}
+	full := narrowBoxInside(t, screen(narrowDoneModel(t, c9LongDir, 50, 80, &bytes.Buffer{})))
+	if last, want := strings.TrimRight(inside[len(inside)-1], " "), strings.TrimRight(full[len(full)-1], " "); last != want {
+		t.Errorf("the box's last row is %q, want the command's last row %q: %q", last, want, inside)
 	}
 	for i, r := range inside {
 		if w := lipgloss.Width(r); w > 42 {

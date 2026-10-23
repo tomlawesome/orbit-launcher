@@ -83,9 +83,17 @@ func TestGroupB_L2_ShortTerminalKeepsTheEndOfTheCommand(t *testing.T) {
 				if room >= 2 && n >= 2 && k < min(room, n) {
 					t.Errorf("the box has %d rows but %d fit (height %d): it is shorter than it needs to be:\n%s", k, min(room, n), h, s)
 				}
-				if !strings.Contains(strings.Join(got, "\n"), "rm") && room >= 3 {
-					// the end of the command is the half that deletes: rm -rf <folder>
-					t.Errorf("the deleting half (`rm`) is not in the box:\n%s", s)
+				// the end of the command is the half that deletes: rm -rf
+				// <folder>; `rm` is in the box whenever its row is among the
+				// last room-1 rows the box keeps.
+				rmRow := -1
+				for i, r := range full {
+					if strings.Contains(r, "rm") {
+						rmRow = i
+					}
+				}
+				if rmRow >= 0 && k < n && rmRow >= n-(k-1) && !strings.Contains(strings.Join(got, "\n"), "rm") {
+					t.Errorf("the deleting half (`rm`) falls within the rows kept but is not in the box:\n%s", s)
 				}
 
 				flat := proseOnly(s)
