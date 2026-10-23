@@ -1014,39 +1014,37 @@ func (m RepairModel) viewDiagnosis() string {
 	fmt.Fprintln(&tail)
 	m.menu.over(m.planMenu()).write(&tail)
 
-	// The findings take the rows the header, the summary, the whole
-	// plan and the menu leave, as the steps do, so an older repair.sh
-	// with many findings never pushes the menu off the screen.
+	// The services block gives way first (#290): it takes the rows the
+	// rest leaves with the findings and the whole plan at full length,
+	// and shrinks in steps (servicesBlock) before anything else. Only
+	// then do the findings shorten, taking the rows the header, the
+	// block, the summary, the whole plan and the menu leave, so an older
+	// repair.sh with many findings never pushes the menu off the screen.
+	// The last row is left to the sky, as on every scene screen.
 	stepRows := 0
 	for _, step := range steps {
 		stepRows += len(step)
-	}
-	findRoom := math.MaxInt
-	if m.height > 0 {
-		findRoom = m.height - 1 - strings.Count(head, "\n") - strings.Count(summary.String(), "\n") - strings.Count(tail.String(), "\n") - stepRows
 	}
 	var found [][]string
 	for _, f := range sortedFindings(m.findings) {
 		found = append(found, []string{findingLine(f)})
 	}
-	m.writeSteps(&b, found, findRoom)
-	b.WriteString(summary.String())
-
-	// The services block sits above the findings and takes the rows the
-	// rest leaves (the whole plan counted, since the steps can shorten
-	// themselves but the block should not squeeze them): the full list
-	// when it fits, else the running rows folded. The last row is left
-	// to the sky, as on every scene screen.
-	rest := head + b.String()
+	fixed := 1 + strings.Count(head, "\n") + strings.Count(summary.String(), "\n") + strings.Count(tail.String(), "\n") + stepRows
 	svcRoom := math.MaxInt
 	if m.height > 0 {
-		svcRoom = m.height - 1 - strings.Count(rest, "\n") - strings.Count(tail.String(), "\n") - stepRows
+		svcRoom = m.height - fixed - len(found)
 	}
-	if block := m.servicesBlock(svcRoom); block != nil {
-		rest = head + strings.Join(block, "\n") + "\n" + b.String()
+	block := m.servicesBlock(svcRoom)
+	findRoom := math.MaxInt
+	if m.height > 0 {
+		findRoom = m.height - fixed - len(block)
 	}
-	b.Reset()
-	b.WriteString(rest)
+	b.WriteString(head)
+	for _, row := range block {
+		fmt.Fprintln(&b, row)
+	}
+	m.writeSteps(&b, found, findRoom)
+	b.WriteString(summary.String())
 
 	// The steps take whatever rows remain, so a short terminal
 	// never pushes the summary and menu off the bottom.

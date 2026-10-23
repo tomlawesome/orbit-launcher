@@ -24,8 +24,13 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, startApp))
 }
 
+// effectiveUID is the user the launcher runs as, for the root refusal in
+// run. A variable so tests can check that refusal without a real root run.
+var effectiveUID = os.Geteuid
+
 // run is orbit-launcher's entire command-line surface: the --version
-// and --licences short-circuits, and otherwise the TUI itself. startApp is a seam for
+// short-circuit, the refusal to run as root, the --licences
+// short-circuit, and otherwise the TUI itself. startApp is a seam for
 // tests -- main always passes startApp itself; main_test.go substitutes a
 // stub so the dispatch logic (which args launch the TUI, what exit code
 // and output each path produces) can be checked without a real terminal.
@@ -38,6 +43,14 @@ func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr i
 		fmt.Fprintf(stdout, "orbit-launcher %s (%s)\n", release.DisplayVersion(release.Version), release.Revision)
 		return 0
 	}
+	// Nothing the launcher or Orbit's installer does needs root, and
+	// running as root only leaves root-owned deployment files, so root is
+	// refused before anything is read or run (#291). --version alone
+	// still answers: it reads and runs nothing.
+	if effectiveUID() == 0 {
+		fmt.Fprintln(stderr, rootRefusal(os.Getenv("SUDO_USER")))
+		return 1
+	}
 	// The licence notices every copy of the binary owes its dependencies
 	// (#182). Both spellings, since either is what someone will type.
 	if len(args) > 0 && (args[0] == "--licences" || args[0] == "--licenses") {
@@ -45,6 +58,17 @@ func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr i
 		return 0
 	}
 	return startApp(stdout, stderr)
+}
+
+// rootRefusal is the one line the launcher prints when run as root:
+// under sudo (SUDO_USER names someone other than root) it says to drop
+// sudo, otherwise to use one's own account.
+func rootRefusal(sudoUser string) string {
+	how := "as your own user, the one who'll look after Orbit"
+	if sudoUser != "" && sudoUser != "root" {
+		how = "without sudo, as the user who'll look after Orbit"
+	}
+	return "orbit-launcher doesn't run as root. Run it again " + how + ". That user needs to be able to use Docker."
 }
 
 // startApp builds and runs the TUI program to completion. stdout is

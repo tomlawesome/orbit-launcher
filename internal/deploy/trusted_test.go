@@ -31,8 +31,7 @@ func chmod(t *testing.T, path string, mode os.FileMode) {
 
 // #191: nothing runs from a deployment unless the path is a real
 // directory and a regular file, neither world-writable, consistently
-// owned by the user running the launcher (or by anyone when it runs as
-// root).
+// owned by the user running the launcher.
 func TestRequireTrustedPath(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -221,17 +220,6 @@ func TestRequireTrustedPath_Owners(t *testing.T) {
 			t.Fatalf("err = %v, want an owner mismatch refusal", err)
 		}
 	})
-	t.Run("root may run a deployment another user owns consistently", func(t *testing.T) {
-		dir := trustedDeployment(t)
-		for _, p := range []string{dir, filepath.Join(dir, "scripts"), filepath.Join(dir, "scripts", "repair.sh")} {
-			if err := os.Lchown(p, nobody, nobody); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := RequireTrustedPath(dir, "scripts/repair.sh"); err != nil {
-			t.Fatalf("root refused a consistently owned deployment: %v", err)
-		}
-	})
 }
 
 func TestRequireTrustedPath_MissingFileIsNotExist(t *testing.T) {
@@ -357,12 +345,9 @@ func TestImportTargetConfig_RefusesUntrustedConfiguration(t *testing.T) {
 	})
 }
 
-// The owner branch without root: a system directory root owns is not
-// the launcher user's deployment.
+// A system directory root owns is not the launcher user's deployment.
 func TestRequireTrustedPath_RootOwnedPathRefusedForAnotherUser(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: root may use any consistently owned path")
-	}
+	asLauncherUser(t, 65534)
 	err := RequireTrustedPath("/usr", "bin/env")
 	var untrusted *UntrustedPathError
 	if !errors.As(err, &untrusted) || !strings.Contains(err.Error(), "not by the user running the launcher") {
@@ -809,7 +794,7 @@ func TestUntrustedPathError_ReasonBeforePath(t *testing.T) {
 
 // asLauncherUser makes RequireTrustedPath see the launcher running as
 // uid, so the owner rules are tested whoever runs the suite (CI runs
-// as root, a developer usually doesn't).
+// the tests as root, a developer usually doesn't).
 func asLauncherUser(t *testing.T, uid int) {
 	t.Helper()
 	saved := launcherEUID
@@ -826,13 +811,6 @@ func TestRequireTrustedPath_OwnerRules(t *testing.T) {
 		var untrusted *UntrustedPathError
 		if !errors.As(err, &untrusted) || untrusted.Path != dir || !strings.Contains(err.Error(), "not by the user running the launcher") {
 			t.Fatalf("err = %v, want the owner refusal naming %s", err, dir)
-		}
-	})
-	t.Run("root may run a deployment another user owns", func(t *testing.T) {
-		dir := trustedDeployment(t)
-		asLauncherUser(t, 0)
-		if err := RequireTrustedPath(dir, "scripts/repair.sh"); err != nil {
-			t.Fatalf("root refused a consistently owned deployment: %v", err)
 		}
 	})
 	t.Run("the same user's deployment is accepted", func(t *testing.T) {
@@ -954,15 +932,6 @@ func TestStandDown_RefusesAnUntrustedDeployment(t *testing.T) {
 			t.Errorf("err = %v, want the owner refusal", err)
 		}
 		dockerNeverRan(t, callLog)
-	})
-	t.Run("root may stand down a deployment another user owns", func(t *testing.T) {
-		dir := trustedDeployment(t)
-		asLauncherUser(t, 0)
-		callLog := fakeDockerLogging(t)
-		if err := StandDown(t.Context(), dir); err != nil {
-			t.Fatalf("root was refused a consistently owned deployment: %v", err)
-		}
-		assertOneComposeDown(t, callLog, dir)
 	})
 }
 

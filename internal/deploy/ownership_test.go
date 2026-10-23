@@ -540,10 +540,10 @@ func TestForeignOwned_AnotherAccountsFolderIsRefusedNotAdvised(t *testing.T) {
 	}
 }
 
-// The rule refuses only what the trust check refuses: the owner and root
-// still get the advice.
-func TestForeignOwned_TheOwnerAndRootStillGetTheAdvice(t *testing.T) {
-	for name, uid := range map[string]int{"the folder's owner": os.Geteuid(), "root": 0} {
+// The rule refuses only what the trust check refuses: the owner still
+// gets the advice.
+func TestForeignOwned_TheOwnerStillGetsTheAdvice(t *testing.T) {
+	for name, uid := range map[string]int{"the folder's owner": os.Geteuid()} {
 		t.Run(name, func(t *testing.T) {
 			dir := fowOwnDeployment(t)
 			asLauncherUser(t, uid)
