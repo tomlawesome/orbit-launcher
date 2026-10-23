@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -1284,13 +1283,8 @@ func (r engineRun) viewFailed(width, height int) string {
 		// broken between its words only, so it reads whole; Copy command
 		// copies the raw line.
 		fmt.Fprintln(&after)
-		if box, ok := commandBox(r.recoveryCommand, width); ok {
-			for _, line := range box {
-				fmt.Fprintln(&after, line)
-			}
-		} else {
-			// copyable text stays whole until the layout call on #277 group B
-			writeWrappedIn(&after, style.Ink, visibleCommand(r.recoveryCommand), limit, math.MaxInt)
+		for _, line := range commandBox(r.recoveryCommand, width) {
+			fmt.Fprintln(&after, line)
 		}
 	}
 	for _, step := range r.nextSteps(kind) {
@@ -1317,9 +1311,10 @@ func (r engineRun) viewFailed(width, height int) string {
 		stderr = append(stderr, line)
 	}
 	room := max(height-strings.Count(b.String(), "\n")-strings.Count(after.String(), "\n")-2, 1)
-	// copyable text stays whole until the layout call on #277 group B
-	// (the installer's lines carry the backup folder's path)
-	for _, line := range fitTail(stderr, limit, math.MaxInt, room) {
+	// The installer's lines carry the backup folder's path: a word that
+	// fits the text area stays whole, a wider one is cut at the measure,
+	// every character kept (#277 L4).
+	for _, line := range fitTail(stderr, limit, textArea(width), room) {
 		fmt.Fprintln(&b, style.Tagline.Render(line))
 	}
 	b.WriteString(after.String())
@@ -1362,14 +1357,15 @@ func fitTail(lines []string, limit, edge, room int) []string {
 }
 
 // commandBox frames a shell command the way printf %q quotes it, like
-// Remove's box: the text gets width-8, and rows break only at a space
-// that is not escaped (one after an even run of backslashes), each
-// continued row ending " \", "&&" starting its own row, continuation
-// rows indented two cells and an option kept with its value where it
-// fits. Words are shown escaped for the terminal, backslashes as
-// written. A command with a word too wide for a row is not boxed
-// (false): the caller wraps it plainly so it still reads whole.
-func commandBox(command string, width int) ([]string, bool) {
+// Remove's box: the text gets width-8, and rows break only between
+// words (shellWords), each continued row ending " \", "&&" starting its
+// own row, continuation rows indented two cells and an option kept with
+// its value where it fits. Words are shown escaped for the terminal,
+// backslashes as written. It always boxes (#277 L4): a command holding a
+// word too wide for a row is laid out by wrapShellCommand, which cuts
+// that word with the shell's own continuation, so the box still reads
+// back as the command.
+func commandBox(command string, width int) []string {
 	limit := width - 8
 	const indent, cont = "  ", " \\"
 	words := shellWords(command)
@@ -1389,54 +1385,92 @@ func commandBox(command string, width int) ([]string, bool) {
 				i++
 			}
 			if !fits(u) {
-				return nil, false
+				units = nil
+				break
 			}
 			units = append(units, u)
 		}
-		line := ""
-		for _, u := range units {
-			if line != "" && line != indent && (u == "&&" || lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit) {
-				lines = append(lines, line+cont)
-				line = indent
+		if units == nil {
+			lines = wrapShellCommand(words, limit)
+		} else {
+			line := ""
+			for _, u := range units {
+				if line != "" && line != indent && (u == "&&" || lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit) {
+					lines = append(lines, line+cont)
+					line = indent
+				}
+				if line != "" && line != indent {
+					line += " "
+				}
+				line += u
 			}
-			if line != "" && line != indent {
-				line += " "
-			}
-			line += u
+			lines = append(lines, line)
 		}
-		lines = append(lines, line)
 	}
 	boxW := 0
 	for i, l := range lines {
 		boxW = max(boxW, lipgloss.Width(l))
 		lines[i] = style.Ink.Render(l)
 	}
-	return drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines), true
+	return drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines)
 }
 
-// shellWords splits a printf %q quoted command at its word breaks: the
-// spaces not escaped by a backslash (a space after an odd run of
-// backslashes is part of the word). Runs of spaces are one break.
+// shellWords splits a shell command at its word breaks: the spaces that
+// are not escaped by a backslash (a space after an odd run of
+// backslashes is part of the word) and not inside quotes ('…', "…" or
+// $'…'), so a quoted folder with spaces in it is one word, as the shell
+// reads it. Runs of spaces are one break; an unclosed quote runs to the
+// end.
 func shellWords(command string) []string {
 	var words []string
-	start, run := 0, 0
-	for i := 0; i < len(command); i++ {
-		switch c := command[i]; {
-		case c == '\\':
-			run++
-			continue
-		case c == ' ' && run%2 == 0:
-			if i > start {
+	start := -1
+	for i := 0; i < len(command); {
+		c := command[i]
+		if c == ' ' {
+			if start >= 0 {
 				words = append(words, command[start:i])
+				start = -1
 			}
-			start = i + 1
+			i++
+			continue
 		}
-		run = 0
+		if start < 0 {
+			start = i
+		}
+		switch {
+		case c == '\\':
+			i += 2
+		case c == '\'':
+			i = quoteEnd(command, i+1, '\'', false)
+		case c == '"':
+			i = quoteEnd(command, i+1, '"', true)
+		case c == '$' && i+1 < len(command) && command[i+1] == '\'':
+			i = quoteEnd(command, i+2, '\'', true)
+		default:
+			i++
+		}
 	}
-	if start < len(command) {
+	if start >= 0 && start < len(command) {
 		words = append(words, command[start:])
 	}
 	return words
+}
+
+// quoteEnd is the index just past the quote closing at or after i, a
+// backslash escaping the next byte when escapes is set; len(s) when the
+// quote never closes.
+func quoteEnd(s string, i int, quote byte, escapes bool) int {
+	for i < len(s) {
+		switch {
+		case escapes && s[i] == '\\':
+			i += 2
+		case s[i] == quote:
+			return i + 1
+		default:
+			i++
+		}
+	}
+	return len(s)
 }
 
 // writeStackedMenu writes menu rows in the centred grammar: each label

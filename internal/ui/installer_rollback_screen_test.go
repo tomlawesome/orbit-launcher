@@ -13,6 +13,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -189,15 +190,17 @@ func TestRollbackScreen_TheCommandIsFramedWholeAndBrokenOnlyBetweenWords(t *test
 	}
 }
 
-// A word wider than the box cannot be broken: the screen still shows the
-// command whole (the plain wrap), with its Copy command row.
+// A word wider than the box is still boxed (#277 L4): it is cut with the
+// shell's own continuation, so the box read as a shell reads it is the
+// command whole, with its Copy command row.
 func TestRollbackScreen_AWordWiderThanTheBoxStillReadsWhole(t *testing.T) {
 	wide := "cd /srv/" + strings.Repeat("deep-folder-name/", 8) + "engine && docker compose down"
 	m, _ := installApp(t, failedScript(
 		[]string{"recovery-command: " + wide}, retryEvent, retryStderr(wide)), 80, 40)
 	s := screen(m)
-	if !strings.Contains(flat(s), wide) {
-		t.Errorf("a command with a word wider than the box does not read whole:\n%s", s)
+	rows, boxed := gbStBox(s)
+	if got, want := gbStShellWords(strings.Join(rows, "\n")), strings.Fields(wide); !boxed || !slices.Equal(got, want) {
+		t.Errorf("a command with a word wider than the box does not read whole in its box (%q):\n%s", got, s)
 	}
 	if !hasRow(s, "Copy command") {
 		t.Errorf("no Copy command row:\n%s", s)

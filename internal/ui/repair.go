@@ -1109,7 +1109,7 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 		// No plan lines: healthy, a --check fallback run, or nothing
 		// plannable. Keep the honest note whenever something's wrong.
 		if result != engine.ResultHealthy {
-			after = append(after, style.Tagline.Render("repair actions arrive with a later Orbit release"))
+			after = append(after, m.taglineRows("repair actions arrive with a later Orbit release")...)
 		}
 		return nil, after
 	}
@@ -1124,10 +1124,11 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			// The engine's guidance is unsized prose with a machine tag
 			// on the end: drop the tag (the plan line above already
 			// names the problem) and wrap the rest, so it is never cut
-			// at the screen's edge (#253).
-			// Copyable text stays whole until the layout call on #277 group B:
-			// a step can name a path or command to run.
-			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), math.MaxInt)
+			// at the screen's edge (#253). A step can name a path or a
+			// command to run: a word that fits the text area stays whole,
+			// a wider one is cut at the measure, every character kept
+			// (#277 L4).
+			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), textArea(m.width))
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
@@ -1138,7 +1139,19 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			steps = append(steps, rows)
 		}
 	}
-	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
+	return steps, append([]string{""}, m.taglineRows(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))...)
+}
+
+// taglineRows is a line under the plan, one row where it fits the text
+// area and wrapped to it where it does not, so no row is wider than the
+// text area (#277 L4: the 48-cell lines wrap at 50 columns).
+func (m RepairModel) taglineRows(text string) []string {
+	lines := wrapWordsIn(text, textArea(m.width), textArea(m.width))
+	rows := make([]string, len(lines))
+	for i, line := range lines {
+		rows[i] = style.Tagline.Render(line)
+	}
+	return rows
 }
 
 // planRows renders one proposed action: the action in plain words and
