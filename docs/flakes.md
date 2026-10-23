@@ -17,3 +17,7 @@ heading.
 ## TestConsole_RealPTY_ClosingTheTerminalMidInstallLetsTheInstallerRollBack (test/pty)
 
 - 2026-10-22 · c4432e7 · pipeline 2896 / fast (`-race`) · the launcher exited 1.1 s after the terminal closed with exit status 1; the installer's EXIT trap left no marker and staged files stayed in TMPDIR. Passed 5 of 5 local `-race` runs on the same commit and 5 of 5 on `dev` aad8058
+
+## TestLive_InstallHealthyEndpointThenRemove/Install (test/live)
+
+- 2026-10-23 · 0b6bacf · pipeline 2956 / live job 39207 · install.sh stopped at the OIDC step with "OIDC provider is unavailable" after reading accounts.google.com's discovery document; the same code passed in 2954, and the retry 39208 passed
