@@ -3,7 +3,7 @@ package deploy
 // Pins #277 W2 (ratified, answer 9a): what the screen shows and what is
 // copied are the same bytes. A shell word holding a non-printing
 // character is quoted in bash's $'...' form, with the escapes the box
-// already shows (\x1b, \n, ‮, \\, \'); an ordinary word is quoted
+// already shows (\x1b, \n, \u202e, \\, \'); an ordinary word is quoted
 // as before. The recovery command is the installer's own line and is not
 // touched. Applies to Remove's command and Repair's chown command.
 
@@ -92,7 +92,7 @@ func TestGroupB_W2_ShellQuoteUsesTheBoxEscapes(t *testing.T) {
 	cases := map[string]string{
 		"/home/you/odd\x1bname": `$'/home/you/odd\x1bname'`,
 		"a\nb":                  `$'a\nb'`,
-		"rlo‮exe":               `$'rlo‮exe'`,
+		"rlo‮exe":               `$'rlo\u202eexe'`,
 		"it's\x1b":              `$'it\'s\x1b'`,
 		"a\\b\x1b":              `$'a\\b\x1b'`,
 	}
@@ -134,7 +134,7 @@ func groupBEvalWords(t *testing.T, words []string) []string {
 
 func TestGroupB_W2_RemovalCommandForAnOddFolderIsFaithful(t *testing.T) {
 	for _, dir := range groupBOddWords {
-		dir = "/srv/" + dir
+		dir = "/srv/" + strings.TrimPrefix(dir, "/") // no "//": the paths are joined cleanly
 		words, err := RemovalCommandWords(dir)
 		if err != nil {
 			t.Fatalf("RemovalCommandWords(%q): %v", dir, err)
@@ -177,7 +177,7 @@ func TestGroupB_W2_RemovalCommandForAnOddFolderIsFaithful(t *testing.T) {
 
 func TestGroupB_W2_ChownCommandForAnOddFolderIsFaithful(t *testing.T) {
 	for _, dir := range groupBOddWords {
-		dir = "/srv/" + dir
+		dir = "/srv/" + strings.TrimPrefix(dir, "/") // no "//": the paths are joined cleanly
 		own := Ownership{Account: "alice", Group: "1000", Files: []ForeignFile{{Path: ".env-orbit", Owner: "root"}}}
 		words := ChownCommandWords(dir, own)
 		for _, w := range words {

@@ -151,11 +151,17 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 	open, closing := "", ""
 	if len(u) >= 2 && u[0] == '\'' && u[len(u)-1] == '\'' {
 		open, closing, u = "'", "'", u[1:len(u)-1]
+	} else if len(u) >= 3 && strings.HasPrefix(u, "$'") && u[len(u)-1] == '\'' {
+		// bash's $'...' form (#277 W2): reopened as $' so each fragment
+		// keeps its escapes, and \' is never split.
+		open, closing, u = "$'", "'", u[2:len(u)-1]
 	}
 	var atoms []string
 	for rest := u; rest != ""; {
 		a := escapedQuote
-		if !strings.HasPrefix(rest, a) {
+		if open == "$'" && strings.HasPrefix(rest, `\'`) {
+			a = `\'`
+		} else if !strings.HasPrefix(rest, a) {
 			a = firstUnit(rest) // an escape such as \x1b is never cut
 		}
 		atoms = append(atoms, a)

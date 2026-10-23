@@ -373,15 +373,11 @@ func (m RemoveModel) viewDone() string {
 	// columns, and a word wider than the box is cut across rows (#271).
 	// The box's outside edge is the console's, width-4: four cells for
 	// its frame, so the text gets width-8. Both are laid out from the
-	// same words: the box shows them escaped for the terminal, measured
-	// after escaping, so a folder with control characters reads
-	// differently from what runs; Copy command keeps the raw one-line
-	// form, which is the one to run.
-	raw, _ := m.removalWords()
-	words := make([]string, len(raw))
-	for i, w := range raw {
-		words[i] = visibleText(w)
-	}
+	// same words, drawn as they are: a word holding a character the
+	// terminal would have to escape is already quoted in $'...' form
+	// with those escapes, so every word is printable, and the box and
+	// Copy command's one-line form are the same bytes (#277 W2).
+	words, _ := m.removalWords()
 	lines := wrapShellCommand(words, m.width-8)
 
 	// The rows after the box are laid out first, so the box knows how
@@ -406,12 +402,15 @@ func (m RemoveModel) viewDone() string {
 
 	// The box gets the rows the screen has left once every other row,
 	// the menu included, has its place: a long folder at a narrow width
-	// must never push Copy command, Menu and Exit off the screen. Rows
-	// past that are stood for by one "…" row; Copy command still
-	// carries the whole command.
+	// must never push Copy command, Menu and Exit off the screen. When
+	// the box is short, its end is kept, not its start: the end is the
+	// half that deletes everything (`&& sudo rm -rf '<folder>'`), the
+	// part that must read. One "…" row stands first for the rows dropped,
+	// as the stopped screen's installer block keeps its newest lines
+	// (fitTail); Copy command still carries the whole command (#277 L2).
 	room := max(m.height-strings.Count(b.String(), "\n")-strings.Count(tail.String(), "\n")-2, 1)
 	if len(lines) > room {
-		lines = append(lines[:room-1:room-1], "  …")
+		lines = append([]string{"  …"}, lines[len(lines)-(room-1):]...)
 	}
 	boxW := 0
 	for _, l := range lines {

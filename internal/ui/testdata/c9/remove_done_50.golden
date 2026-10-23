@@ -11,15 +11,15 @@
   [38;2;74;84;104mto fully remove Orbit from this machine, copy[m   
                      [38;2;74;84;104mand run[m                 [38;2;74;84;104m·[m    
   [38;2;28;36;52m╭────────────────────────────────────────────╮[m  
-  [38;2;28;36;52m│[m docker compose \                           [38;2;28;36;52m│[m  
-  [38;2;28;36;52m│[m   --project-directory '/srv/containers/m'\ [38;2;28;36;52m│[m  
-  [38;2;28;36;52m│[m 'ail stack/orbit production/with several'\ [38;2;28;36;52m│[m  
-  [38;2;28;36;52m│[m '/long directories/under the data volume'\ [38;2;28;36;52m│[m  
-  [38;2;28;36;52m│[m '/orbit' \                                 [38;2;28;36;52m│[m  
-  [38;2;28;36;52m│[m   --env-file '/srv/containers/mail stack'\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   …                                        [38;2;28;36;52m│[m  
   [38;2;28;36;52m│[m '/orbit production/with several/long dir'\ [38;2;28;36;52m│[m  
   [38;2;28;36;52m│[m 'ectories/under the data volume/orbit/.e'\ [38;2;28;36;52m│[m  
-  [38;2;28;36;52m│[m   …                                        [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 'nv-orbit' \                               [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   down -v \                                [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   && sudo rm \                             [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m   -rf '/srv/containers/mail stack/orbit '\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 'production/with several/long directorie'\ [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m 's/under the data volume/orbit'            [38;2;28;36;52m│[m  
   [38;2;28;36;52m╰────────────────────────────────────────────╯[m  
        [38;2;251;146;60mthis deletes all mail, documents and[m     [38;2;74;84;104m.[m 
     [38;2;251;146;60mconfiguration, and everything else in the[m     
