@@ -341,7 +341,7 @@ func TestEngineRun_ASecondCtrlCWhileStoppingKillsAndQuitsAtOnce(t *testing.T) {
 	}
 
 	started := time.Now()
-	_, cmd := runUpdate(t, r, ctrlC())
+	r, cmd := runUpdate(t, r, ctrlC())
 	_, _, quit := settleStop(t, r, cmd)
 
 	if !quit {
