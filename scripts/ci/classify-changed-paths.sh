@@ -44,7 +44,7 @@ LIVE_PIN_KEYS='UBUNTU_IMAGE|GO_VERSION|GO_SHA256'
 # The files those pins pass through on their way in: the live job fetches the
 # Go tarball through the checked-download script, so a change to it alone is
 # a change to what the install runs on (#216). Whole paths, `|`-separated.
-LIVE_PIN_PATHS='scripts/ci/fetch-verified.sh'
+LIVE_PIN_PATHS='scripts/ci/fetch-verified.sh|scripts/ci/run-unprivileged.sh'
 
 docs_only=false
 live_pins=true

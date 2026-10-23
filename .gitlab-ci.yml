@@ -316,7 +316,8 @@ fast:
     - go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
     - staticcheck ./...
     # Unit tests plus the compiled binary's own runs under test/pty, merged
-    # into one profile (#169): see scripts/coverage.sh.
+    # into one profile (#169): see scripts/coverage.sh. The launcher refuses
+    # root (#291), so test/pty runs there as an unprivileged user (#292).
     - scripts/coverage.sh -race
     - go run ./tools/coveragefloor coverage.out
     # The suite above runs as root, which reads a mode-0000 file, so the
@@ -429,12 +430,15 @@ visual:
     - if: $CI_PIPELINE_SOURCE == "web"
     # The Go tarball and ttyd come in through the checked-download script, so
     # a change to it alone is a change to what this job runs on (#216).
+    # The suite runs through scripts/ci/run-unprivileged.sh (#292), so a
+    # change to it alone starts this job too.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - internal/ui/**/*
         - test/visual/**/*
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
+        - scripts/ci/run-unprivileged.sh
   before_script:
     - *go_tarball
     - |
@@ -443,9 +447,14 @@ visual:
         "${TTYD_SHA256}" /usr/local/bin/ttyd
       chmod +x /usr/local/bin/ttyd
   script:
-    - cd test/visual
-    - npm ci
-    - npx playwright test
+    # The launcher refuses root (#291) and this image runs as root, so the
+    # suite -- npm, the browser, ttyd and the binary it builds -- runs as an
+    # unprivileged user over a copy it owns (#292); the reports come back
+    # for the artifacts below.
+    - |
+      bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+        --keep test/visual/playwright-report --keep test/visual/test-results \
+        -- bash -c 'npm ci && npx playwright test'
   artifacts:
     name: playwright-report
     when: on_failure
@@ -507,11 +516,14 @@ live:
     # The Go tarball comes in through scripts/ci/fetch-verified.sh, so a change
     # to that script alone changes what the install runs on, and starts this
     # route too (#216). classify-changed-paths.sh's LIVE_PIN_PATHS lists the
-    # same files, so the gate below lets the job through for them.
+    # same files, so the gate below lets the job through for them. The
+    # launcher runs through scripts/ci/run-unprivileged.sh (#292), so a change
+    # to it alone does too.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
+        - scripts/ci/run-unprivileged.sh
       when: manual
       allow_failure: false
   variables:
@@ -536,6 +548,19 @@ live:
     - *docker_in_job
   script:
     - mkdir -p .live/install-script
+    - |
+      # The launcher refuses root (#291), so the install runs as orbit-ci, a
+      # user in the docker group of the daemon above (#292): the launcher,
+      # install.sh, the folder it installs into (the test's own temporary
+      # folder) and the image pulls are all that user's. Its Docker client
+      # config, where the registry login below writes the job token, is
+      # created here first so its owner and mode are known: orbit-ci, 0700.
+      useradd --create-home --shell /bin/bash --groups docker orbit-ci
+      install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker
+      # The raw-log artefacts are written into .live by the test.
+      chown orbit-ci .live
+      setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- docker info > /dev/null \
+        || { echo "orbit-ci cannot reach the job's Docker daemon"; exit 1; }
     - |
       # Where the files come from (#173): ai/orbit on this GitLab, read with
       # the job token. That token carries the access of whoever started the
@@ -651,7 +676,14 @@ live:
         image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
         export ORBIT_REGISTRY="${image_repository%%/*}"
         export ORBIT_REPOSITORY="${image_repository#*/}"
-        printf '%s' "$CI_JOB_TOKEN" | docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+        # The login is per Docker client user, and the pulls are orbit-ci's
+        # (#292), so it is orbit-ci that logs in: the token is written to
+        # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
+        # inside this job's container only, and after_script removes it.
+        printf '%s' "$CI_JOB_TOKEN" \
+          | setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- env HOME=/home/orbit-ci \
+            docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+        stat -c 'the registry login is in %n, owned by %U, mode %a' /home/orbit-ci/.docker/config.json
         echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"
         echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
         # The update leg's first install (#198): an earlier preview release,
@@ -731,8 +763,16 @@ live:
       [ -n "$ORBIT_CHANNEL" ] || unset ORBIT_CHANNEL
       go build -o /tmp/orbit-launcher ./cmd/orbit-launcher
       export ORBIT_LAUNCHER_LIVE_BINARY=/tmp/orbit-launcher
-    - go test -tags live -count=1 -v -timeout 30m ./test/live/...
+    # As orbit-ci (#292), over a copy it owns. The variables that carry the
+    # job token are dropped first: nothing the install runs needs them, and
+    # the image pulls read the login above.
+    - |
+      bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+        env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+        go test -tags live -count=1 -v -timeout 30m ./test/live/...
   after_script:
+    # The registry login's copy of the job token goes first, pass or fail.
+    - rm -f /home/orbit-ci/.docker/config.json
     # Docker state, always, for debugging.
     - docker ps -a || true
     - docker volume ls || true

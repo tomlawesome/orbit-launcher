@@ -294,7 +294,7 @@ func stopCases() []stopCase {
 		{
 			name:     "install refused before writing, folder not empty",
 			build:    installCase([]string{"notes.txt", "old-site/"}, []any{hostRefused, exit1(notEmptyStderr...)}),
-			sentence: stopNothingChanged, steps: []string{stepMoveThemOut, stepAnotherFolder},
+			sentence: stopNothingChanged, steps: []string{stepFixNamedAbove, stepAnotherFolder},
 			stage: stageAfter(hostRefused), rows: rowsAgain, caret: "Install again", last: hostRefused.Event,
 		},
 		{
@@ -514,7 +514,7 @@ func TestStoppedScreen_NotEmptyFolderNamesTheFolderAndListsWhatIsInIt(t *testing
 		stageAfter(hostRefused),
 		"Orbit installer: The installation directory is not empty",
 		"Refusing to install here.",
-		"in the folder: notes.txt, old-site/ " + stepMoveThemOut,
+		"in the folder: notes.txt, old-site/ — the installer needs it empty " + stepFixNamedAbove,
 		stepAnotherFolder,
 	}
 	at := -1
@@ -545,19 +545,19 @@ func TestStoppedScreen_NotEmptyFolderNamesTheFolderAndListsWhatIsInIt(t *testing
 // leftovers folder: Orbit refuses it, and the listing names it.
 func TestStoppedScreen_AnOrbitInstallBackupsThatIsNotAFolderIsListed(t *testing.T) {
 	t.Run("a file", func(t *testing.T) {
-		dir := folderWith(t, "notes.txt", "orbit-install-backups")
+		dir := folderWith(t, "a", "orbit-install-backups")
 		s := screen(stoppedInstall(t, dir, hostRefused, exit1(notEmptyStderr...)))
-		if want := "in the folder: notes.txt, orbit-install-backups " + stepMoveThemOut; !strings.Contains(flat(s), want) {
+		if want := "in the folder: a, orbit-install-backups — the installer needs it empty " + stepFixNamedAbove; !strings.Contains(flat(s), want) {
 			t.Errorf("want %q on the screen:\n%s", want, s)
 		}
 	})
 	t.Run("a link", func(t *testing.T) {
-		dir := folderWith(t, "notes.txt")
+		dir := folderWith(t, "a")
 		if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(dir, "orbit-install-backups")); err != nil {
 			t.Fatal(err)
 		}
 		s := screen(stoppedInstall(t, dir, hostRefused, exit1(notEmptyStderr...)))
-		if want := "in the folder: notes.txt, orbit-install-backups " + stepMoveThemOut; !strings.Contains(flat(s), want) {
+		if want := "in the folder: a, orbit-install-backups — the installer needs it empty " + stepFixNamedAbove; !strings.Contains(flat(s), want) {
 			t.Errorf("want %q on the screen:\n%s", want, s)
 		}
 	})
@@ -565,12 +565,12 @@ func TestStoppedScreen_AnOrbitInstallBackupsThatIsNotAFolderIsListed(t *testing.
 
 // A few names, then "and N more": no long list, no scroll (owner, 15a).
 func TestStoppedScreen_AFolderWithManyEntriesListsThreeAndCountsTheRest(t *testing.T) {
-	dir := folderWith(t, "e/", "c.txt", "a.txt", "d.txt", "b/", ".env-orbit")
+	dir := folderWith(t, "e/", "c.md", "a.md", "d.md", "b/", ".env-orbit")
 	s := screen(stoppedInstall(t, dir, hostRefused, exit1(notEmptyStderr...)))
-	if want := "in the folder: a.txt, b/, c.txt and 2 more " + stepMoveThemOut; !strings.Contains(flat(s), want) {
+	if want := "in the folder: a.md, b/, c.md and 2 more — the installer needs it empty " + stepFixNamedAbove; !strings.Contains(flat(s), want) {
 		t.Errorf("want %q on the screen:\n%s", want, s)
 	}
-	if strings.Contains(flat(s), "d.txt") || strings.Contains(flat(s), " e/") {
+	if strings.Contains(flat(s), "d.md") || strings.Contains(flat(s), " e/") {
 		t.Errorf("the listing names more than three entries:\n%s", s)
 	}
 }

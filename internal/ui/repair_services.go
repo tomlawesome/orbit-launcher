@@ -177,11 +177,13 @@ func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
 // show. room is the rows the screen has left for it once the rest of
 // the screen, the plan included, has its rows. The block draws its label
 // and one row per service, nothing more (viewDiagnosis joins it straight
-// onto the findings), so the full list is used when those rows fit room
-// (#277); otherwise the running rows fold into one `✓ N running` row and
-// every faulted or missing row stays.
+// onto the findings), so it gives way in steps as room shrinks (#277,
+// #290): the full list when those rows fit; else, with something
+// running, the running rows fold into one `✓ N running` row and every
+// faulted or missing row stays; else one muted row
+// `services · r of n running`; with no room at all, no block.
 func (m RepairModel) servicesBlock(room int) []string {
-	if m.serviceStates == nil || m.services == nil {
+	if m.serviceStates == nil || m.services == nil || room < 1 {
 		return nil
 	}
 	if !m.services.loaded {
@@ -204,8 +206,13 @@ func (m RepairModel) servicesBlock(room int) []string {
 		}
 	}
 	// Fold when the label and a row each don't fit; a healthy
-	// deployment folds too, to the one running row alone.
-	fold := 1+len(rows) > room && running > 0
+	// deployment folds too, to the one running row alone. When the
+	// folded form doesn't fit either, or nothing is running to fold,
+	// one row says how many are running.
+	fold := 1+len(rows) > room
+	if fold && (running == 0 || 2+len(faulted) > room) {
+		return []string{style.MutedText.Render(fmt.Sprintf("services%s%d of %d %s", style.Separator, running, len(rows), deploy.ContainerRunning))}
+	}
 	const plainWidth = 2 + serviceNameWidth
 	width := 0
 	for _, r := range rows {

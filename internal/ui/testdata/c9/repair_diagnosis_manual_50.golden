@@ -2,10 +2,9 @@
                                                   
                 [38;2;74;84;104m✦[m                                 
                                                   
-                                                  
                 [38;2;251;146;60m⟡[m [1;38;2;231;233;238mRepairs proposed[m                
-                                 [38;2;143;184;255m●[m           [38;2;216;180;90m●[m    
-      [38;2;248;113;113m✗[m [38;2;231;233;238mdocker-compose.yml[m[38;2;74;84;104m — absent or empty[m      
+                                                  
+      [38;2;248;113;113m✗[m [38;2;231;233;238mdocker-compose.yml[m[38;2;74;84;104m — absent or empty[m [38;2;216;180;90m●[m    
            [38;2;251;146;60m![m [38;2;231;233;238m.env-orbit[m[38;2;74;84;104m — secret-stale[m            
                                                   
               [38;2;74;84;104m12 checked · 1 skipped[m              
@@ -15,7 +14,8 @@
    [38;2;74;84;104mRestore the secret from your own backup and[m    
      [38;2;74;84;104mkeep it somewhere only you can read it.[m      
                                                   
-[38;2;74;84;104msome steps need your hands — the rest can run from the menu below[m
+  [38;2;74;84;104msome steps need your hands — the rest can run[m   
+               [38;2;74;84;104mfrom the menu below[m                
                                                   
              [38;2;216;180;90m▸[m [38;2;231;233;238mRun the safe repairs[m         [38;2;74;84;104m·[m     
                        [38;2;124;134;153mMenu[m                       

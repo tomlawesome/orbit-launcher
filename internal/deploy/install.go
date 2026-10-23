@@ -50,20 +50,47 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	return cmd, cleanup, nil
 }
 
+// ErrFolderNameControl is what every engine start returns, wrapped in
+// the refusal sentence, for a folder whose name holds a control
+// character (checkFolder). A rerun from the same folder fails the same
+// way, so a screen offers no "again" for it.
+var ErrFolderNameControl = errors.New("the folder's name holds a control character")
+
+// folderNameError is the refusal for one control character: the
+// sentence names it as its Go escape, never raw, and says what to do
+// (#277 W3). Orbit reads its Compose project name from .env-orbit and
+// names its volumes exactly, so renaming the folder keeps the
+// deployment.
+type folderNameError struct{ r rune }
+
+func (e folderNameError) Error() string {
+	return "the folder's name holds a control character (" + strings.Trim(strconv.QuoteRune(e.r), "'") + "), so nothing runs in it: " +
+		"rename the folder to a plain name, then run the launcher from there"
+}
+
+func (e folderNameError) Is(target error) bool { return target == ErrFolderNameControl }
+
 // checkFolder refuses a folder whose name holds a control character
 // (#272): such a name can disturb the engine's --plain output and what
-// the screens show, so nothing runs in it. The rune is named as its Go
-// escape, never raw. Format runes such as U+202E are not refused; the
-// screens show them escaped.
+// the screens show, so nothing runs in it. It is the first check of
+// every start that runs a script in the folder: Install, Update, and
+// RepairCommand (the diagnosis, the safe and dangerous repairs, and
+// credential rotation), before anything is read from the folder.
+// Format runes such as U+202E are not refused; the screens show them
+// escaped. Remove runs nothing there and is not covered.
 func checkFolder(dir string) error {
 	for _, r := range dir {
 		if unicode.IsControl(r) {
-			return fmt.Errorf("the folder name holds a control character (%s), so nothing runs there: choose another folder",
-				strings.Trim(strconv.QuoteRune(r), "'"))
+			return folderNameError{r}
 		}
 	}
 	return nil
 }
+
+// CheckFolderName is checkFolder for a screen that reads the folder
+// itself before an engine start (Repair's ownership check, #277 W3):
+// the same refusal, so the name is checked once, by one rule.
+func CheckFolderName(dir string) error { return checkFolder(dir) }
 
 // stageInstall writes script to a temp file and makes the run's private
 // configuration tree directory. It returns the script's path, the run's

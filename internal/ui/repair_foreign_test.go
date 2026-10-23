@@ -632,7 +632,10 @@ func TestRepairForeign_PathsAndOwnersAreEscapedOnScreen(t *testing.T) {
 	}
 }
 
-func TestRepairForeign_FolderIsEscapedInTheCommandOnScreenButCopiedQuoted(t *testing.T) {
+// The folder's escape shows as text, and the screen and the clipboard
+// carry the same bytes: the folder's words in printable $'...' form,
+// which bash reads back as the raw folder (#277 W2).
+func TestRepairForeign_FolderIsEscapedInTheCommandOnScreenAndCopiedTheSame(t *testing.T) {
 	dir := "/srv/\x1b[2Jorbit"
 	m, buf := rfStop(t, dir, rfOwn(rfEnv, rfSecretA))
 
@@ -642,8 +645,8 @@ func TestRepairForeign_FolderIsEscapedInTheCommandOnScreenButCopiedQuoted(t *tes
 			t.Errorf("raw screen holds %q: the folder reached the terminal unescaped", bad)
 		}
 	}
-	shownDir := `/srv/\x1b[2Jorbit`
-	if got, want := rfCommandOn(t, screen(m)), rfWantCommand("alice", shownDir, true, true); got != want {
+	want := `sudo chown -R alice: $'/srv/\x1b[2Jorbit/.env-orbit' $'/srv/\x1b[2Jorbit/.orbit-secrets'`
+	if got := rfCommandOn(t, screen(m)); got != want {
 		t.Errorf("command on screen = %q, want %q", got, want)
 	}
 
@@ -652,8 +655,8 @@ func TestRepairForeign_FolderIsEscapedInTheCommandOnScreenButCopiedQuoted(t *tes
 		t.Fatal("Copy command wrote nothing")
 	}
 	copyCmd()
-	if got, want := rfDecodeClip(t, buf.String()), rfWantCommand("alice", dir, true, true); got != want {
-		t.Errorf("copied %q, want the quoted command %q", got, want)
+	if got := rfDecodeClip(t, buf.String()); got != want {
+		t.Errorf("copied %q, want the command as shown %q", got, want)
 	}
 }
 

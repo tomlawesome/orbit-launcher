@@ -705,8 +705,82 @@ bash scripts/ci/nonroot-tests.sh`,
 	},
 }
 
+// What #292 changes on purpose: the launcher refuses root (#291), so the
+// visual suite runs as an unprivileged user through
+// scripts/ci/run-unprivileged.sh, and the live install runs as orbit-ci, a
+// user in the job daemon's docker group, which also makes the registry login
+// and has it removed in after_script. A change to that script alone starts
+// the visual and live jobs. Same form and the same exactly-once rule as
+// changedBy216.
+var changedBy292 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
+		new:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		key:  "rules",
+		old:  `"changes": ["internal/ui/**/*", "test/visual/**/*", ".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
+		new:  `"changes": ["internal/ui/**/*", "test/visual/**/*", ".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		old: `cd test/visual
+npm ci
+npx playwright test`,
+		new: `bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+  --keep test/visual/playwright-report --keep test/visual/test-results \
+  -- bash -c 'npm ci && npx playwright test'`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `mkdir -p .live/install-script`,
+		new: `mkdir -p .live/install-script
+# The launcher refuses root (#291), so the install runs as orbit-ci, a
+# user in the docker group of the daemon above (#292): the launcher,
+# install.sh, the folder it installs into (the test's own temporary
+# folder) and the image pulls are all that user's. Its Docker client
+# config, where the registry login below writes the job token, is
+# created here first so its owner and mode are known: orbit-ci, 0700.
+useradd --create-home --shell /bin/bash --groups docker orbit-ci
+install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker
+# The raw-log artefacts are written into .live by the test.
+chown orbit-ci .live
+setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- docker info > /dev/null \
+  || { echo "orbit-ci cannot reach the job's Docker daemon"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `  printf '%s' "$CI_JOB_TOKEN" | docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin`,
+		new: `  # The login is per Docker client user, and the pulls are orbit-ci's
+  # (#292), so it is orbit-ci that logs in: the token is written to
+  # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
+  # inside this job's container only, and after_script removes it.
+  printf '%s' "$CI_JOB_TOKEN" \
+    | setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- env HOME=/home/orbit-ci \
+      docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+  stat -c 'the registry login is in %n, owned by %U, mode %a' /home/orbit-ci/.docker/config.json`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `go test -tags live -count=1 -v -timeout 30m ./test/live/...
+docker ps -a || true`,
+		new: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...
+rm -f /home/orbit-ci/.docker/config.json
+docker ps -a || true`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -722,6 +796,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy264...)
 	all = append(all, changedBy236...)
 	all = append(all, changedBy195...)
+	all = append(all, changedBy292...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

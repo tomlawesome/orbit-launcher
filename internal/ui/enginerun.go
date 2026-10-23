@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -255,8 +254,11 @@ type engineRun struct {
 	// installer; exited the installer's failing exit ending the run, and
 	// streamCut its stream closing before it said how the run went.
 	// handoffRefused is the strict mode's refusal of the terminal
-	// handoff. folderEntries is the folder's listing, read once on
-	// entering the screen when nothing was written to it.
+	// handoff. folderEntries is the folder's listing, read once by a
+	// command on entering the screen when nothing was written to it:
+	// folderRead is that read (nil when none was started), folderPending
+	// it not having answered yet, folderFailed its error or no answer in
+	// time (readFolderCmd).
 	sawEvent       bool
 	rollbackSeen   bool
 	startFailed    bool
@@ -264,6 +266,9 @@ type engineRun struct {
 	streamCut      bool
 	handoffRefused bool
 	folderEntries  []string
+	folderRead     *folderRead
+	folderPending  bool
+	folderFailed   bool
 
 	// handoffByHand is the terminal handoff chosen from the failure
 	// screen rather than reached as a fallback; handoffErr is why its
@@ -458,7 +463,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		if msg.err != nil {
 			r.runErr = msg.err
 			r.startFailed = true
-			return r.enterStopped(), nil
+			return r.enterStopped()
 		}
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
@@ -485,6 +490,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)
+
+	case folderReadMsg:
+		return r.gotFolder(msg), nil
 
 	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
@@ -625,7 +633,7 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			return r.beginConfigCollect()
 		}
 		r.exited = true
-		return r.enterStopped(), nil
+		return r.enterStopped()
 	}
 	return r, nil
 }
@@ -651,7 +659,7 @@ func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.C
 		r.runErr = errEngineStoppedEarly
 	}
 	r.streamCut = true
-	return r.enterStopped(), nil
+	return r.enterStopped()
 }
 
 // succeed resolves the deployment's URL and finishes the run.
@@ -982,33 +990,95 @@ func (r *engineRun) forgetStop() {
 	r.sawEvent, r.rollbackSeen, r.startFailed = false, false, false
 	r.exited, r.streamCut, r.handoffRefused = false, false, false
 	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
-	r.folderEntries = nil
+	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
 }
 
 // enterStopped puts the run on the stopped screen, the caret on its
 // first row. An Install that stopped before writing reads the folder
-// once, here, so the screen can say what is in it.
-func (r engineRun) enterStopped() engineRun {
+// once, by the command it returns, so the screen can say what is in it
+// (#277 L3): never on the screen's own thread.
+func (r engineRun) enterStopped() (engineRun, tea.Cmd) {
 	r.state = runFailed
 	r.menu = menu{}
-	r.folderEntries = nil
+	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
 	if r.action == deploy.ActionInstall && r.stopKind() == stoppedBeforeWriting {
-		r.folderEntries = r.readFolder()
+		r.folderRead = &folderRead{dir: r.targetDir}
+		r.folderPending = true
+		return r, r.readFolderCmd()
 	}
+	return r, nil
+}
+
+// folderReadLimit is how long the stopped screen waits for the folder's
+// listing, as long as Repair waits for the services (A4).
+const folderReadLimit = 4 * time.Second
+
+// folderRead names one read of the folder: its answer is kept only while
+// the run still holds the same read, so one landing after Install again
+// or Menu is dropped. It is never zero-sized, so two reads never share
+// an address.
+type folderRead struct{ dir string }
+
+// folderReadMsg is a folder read's answer: the names the screen lists,
+// or failed for an error or no answer within the limit.
+type folderReadMsg struct {
+	read   *folderRead
+	names  []string
+	failed bool
+}
+
+// readFolderCmd lists the folder off the screen's thread, waiting at most
+// folderLimit, as readServices does: the reader runs on a goroutine of
+// its own with a buffered slot for its answer, so one that is late (or
+// never returns) costs only that goroutine, and its answer is dropped.
+func (r engineRun) readFolderCmd() tea.Cmd {
+	list, read := r.listFolder, r.folderRead
+	if list == nil {
+		list = os.ReadDir
+	}
+	limit := r.folderLimit
+	if limit <= 0 {
+		limit = folderReadLimit
+	}
+	return func() tea.Msg {
+		type answer struct {
+			entries []os.DirEntry
+			err     error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			entries, err := list(read.dir)
+			answered <- answer{entries, err}
+		}()
+		select {
+		case a := <-answered:
+			if a.err != nil {
+				return folderReadMsg{read: read, failed: true}
+			}
+			return folderReadMsg{read: read, names: folderNames(a.entries)}
+		case <-time.After(limit):
+			return folderReadMsg{read: read, failed: true}
+		}
+	}
+}
+
+// gotFolder keeps a folder read's answer if the run still holds that
+// read and is still on its stopped screen.
+func (r engineRun) gotFolder(msg folderReadMsg) engineRun {
+	if msg.read == nil || msg.read != r.folderRead || !r.folderPending || r.state != runFailed || r.Done {
+		return r
+	}
+	r.folderPending = false
+	r.folderEntries, r.folderFailed = msg.names, msg.failed
 	return r
 }
 
-// readFolder lists the folder's entries as the stopped screen names
+// folderNames lists the folder's entries as the stopped screen names
 // them: sorted, directories ending "/", without the installer's own
 // files (.env-orbit, .orbit-secrets, and orbit-install-backups when it
 // is a real directory; a file or link of that name the installer
 // refuses, so it is listed).
-func (r engineRun) readFolder() []string {
-	list := r.listFolder
-	if list == nil {
-		list = os.ReadDir
-	}
-	entries, _ := list(r.targetDir) // what was read before an error still counts
+func folderNames(entries []os.DirEntry) []string {
 	var names []string
 	for _, e := range entries {
 		name := e.Name()
@@ -1025,13 +1095,26 @@ func (r engineRun) readFolder() []string {
 }
 
 // folderListing is the stopped screen's line about the folder: a few
-// names, then how many more (owner, 15a), never a long list.
-func folderListing(names []string) string {
-	const shown = 3
-	if len(names) <= shown {
-		return "in the folder: " + strings.Join(names, ", ")
+// names, then how many more (owner, 15a), never a long list, ending in
+// the fact that holds whichever check refused (#277 W5). It names as
+// many entries, up to three, as keep the whole line within limit, so it
+// takes the one row "reading the folder" held for it (#277 L3). When
+// even one name does not fit, it keeps one name and the line wraps
+// between words.
+func folderListing(names []string, limit int) string {
+	const most, tail = 3, " — the installer needs it empty"
+	line := func(shown int) string {
+		if shown >= len(names) {
+			return "in the folder: " + strings.Join(names, ", ") + tail
+		}
+		return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown) + tail
 	}
-	return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown)
+	for shown := min(most, len(names)); shown > 1; shown-- {
+		if l := line(shown); lipgloss.Width(visibleText(l)) <= limit {
+			return l
+		}
+	}
+	return line(1)
 }
 
 // stoppedRows are the stopped screen's rows for how the run stopped.
@@ -1041,7 +1124,13 @@ func (r engineRun) stoppedRows() []string {
 		rows = append(rows, removeCopy)
 	}
 	switch r.stopKind() {
-	case stoppedBeforeWriting, stoppedUndone, stoppedUndoneButDocker, stoppedDied, stoppedCouldNotStart:
+	case stoppedCouldNotStart:
+		if errors.Is(r.runErr, deploy.ErrFolderNameControl) {
+			// A rerun from the same folder fails the same way (#277 W3).
+			break
+		}
+		fallthrough
+	case stoppedBeforeWriting, stoppedUndone, stoppedUndoneButDocker, stoppedDied:
 		again := installAgain
 		if r.action == deploy.ActionUpdate {
 			again = updateAgain
@@ -1106,11 +1195,10 @@ func (r engineRun) nextSteps(kind stopKind) []string {
 	const fixNamed = "fix what the installer names above, then install again"
 	switch kind {
 	case stoppedBeforeWriting:
-		first := fixNamed
-		if len(r.folderEntries) > 0 {
-			first = "move them out of the folder, then install again"
-		}
-		return []string{first, "to use another folder, exit and run the launcher from there"}
+		// Never "move them out" as the cause: the launcher can't tell a
+		// Docker refusal from a not-empty one, so the listing carries the
+		// folder's fact and this line stays the general one (#277 W5).
+		return []string{fixNamed, "to use another folder, exit and run the launcher from there"}
 	case stoppedUndone:
 		return []string{fixNamed}
 	case stoppedUndoneButDocker:
@@ -1178,14 +1266,7 @@ func (r engineRun) viewFailed(width, height int) string {
 	switch kind {
 	case stoppedCouldNotStart, stoppedOther, stoppedHandoffRefused:
 		if r.runErr != nil {
-			text := r.runErr.Error()
-			// visibleText is not idempotent (a backslash is shown doubled),
-			// so text that was escaped as it was built is not escaped again.
-			var shown shownText
-			if !errors.As(r.runErr, &shown) {
-				text = visibleLines(text)
-			}
-			writeWrappedIn(&b, style.Tagline, text, limit, textArea(width))
+			writeWrappedIn(&b, style.Tagline, errorWords(r.runErr), limit, textArea(width))
 		}
 	default:
 		if r.sawEvent {
@@ -1196,8 +1277,15 @@ func (r engineRun) viewFailed(width, height int) string {
 	if r.handoffErr != nil {
 		writeWrappedIn(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit, textArea(width))
 	}
-	if len(r.folderEntries) > 0 {
-		for _, row := range wrapHard(folderListing(r.folderEntries), limit, width-4, folderRows) {
+	// The listing's slot: one muted row while the read is out, so the
+	// menu sits where a one-row listing leaves it (#277 L3).
+	switch {
+	case r.folderPending:
+		writeWrappedIn(&after, style.MutedText, "reading the folder", limit, textArea(width))
+	case r.folderFailed:
+		writeWrappedIn(&after, style.MutedText, "the folder could not be read", limit, textArea(width))
+	case len(r.folderEntries) > 0:
+		for _, row := range wrapHard(folderListing(r.folderEntries, limit), limit, width-4, folderRows) {
 			fmt.Fprintln(&after, style.MutedText.Render(row))
 		}
 	}
@@ -1206,13 +1294,8 @@ func (r engineRun) viewFailed(width, height int) string {
 		// broken between its words only, so it reads whole; Copy command
 		// copies the raw line.
 		fmt.Fprintln(&after)
-		if box, ok := commandBox(r.recoveryCommand, width); ok {
-			for _, line := range box {
-				fmt.Fprintln(&after, line)
-			}
-		} else {
-			// copyable text stays whole until the layout call on #277 group B
-			writeWrappedIn(&after, style.Ink, visibleCommand(r.recoveryCommand), limit, math.MaxInt)
+		for _, line := range commandBox(r.recoveryCommand, width) {
+			fmt.Fprintln(&after, line)
 		}
 	}
 	for _, step := range r.nextSteps(kind) {
@@ -1239,13 +1322,27 @@ func (r engineRun) viewFailed(width, height int) string {
 		stderr = append(stderr, line)
 	}
 	room := max(height-strings.Count(b.String(), "\n")-strings.Count(after.String(), "\n")-2, 1)
-	// copyable text stays whole until the layout call on #277 group B
-	// (the installer's lines carry the backup folder's path)
-	for _, line := range fitTail(stderr, limit, math.MaxInt, room) {
+	// The installer's lines carry the backup folder's path: a word that
+	// fits the text area stays whole, a wider one is cut at the measure,
+	// every character kept (#277 L4).
+	for _, line := range fitTail(stderr, limit, textArea(width), room) {
 		fmt.Fprintln(&b, style.Tagline.Render(line))
 	}
 	b.WriteString(after.String())
 	return skyBlock(r.console.sky, width, height, b.String())
+}
+
+// errorWords is an error's text as a screen shows it: visibleLines,
+// except for text escaped as it was built, since visibleText is not
+// idempotent (a backslash is shown doubled). That is a shownText, and
+// deploy's refusal of a folder whose name holds a control character,
+// which names the character as its escape and holds no raw one.
+func errorWords(err error) string {
+	var shown shownText
+	if errors.As(err, &shown) || errors.Is(err, deploy.ErrFolderNameControl) {
+		return err.Error()
+	}
+	return visibleLines(err.Error())
 }
 
 // fitTail lays out stderr lines, wrapped at limit within a text area edge
@@ -1284,14 +1381,15 @@ func fitTail(lines []string, limit, edge, room int) []string {
 }
 
 // commandBox frames a shell command the way printf %q quotes it, like
-// Remove's box: the text gets width-8, and rows break only at a space
-// that is not escaped (one after an even run of backslashes), each
-// continued row ending " \", "&&" starting its own row, continuation
-// rows indented two cells and an option kept with its value where it
-// fits. Words are shown escaped for the terminal, backslashes as
-// written. A command with a word too wide for a row is not boxed
-// (false): the caller wraps it plainly so it still reads whole.
-func commandBox(command string, width int) ([]string, bool) {
+// Remove's box: the text gets width-8, and rows break only between
+// words (shellWords), each continued row ending " \", "&&" starting its
+// own row, continuation rows indented two cells and an option kept with
+// its value where it fits. Words are shown escaped for the terminal,
+// backslashes as written. It always boxes (#277 L4): a command holding a
+// word too wide for a row is laid out by wrapShellCommand, which cuts
+// that word with the shell's own continuation, so the box still reads
+// back as the command.
+func commandBox(command string, width int) []string {
 	limit := width - 8
 	const indent, cont = "  ", " \\"
 	words := shellWords(command)
@@ -1311,54 +1409,92 @@ func commandBox(command string, width int) ([]string, bool) {
 				i++
 			}
 			if !fits(u) {
-				return nil, false
+				units = nil
+				break
 			}
 			units = append(units, u)
 		}
-		line := ""
-		for _, u := range units {
-			if line != "" && line != indent && (u == "&&" || lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit) {
-				lines = append(lines, line+cont)
-				line = indent
+		if units == nil {
+			lines = wrapShellCommand(words, limit)
+		} else {
+			line := ""
+			for _, u := range units {
+				if line != "" && line != indent && (u == "&&" || lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit) {
+					lines = append(lines, line+cont)
+					line = indent
+				}
+				if line != "" && line != indent {
+					line += " "
+				}
+				line += u
 			}
-			if line != "" && line != indent {
-				line += " "
-			}
-			line += u
+			lines = append(lines, line)
 		}
-		lines = append(lines, line)
 	}
 	boxW := 0
 	for i, l := range lines {
 		boxW = max(boxW, lipgloss.Width(l))
 		lines[i] = style.Ink.Render(l)
 	}
-	return drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines), true
+	return drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines)
 }
 
-// shellWords splits a printf %q quoted command at its word breaks: the
-// spaces not escaped by a backslash (a space after an odd run of
-// backslashes is part of the word). Runs of spaces are one break.
+// shellWords splits a shell command at its word breaks: the spaces that
+// are not escaped by a backslash (a space after an odd run of
+// backslashes is part of the word) and not inside quotes ('…', "…" or
+// $'…'), so a quoted folder with spaces in it is one word, as the shell
+// reads it. Runs of spaces are one break; an unclosed quote runs to the
+// end.
 func shellWords(command string) []string {
 	var words []string
-	start, run := 0, 0
-	for i := 0; i < len(command); i++ {
-		switch c := command[i]; {
-		case c == '\\':
-			run++
-			continue
-		case c == ' ' && run%2 == 0:
-			if i > start {
+	start := -1
+	for i := 0; i < len(command); {
+		c := command[i]
+		if c == ' ' {
+			if start >= 0 {
 				words = append(words, command[start:i])
+				start = -1
 			}
-			start = i + 1
+			i++
+			continue
 		}
-		run = 0
+		if start < 0 {
+			start = i
+		}
+		switch {
+		case c == '\\':
+			i += 2
+		case c == '\'':
+			i = quoteEnd(command, i+1, '\'', false)
+		case c == '"':
+			i = quoteEnd(command, i+1, '"', true)
+		case c == '$' && i+1 < len(command) && command[i+1] == '\'':
+			i = quoteEnd(command, i+2, '\'', true)
+		default:
+			i++
+		}
 	}
-	if start < len(command) {
+	if start >= 0 && start < len(command) {
 		words = append(words, command[start:])
 	}
 	return words
+}
+
+// quoteEnd is the index just past the quote closing at or after i, a
+// backslash escaping the next byte when escapes is set; len(s) when the
+// quote never closes.
+func quoteEnd(s string, i int, quote byte, escapes bool) int {
+	for i < len(s) {
+		switch {
+		case escapes && s[i] == '\\':
+			i += 2
+		case s[i] == quote:
+			return i + 1
+		default:
+			i++
+		}
+	}
+	return len(s)
 }
 
 // writeStackedMenu writes menu rows in the centred grammar: each label

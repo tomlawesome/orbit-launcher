@@ -40,8 +40,8 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 
 - Runs on the MR label `run-live-matrix` or `RUN_LIVE=true` on a hand-started
   pipeline. An MR that moves the `UBUNTU_IMAGE`, `GO_VERSION` or `GO_SHA256`
-  pin, or edits `.gitlab-ci.yml` or `scripts/ci/fetch-verified.sh`, needs it
-  started by hand (#192, #216).
+  pin, or edits `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh` or
+  `scripts/ci/run-unprivileged.sh`, needs it started by hand (#192, #216, #292).
 
 - The update leg (#198) skips unless the pipeline is started with
   `ORBIT_FIRST_RECORD_IMAGE_JOB` and `ORBIT_FIRST_SIGN_EVIDENCE_JOB`: the

@@ -3,7 +3,6 @@ package ui
 import (
 	"errors"
 	"io"
-	"math"
 	"net/url"
 	"os"
 	"os/exec"
@@ -322,9 +321,10 @@ func (m SuccessModel) centreBlockLines() []string {
 	if len(m.serviceNotes) > 0 {
 		lines = append(lines, "")
 		for _, note := range m.serviceNotes {
-			// Installer lines, like the stopped screen's: copyable text stays
-			// whole until the layout call on #277 group B.
-			for _, row := range wrapWordsIn(visibleText(note), measure(m.width, errorWidth), math.MaxInt) {
+			// Installer lines, like the stopped screen's: a word that fits
+			// the text area stays whole, a wider one is cut at the measure,
+			// every character kept (#277 L4).
+			for _, row := range wrapWordsIn(visibleText(note), measure(m.width, errorWidth), textArea(m.width)) {
 				lines = append(lines, style.MutedText.Render(row))
 			}
 		}

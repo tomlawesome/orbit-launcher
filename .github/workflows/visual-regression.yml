@@ -13,6 +13,7 @@ on:
     paths:
       - "internal/ui/**"
       - "test/visual/**"
+      - "scripts/ci/run-unprivileged.sh"
       - ".github/workflows/visual-regression.yml"
   pull_request:
     branches:
@@ -23,6 +24,7 @@ on:
     paths:
       - "internal/ui/**"
       - "test/visual/**"
+      - "scripts/ci/run-unprivileged.sh"
       - ".github/workflows/visual-regression.yml"
 
 permissions:
@@ -59,14 +61,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The suite runs as an unprivileged user (#292); leave no token on
+          # disk for it to read.
+          persist-credentials: false
 
       # Inside `container:` the workspace belongs to the host's runner user
       # while the steps run as root, so git refuses the repository as
       # "dubious ownership". actions/checkout marks it safe only for its own
-      # step; without this, test/visual's `go build ./cmd/orbit-launcher`
-      # can fail with "error obtaining VCS status: exit status 128"
-      # (reproduced with GIT_TEST_ASSUME_DIFFERENT_OWNER=1). Unproven on
-      # GitHub until this workflow runs on the mirror again (#224).
+      # step; without this, scripts/ci/run-unprivileged.sh's `git ls-files`
+      # (which copies the tree for the suite below, as root) fails with exit
+      # status 128 (reproduced with GIT_TEST_ASSUME_DIFFERENT_OWNER=1).
+      # Unproven on GitHub until this workflow runs on the mirror again (#224).
       - name: Trust the checked-out workspace for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
@@ -87,13 +93,16 @@ jobs:
             "${TTYD_SHA256}" /usr/local/bin/ttyd
           chmod +x /usr/local/bin/ttyd
 
-      - name: Install visual-test dependencies
-        working-directory: test/visual
-        run: npm ci
-
+      # The launcher refuses root (#291) and `container:` runs steps as
+      # root, so the suite -- npm, the browser, ttyd and the binary it
+      # builds -- runs as an unprivileged user over a copy it owns, as
+      # GitLab's visual job does (#292); the report comes back for the
+      # upload below.
       - name: Run visual regression tests
-        working-directory: test/visual
-        run: npx playwright test
+        run: |
+          bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+            --keep test/visual/playwright-report \
+            -- bash -c 'npm ci && npx playwright test'
 
       - name: Upload Playwright report on failure
         if: failure()

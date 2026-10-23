@@ -11,8 +11,8 @@
      [38;2;74;84;104mOrbit installer: The installation directory is not empty and is not a[m      
         [38;2;74;84;104mrecognizable Orbit deployment or safe pre-provisioned bootstrap.[m        
                    [38;2;74;84;104mOrbit installer: Refusing to install here.[m                   
-               [38;2;124;134;153min the folder: a.txt, b.txt, notes.txt and 1 more[m                
-                [38;2;124;134;153mmove them out of the folder, then install again[m                 
+                 [38;2;74;84;104m·[m       [38;2;74;84;104m·[m [38;2;74;84;104m✦[m   [38;2;124;134;153mreading the folder[m                               
+             [38;2;124;134;153mfix what the installer names above, then install again[m             
           [38;2;124;134;153mto use another folder, exit and run the launcher from there[m           
                                                                                 
                                [38;2;216;180;90m▸[m [38;2;231;233;238mInstall again[m                                  

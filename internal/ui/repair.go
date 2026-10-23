@@ -956,7 +956,7 @@ func (m RepairModel) viewError() string {
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), title)
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
-		writeWrappedIn(&b, style.Tagline, visibleLines(m.runErr.Error()), measure(m.width, errorWidth), textArea(m.width))
+		writeWrappedIn(&b, style.Tagline, errorWords(m.runErr), measure(m.width, errorWidth), textArea(m.width))
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
@@ -1014,39 +1014,37 @@ func (m RepairModel) viewDiagnosis() string {
 	fmt.Fprintln(&tail)
 	m.menu.over(m.planMenu()).write(&tail)
 
-	// The findings take the rows the header, the summary, the whole
-	// plan and the menu leave, as the steps do, so an older repair.sh
-	// with many findings never pushes the menu off the screen.
+	// The services block gives way first (#290): it takes the rows the
+	// rest leaves with the findings and the whole plan at full length,
+	// and shrinks in steps (servicesBlock) before anything else. Only
+	// then do the findings shorten, taking the rows the header, the
+	// block, the summary, the whole plan and the menu leave, so an older
+	// repair.sh with many findings never pushes the menu off the screen.
+	// The last row is left to the sky, as on every scene screen.
 	stepRows := 0
 	for _, step := range steps {
 		stepRows += len(step)
-	}
-	findRoom := math.MaxInt
-	if m.height > 0 {
-		findRoom = m.height - 1 - strings.Count(head, "\n") - strings.Count(summary.String(), "\n") - strings.Count(tail.String(), "\n") - stepRows
 	}
 	var found [][]string
 	for _, f := range sortedFindings(m.findings) {
 		found = append(found, []string{findingLine(f)})
 	}
-	m.writeSteps(&b, found, findRoom)
-	b.WriteString(summary.String())
-
-	// The services block sits above the findings and takes the rows the
-	// rest leaves (the whole plan counted, since the steps can shorten
-	// themselves but the block should not squeeze them): the full list
-	// when it fits, else the running rows folded. The last row is left
-	// to the sky, as on every scene screen.
-	rest := head + b.String()
+	fixed := 1 + strings.Count(head, "\n") + strings.Count(summary.String(), "\n") + strings.Count(tail.String(), "\n") + stepRows
 	svcRoom := math.MaxInt
 	if m.height > 0 {
-		svcRoom = m.height - 1 - strings.Count(rest, "\n") - strings.Count(tail.String(), "\n") - stepRows
+		svcRoom = m.height - fixed - len(found)
 	}
-	if block := m.servicesBlock(svcRoom); block != nil {
-		rest = head + strings.Join(block, "\n") + "\n" + b.String()
+	block := m.servicesBlock(svcRoom)
+	findRoom := math.MaxInt
+	if m.height > 0 {
+		findRoom = m.height - fixed - len(block)
 	}
-	b.Reset()
-	b.WriteString(rest)
+	b.WriteString(head)
+	for _, row := range block {
+		fmt.Fprintln(&b, row)
+	}
+	m.writeSteps(&b, found, findRoom)
+	b.WriteString(summary.String())
 
 	// The steps take whatever rows remain, so a short terminal
 	// never pushes the summary and menu off the bottom.
@@ -1109,7 +1107,7 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 		// No plan lines: healthy, a --check fallback run, or nothing
 		// plannable. Keep the honest note whenever something's wrong.
 		if result != engine.ResultHealthy {
-			after = append(after, style.Tagline.Render("repair actions arrive with a later Orbit release"))
+			after = append(after, m.taglineRows("repair actions arrive with a later Orbit release")...)
 		}
 		return nil, after
 	}
@@ -1124,10 +1122,11 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			// The engine's guidance is unsized prose with a machine tag
 			// on the end: drop the tag (the plan line above already
 			// names the problem) and wrap the rest, so it is never cut
-			// at the screen's edge (#253).
-			// Copyable text stays whole until the layout call on #277 group B:
-			// a step can name a path or command to run.
-			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), math.MaxInt)
+			// at the screen's edge (#253). A step can name a path or a
+			// command to run: a word that fits the text area stays whole,
+			// a wider one is cut at the measure, every character kept
+			// (#277 L4).
+			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), textArea(m.width))
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
@@ -1138,7 +1137,19 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			steps = append(steps, rows)
 		}
 	}
-	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
+	return steps, append([]string{""}, m.taglineRows(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))...)
+}
+
+// taglineRows is a line under the plan, one row where it fits the text
+// area and wrapped to it where it does not, so no row is wider than the
+// text area (#277 L4: the 48-cell lines wrap at 50 columns).
+func (m RepairModel) taglineRows(text string) []string {
+	lines := wrapWordsIn(text, textArea(m.width), textArea(m.width))
+	rows := make([]string, len(lines))
+	for i, line := range lines {
+		rows[i] = style.Tagline.Render(line)
+	}
+	return rows
 }
 
 // planRows renders one proposed action: the action in plain words and
