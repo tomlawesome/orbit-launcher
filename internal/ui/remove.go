@@ -402,12 +402,15 @@ func (m RemoveModel) viewDone() string {
 
 	// The box gets the rows the screen has left once every other row,
 	// the menu included, has its place: a long folder at a narrow width
-	// must never push Copy command, Menu and Exit off the screen. Rows
-	// past that are stood for by one "…" row; Copy command still
-	// carries the whole command.
+	// must never push Copy command, Menu and Exit off the screen. When
+	// the box is short, its end is kept, not its start: the end is the
+	// half that deletes everything (`&& sudo rm -rf '<folder>'`), the
+	// part that must read. One "…" row stands first for the rows dropped,
+	// as the stopped screen's installer block keeps its newest lines
+	// (fitTail); Copy command still carries the whole command (#277 L2).
 	room := max(m.height-strings.Count(b.String(), "\n")-strings.Count(tail.String(), "\n")-2, 1)
 	if len(lines) > room {
-		lines = append(lines[:room-1:room-1], "  …")
+		lines = append([]string{"  …"}, lines[len(lines)-(room-1):]...)
 	}
 	boxW := 0
 	for _, l := range lines {
