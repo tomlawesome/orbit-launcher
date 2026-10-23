@@ -475,7 +475,16 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
-		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+		if d, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+			// A stop that reaches the installer after it disarmed its
+			// rollback (database and application ready — orbit
+			// docs/engine-events.md) only ends the optional waits: the
+			// run finishes with its completion event and exit 0 and
+			// nothing is undone, so it is the success it is, keyed as
+			// every outcome is off the event plus the exit code.
+			if d.Err == nil && r.completed {
+				return r.handleStream(msg.msg)
+			}
 			// The installer finished its own stop. Whatever it exited
 			// with, the operator asked for this: not a failure.
 			return r.quitNow(false)
@@ -486,7 +495,14 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		if r.state != runStopping {
 			return r, nil
 		}
-		return r.quitNow(msg.forced)
+		if !msg.forced {
+			// The installer's exit is not the end of its stream: its
+			// last lines and its DoneMsg are still on the way (bounded
+			// by the command's WaitDelay), and that DoneMsg says
+			// whether the stop undid the run or finished it.
+			return r, nil
+		}
+		return r.quitNow(true)
 
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)

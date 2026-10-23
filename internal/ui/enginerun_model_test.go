@@ -269,7 +269,9 @@ func TestEngineRun_CtrlCWhilePreparingCancelsAndQuitsOnceThePrepareReportsBack(t
 }
 
 func TestEngineRun_CtrlCWhilePreparingKillsAnEngineThatStartedAnyway(t *testing.T) {
-	s := sleepingStream(t)
+	// A stoppableStream, so settleStop can feed the run the stream's
+	// DoneMsg: the installer exiting is not the end of the run.
+	s := stoppableStream(t, "echo started; exec sleep 60")
 	cleaned := false
 	r := newEngineRun("install", t.TempDir(), "Install — Standard", "v9.9.9").withSeams(engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -290,8 +292,8 @@ func TestEngineRun_CtrlCWhilePreparingKillsAnEngineThatStartedAnyway(t *testing.
 	if !cleaned {
 		t.Fatal("the staged script was not cleaned up")
 	}
-	if d := awaitEnd(t, s); d.ExitCode == 0 {
-		t.Fatalf("an engine that started after Ctrl+C was left running: %+v", d)
+	if !closed(s.Done(), 3*time.Second) {
+		t.Fatal("an engine that started after Ctrl+C was left running")
 	}
 }
 
