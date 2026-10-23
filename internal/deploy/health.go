@@ -19,8 +19,15 @@ import (
 const healthProbeTimeout = 2 * time.Second
 
 // healthClient is the client the probe goes through; http.DefaultClient
-// has no timeout at all.
-var healthClient = &http.Client{Timeout: healthProbeTimeout}
+// has no timeout at all. It never follows a redirect (#277 W1): a
+// redirect would contact an address .env-orbit never named, and the 3xx
+// answer already shows the deployment is responding.
+var healthClient = &http.Client{
+	Timeout: healthProbeTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // HealthReason says why a deployment reads as degraded; the empty
 // reason means it answered (#254).
@@ -46,10 +53,15 @@ const (
 func ProbeHealth(ctx context.Context, appURL string) HealthReason {
 	// APP_URL comes from a file the launcher may not have written, so
 	// only a web address is ever asked; any other scheme is not checked.
-	if u, err := url.Parse(appURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	u, err := url.Parse(appURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return HealthUnchecked
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appURL, nil)
+	// Go's client turns a user:password@ in the address into Basic auth;
+	// the probe never needs credentials (a 401 already counts as
+	// responding), so none are sent (#277 W1).
+	u.User = nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return HealthUnchecked
 	}
