@@ -38,13 +38,15 @@ var repairAllowedUses = map[string]bool{"os.Stdout": true}
 // outside the process (RepairCommand builds repair.sh's command and the
 // two Start functions run it with repair.sh's own read-only contract;
 // ServiceStates asks Docker for container states; Detect reads
-// .env-orbit) or builds text (ChownCommandWords). A new entry point
+// .env-orbit), builds text (ChownCommandWords) or checks the folder's
+// name and nothing else (CheckFolderName). A new entry point
 // gets in only by being added here, after someone has asked what it does.
 var repairAllowedCalls = map[string]bool{
 	"deploy.RepairCommand":     true,
 	"deploy.ServiceStates":     true,
 	"deploy.Detect":            true,
 	"deploy.ChownCommandWords": true,
+	"deploy.CheckFolderName":   true, // the path string only (#277 W3)
 	"engine.Start":             true,
 	"engine.StartInteractive":  true,
 }

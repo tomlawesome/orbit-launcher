@@ -87,6 +87,11 @@ func checkFolder(dir string) error {
 	return nil
 }
 
+// CheckFolderName is checkFolder for a screen that reads the folder
+// itself before an engine start (Repair's ownership check, #277 W3):
+// the same refusal, so the name is checked once, by one rule.
+func CheckFolderName(dir string) error { return checkFolder(dir) }
+
 // stageInstall writes script to a temp file and makes the run's private
 // configuration tree directory. It returns the script's path, the run's
 // environment, and the cleanup that removes both.

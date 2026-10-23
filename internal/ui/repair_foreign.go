@@ -29,21 +29,25 @@ type repairForeignMsg struct{ own deploy.Ownership }
 var foreignMenu = []string{removeCopy, "Diagnose again", "Menu", "Exit"}
 
 // startDiagnosis is startRun for a run start (Init, "Diagnose again"):
-// the foreignOwned check runs first, inside the same command, so the
-// screen is never held up by it and each start asks afresh. Foreign
-// files stop the start; a check that fails does not, as the engine's own
-// diagnosis still reads what it can. A nil seam checks nothing (the c9
-// harness).
+// the folder's name is checked first, by RepairCommand's own rule, so
+// nothing in a control-named folder is read and it gets the name refusal
+// (#277 W3). The foreignOwned check runs next, inside the same command,
+// so the screen is never held up by it and each start asks afresh.
+// Foreign files stop the start; a check that fails does not, as the
+// engine's own diagnosis still reads what it can. A nil seam checks no
+// ownership (the c9 harness).
 func (m RepairModel) startDiagnosis(mode deploy.RepairMode) tea.Cmd {
 	run := m.startRun(mode)
 	check := m.foreignOwned
-	if check == nil {
-		return run
-	}
 	targetDir := m.targetDir
 	return func() tea.Msg {
-		if own, err := check(targetDir); err == nil && len(own.Files) > 0 {
-			return repairForeignMsg{own: own}
+		if err := deploy.CheckFolderName(targetDir); err != nil {
+			return repairReadyMsg{err: err}
+		}
+		if check != nil {
+			if own, err := check(targetDir); err == nil && len(own.Files) > 0 {
+				return repairForeignMsg{own: own}
+			}
 		}
 		return run()
 	}
