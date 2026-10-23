@@ -36,11 +36,12 @@ import (
 // groupBCore is the spec's core height: header, blank, counts, plan line,
 // blank, a three-row menu, the sky's row and one "more" row each for
 // findings and steps: 13 rows at 80 columns. At 50 columns each "and N
-// more — make the terminal taller to see them" row wraps to two rows, so
-// the core there is 15.
+// more — make the terminal taller to see them" row wraps to two rows, and
+// since L4 the plan line ("a safe plan is ready — pick a repair below to
+// run it") wraps to two as well, so the core there is 16.
 func groupBCore(w int) int {
 	if w < 60 {
-		return 15
+		return 16
 	}
 	return 13
 }
