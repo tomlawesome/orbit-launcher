@@ -272,9 +272,16 @@ func ansiCQuote(s string) string {
 			b.WriteString(`\'`)
 		case strconv.IsPrint(r):
 			b.WriteRune(r)
-		default:
+		case r < utf8.RuneSelf:
 			q := strconv.QuoteRune(r)
 			b.WriteString(q[1 : len(q)-1])
+		default:
+			// Outside ASCII, the UTF-8 bytes: bash reads \xHH the same in
+			// every locale, while \u stays literal text in the C locale
+			// (owner answer 15a on #277).
+			for _, c := range []byte(s[i : i+n]) {
+				fmt.Fprintf(&b, `\x%02x`, c)
+			}
 		}
 		i += n
 	}

@@ -20,11 +20,11 @@ type groupBByteCase struct {
 }
 
 var groupBByteCases = []groupBByteCase{
-	{"rlo‮exe", `$'rlo\xe2\x80\xaeexe'`},
+	{"rlo\u202eexe", `$'rlo\xe2\x80\xaeexe'`},
 	{"nel\u0085x", `$'nel\xc2\x85x'`},
-	{"isolate⁦x", `$'isolate\xe2\x81\xa6x'`},
-	{"‮\x1b", `$'\xe2\x80\xae\x1b'`},
-	{"it's‮\n\\", `$'it\'s\xe2\x80\xae\n\\'`},
+	{"isolate\u2066x", `$'isolate\xe2\x81\xa6x'`},
+	{"\u202e\x1b", `$'\xe2\x80\xae\x1b'`},
+	{"it's\u202e\n\\", `$'it\'s\xe2\x80\xae\n\\'`},
 }
 
 func TestGroupB_W2_NonASCIIEscapesAreUTF8Bytes(t *testing.T) {
