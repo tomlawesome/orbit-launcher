@@ -1,0 +1,4 @@
+# Golden files are screen snapshots the tests write, not hand-written code:
+# GitLab and GitHub collapse them in diffs, and the audit line count leaves
+# them out.
+*.golden linguist-generated
