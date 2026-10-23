@@ -42,12 +42,23 @@ if [ "$(id -u)" -eq 0 ]; then
   chmod 0777 "$dir/unit" "$dir/binary"
 fi
 
-ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" go test "$@" "${cover[@]}" "${pkgs[@]}" \
-  -args -test.gocoverdir="$dir/unit"
+# The two runs go side by side: one after the other pushed `fast` past its
+# 15-minute cap (pipeline 2954). The unprivileged run gets its own build
+# cache, because run-unprivileged.sh hands its cache to the other user while
+# the root run is still writing to the shared one.
+unprivileged=""
 if [ "${#spawners[@]}" -gt 0 ]; then
-  bash scripts/ci/run-unprivileged.sh -- env ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" \
-    go test "$@" "${cover[@]}" "${spawners[@]}" -args -test.gocoverdir="$dir/unit"
+  GOCACHE="$dir/gocache" bash scripts/ci/run-unprivileged.sh -- env ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" \
+    go test "$@" "${cover[@]}" "${spawners[@]}" -args -test.gocoverdir="$dir/unit" &
+  unprivileged=$!
 fi
+status=0
+ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" go test "$@" "${cover[@]}" "${pkgs[@]}" \
+  -args -test.gocoverdir="$dir/unit" || status=$?
+if [ -n "$unprivileged" ]; then
+  wait "$unprivileged" || status=$?
+fi
+[ "$status" -eq 0 ] || exit "$status"
 
 go tool covdata textfmt -i="$dir/unit,$dir/binary" -o coverage.out
 go tool covdata percent -i="$dir/unit,$dir/binary"
