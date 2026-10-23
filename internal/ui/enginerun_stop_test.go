@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -26,7 +27,9 @@ import (
 
 // stoppableStream starts script the way the console runs the engine
 // (session-detached, stdout piped), waits for its first line so that any
-// trap it sets is in place, then drains the rest in the background. The
+// trap it sets is in place, then drains the rest in the background into
+// the stream's tail (streamTail), where settleStop finds the engine's
+// DoneMsg to feed back into update as the event loop would. The
 // script's whole process group is killed when the test ends.
 func stoppableStream(t *testing.T, script string) *engine.Stream {
 	t.Helper()
@@ -45,11 +48,35 @@ func stoppableStream(t *testing.T, script string) *engine.Stream {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the engine script printed nothing")
 	}
+	tail := make(chan any, 256)
+	streamTails.Store(s, tail)
+	t.Cleanup(func() { streamTails.Delete(s) })
 	go func() {
-		for range s.C {
+		for msg := range s.C {
+			select {
+			case tail <- msg:
+			default: // nobody is reading this stream's tail; drop it
+			}
 		}
+		close(tail)
 	}()
 	return s
+}
+
+// streamTails maps a stoppableStream to the channel its background
+// drain copies the stream's remaining messages into.
+var streamTails sync.Map // *engine.Stream -> chan any
+
+// streamTail is s's drained messages, or nil for a stream stoppableStream
+// did not start.
+func streamTail(s *engine.Stream) <-chan any {
+	if s == nil {
+		return nil
+	}
+	if v, ok := streamTails.Load(s); ok {
+		return v.(chan any)
+	}
+	return nil
 }
 
 // The scripts start their long sleep, and wait until it is really
@@ -113,29 +140,42 @@ func runCmdInto(cmd tea.Cmd, out chan<- tea.Msg) {
 }
 
 // settleStop plays the event loop for a stopping run: the commands run,
-// engineStoppedMsg goes back into update, and what that returns runs in
-// turn, until the run quits or five seconds pass. stopped is the
-// engineStoppedMsg seen, if any.
+// engineStoppedMsg goes back into update, and so does what the run's
+// engine stream still delivers (its DoneMsg above all), as the stream
+// reader pushes it in production; what update returns runs in turn,
+// until the run quits or five seconds pass. stopped is the
+// engineStoppedMsg seen, if any. The stream is read from its tail
+// (stoppableStream), so a test can still wait on s.Done() itself.
 func settleStop(t *testing.T, r engineRun, cmd tea.Cmd) (after engineRun, stopped *engineStoppedMsg, quit bool) {
 	t.Helper()
 	out := make(chan tea.Msg, 256)
 	runCmdInto(cmd, out)
+	tail := streamTail(r.stream)
 	deadline := time.After(5 * time.Second)
 	for {
+		var next tea.Cmd
 		select {
 		case msg := <-out:
 			if msg == tea.Quit() {
 				return r, stopped, true
 			}
+			if _, tick := msg.(tickMsg); tick {
+				continue
+			}
 			if m, ok := msg.(engineStoppedMsg); ok {
 				stopped = &m
-				var next tea.Cmd
-				r, next = r.update(msg)
-				runCmdInto(next, out)
 			}
+			r, next = r.update(msg)
+		case msg, ok := <-tail:
+			if !ok {
+				tail = nil
+				continue
+			}
+			r, next = r.update(engineStreamMsg{msg: msg})
 		case <-deadline:
 			return r, stopped, false
 		}
+		runCmdInto(next, out)
 	}
 }
 
@@ -210,10 +250,12 @@ func TestEngineRun_CtrlCWhileStreamingLetsTheInstallerRollBackBeforeQuitting(t *
 	}
 }
 
-func TestEngineRun_EngineStoppedMsgQuitsAfterCtrlC(t *testing.T) {
-	// engineStoppedMsg{} -- not forced -- is all the stopping run needs
-	// to quit: it must not kill an engine that has already gone, and it
-	// must release the run's files.
+func TestEngineRun_EngineStoppedMsgAfterCtrlCWaitsForTheDoneMsgToQuit(t *testing.T) {
+	// engineStoppedMsg{} -- not forced -- says the installer process has
+	// gone, but not how it ended: its DoneMsg (and any success event
+	// still queued before it) may yet be on the way, so the run waits
+	// for the DoneMsg to quit (#293). It must not kill an engine that
+	// has already gone, and it must release the run's files.
 	marker := filepath.Join(t.TempDir(), "rolled-back")
 	s := stoppableStream(t, rollbackScript(marker))
 	cleaned := 0
@@ -223,10 +265,27 @@ func TestEngineRun_EngineStoppedMsgQuitsAfterCtrlC(t *testing.T) {
 		t.Fatal("the installer never finished its cleanup")
 	}
 
-	_, cmd := runUpdate(t, r, engineStoppedMsg{})
+	r, cmd := runUpdate(t, r, engineStoppedMsg{})
+
+	if isQuit(cmd) {
+		t.Fatal("the process exit alone quit the stopping run; the quit must wait for the engine's DoneMsg")
+	}
+	if !strings.Contains(runScreen(r), "stopping the install") {
+		t.Errorf("after the process exit, before the DoneMsg, the screen no longer says it is stopping:\n%s", runScreen(r))
+	}
+	if cleaned > 1 {
+		t.Errorf("staged script cleaned %d times by the process exit, want at most once", cleaned)
+	}
+
+	r, cmd = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{
+		Err: errors.New("signal: terminated"), ExitCode: 143, StderrTail: []string{"rolled back"},
+	}})
 
 	if !isQuit(cmd) {
-		t.Fatal("engineStoppedMsg did not lead to tea.Quit")
+		t.Fatal("the DoneMsg that followed the process exit did not lead to tea.Quit")
+	}
+	if r.state == runFailed {
+		t.Errorf("a stop the operator asked for ended on the failure screen:\n%s", runScreen(r))
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("the installer's EXIT trap did not run: %v", err)
@@ -451,8 +510,9 @@ func TestEngineRun_ACleanStopLeavesNoExitNote(t *testing.T) {
 }
 
 // The real ordering: the stream closes Done() before it delivers the
-// DoneMsg, so the stop wait reports engineStoppedMsg{} first and the
-// run quits before any DoneMsg is handled.
+// DoneMsg, so the stop wait reports engineStoppedMsg{} first. The run
+// waits for the DoneMsg to quit (#293), and neither message leaves an
+// exit note for a clean stop.
 func TestEngineRun_ACleanStoppedMsgBeforeTheDoneMsgLeavesNoExitNote(t *testing.T) {
 	s := stoppableStream(t, rollbackScript(filepath.Join(t.TempDir(), "rolled-back")))
 	cleaned := 0
@@ -467,8 +527,8 @@ func TestEngineRun_ACleanStoppedMsgBeforeTheDoneMsgLeavesNoExitNote(t *testing.T
 
 	r, cmd := runUpdate(t, r, engineStoppedMsg{})
 
-	if !isQuit(cmd) {
-		t.Fatal("engineStoppedMsg did not lead to tea.Quit")
+	if isQuit(cmd) {
+		t.Fatal("engineStoppedMsg alone led to tea.Quit; the quit must wait for the DoneMsg")
 	}
 	if note := outcomeOf(r).ExitNote; note != "" {
 		t.Errorf("a clean stop left an exit note: %q", note)
@@ -479,10 +539,13 @@ func TestEngineRun_ACleanStoppedMsgBeforeTheDoneMsgLeavesNoExitNote(t *testing.T
 	}})
 
 	if !isQuit(cmd) {
-		t.Error("a late DoneMsg after the stop no longer leads to tea.Quit")
+		t.Error("the DoneMsg after the stop does not lead to tea.Quit")
 	}
 	if note := outcomeOf(r).ExitNote; note != "" {
-		t.Errorf("a late DoneMsg invented an exit note: %q", note)
+		t.Errorf("the DoneMsg after a clean stop invented an exit note: %q", note)
+	}
+	if cleaned != 1 {
+		t.Errorf("staged script cleaned %d times, want once", cleaned)
 	}
 }
 
