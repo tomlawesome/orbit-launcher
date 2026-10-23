@@ -75,10 +75,10 @@ func TestGroupB_W5_AFolderWithFilesShowsTheThreeLinesWhateverTheRefusal(t *testi
 
 // More than three entries: three names and a count, then the same tail.
 func TestGroupB_W5_ManyEntriesListThreeCountTheRestAndKeepTheTail(t *testing.T) {
-	dir := folderWith(t, "e/", "c.txt", "a.txt", "d.txt", "b/", ".env-orbit")
+	dir := folderWith(t, "e/", "c.md", "a.md", "d.md", "b/", ".env-orbit")
 	s := screen(stoppedInstall(t, dir, hostRefused, exit1(notEmptyStderr...)))
-	gbStThreeLines(t, s, "a.txt, b/, c.txt and 2 more")
-	if strings.Contains(flat(s), "d.txt") {
+	gbStThreeLines(t, s, "a.md, b/, c.md and 2 more")
+	if strings.Contains(flat(s), "d.md") {
 		t.Errorf("the listing names more than three entries:\n%s", s)
 	}
 }
@@ -114,17 +114,17 @@ func TestGroupB_W5_TheListingExcludesTheInstallersOwnEntries(t *testing.T) {
 		}
 	})
 	t.Run("a file of that name is listed", func(t *testing.T) {
-		dir := folderWith(t, "notes.txt", "orbit-install-backups")
+		dir := folderWith(t, "a", "orbit-install-backups")
 		s := screen(stoppedInstall(t, dir, hostRefused, exit1(notEmptyStderr...)))
-		gbStThreeLines(t, s, "notes.txt, orbit-install-backups")
+		gbStThreeLines(t, s, "a, orbit-install-backups")
 	})
 	t.Run("a link of that name is listed", func(t *testing.T) {
-		dir := folderWith(t, "notes.txt")
+		dir := folderWith(t, "a")
 		if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(dir, "orbit-install-backups")); err != nil {
 			t.Fatal(err)
 		}
 		s := screen(stoppedInstall(t, dir, hostRefused, exit1(notEmptyStderr...)))
-		gbStThreeLines(t, s, "notes.txt, orbit-install-backups")
+		gbStThreeLines(t, s, "a, orbit-install-backups")
 	})
 }
 
