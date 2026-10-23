@@ -611,11 +611,14 @@ config field enters Go, ever. Outcomes are keyed off events plus exit
 codes, never scraped prose; a legacy engine (orbit main today) that
 emits no events has its output displayed verbatim and is judged by exit
 code alone. The guided installer is offered from the stopped screen only
-for an installer that reports nothing, or one that refuses configuration
-again after guided configuration; anywhere else it would run the same
-`install.sh` into the same refusal (#257). Every other stop says what
-happened to the folder and offers only what can work: Install again (or
-Update again), Open Repair, or Menu and Exit.
+for an installer that reports nothing, or for a failure of the
+configuration session or of the guided installer itself (for example a
+configuration tree on a path the launcher does not trust); anywhere else
+it would run the same `install.sh` into the same refusal (#257). The
+configuration-session failure states nothing about the folder, since the
+failure's own words stand. Every other stop says what happened to the
+folder and offers only what can work: Install again (or Update again),
+Open Repair, or Menu and Exit.
 Success concludes on `internal/ui/success.go`: the splash's scene with
 the wordmark in alive-green, the deployment URL in the identity slot,
 "Orbit achieved in Nm NNs" from the console's real clock, and

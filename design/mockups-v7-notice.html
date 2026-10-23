@@ -38,7 +38,7 @@
 
 <h1>orbit-launcher · v7 — the development notice · #175</h1>
 <div class="sub">
-  <i>Partly superseded (2026-10-20, #248): the confirm screen named below is gone; Standard on the profile screen opens the notice, and Back returns there. Also superseded: the timer is a flat 20 seconds (2026-10-17, #250; the 70-second timer and the 1:08/1:10 captions below are the record); the right-gutter track and ↓ arrow exist (2026-10-21, #249); the pinned row reads "Back", not "Go back" (2026-10-20, #228).</i><br>
+  <i>Partly superseded (2026-10-20, #248): the confirm screen named below is gone; Standard on the profile screen opens the notice, and Back returns there. Also superseded: the timer is a flat 20 seconds (2026-10-17, #250; the 70-second timer and the 1:08/1:10 captions below are the record); the right-gutter track and ↓ arrow exist (2026-10-21, #249); the pinned row reads "Back", not "Go back" (2026-10-11, #228).</i><br>
   One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
   Three things gate the install: the prose has been on screen to its last line, a 70-second timer has run
   out, and the person has typed <b>I've read this and I understand</b> into a text box. The timer, the
@@ -180,6 +180,7 @@
 
   <h3>5 · 80×26, and tall</h3>
   <p><b>Superseded 2026-10-21 (#249):</b> the notice now draws a right-gutter scroll track (│/┃) and a ↓ arrow below the prose, and the prose window is the viewport less two rows (10 rows at 80×26, not 12).</p>
+  <p><b>Also superseded:</b> at 120×50 the prose window is now 34 rows, not 36 (the height less 16; <code>viewport</code> and <code>prose</code> in <code>internal/ui/notice.go</code>). The scene e caption above and the 120×50 figures below are the record.</p>
   <p>The approved copy wraps to <b>forty-seven rows</b> at the 56-column measure (ten paragraphs,
     nine gaps). At 80×26 the header (blank, ⟡, blank, title, state, blank) takes six rows and the
     bottom region (timer, prompt, the box's three rows, feedback, Go back, blank) eight — the box

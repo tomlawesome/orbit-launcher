@@ -7,7 +7,7 @@ heading.
 
 ## TestDiagnose_FindsASessionDetachedDescendant (test/live)
 
-- 2026-10-06 · 9e15161 · local, 2 of about 25 runs alongside TestLive_HangDiagnosisProducesAGoroutineDump · fails only when run with the hang-diagnosis test; always passes alone
+- 2026-10-06 · 9e15161 (no longer in history) · local, 2 of about 25 runs alongside TestLive_HangDiagnosisProducesAGoroutineDump · fails only when run with the hang-diagnosis test; always passes alone
 
 ## Unidentified internal/ui failure
 

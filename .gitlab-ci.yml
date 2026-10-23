@@ -105,7 +105,7 @@ variables:
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
   # this GitLab, not the GitHub mirror. Overridable per pipeline the way the
-  # GitHub job's `orbit_branch` and `orbit_channel` inputs are.
+  # GitHub job's `orbit_branch` input is.
   #
   # The production pair is `main` and "" (install.sh's own default, `latest`).
   # Both sit on `preview` (owner, 2026-09-14): Orbit's `main` still carries
