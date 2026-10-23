@@ -61,6 +61,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The suite runs as an unprivileged user (#292); leave no token on
+          # disk for it to read.
+          persist-credentials: false
 
       # Inside `container:` the workspace belongs to the host's runner user
       # while the steps run as root, so git refuses the repository as

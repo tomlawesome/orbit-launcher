@@ -516,11 +516,14 @@ live:
     # The Go tarball comes in through scripts/ci/fetch-verified.sh, so a change
     # to that script alone changes what the install runs on, and starts this
     # route too (#216). classify-changed-paths.sh's LIVE_PIN_PATHS lists the
-    # same files, so the gate below lets the job through for them.
+    # same files, so the gate below lets the job through for them. The
+    # launcher runs through scripts/ci/run-unprivileged.sh (#292), so a change
+    # to it alone does too.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
+        - scripts/ci/run-unprivileged.sh
       when: manual
       allow_failure: false
   variables:

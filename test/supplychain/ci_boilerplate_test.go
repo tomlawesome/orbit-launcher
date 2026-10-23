@@ -710,12 +710,19 @@ bash scripts/ci/nonroot-tests.sh`,
 // scripts/ci/run-unprivileged.sh, and the live install runs as orbit-ci, a
 // user in the job daemon's docker group, which also makes the registry login
 // and has it removed in after_script. A change to that script alone starts
-// the visual job. Same form and the same exactly-once rule as changedBy216.
+// the visual and live jobs. Same form and the same exactly-once rule as
+// changedBy216.
 var changedBy292 = []struct {
 	jobs     []string
 	key      string
 	old, new string
 }{
+	{
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
+		new:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+	},
 	{
 		jobs: []string{"visual"},
 		key:  "rules",
