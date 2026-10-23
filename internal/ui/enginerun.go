@@ -255,8 +255,11 @@ type engineRun struct {
 	// installer; exited the installer's failing exit ending the run, and
 	// streamCut its stream closing before it said how the run went.
 	// handoffRefused is the strict mode's refusal of the terminal
-	// handoff. folderEntries is the folder's listing, read once on
-	// entering the screen when nothing was written to it.
+	// handoff. folderEntries is the folder's listing, read once by a
+	// command on entering the screen when nothing was written to it:
+	// folderRead is that read (nil when none was started), folderPending
+	// it not having answered yet, folderFailed its error or no answer in
+	// time (readFolderCmd).
 	sawEvent       bool
 	rollbackSeen   bool
 	startFailed    bool
@@ -264,6 +267,9 @@ type engineRun struct {
 	streamCut      bool
 	handoffRefused bool
 	folderEntries  []string
+	folderRead     *folderRead
+	folderPending  bool
+	folderFailed   bool
 
 	// handoffByHand is the terminal handoff chosen from the failure
 	// screen rather than reached as a fallback; handoffErr is why its
@@ -458,7 +464,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		if msg.err != nil {
 			r.runErr = msg.err
 			r.startFailed = true
-			return r.enterStopped(), nil
+			return r.enterStopped()
 		}
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
@@ -485,6 +491,9 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)
+
+	case folderReadMsg:
+		return r.gotFolder(msg), nil
 
 	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
@@ -625,7 +634,7 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			return r.beginConfigCollect()
 		}
 		r.exited = true
-		return r.enterStopped(), nil
+		return r.enterStopped()
 	}
 	return r, nil
 }
@@ -651,7 +660,7 @@ func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.C
 		r.runErr = errEngineStoppedEarly
 	}
 	r.streamCut = true
-	return r.enterStopped(), nil
+	return r.enterStopped()
 }
 
 // succeed resolves the deployment's URL and finishes the run.
@@ -982,33 +991,95 @@ func (r *engineRun) forgetStop() {
 	r.sawEvent, r.rollbackSeen, r.startFailed = false, false, false
 	r.exited, r.streamCut, r.handoffRefused = false, false, false
 	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
-	r.folderEntries = nil
+	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
 }
 
 // enterStopped puts the run on the stopped screen, the caret on its
 // first row. An Install that stopped before writing reads the folder
-// once, here, so the screen can say what is in it.
-func (r engineRun) enterStopped() engineRun {
+// once, by the command it returns, so the screen can say what is in it
+// (#277 L3): never on the screen's own thread.
+func (r engineRun) enterStopped() (engineRun, tea.Cmd) {
 	r.state = runFailed
 	r.menu = menu{}
-	r.folderEntries = nil
+	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
 	if r.action == deploy.ActionInstall && r.stopKind() == stoppedBeforeWriting {
-		r.folderEntries = r.readFolder()
+		r.folderRead = &folderRead{dir: r.targetDir}
+		r.folderPending = true
+		return r, r.readFolderCmd()
 	}
+	return r, nil
+}
+
+// folderReadLimit is how long the stopped screen waits for the folder's
+// listing, as long as Repair waits for the services (A4).
+const folderReadLimit = 4 * time.Second
+
+// folderRead names one read of the folder: its answer is kept only while
+// the run still holds the same read, so one landing after Install again
+// or Menu is dropped. It is never zero-sized, so two reads never share
+// an address.
+type folderRead struct{ dir string }
+
+// folderReadMsg is a folder read's answer: the names the screen lists,
+// or failed for an error or no answer within the limit.
+type folderReadMsg struct {
+	read   *folderRead
+	names  []string
+	failed bool
+}
+
+// readFolderCmd lists the folder off the screen's thread, waiting at most
+// folderLimit, as readServices does: the reader runs on a goroutine of
+// its own with a buffered slot for its answer, so one that is late (or
+// never returns) costs only that goroutine, and its answer is dropped.
+func (r engineRun) readFolderCmd() tea.Cmd {
+	list, read := r.listFolder, r.folderRead
+	if list == nil {
+		list = os.ReadDir
+	}
+	limit := r.folderLimit
+	if limit <= 0 {
+		limit = folderReadLimit
+	}
+	return func() tea.Msg {
+		type answer struct {
+			entries []os.DirEntry
+			err     error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			entries, err := list(read.dir)
+			answered <- answer{entries, err}
+		}()
+		select {
+		case a := <-answered:
+			if a.err != nil {
+				return folderReadMsg{read: read, failed: true}
+			}
+			return folderReadMsg{read: read, names: folderNames(a.entries)}
+		case <-time.After(limit):
+			return folderReadMsg{read: read, failed: true}
+		}
+	}
+}
+
+// gotFolder keeps a folder read's answer if the run still holds that
+// read and is still on its stopped screen.
+func (r engineRun) gotFolder(msg folderReadMsg) engineRun {
+	if msg.read == nil || msg.read != r.folderRead || !r.folderPending || r.state != runFailed || r.Done {
+		return r
+	}
+	r.folderPending = false
+	r.folderEntries, r.folderFailed = msg.names, msg.failed
 	return r
 }
 
-// readFolder lists the folder's entries as the stopped screen names
+// folderNames lists the folder's entries as the stopped screen names
 // them: sorted, directories ending "/", without the installer's own
 // files (.env-orbit, .orbit-secrets, and orbit-install-backups when it
 // is a real directory; a file or link of that name the installer
 // refuses, so it is listed).
-func (r engineRun) readFolder() []string {
-	list := r.listFolder
-	if list == nil {
-		list = os.ReadDir
-	}
-	entries, _ := list(r.targetDir) // what was read before an error still counts
+func folderNames(entries []os.DirEntry) []string {
 	var names []string
 	for _, e := range entries {
 		name := e.Name()
@@ -1196,7 +1267,14 @@ func (r engineRun) viewFailed(width, height int) string {
 	if r.handoffErr != nil {
 		writeWrappedIn(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit, textArea(width))
 	}
-	if len(r.folderEntries) > 0 {
+	// The listing's slot: one muted row while the read is out, so the
+	// menu sits where a one-row listing leaves it (#277 L3).
+	switch {
+	case r.folderPending:
+		writeWrappedIn(&after, style.MutedText, "reading the folder", limit, textArea(width))
+	case r.folderFailed:
+		writeWrappedIn(&after, style.MutedText, "the folder could not be read", limit, textArea(width))
+	case len(r.folderEntries) > 0:
 		for _, row := range wrapHard(folderListing(r.folderEntries), limit, width-4, folderRows) {
 			fmt.Fprintln(&after, style.MutedText.Render(row))
 		}

@@ -116,8 +116,10 @@ type engineRunSeams struct {
 	prepareRepair  prepareRepairFunc
 	prepareRotate  prepareRotateFunc
 	// listFolder reads the folder for the stopped screen's listing;
-	// nil is os.ReadDir.
-	listFolder func(dir string) ([]os.DirEntry, error)
+	// nil is os.ReadDir. folderLimit is how long the screen waits for
+	// it; zero is folderReadLimit.
+	listFolder  func(dir string) ([]os.DirEntry, error)
+	folderLimit time.Duration
 }
 
 // withSend gives the run its way back into the event loop.
