@@ -1096,13 +1096,25 @@ func folderNames(entries []os.DirEntry) []string {
 
 // folderListing is the stopped screen's line about the folder: a few
 // names, then how many more (owner, 15a), never a long list, ending in
-// the fact that holds whichever check refused (#277 W5).
-func folderListing(names []string) string {
-	const shown, tail = 3, " — the installer needs it empty"
-	if len(names) <= shown {
-		return "in the folder: " + strings.Join(names, ", ") + tail
+// the fact that holds whichever check refused (#277 W5). It names as
+// many entries, up to three, as keep the whole line within limit, so it
+// takes the one row "reading the folder" held for it (#277 L3). When
+// even one name does not fit, it keeps one name and the line wraps
+// between words.
+func folderListing(names []string, limit int) string {
+	const most, tail = 3, " — the installer needs it empty"
+	line := func(shown int) string {
+		if shown >= len(names) {
+			return "in the folder: " + strings.Join(names, ", ") + tail
+		}
+		return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown) + tail
 	}
-	return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown) + tail
+	for shown := min(most, len(names)); shown > 1; shown-- {
+		if l := line(shown); lipgloss.Width(visibleText(l)) <= limit {
+			return l
+		}
+	}
+	return line(1)
 }
 
 // stoppedRows are the stopped screen's rows for how the run stopped.
@@ -1273,7 +1285,7 @@ func (r engineRun) viewFailed(width, height int) string {
 	case r.folderFailed:
 		writeWrappedIn(&after, style.MutedText, "the folder could not be read", limit, textArea(width))
 	case len(r.folderEntries) > 0:
-		for _, row := range wrapHard(folderListing(r.folderEntries), limit, width-4, folderRows) {
+		for _, row := range wrapHard(folderListing(r.folderEntries, limit), limit, width-4, folderRows) {
 			fmt.Fprintln(&after, style.MutedText.Render(row))
 		}
 	}
