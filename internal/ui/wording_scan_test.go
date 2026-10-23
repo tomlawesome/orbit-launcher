@@ -83,8 +83,10 @@ var wordingSpelledOut = []string{"will not", "cannot", "could not"}
 // wordingAllowed are the phrases that keep their spelled-out form: the
 // one warning that keeps its weight (remove's "it cannot be undone"),
 // and the status a check the launcher could not run reads as (owner,
-// 2026-10-21: "could not check" is the technical reading).
-var wordingAllowed = []string{"it cannot be undone", "could not check"}
+// 2026-10-21: "could not check" is the technical reading). "could not
+// be read" is the same status-reading case: the stopped screen's folder
+// read that failed or did not answer (ratified L3 wording, #277).
+var wordingAllowed = []string{"it cannot be undone", "could not check", "could not be read"}
 
 func spelledOutForms(lit string) []string {
 	l := strings.ToLower(lit)
