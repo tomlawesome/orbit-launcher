@@ -21,7 +21,7 @@ import (
 var groupBOddFolders = []string{
 	"/srv/odd\x1bname",
 	"/srv/new\nline",
-	"/srv/rlo‮exe",
+	"/srv/rlo\u202eexe",
 	"/srv/it's\x1b",
 	`/srv/back\slash` + "\x1b",
 }

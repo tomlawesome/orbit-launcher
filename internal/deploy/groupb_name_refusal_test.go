@@ -180,7 +180,7 @@ func TestGroupB_W3_TheNameIsRefusedBeforeAnyOtherReason(t *testing.T) {
 // U+202E alone is not refused: the screens show it escaped instead. A
 // deployment in such a folder still gets its repair command.
 func TestGroupB_W3_ARightToLeftOverrideAloneIsNotRefused(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "evil‮txt")
+	dir := filepath.Join(t.TempDir(), "evil\u202etxt")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Skipf("file system cannot hold this folder name: %v", err)
 	}

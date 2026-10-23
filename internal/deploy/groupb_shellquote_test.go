@@ -23,7 +23,7 @@ var groupBOddWords = []string{
 	"cr\rhere",
 	"del\x7fx",
 	"bell\ax",
-	"rlo‮exe.txt",
+	"rlo\u202eexe.txt",
 	"it's\x1b",
 	`back\slash` + "\x1b",
 	"x\\" + "\x1b",
@@ -92,7 +92,7 @@ func TestGroupB_W2_ShellQuoteUsesTheBoxEscapes(t *testing.T) {
 	cases := map[string]string{
 		"/home/you/odd\x1bname": `$'/home/you/odd\x1bname'`,
 		"a\nb":                  `$'a\nb'`,
-		"rlo‮exe":               `$'rlo\u202eexe'`,
+		"rlo\u202eexe":               `$'rlo\u202eexe'`,
 		"it's\x1b":              `$'it\'s\x1b'`,
 		"a\\b\x1b":              `$'a\\b\x1b'`,
 	}
