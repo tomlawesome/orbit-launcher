@@ -185,7 +185,8 @@ func narrowBoxInside(t *testing.T, s string) []string {
 
 // narrowReadBack reads rows back the way criterion g says: a row ending
 // in " \" joins the next with a space; one ending in `'\` joins it
-// directly and the doubled quote at the join goes; one ending in a bare `\` joins
+// directly and the doubled quote at the join goes (a $'...' word reopens
+// with $', which goes too, #277 W2); one ending in a bare `\` joins
 // it directly. Leading indent is whitespace.
 func narrowReadBack(rows []string) string {
 	var b strings.Builder
@@ -196,7 +197,11 @@ func narrowReadBack(rows []string) string {
 			cur := strings.TrimSuffix(b.String(), "'")
 			b.Reset()
 			b.WriteString(cur)
-			r = strings.TrimPrefix(r, "'")
+			if strings.HasPrefix(r, "$'") {
+				r = strings.TrimPrefix(r, "$'")
+			} else {
+				r = strings.TrimPrefix(r, "'")
+			}
 			glueQuote = false
 		}
 		switch {
@@ -547,11 +552,9 @@ func TestNarrow_J_CopyCommandCarriesTheRawOneLineCommand(t *testing.T) {
 // k. FR2-4: an escape-heavy folder grows the box, not the screen.
 func TestNarrow_K_EscapeHeavyFolderGrowsTheBoxNotTheScreen(t *testing.T) {
 	folder := "/srv/" + strings.Repeat("\x1b", 40)
-	var shown []string
-	for _, w := range removalWords(t, folder) {
-		shown = append(shown, visibleText(w))
-	}
-	want := strings.Join(shown, " ")
+	// The box shows the command's own words: the folder's word is already
+	// in printable $'...' form (#277 W2).
+	want := strings.Join(removalWords(t, folder), " ")
 	for _, width := range []int{50, 80} {
 		// Height is not promised at 50 columns: the screen is tall enough
 		// for the whole box, which is never capped in rows.
