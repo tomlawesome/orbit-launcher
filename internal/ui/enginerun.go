@@ -250,7 +250,7 @@ type engineRun struct {
 
 	// How the run stopped, as far as the launcher can tell (stopKind):
 	// sawEvent is any event having arrived; rollbackSeen a rollback-phase
-	// one; startFailed the launcher's own failure to fetch or start the
+	// one; optionalSeen an optional-phase one; startFailed the launcher's own failure to fetch or start the
 	// installer; exited the installer's failing exit ending the run, and
 	// streamCut its stream closing before it said how the run went.
 	// handoffRefused is the strict mode's refusal of the terminal
@@ -261,6 +261,7 @@ type engineRun struct {
 	// time (readFolderCmd).
 	sawEvent       bool
 	rollbackSeen   bool
+	optionalSeen   bool
 	startFailed    bool
 	exited         bool
 	streamCut      bool
@@ -587,6 +588,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		r.sawEvent = true
 		if m.Event.Phase == engine.PhaseRollback {
 			r.rollbackSeen = true
+		}
+		if m.Event.Phase == engine.PhaseOptional {
+			r.optionalSeen = true
 		}
 		// The command counts only when its line came just before the
 		// terminal failure that says it was printed.
@@ -1243,8 +1247,15 @@ func (r engineRun) view(width, height int) string {
 	case runPreparing, runStreaming:
 		return r.console.view(width, height)
 	case runStopping:
+		detail := "the installer is undoing what it started — a few seconds"
+		// phase=optional is only emitted after the installer has disarmed
+		// its rollback, so a stop then undoes nothing (orbit
+		// docs/engine-events.md).
+		if r.action == deploy.ActionInstall && r.optionalSeen {
+			detail = "Orbit is already installed; the installer is finishing without waiting for the optional services"
+		}
 		return skyBlock(r.console.sky, width, height,
-			workingLine(r.console.spinner, "stopping the "+string(r.action), "the installer is undoing what it started — a few seconds"))
+			workingLine(r.console.spinner, "stopping the "+string(r.action), detail))
 	case runConfigSignInMode:
 		return r.viewConfigSignInMode(width, height)
 	case runConfigCollect:
