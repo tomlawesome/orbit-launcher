@@ -1252,7 +1252,10 @@ func (r engineRun) view(width, height int) string {
 		// its rollback, so a stop then undoes nothing (orbit
 		// docs/engine-events.md).
 		if r.action == deploy.ActionInstall && r.optionalSeen {
-			detail = "Orbit is already installed; the installer is finishing without waiting for the optional services"
+			// Too long for one row on a narrow screen: it wraps inside
+			// the padding, never past the screen (#288).
+			detail = strings.Join(wrapWordsIn("Orbit is already installed; the installer is finishing without waiting for the optional services",
+				measure(width, proseWidth), textArea(width)), "\n")
 		}
 		return skyBlock(r.console.sky, width, height,
 			workingLine(r.console.spinner, "stopping the "+string(r.action), detail))
