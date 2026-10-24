@@ -31,6 +31,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 )
 
 // readerSlow is how long a slow services reader takes; readerPrompt is
@@ -289,6 +290,7 @@ func TestAppModel_WithServicesReaderIsWhatRepairReads(t *testing.T) {
 func TestAppModel_WithServicesReaderIsWhatTheSplashCounts(t *testing.T) {
 	dir := t.TempDir()
 	writeEnv(t, dir, "APP_URL=https://mail.example.test\n")
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile)) // installed: only then is there a probe
 	reader := &readerRecord{have: readerAppHave}
 	m := NewAppModelNoAnimation().WithServicesReader(reader.read)
 	m.targetDir = dir

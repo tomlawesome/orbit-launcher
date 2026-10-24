@@ -222,14 +222,19 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
-	if !deploy.Installed(m.resolvedTargetDir()) {
+	s.targetDir = m.resolvedTargetDir()
+	s.serviceStates = m.readServices()
+	if !deploy.Installed(s.targetDir) {
 		// Only the pre-provisioned configuration, as a rolled-back
-		// install leaves it: Install is what the engine will accept.
+		// install leaves it: Install is what the engine will accept,
+		// and there is nothing to probe. An address nothing of ours
+		// serves can only answer "not responding" (painting the folder
+		// degraded and moving the caret to a Repair the engine refuses)
+		// or be answered by a stranger. The state stays unknown.
 		s.menu.sel = menuInstall
+		return s
 	}
 	s.healthProbe = m.healthProbe
-	s.serviceStates = m.readServices()
-	s.targetDir = m.resolvedTargetDir()
 	return s
 }
 

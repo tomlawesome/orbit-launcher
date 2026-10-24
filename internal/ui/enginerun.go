@@ -250,7 +250,7 @@ type engineRun struct {
 
 	// How the run stopped, as far as the launcher can tell (stopKind):
 	// sawEvent is any event having arrived; rollbackSeen a rollback-phase
-	// one; startFailed the launcher's own failure to fetch or start the
+	// one; optionalSeen an optional-phase one; startFailed the launcher's own failure to fetch or start the
 	// installer; exited the installer's failing exit ending the run, and
 	// streamCut its stream closing before it said how the run went.
 	// handoffRefused is the strict mode's refusal of the terminal
@@ -261,6 +261,7 @@ type engineRun struct {
 	// time (readFolderCmd).
 	sawEvent       bool
 	rollbackSeen   bool
+	optionalSeen   bool
 	startFailed    bool
 	exited         bool
 	streamCut      bool
@@ -475,7 +476,16 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
-		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+		if d, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+			// A stop that reaches the installer after it disarmed its
+			// rollback (database and application ready — orbit
+			// docs/engine-events.md) only ends the optional waits: the
+			// run finishes with its completion event and exit 0 and
+			// nothing is undone, so it is the success it is, keyed as
+			// every outcome is off the event plus the exit code.
+			if d.Err == nil && r.completed {
+				return r.handleStream(msg.msg)
+			}
 			// The installer finished its own stop. Whatever it exited
 			// with, the operator asked for this: not a failure.
 			return r.quitNow(false)
@@ -486,7 +496,14 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		if r.state != runStopping {
 			return r, nil
 		}
-		return r.quitNow(msg.forced)
+		if !msg.forced {
+			// The installer's exit is not the end of its stream: its
+			// last lines and its DoneMsg are still on the way (bounded
+			// by the command's WaitDelay), and that DoneMsg says
+			// whether the stop undid the run or finished it.
+			return r, nil
+		}
+		return r.quitNow(true)
 
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)
@@ -571,6 +588,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		r.sawEvent = true
 		if m.Event.Phase == engine.PhaseRollback {
 			r.rollbackSeen = true
+		}
+		if m.Event.Phase == engine.PhaseOptional {
+			r.optionalSeen = true
 		}
 		// The command counts only when its line came just before the
 		// terminal failure that says it was printed.
@@ -987,7 +1007,10 @@ func (r engineRun) failedKind(e engine.Event) stopKind {
 func (r *engineRun) forgetStop() {
 	r.lastFailed = nil
 	r.stderrTail = nil
-	r.sawEvent, r.rollbackSeen, r.startFailed = false, false, false
+	// optionalSeen too: it is what lets the stopping line say nothing is
+	// being undone, and a retried install has its rollback armed again
+	// until its own phase=optional event arrives.
+	r.sawEvent, r.rollbackSeen, r.optionalSeen, r.startFailed = false, false, false, false
 	r.exited, r.streamCut, r.handoffRefused = false, false, false
 	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
 	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
@@ -1227,8 +1250,18 @@ func (r engineRun) view(width, height int) string {
 	case runPreparing, runStreaming:
 		return r.console.view(width, height)
 	case runStopping:
+		detail := "the installer is undoing what it started — a few seconds"
+		// phase=optional is only emitted after the installer has disarmed
+		// its rollback, so a stop then undoes nothing (orbit
+		// docs/engine-events.md).
+		if r.action == deploy.ActionInstall && r.optionalSeen {
+			// Too long for one row on a narrow screen: it wraps inside
+			// the padding, never past the screen (#288).
+			detail = strings.Join(wrapWordsIn("Orbit is already installed; the installer is finishing without waiting for the optional services",
+				measure(width, proseWidth), textArea(width)), "\n")
+		}
 		return skyBlock(r.console.sky, width, height,
-			workingLine(r.console.spinner, "stopping the "+string(r.action), "the installer is undoing what it started — a few seconds"))
+			workingLine(r.console.spinner, "stopping the "+string(r.action), detail))
 	case runConfigSignInMode:
 		return r.viewConfigSignInMode(width, height)
 	case runConfigCollect:

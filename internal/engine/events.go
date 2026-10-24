@@ -58,6 +58,11 @@ const (
 	// back, completed once it has.
 	PhaseRollback = "rollback"
 
+	// PhaseOptional is the phase of the events about the optional
+	// services, emitted only once the installer has disarmed its
+	// rollback (orbit docs/engine-events.md).
+	PhaseOptional = "optional"
+
 	// ReasonConfigurationFailure is the non-interactive refusal the
 	// contract documents for incomplete configuration: the engine
 	// refuses before starting Compose, and the consumer should re-run

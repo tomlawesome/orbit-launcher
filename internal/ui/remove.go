@@ -456,13 +456,12 @@ func (m RemoveModel) viewFailed() string {
 	if errors.As(m.standDownErr, &timedOut) {
 		// Docker's words would say only that it was killed: the screen
 		// gives the limit and the command to run by hand instead. The
-		// rows are escaped for the terminal like the removal command's.
+		// words are drawn as they are, like the removed screen's box:
+		// shellQuote already wrote any odd name in printable $'...' form,
+		// so a second escaping pass would double its backslashes and show
+		// a command that names another folder (#277 W2).
 		writeWrappedIn(&b, style.Tagline, "The stack hasn't come down after "+limitWords(timedOut.Limit)+". Try again manually later with:", measure(m.width, errorWidth), textArea(m.width))
-		words := make([]string, len(timedOut.Words))
-		for i, w := range timedOut.Words {
-			words[i] = visibleText(w)
-		}
-		for _, row := range wrapShellCommand(words, m.width-8) {
+		for _, row := range wrapShellCommand(timedOut.Words, m.width-8) {
 			fmt.Fprintln(&b, style.MutedText.Render(row))
 		}
 		fmt.Fprintln(&b)

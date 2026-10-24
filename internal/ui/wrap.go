@@ -51,7 +51,6 @@ func textArea(width int) int {
 // (§2.2.1: a backslash-newline continues a line; §2.2.2: adjacent quoted
 // strings join into one word; see cutUnit). The next unit starts a fresh row.
 func wrapShellCommand(words []string, limit int) []string {
-	words = shownQuotes(words)
 	if cmd := strings.Join(words, " "); lipgloss.Width(cmd) <= limit {
 		return []string{cmd}
 	}
@@ -116,19 +115,6 @@ func endCut(text string, limit int) string {
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`
 
-// shownQuotes puts back the escaped apostrophes visibleText doubled the
-// backslash of in words shown on screen: they are the shell's quoting,
-// not text from the folder, so the box writes them as the shell does
-// and cutUnit still knows them. Inside a quoted word every apostrophe
-// is a quote or part of one, so the doubled form is never anything else.
-func shownQuotes(words []string) []string {
-	out := make([]string, len(words))
-	for i, w := range words {
-		out[i] = strings.ReplaceAll(w, `'\\''`, escapedQuote)
-	}
-	return out
-}
-
 // cutUnit cuts a unit too wide for one row (an option with its value, or
 // a word) into rows that read back as it. It returns every row but the
 // last, each ending in a backslash that continues the line, and the last
@@ -137,7 +123,7 @@ func shownQuotes(words []string) []string {
 // left. A cut inside a single-quoted word closes the quote and reopens
 // it: a row ends in `'\` and the next starts with `'`. A cut inside a
 // bare word ends the row in a backslash glued to the text. A cut falls
-// between escapeUnits, never leaves an empty fragment, and never
+// between shell lexemes (shellEscape), never leaves an empty fragment, and never
 // falls beside or inside an escaped apostrophe. A unit with no place to
 // cut is returned whole.
 func cutUnit(u string, limit int) (rows []string, last string) {
@@ -159,9 +145,11 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 	var atoms []string
 	for rest := u; rest != ""; {
 		a := escapedQuote
-		if open == "$'" && strings.HasPrefix(rest, `\'`) {
-			a = `\'`
-		} else if !strings.HasPrefix(rest, a) {
+		switch {
+		case strings.HasPrefix(rest, a):
+		case open != "'" && rest[0] == '\\':
+			a = shellEscape(rest, open == "$'")
+		default:
 			a = firstUnit(rest) // an escape such as \x1b is never cut
 		}
 		atoms = append(atoms, a)
@@ -196,6 +184,46 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 		atoms, head = atoms[n:], ""
 	}
 	return rows, head + open + strings.Join(atoms, "") + closing
+}
+
+// shellEscape is the backslash at the start of rest together with what
+// it escapes, as bash reads it: in a bare word the next character (POSIX
+// 2.2.1); inside $'…' the ANSI-C escape (\nnn up to three octal digits,
+// \xHH up to two hex, \uHHHH up to four, \UHHHHHHHH up to eight, \cX,
+// or one character). printf %q, which writes the installer's recovery
+// line, uses these forms; escapeLen knows only visibleText's. A cut
+// between the backslash and its character ends a row in `\\` (read as a
+// literal backslash, and the command ends there) or `\'` (read as an
+// escaped quote, so the quoting runs out of phase).
+func shellEscape(rest string, ansiC bool) string {
+	if len(rest) < 2 {
+		return rest
+	}
+	const hex = "0123456789abcdefABCDEF"
+	start, most, digits := 1, 0, ""
+	if ansiC {
+		switch c := rest[1]; {
+		case c >= '0' && c <= '7':
+			most, digits = 3, "01234567"
+		case c == 'x':
+			start, most, digits = 2, 2, hex
+		case c == 'u':
+			start, most, digits = 2, 4, hex
+		case c == 'U':
+			start, most, digits = 2, 8, hex
+		case c == 'c':
+			start = 2
+		}
+	}
+	if digits == "" { // the backslash (or \c) and the next character
+		c, _ := xansi.FirstGraphemeCluster(rest[start:], xansi.GraphemeWidth)
+		return rest[:start+len(c)]
+	}
+	end := start
+	for end < len(rest) && end < start+most && strings.IndexByte(digits, rest[end]) >= 0 {
+		end++
+	}
+	return rest[:end]
 }
 
 // commandUnits groups a command's words into the pieces a line may end
