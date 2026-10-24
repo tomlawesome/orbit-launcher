@@ -1007,7 +1007,10 @@ func (r engineRun) failedKind(e engine.Event) stopKind {
 func (r *engineRun) forgetStop() {
 	r.lastFailed = nil
 	r.stderrTail = nil
-	r.sawEvent, r.rollbackSeen, r.startFailed = false, false, false
+	// optionalSeen too: it is what lets the stopping line say nothing is
+	// being undone, and a retried install has its rollback armed again
+	// until its own phase=optional event arrives.
+	r.sawEvent, r.rollbackSeen, r.optionalSeen, r.startFailed = false, false, false, false
 	r.exited, r.streamCut, r.handoffRefused = false, false, false
 	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
 	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
