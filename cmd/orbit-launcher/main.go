@@ -28,9 +28,9 @@ func main() {
 // run. A variable so tests can check that refusal without a real root run.
 var effectiveUID = os.Geteuid
 
-// run is orbit-launcher's entire command-line surface: the --version
-// short-circuit, the refusal to run as root, the --licences
-// short-circuit, and otherwise the TUI itself. startApp is a seam for
+// run is orbit-launcher's entire command-line surface: the --version and
+// --licences short-circuits, the refusal to run as root, and otherwise
+// the TUI itself. startApp is a seam for
 // tests -- main always passes startApp itself; main_test.go substitutes a
 // stub so the dispatch logic (which args launch the TUI, what exit code
 // and output each path produces) can be checked without a real terminal.
@@ -43,19 +43,20 @@ func run(args []string, stdout, stderr io.Writer, startApp func(stdout, stderr i
 		fmt.Fprintf(stdout, "orbit-launcher %s (%s)\n", release.DisplayVersion(release.Version), release.Revision)
 		return 0
 	}
-	// Nothing the launcher or Orbit's installer does needs root, and
-	// running as root only leaves root-owned deployment files, so root is
-	// refused before anything is read or run (#291). --version alone
-	// still answers: it reads and runs nothing.
-	if effectiveUID() == 0 {
-		fmt.Fprintln(stderr, rootRefusal(os.Getenv("SUDO_USER")))
-		return 1
-	}
 	// The licence notices every copy of the binary owes its dependencies
 	// (#182). Both spellings, since either is what someone will type.
+	// Like --version it only prints text, so it answers as root too.
 	if len(args) > 0 && (args[0] == "--licences" || args[0] == "--licenses") {
 		fmt.Fprint(stdout, notices.Text)
 		return 0
+	}
+	// Nothing the launcher or Orbit's installer does needs root, and
+	// running as root only leaves root-owned deployment files, so root is
+	// refused before anything is read or run (#291). --version and
+	// --licences alone still answer: they read and run nothing.
+	if effectiveUID() == 0 {
+		fmt.Fprintln(stderr, rootRefusal(os.Getenv("SUDO_USER")))
+		return 1
 	}
 	return startApp(stdout, stderr)
 }
