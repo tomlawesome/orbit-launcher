@@ -67,18 +67,20 @@ func lowsCRunCmds(cmd tea.Cmd) {
 	}
 }
 
+// lowsCOnCopy reports whether the caret is on the Copy command row.
+func lowsCOnCopy(r engineRun, w, h int) bool {
+	return caretRowOf(ansi.Strip(r.view(w, h))) == "Copy command"
+}
+
 // lowsCPressEnterOnCopy puts the caret on the Copy command row at w x h,
 // presses Enter, and returns what the launcher wrote to the terminal for
 // the clipboard (os.Stdout is swapped for the duration).
 func lowsCPressEnterOnCopy(t *testing.T, r engineRun, w, h int) string {
 	t.Helper()
-	onCopy := func() bool {
-		return caretRowOf(ansi.Strip(r.view(w, h))) == "Copy command"
-	}
-	for i := 0; i < 8 && !onCopy(); i++ {
+	for i := 0; i < 8 && !lowsCOnCopy(r, w, h); i++ {
 		r, _ = r.update(key(tea.KeyDown))
 	}
-	if !onCopy() {
+	if !lowsCOnCopy(r, w, h) {
 		t.Fatalf("the caret never reached Copy command:\n%s", ansi.Strip(r.view(w, h)))
 	}
 	old := os.Stdout
