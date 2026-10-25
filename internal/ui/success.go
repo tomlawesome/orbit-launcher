@@ -68,12 +68,6 @@ type SuccessModel struct {
 	claimLink string
 	copied    bool
 
-	// claimAnswered is set once readClaim's answer is in. Until then a
-	// screen that reads one keeps a blank row where Copy claim link
-	// would go, so a link arriving late moves no row under the caret
-	// (#277).
-	claimAnswered bool
-
 	// clipboard is where Copy claim link writes its OSC 52 sequence:
 	// nil in production, which means os.Stdout, as for Remove's Copy
 	// command.
@@ -167,7 +161,6 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case claimLinkMsg:
-		m.claimAnswered = true
 		if msg.link != "" {
 			// The caret stays on the row it was on, whose label keeps
 			// its screen row (claimPending).
@@ -362,10 +355,12 @@ func (m SuccessModel) centreBlockLines() []string {
 	return lines
 }
 
-// claimPending reports whether the claim read is still out: the blank
-// slot under Get into Orbit is Copy claim link's, should a link arrive.
+// claimPending reports whether a screen that reads a claim link has none
+// to show: the blank slot under Get into Orbit is Copy claim link's,
+// should a link arrive, and stays blank when none does, so no row moves
+// under the caret either way (#277).
 func (m SuccessModel) claimPending() bool {
-	return m.readClaim != nil && !m.claimAnswered
+	return m.readClaim != nil && m.claimLink == ""
 }
 
 // claimLinkRows lays the claim link out in rows of at most limit cells:
