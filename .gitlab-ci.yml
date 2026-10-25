@@ -449,17 +449,17 @@ visual:
   script:
     # The launcher refuses root (#291) and this image runs as root, so the
     # suite -- npm, the browser, ttyd and the binary it builds -- runs as an
-    # unprivileged user over a copy it owns (#292); the reports come back
-    # for the artifacts below.
+    # unprivileged user over a copy it owns (#292); its results, where a
+    # failure's screenshots and diffs go, come back for the artifacts below.
+    # The config's only reporter is `list`, so there is no HTML report (#277).
     - |
       bash scripts/ci/run-unprivileged.sh --chdir test/visual \
-        --keep test/visual/playwright-report --keep test/visual/test-results \
+        --keep test/visual/test-results \
         -- bash -c 'npm ci && npx playwright test'
   artifacts:
     name: playwright-report
     when: on_failure
     paths:
-      - test/visual/playwright-report/
       - test/visual/test-results/
     expire_in: 14 days
 

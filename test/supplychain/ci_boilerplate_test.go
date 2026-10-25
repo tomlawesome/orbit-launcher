@@ -779,8 +779,34 @@ docker ps -a || true`,
 	},
 }
 
+// What #277 changes on purpose: the visual suite's config has only the
+// list reporter, so no playwright-report folder is ever made; only
+// test-results, where a failure's screenshots and diffs go, comes back.
+// Same form and the same exactly-once rule as changedBy216.
+var changedBy277 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"visual"},
+		key:  "artifacts",
+		old:  `"paths": ["test/visual/playwright-report/", "test/visual/test-results/"]`,
+		new:  `"paths": ["test/visual/test-results/"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		old: `bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+  --keep test/visual/playwright-report --keep test/visual/test-results \
+  -- bash -c 'npm ci && npx playwright test'`,
+		new: `bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+  --keep test/visual/test-results \
+  -- bash -c 'npm ci && npx playwright test'`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -797,6 +823,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy236...)
 	all = append(all, changedBy195...)
 	all = append(all, changedBy292...)
+	all = append(all, changedBy277...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
