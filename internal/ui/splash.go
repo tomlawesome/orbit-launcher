@@ -337,8 +337,10 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateDegraded
 			// A degraded deployment preselects Repair — the mark says
 			// what's wrong, the caret already points at the fix — but
-			// only while the user hasn't taken over.
-			if !m.userNavigated {
+			// only while the user hasn't taken over. A check that could
+			// not run says nothing is wrong, so the caret stays put
+			// (#277, owner answer 4a).
+			if !m.userNavigated && msg.reason != deploy.HealthUnchecked {
 				m.menu.sel = menuRepair
 			}
 		}
