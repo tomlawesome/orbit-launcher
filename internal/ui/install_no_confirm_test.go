@@ -323,8 +323,8 @@ func TestNoConfirm_EscOnTheProfileScreenGoesToTheMenu(t *testing.T) {
 	}
 }
 
-func TestNoConfirm_DocumentsAgentAndFullStillReachTheUnavailableScreenAndBackReturns(t *testing.T) {
-	for _, downs := range []int{1, 2, 3} { // Documents, Agent, Full
+func TestNoConfirm_AgentAndFullStillReachTheUnavailableScreenAndBackReturns(t *testing.T) {
+	for _, downs := range []int{2, 3} { // Agent, Full
 		for _, back := range []tea.KeyPressMsg{key(tea.KeyEnter), key(tea.KeyEsc)} {
 			m, _ := noConfirmModel(t, noConfirmDir, 80, 26, engineRunSeams{})
 			for range downs {

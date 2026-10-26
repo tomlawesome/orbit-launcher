@@ -10,8 +10,8 @@
                                                   
          [1;38;2;231;233;238mThis profile isn't available yet[m         
                                              [38;2;74;84;104m·[m    
- [38;2;124;134;153mDocuments, Agent and Full aren't wired into this[m 
-         [38;2;74;84;104m·[m        [38;2;124;134;153minstaller yet.[m                  
+  [38;2;124;134;153mAgent and Full need a local model, which Orbit[m  
+         [38;2;74;84;104m·[m       [38;2;124;134;153mdoesn't use yet.[m                 
                [38;2;74;84;104m✦[m                                  
                      [38;2;216;180;90m▸[m [38;2;231;233;238mBack[m                       
                                                   
