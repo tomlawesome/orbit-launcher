@@ -1086,6 +1086,7 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
+		assertMemoryDefaultsMatchLauncher(t, dir)
 	})
 
 	t.Run("Remove", func(t *testing.T) {
@@ -1094,6 +1095,105 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
+}
+
+// memoryLimitDefaults returns, for each name in deploy.MemoryDefaults, the
+// default the installed Orbit ships: the `${NAME:-default}` in
+// docker-compose.yml and the `NAME=default` line (commented or not) in
+// .env-orbit.example. A name missing from both files is absent.
+func memoryLimitDefaults(dir string) (map[string][]string, error) {
+	found := map[string][]string{}
+	for _, file := range []struct {
+		name string
+		re   func(name string) *regexp.Regexp
+	}{
+		{"docker-compose.yml", func(n string) *regexp.Regexp { return regexp.MustCompile(`\$\{` + n + `:-([^}]*)\}`) }},
+		{".env-orbit.example", func(n string) *regexp.Regexp { return regexp.MustCompile(`(?m)^#?\s*` + n + `=(\S*)`) }},
+	} {
+		data, err := os.ReadFile(filepath.Join(dir, file.name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for name := range deploy.MemoryDefaults {
+			for _, m := range file.re(name).FindAllStringSubmatch(string(data), -1) {
+				found[name] = append(found[name], m[1])
+			}
+		}
+	}
+	return found, nil
+}
+
+// memoryBytes reads a Compose size such as "2g" or "512m".
+func memoryBytes(v string) (uint64, bool) {
+	if len(v) < 2 {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(v[:len(v)-1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	switch v[len(v)-1] {
+	case 'k', 'K':
+		return n << 10, true
+	case 'm', 'M':
+		return n << 20, true
+	case 'g', 'G':
+		return n << 30, true
+	}
+	return 0, false
+}
+
+// assertMemoryDefaultsMatchLauncher is the drift guard for the launcher's
+// memory table (#260): the Orbit this run installed must ship the same
+// ORBIT_MEMORY_LIMIT, CLAMAV_MEMORY_LIMIT and TIKA_MEMORY_LIMIT defaults
+// as deploy.MemoryDefaults, because the install table's "+1 GB" and
+// "not enough" are worked out from them.
+func assertMemoryDefaultsMatchLauncher(t *testing.T, dir string) {
+	t.Helper()
+	found, err := memoryLimitDefaults(dir)
+	if err != nil {
+		t.Fatalf("read the installed memory defaults: %v", err)
+	}
+	for name, want := range deploy.MemoryDefaults {
+		values := found[name]
+		if len(values) == 0 {
+			t.Errorf("the installed docker-compose.yml and .env-orbit.example name no default for %s; the launcher's table assumes %d bytes", name, want)
+			continue
+		}
+		for _, v := range values {
+			if got, ok := memoryBytes(v); !ok || got != want {
+				t.Errorf("%s defaults to %q in the installed Orbit; the launcher's table (deploy.MemoryDefaults) has %d bytes", name, v, want)
+			}
+		}
+	}
+}
+
+func TestMemoryLimitDefaults_ReadsComposeAndExample(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("    mem_limit: ${TIKA_MEMORY_LIMIT:-1g}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit.example"), []byte("# CLAMAV_MEMORY_LIMIT=4g\nORBIT_MEMORY_LIMIT=2g\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, err := memoryLimitDefaults(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"TIKA_MEMORY_LIMIT": "1g", "CLAMAV_MEMORY_LIMIT": "4g", "ORBIT_MEMORY_LIMIT": "2g"} {
+		if len(found[name]) != 1 || found[name][0] != want {
+			t.Errorf("%s = %q, want [%s]", name, found[name], want)
+		}
+	}
+	if got, ok := memoryBytes("2g"); !ok || got != 2<<30 {
+		t.Errorf(`memoryBytes("2g") = %d, %v`, got, ok)
+	}
+	if _, ok := memoryBytes("lots"); ok {
+		t.Error(`memoryBytes("lots") read`)
+	}
 }
 
 // TestLive_InstallLocalAccountsThenRemove is #246: the same Install and
