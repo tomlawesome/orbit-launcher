@@ -453,6 +453,17 @@ func (m InstallModel) rowNamed(name string) installProfile {
 	return installProfile{}
 }
 
+// requestedRow is the name of the row whose profile the run asks for,
+// for the console's title; Standard when none was chosen.
+func (m InstallModel) requestedRow() string {
+	for _, p := range installProfileTable {
+		if p.profile != "" && p.profile == m.requested {
+			return p.name
+		}
+	}
+	return installStandard
+}
+
 // chooseProfile acts on the row Enter chose on the profile screen.
 func (m InstallModel) chooseProfile(chosen string) (tea.Model, tea.Cmd) {
 	if p := m.rowNamed(chosen); m.canChoose(p) {
@@ -486,7 +497,7 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
-	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — Standard", m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
 	// The console's own start, so the clock is read once (a later
