@@ -31,6 +31,10 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   checksum line (#216).
 - GitHub workflow failures are advisory; they never block a GitLab merge. Change
   a check on both hosts together.
+- Merges: ask the owner first; once they say merge, run the merge call
+  yourself (`glab api -X PUT …/merge_requests/<iid>/merge`, reading `sha`
+  from the MR in the same command). Handoffs from 2026-10-23 that say to hand
+  the merge over were wrong (owner, 2026-10-24).
 - Only the owner presses `release:patch` or `release:minor` (on `main`
   pipelines), which cut the release tag (`docs/releasing.md`).
 - A green `go test` without running the TUI is not verified. Say plainly what

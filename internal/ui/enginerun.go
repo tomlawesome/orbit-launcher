@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -94,6 +96,11 @@ type flowOutcome struct {
 var backToMenu = flowOutcome{Done: true, WantsMenu: true}
 
 func outcomeOf(r engineRun) flowOutcome {
+	if r.signalQuit {
+		// The launcher is quitting: a finished run has no screen to go
+		// to, and the app must not replace the quit with one.
+		return flowOutcome{ExitNote: r.exitNote}
+	}
 	return flowOutcome{
 		Done:        r.Done,
 		Succeeded:   r.Succeeded,
@@ -247,6 +254,10 @@ type engineRun struct {
 	pendingCommand  string
 	recoveryCommand string
 	copiedCommand   bool
+
+	// signalQuit is a SignalQuitMsg that has reached the run: the
+	// launcher quits when the run ends, in outcomeOf's place.
+	signalQuit bool
 
 	// How the run stopped, as far as the launcher can tell (stopKind):
 	// sawEvent is any event having arrived; rollbackSeen a rollback-phase
@@ -435,8 +446,25 @@ func readEngineStream(send func(tea.Msg), s *engine.Stream, wrap streamWrap) tea
 	}
 }
 
-// update handles every message while an engine run owns the screen.
+// update handles every message while an engine run owns the screen. A
+// SignalQuitMsg is remembered (signalQuit): nobody may be left to see how
+// the run ended, so the launcher quits as soon as it has, as Remove's and
+// Repair's flows do, whether it finished (a stop that came after the
+// installer disarmed its rollback ends in success) or stopped.
 func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
+	if _, ok := msg.(SignalQuitMsg); ok {
+		// Handled as the Ctrl-C key is, which decides this message.
+		r.signalQuit = true
+		return r.handle(msg)
+	}
+	r, cmd := r.handle(msg)
+	if r.signalQuit && (r.Done || r.state == runFailed) {
+		return r.quitNow(false)
+	}
+	return r, cmd
+}
+
+func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		r.width, r.height = msg.Width, msg.Height
@@ -618,7 +646,12 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 
 	case engine.RawLineMsg:
 		r.console = r.console.observeRaw(m.Text)
-		r.pendingCommand, _ = engine.RecoveryCommand(m.Text)
+		// Only a whole recovery-command line is a command: any other
+		// line, or a line the reader cut, clears one that came before.
+		r.pendingCommand = ""
+		if command, ok := engine.RecoveryCommand(m.Text); ok && !m.Truncated {
+			r.pendingCommand = command
+		}
 		if r.completed && len(r.completion) < 2*len(serviceLabels) && serviceLine(m.Text) {
 			r.completion = append(r.completion, m.Text)
 		}
@@ -662,11 +695,18 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 //
 // Arriving after the run resolved, it is the ordinary case: DoneMsg was
 // handled and the channel closed behind it, so there is nothing to do.
-// Arriving while the run is still streaming, the engine stopped without
-// reporting an outcome, and the honest thing is to say so — a run that
-// cannot be reported on has failed, whatever it managed to do first.
+// Arriving while the run is still streaming, or stopping (the installer
+// exited by itself and its stream closed before its DoneMsg came), the
+// engine stopped without reporting an outcome, and the honest thing is
+// to say so — a run that cannot be reported on has failed, whatever it
+// managed to do first. The stopping screen has nothing left to wait for.
 func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.Cmd) {
-	if r.state != runStreaming {
+	if r.state != runStreaming && r.state != runStopping {
+		return r, nil
+	}
+	if r.state == runStopping && errors.Is(msg.reason, errNoEngineSender) {
+		// Nobody was reading the stream, so it has not been seen to
+		// close; the stop's own messages end the run.
 		return r, nil
 	}
 	logDiag("engine stream: closed before the run finished")
@@ -798,7 +838,7 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 				// Stays on the screen and copies again on every Enter,
 				// as Remove's does.
 				r.copiedCommand = true
-				return r, copyToClipboard(os.Stdout, r.recoveryCommand)
+				return r, copyToClipboard(os.Stdout, strings.Join(visibleWords(r.recoveryCommand), " "))
 			case installAgain, updateAgain:
 				// The same run again, in-flow: the profile and the
 				// notice stand. After an unfinished rollback the
@@ -1250,7 +1290,8 @@ func (r engineRun) view(width, height int) string {
 	case runPreparing, runStreaming:
 		return r.console.view(width, height)
 	case runStopping:
-		detail := "the installer is undoing what it started — a few seconds"
+		detail := strings.Join(wrapWordsIn("the installer is undoing what it started — a few seconds",
+			measure(width, proseWidth), textArea(width)), "\n")
 		// phase=optional is only emitted after the installer has disarmed
 		// its rollback, so a stop then undoes nothing (orbit
 		// docs/engine-events.md).
@@ -1311,7 +1352,8 @@ func (r engineRun) viewFailed(width, height int) string {
 		writeWrappedIn(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit, textArea(width))
 	}
 	// The listing's slot: one muted row while the read is out, so the
-	// menu sits where a one-row listing leaves it (#277 L3).
+	// menu sits where a one-row listing leaves it (#277 L3); a read that
+	// finds nothing to list leaves the row blank, so the menu stays put.
 	switch {
 	case r.folderPending:
 		writeWrappedIn(&after, style.MutedText, "reading the folder", limit, textArea(width))
@@ -1321,6 +1363,8 @@ func (r engineRun) viewFailed(width, height int) string {
 		for _, row := range wrapHard(folderListing(r.folderEntries, limit), limit, width-4, folderRows) {
 			fmt.Fprintln(&after, style.MutedText.Render(row))
 		}
+	case r.folderRead != nil:
+		fmt.Fprintln(&after)
 	}
 	if r.recoveryCommand != "" {
 		// Verbatim, as the contract asks: framed like Remove's box and
@@ -1425,10 +1469,7 @@ func fitTail(lines []string, limit, edge, room int) []string {
 func commandBox(command string, width int) []string {
 	limit := width - 8
 	const indent, cont = "  ", " \\"
-	words := shellWords(command)
-	for i, w := range words {
-		words[i] = visibleCommand(w)
-	}
+	words := visibleWords(command)
 	var lines []string
 	if one := strings.Join(words, " "); lipgloss.Width(one) <= limit {
 		lines = []string{one}
@@ -1539,15 +1580,94 @@ func writeStackedMenu(b *strings.Builder, items []string, selected int) {
 	}
 }
 
-// visibleCommand is visibleText for a shell-quoted command, keeping its
-// backslashes as they are: they are the quoting printf %q wrote, and
-// doubling them would show a different command from the one copied.
-func visibleCommand(command string) string {
-	parts := strings.Split(command, `\`)
-	for i, p := range parts {
-		parts[i] = visibleText(p)
+// visibleWords is the command as the recovery box shows it and Copy
+// command copies it: its shell words (shellWords), each escaped by
+// visibleCommand, joined by single spaces.
+func visibleWords(command string) []string {
+	words := shellWords(command)
+	for i, w := range words {
+		words[i] = visibleCommand(w)
 	}
-	return strings.Join(parts, `\`)
+	return words
+}
+
+// visibleCommand shows one shell word of a command nobody vetted so the
+// terminal draws it safely and a shell still reads it as the same word:
+// a character the screen would have to escape (a control character, a
+// bidi override, an invalid byte) becomes bash's $'\xHH' form, written
+// as its UTF-8 bytes (bash reads \xHH the same in every locale, \u not
+// in the C locale; owner answer 15a on #277). What stands in a quoted
+// part closes that quote for the escape and opens it again, so the word
+// still reads as one. Backslashes and printable text stay as written:
+// they are the quoting printf %q wrote, and doubling them would show a
+// different command from the one copied.
+func visibleCommand(command string) string {
+	var b strings.Builder
+	// quote is the quote the scan is inside: 0 for none, ' or " for a
+	// quoted part, $ for a $'...' part.
+	var quote byte
+	hidden := func(r rune, n int) bool { return r == utf8.RuneError && n == 1 || !strconv.IsPrint(r) }
+	for i := 0; i < len(command); {
+		r, n := utf8.DecodeRuneInString(command[i:])
+		switch {
+		case hidden(r, n):
+			b.WriteString(escapeInQuote(command[i:i+n], r, quote))
+			i += n
+			continue
+		case quote == 0 && command[i] == '$' && i+1 < len(command) && command[i+1] == '\'':
+			quote = '$'
+			b.WriteString("$'")
+			i += 2
+			continue
+		case command[i] == '\\' && quote != '\'' && i+1 < len(command):
+			// A backslash keeps the rune it quotes, unless that rune is
+			// itself hidden: then the escape takes its place, or follows
+			// a literal backslash where a quote part reads one.
+			next, m := utf8.DecodeRuneInString(command[i+1:])
+			if hidden(next, m) {
+				if quote == '$' || quote == '"' {
+					b.WriteString(`\\`)
+				}
+				b.WriteString(escapeInQuote(command[i+1:i+1+m], next, quote))
+			} else {
+				b.WriteString(command[i : i+1+m])
+			}
+			i += 1 + m
+			continue
+		case command[i] == '\'' && quote == 0:
+			quote = '\''
+		case command[i] == '"' && quote == 0:
+			quote = '"'
+		case quote == '$' && command[i] == '\'', quote == '"' && command[i] == '"', quote == '\'' && command[i] == '\'':
+			quote = 0
+		}
+		b.WriteString(command[i : i+n])
+		i += n
+	}
+	return b.String()
+}
+
+// escapeInQuote is a hidden character (raw, an invalid byte or a rune)
+// as $'...' text, for a place inside quote (see visibleCommand): bare
+// after an open $'...', and otherwise a $'...' word of its own, the
+// open quote closed around it.
+func escapeInQuote(raw string, r rune, quote byte) string {
+	var esc strings.Builder
+	if r < utf8.RuneSelf && r != utf8.RuneError {
+		q := strconv.QuoteRune(r)
+		esc.WriteString(q[1 : len(q)-1])
+	} else {
+		for _, c := range []byte(raw) {
+			fmt.Fprintf(&esc, `\x%02x`, c)
+		}
+	}
+	switch quote {
+	case '$':
+		return esc.String()
+	case '\'', '"':
+		return string(quote) + "$'" + esc.String() + "'" + string(quote)
+	}
+	return "$'" + esc.String() + "'"
 }
 
 func flowStoppedTitle(action deploy.Action) string {
