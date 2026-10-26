@@ -38,6 +38,9 @@ func docs260Recorder(t *testing.T) (target, out string) {
 	installScriptAt(t, "printf '%s\\n' \"${"+docs260Env+"-<unset>}\" >> \"$ORBIT_T260_OUT/profile\"\n"+
 		"printf '%s\\n' \"$*\" >> \"$ORBIT_T260_OUT/argv\"\n"+
 		"echo recorded >&2\n"+
+		// A terminal failure the installer could retry: without one the
+		// stopped screen offers the guided installer, not Install again.
+		"echo 'phase=host component=host state=failed reason=docker-host action=retry elapsed=0s'\n"+
 		"exit 1\n")
 	return target, out
 }

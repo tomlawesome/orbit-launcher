@@ -38,10 +38,10 @@ func docs260Status(t *testing.T, w int) map[string]string {
 	got := map[string]string{}
 	for _, name := range []string{"Standard", "Documents", "Agent", "Full"} {
 		r := rows[rowOfName(t, rows, name)]
-		if nameCol+56 > len(r) {
+		if nameCol+55 > len(r) {
 			t.Fatalf("w=%d: row too short for a status column: %q", w, string(r))
 		}
-		got[name] = strings.TrimSpace(string(r[nameCol+56:]))
+		got[name] = strings.TrimSpace(string(r[nameCol+55:]))
 	}
 	return got
 }
