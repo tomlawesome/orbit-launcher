@@ -129,7 +129,7 @@ func docs260NoProfileInArgv(t *testing.T, out string) {
 func TestDocs260_StandardRunCarriesTheStandardProfileInItsEnvironment(t *testing.T) {
 	target, out := docs260Recorder(t)
 	m, s := docs260Model(t, target)
-	m = docs260Run(t, m, s, 0, "Standard")
+	docs260Run(t, m, s, 0, "Standard")
 	if got := docs260Lines(t, out, "profile"); len(got) != 1 || got[0] != "standard" {
 		t.Errorf("the installer saw %s = %q, want exactly one run with %q", docs260Env, got, "standard")
 	}

@@ -84,7 +84,7 @@ func TestDocs260_DocumentsRunCarriesTheProcessingProfileInItsEnvironment(t *test
 	docs260Memory(t, 16*docs260GB, true)
 	target, out := docs260Recorder(t)
 	m, s := docs260Model(t, target)
-	m = docs260Run(t, m, s, 1, "Documents")
+	docs260Run(t, m, s, 1, "Documents")
 	if got := docs260Lines(t, out, "profile"); len(got) != 1 || got[0] != "processing" {
 		t.Errorf("the installer saw %s = %q, want exactly one run with %q", docs260Env, got, "processing")
 	}
@@ -204,7 +204,7 @@ func TestDocs260_StandardStillRunsWithTooLittleMemory(t *testing.T) {
 	docs260Memory(t, 4*docs260GB, true)
 	target, out := docs260Recorder(t)
 	m, s := docs260Model(t, target)
-	m = docs260Run(t, m, s, 0, "Standard")
+	docs260Run(t, m, s, 0, "Standard")
 	if got := docs260Lines(t, out, "profile"); len(got) != 1 || got[0] != "standard" {
 		t.Errorf("the installer saw %s = %q, want one run with %q", docs260Env, got, "standard")
 	}
@@ -223,7 +223,7 @@ func TestDocs260_UnreadableMemoryLetsDocumentsRun(t *testing.T) {
 	docs260Memory(t, 0, false)
 	target, out := docs260Recorder(t)
 	m, s := docs260Model(t, target)
-	m = docs260Run(t, m, s, 1, "Documents")
+	docs260Run(t, m, s, 1, "Documents")
 	if got := docs260Lines(t, out, "profile"); len(got) != 1 || got[0] != "processing" {
 		t.Errorf("the installer saw %s = %q, want one run with %q", docs260Env, got, "processing")
 	}
