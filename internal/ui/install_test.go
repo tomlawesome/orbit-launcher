@@ -145,8 +145,8 @@ func TestInstallModel_SelectingStandardOpensTheNotice(t *testing.T) {
 	}
 }
 
-func TestInstallModel_SelectingDocumentsAgentOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
-	for _, sel := range []int{1, 2, 3} { // Documents, Agent, Full
+func TestInstallModel_SelectingAgentOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
+	for _, sel := range []int{2, 3} { // Agent, Full
 		m, _ := newTestInstallModel(engineRunSeams{})
 		m.profile.sel = sel
 		updated, _ := m.Update(key(tea.KeyEnter))

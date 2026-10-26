@@ -14,7 +14,7 @@ type profileRow struct{ name, adds, avail string }
 
 var profileTableRows = []profileRow{
 	{"Standard", "mail, documents, calendar", "available"},
-	{"Documents", "adds text extraction from attachments", "not yet"},
+	{"Documents", "adds text extraction from attachments", "+1 GB"},
 	{"Agent", "adds a local model for search & suggestions", "not yet"},
 	{"Full", "documents extraction and the local model", "not yet"},
 }
@@ -71,8 +71,8 @@ func TestProfileTableWide(t *testing.T) {
 			if !hasAt(row, nameCol+11, p.adds) {
 				t.Errorf("w=%d: %s adds not at column %d: %q", w, p.name, nameCol+11, string(row))
 			}
-			if !hasAt(row, nameCol+56, p.avail) {
-				t.Errorf("w=%d: %s availability not at column %d: %q", w, p.name, nameCol+56, string(row))
+			if !hasAt(row, nameCol+55, p.avail) {
+				t.Errorf("w=%d: %s availability not at column %d: %q", w, p.name, nameCol+55, string(row))
 			}
 			caret := runeIndex(row, "▸")
 			if i == 0 && caret != nameCol-2 {

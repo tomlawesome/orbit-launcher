@@ -190,6 +190,10 @@ type engineRun struct {
 	targetDir string
 	title     string
 	version   string
+	// profile is the deployment profile an install requests
+	// (deploy.ProfileEnv), sent on every start and retry; empty sends
+	// none, as an update does.
+	profile string
 
 	state   engineRunState
 	console ConsoleModel
@@ -334,15 +338,15 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	targetDir, action, script := r.targetDir, string(r.action), r.script
+	targetDir, action, script, profile := r.targetDir, string(r.action), r.script, r.profile
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
 		if prepare == nil {
 			if script != nil {
-				return startEngine(ctx, script, targetDir, action)
+				return startEngine(ctx, script, targetDir, action, profile)
 			}
-			return defaultPrepareEngine(ctx, targetDir, action)
+			return prepareEngineAs(ctx, targetDir, action, profile)
 		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
@@ -353,15 +357,22 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 // detached, piped, plain-mode engine run, reporting the configuration tree
 // directory the engine was handed.
 func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineReadyMsg {
+	return prepareEngineAs(ctx, targetDir, action, "")
+}
+
+// prepareEngineAs is defaultPrepareEngine for a run that requests a
+// deployment profile (deploy.ProfileEnv); empty requests none.
+func prepareEngineAs(ctx context.Context, targetDir, action, profile string) engineReadyMsg {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
-	return startEngine(ctx, script, targetDir, action)
+	return startEngine(ctx, script, targetDir, action, profile)
 }
 
-// startEngine stages script and starts it as the engine run.
-func startEngine(ctx context.Context, script []byte, targetDir, action string) engineReadyMsg {
+// startEngine stages script and starts it as the engine run, carrying
+// profile in the environment when there is one.
+func startEngine(ctx context.Context, script []byte, targetDir, action, profile string) engineReadyMsg {
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
@@ -371,6 +382,7 @@ func startEngine(ctx context.Context, script []byte, targetDir, action string) e
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
+	deploy.WithProfile(cmd, profile)
 	stream, err := engine.Start(cmd)
 	if err != nil {
 		cleanup()
