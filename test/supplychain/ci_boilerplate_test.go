@@ -104,6 +104,12 @@ func TestCIFixtureMatchesTypedKeyList(t *testing.T) {
 	}
 }
 
+// What #245 adds on purpose: the shared private-details check from
+// ai/agent-infra, brought in by `include:` and run as the template's
+// `private-details` job, which .gitlab-ci.yml gives this pipeline's stage,
+// runner, pull policy and history start point.
+var addedBy245 = []string{"include", "private-details"}
+
 // Passed already: every job and template keeps its name (and extras may only
 // be hidden templates, which GitLab never runs). The restructure adds anchors;
 // it must not rename, split or drop a job.
@@ -131,6 +137,12 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 		}
 		if !have[k] {
 			t.Errorf("top-level key %q from ce4b412 is gone from .gitlab-ci.yml: job names must not change (#217)", k)
+		}
+	}
+	for _, k := range addedBy245 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #245 adds, is missing from .gitlab-ci.yml", k)
 		}
 	}
 	for _, k := range doc.root.keys {
