@@ -12,5 +12,8 @@ import (
 // that need another machine set deploy.ReadHostMemory themselves.
 func TestMain(m *testing.M) {
 	deploy.ReadHostMemory = func() (uint64, bool) { return 16 << 30, true }
-	os.Exit(m.Run())
+	code := m.Run()
+	// Runs built outside an InstallModel keep their own collected trees.
+	releaseCollectedTrees()
+	os.Exit(code)
 }

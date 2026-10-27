@@ -40,7 +40,7 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	if err := checkFolder(targetDir); err != nil {
 		return nil, nil, err
 	}
-	scriptPath, env, cleanup, err := stageInstall(script)
+	scriptPath, env, cleanup, err := stageInstall(script, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -93,9 +93,12 @@ func checkFolder(dir string) error {
 func CheckFolderName(dir string) error { return checkFolder(dir) }
 
 // stageInstall writes script to a temp file and makes the run's private
-// configuration tree directory. It returns the script's path, the run's
-// environment, and the cleanup that removes both.
-func stageInstall(script []byte) (scriptPath string, env []string, cleanup func() error, err error) {
+// configuration tree directory, seeded from collected when it is set
+// (see BuildEngineCommandWithConfig). It returns the script's path, the
+// run's environment, and the cleanup that removes both. A seed that
+// cannot be copied fails the staging like any other step: nothing is
+// left behind and nothing runs.
+func stageInstall(script []byte, collected string) (scriptPath string, env []string, cleanup func() error, err error) {
 	scriptFile, err := os.CreateTemp("", "orbit-launcher-install-*.sh")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("stage install.sh: %w", err)
@@ -118,6 +121,19 @@ func stageInstall(script []byte) (scriptPath string, env []string, cleanup func(
 	if err != nil {
 		removeScript()
 		return "", nil, nil, fmt.Errorf("stage configuration tree: %w", err)
+	}
+	if collected != "" {
+		// The guided configuration is handed to the installer here, in
+		// its own tree, never written into the deployment folder: the
+		// tree is two-way, and on a fresh install the engine writes it
+		// through its install transaction, so both rollbacks leave the
+		// folder as the person had it (orbit docs/engine-events.md,
+		// Non-interactive contract, #1519).
+		if err := AdoptConfig(collected, configTree); err != nil {
+			removeScript()
+			os.RemoveAll(configTree)
+			return "", nil, nil, fmt.Errorf("stage configuration tree: %w", err)
+		}
 	}
 	cleanup = func() error {
 		return errors.Join(removeScript(), os.RemoveAll(configTree))
@@ -172,6 +188,15 @@ const (
 // orbit develop, so the follow-up interactive handoff always starts
 // from a clean target.
 func BuildEngineCommand(script []byte, targetDir string, action Action) (cmd *exec.Cmd, cleanup func() error, err error) {
+	return BuildEngineCommandWithConfig(script, targetDir, action, "")
+}
+
+// BuildEngineCommandWithConfig is BuildEngineCommand whose fresh
+// configuration tree is first seeded with the guided configuration the
+// launcher collected earlier in its session: collected's .env-orbit
+// and, when it has one, .orbit-secrets/, owner-only (AdoptConfig).
+// Empty collected seeds nothing, as BuildEngineCommand does.
+func BuildEngineCommandWithConfig(script []byte, targetDir string, action Action, collected string) (cmd *exec.Cmd, cleanup func() error, err error) {
 	switch action {
 	case ActionInstall, ActionUpdate, ActionRepair:
 	default:
@@ -181,7 +206,7 @@ func BuildEngineCommand(script []byte, targetDir string, action Action) (cmd *ex
 		return nil, nil, err
 	}
 
-	scriptPath, env, cleanup, err := stageInstall(script)
+	scriptPath, env, cleanup, err := stageInstall(script, collected)
 	if err != nil {
 		return nil, nil, err
 	}
