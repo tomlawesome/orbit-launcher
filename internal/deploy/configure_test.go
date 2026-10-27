@@ -67,17 +67,20 @@ func TestImportAndAdoptConfig_RoundTripWithModes(t *testing.T) {
 	}
 }
 
-func TestAdoptConfig_CreatesFreshTarget(t *testing.T) {
+// AdoptConfig never creates its destination (#295): it seeds a
+// configuration tree that already exists, and a missing one is an
+// error with nothing made. It used to MkdirAll a fresh target.
+func TestAdoptConfig_RefusesAMissingDestination(t *testing.T) {
 	treeDir := t.TempDir()
 	targetDir := filepath.Join(t.TempDir(), "brand-new")
 	if err := os.WriteFile(filepath.Join(treeDir, ".env-orbit"), []byte("APP_URL=https://x.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := AdoptConfig(treeDir, targetDir); err != nil {
-		t.Fatalf("AdoptConfig: %v", err)
+	if err := AdoptConfig(treeDir, targetDir); err == nil {
+		t.Fatal("AdoptConfig into a missing destination succeeded")
 	}
-	if _, err := os.Stat(filepath.Join(targetDir, ".env-orbit")); err != nil {
-		t.Fatalf("expected .env-orbit in the fresh target: %v", err)
+	if _, err := os.Lstat(targetDir); !os.IsNotExist(err) {
+		t.Fatalf("the missing destination was created (err=%v)", err)
 	}
 }
 

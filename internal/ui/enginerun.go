@@ -65,6 +65,15 @@ const (
 // A variable so tests can shorten it.
 var stopGrace = 15 * time.Second
 
+// stopGraceAfterCommit is the wait for an Update stopped after the
+// installer's commit. From there an interrupt undoes nothing and cuts no
+// step part-way: the installer finishes the step it is in, and compose
+// up runs under a 300 s bound of its own, so the launcher allows that
+// bound plus a margin before killing it (orbit docs/engine-events.md,
+// "install.sh after the commit", #1518). A second Ctrl-C still kills at
+// once.
+var stopGraceAfterCommit = 300*time.Second + 30*time.Second
+
 // Seam types: the overridable dependencies an engine run needs, so
 // flow tests never touch the network or a real terminal.
 type (
@@ -237,6 +246,12 @@ type engineRun struct {
 	// session for ever; a fresh start from the menu is a new run.
 	retriedAfterConfig bool
 
+	// collected is the guided configuration kept for the launcher
+	// session (collectedConfig, owned by the InstallModel): every start,
+	// the retry and Install again included, seeds the run's fresh
+	// configuration tree from it. Nil until something is collected.
+	collected *collectedConfig
+
 	// Outcome evidence, gathered from events and the exit code.
 	// waiting holds the optional services whose last event was
 	// optionalStillWaiting; completed is the success event seen, after
@@ -265,7 +280,9 @@ type engineRun struct {
 
 	// How the run stopped, as far as the launcher can tell (stopKind):
 	// sawEvent is any event having arrived; rollbackSeen a rollback-phase
-	// one; optionalSeen an optional-phase one; startFailed the launcher's own failure to fetch or start the
+	// one; optionalSeen an optional-phase one; committed one from after
+	// the installer's commit (engine.Event.AfterCommit), past which a
+	// stopped Update rolls forward instead of undoing anything; startFailed the launcher's own failure to fetch or start the
 	// installer; exited the installer's failing exit ending the run, and
 	// streamCut its stream closing before it said how the run went.
 	// handoffRefused is the strict mode's refusal of the terminal
@@ -277,6 +294,7 @@ type engineRun struct {
 	sawEvent       bool
 	rollbackSeen   bool
 	optionalSeen   bool
+	committed      bool
 	startFailed    bool
 	exited         bool
 	streamCut      bool
@@ -339,14 +357,15 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
 	targetDir, action, script, profile := r.targetDir, string(r.action), r.script, r.profile
+	seed := r.collected.seed()
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
 		if prepare == nil {
 			if script != nil {
-				return startEngine(ctx, script, targetDir, action, profile)
+				return startEngine(ctx, script, targetDir, action, profile, seed)
 			}
-			return prepareEngineAs(ctx, targetDir, action, profile)
+			return prepareEngineAs(ctx, targetDir, action, profile, seed)
 		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
@@ -357,28 +376,30 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 // detached, piped, plain-mode engine run, reporting the configuration tree
 // directory the engine was handed.
 func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineReadyMsg {
-	return prepareEngineAs(ctx, targetDir, action, "")
+	return prepareEngineAs(ctx, targetDir, action, "", "")
 }
 
 // prepareEngineAs is defaultPrepareEngine for a run that requests a
-// deployment profile (deploy.ProfileEnv); empty requests none.
-func prepareEngineAs(ctx context.Context, targetDir, action, profile string) engineReadyMsg {
+// deployment profile (deploy.ProfileEnv; empty requests none) and hands
+// in the configuration collected at seed (empty hands in none).
+func prepareEngineAs(ctx context.Context, targetDir, action, profile, seed string) engineReadyMsg {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
-	return startEngine(ctx, script, targetDir, action, profile)
+	return startEngine(ctx, script, targetDir, action, profile, seed)
 }
 
 // startEngine stages script and starts it as the engine run, carrying
-// profile in the environment when there is one.
-func startEngine(ctx context.Context, script []byte, targetDir, action, profile string) engineReadyMsg {
+// profile in the environment when there is one, and seeding the run's
+// configuration tree from seed when it is set.
+func startEngine(ctx context.Context, script []byte, targetDir, action, profile, seed string) engineReadyMsg {
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
 		return engineReadyMsg{err: err}
 	}
-	cmd, cleanup, err := deploy.BuildEngineCommand(script, targetDir, deploy.Action(action))
+	cmd, cleanup, err := deploy.BuildEngineCommandWithConfig(script, targetDir, deploy.Action(action), seed)
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
@@ -526,6 +547,17 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 			if d.Err == nil && r.completed {
 				return r.handleStream(msg.msg)
 			}
+			// An Update stopped after its commit undoes nothing: the
+			// installer finishes the step it was in and ends with one
+			// terminal failure naming it, action retry before any
+			// container was started and repair from compose up on
+			// (orbit docs/engine-events.md, "install.sh after the
+			// commit", #1518). That is where the deployment was left,
+			// so the person sees it on the stopped screen rather than
+			// a quit that hides it.
+			if r.action == deploy.ActionUpdate && d.Err != nil && r.lastFailed != nil {
+				return r.handleStream(msg.msg)
+			}
 			// The installer finished its own stop. Whatever it exited
 			// with, the operator asked for this: not a failure.
 			return r.quitNow(false)
@@ -602,6 +634,14 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r.handleKey(msg)
 
 	case SignalQuitMsg:
+		// An Update past its commit is left to finish: an interrupt
+		// would undo nothing (orbit docs/engine-events.md, "install.sh
+		// after the commit", #1518), and nobody may be left to wait for
+		// it. The installer leads its own session, so the hangup did not
+		// reach it either; the launcher sends it nothing and quits.
+		if r.state == runStreaming && r.action == deploy.ActionUpdate && r.committed {
+			return r.quitNow(false)
+		}
 		// A hangup or terminate that repeats while the stop it asked for
 		// is running is the same request again, not the force a second
 		// Ctrl-C is: the installer keeps its grace to roll back, and the
@@ -631,6 +671,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		}
 		if m.Event.Phase == engine.PhaseOptional {
 			r.optionalSeen = true
+		}
+		if m.Event.AfterCommit() {
+			r.committed = true
 		}
 		// The command counts only when its line came just before the
 		// terminal failure that says it was printed.
@@ -880,12 +923,17 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 
 // beginStop is Ctrl-C mid-run: SIGTERM so install.sh's EXIT trap can
 // roll the run back, then a wait on the engine's exit bounded by
-// stopGrace (the pattern of docker stop and systemd's TimeoutStopSec).
+// stopGrace (the pattern of docker stop and systemd's TimeoutStopSec),
+// or by stopGraceAfterCommit for an Update past its commit, which rolls
+// forward through the step it is in instead.
 // Nothing here cancels a context the engine was built on: its
 // detachedCommand cancel would SIGKILL the group before the trap ran,
 // and BuildEngineCommand builds it on context.Background().
 func (r engineRun) beginStop() (engineRun, tea.Cmd) {
 	stream, grace := r.stream, stopGrace
+	if r.action == deploy.ActionUpdate && r.committed {
+		grace = stopGraceAfterCommit
+	}
 	stream.Terminate()
 	r.state = runStopping
 	return r, func() tea.Msg {
@@ -913,7 +961,7 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 	// the killed installer's own DoneMsg can still be handled before the
 	// quit.
 	if killed && r.state == runStopping && r.exitNote == "" {
-		r.exitNote = forcedStopNote(r.action)
+		r.exitNote = forcedStopNote(r.action, r.committed)
 	}
 	r.cfg.close()
 	// A removal this defers to a configuration preparation still
@@ -925,14 +973,22 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 
 // forcedStopNote is the owner's wording for a stop whose installer was
 // still undoing its work when the launcher ended it. A stopped update
-// says "before updating again" (decision 21a).
-func forcedStopNote(action deploy.Action) string {
-	again := "installing"
+// says "before updating again" (decision 21a). An update is never
+// rolled back, so nothing of it is "half restored": its note names
+// Orbit's services instead, and once past its commit (committed) the
+// installer was rolling forward, not undoing anything (orbit
+// docs/engine-events.md, "install.sh after the commit", #1518).
+func forcedStopNote(action deploy.Action, committed bool) string {
 	if action == deploy.ActionUpdate {
-		again = "updating"
+		doing := "still undoing its work"
+		if committed {
+			doing = "still working"
+		}
+		return "the update was stopped, but Orbit's installer was " + doing + " when the launcher stopped waiting and ended it. " +
+			"Orbit's services may not all be running — open Repair to check them before updating again."
 	}
 	return "the " + string(action) + " was stopped, but Orbit's installer was still undoing its work when the launcher stopped waiting and ended it. " +
-		"The folder and the Docker containers and volumes it created may be half restored — check them before " + again + " again."
+		"The folder and the Docker containers and volumes it created may be half restored — check them before installing again."
 }
 
 // handleMenuKey drives a post-run screen's menu over items: Esc is back
@@ -1062,7 +1118,7 @@ func (r *engineRun) forgetStop() {
 	// optionalSeen too: it is what lets the stopping line say nothing is
 	// being undone, and a retried install has its rollback armed again
 	// until its own phase=optional event arrives.
-	r.sawEvent, r.rollbackSeen, r.optionalSeen, r.startFailed = false, false, false, false
+	r.sawEvent, r.rollbackSeen, r.optionalSeen, r.committed, r.startFailed = false, false, false, false, false
 	r.exited, r.streamCut, r.handoffRefused = false, false, false
 	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
 	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
@@ -1307,6 +1363,12 @@ func (r engineRun) view(width, height int) string {
 		// phase=optional is only emitted after the installer has disarmed
 		// its rollback, so a stop then undoes nothing (orbit
 		// docs/engine-events.md).
+		// An Update past its commit undoes nothing (orbit
+		// docs/engine-events.md, "install.sh after the commit", #1518):
+		// the working line stands alone.
+		if r.action == deploy.ActionUpdate && r.committed {
+			detail = ""
+		}
 		if r.action == deploy.ActionInstall && r.optionalSeen {
 			// Too long for one row on a narrow screen: it wraps inside
 			// the padding, never past the screen (#288).

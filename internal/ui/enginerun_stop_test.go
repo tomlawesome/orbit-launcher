@@ -410,12 +410,16 @@ func forcedStopNoteWords(action string) []string {
 	if action == "update" {
 		again = "updating"
 	}
-	return []string{
+	words := []string{
 		"the " + action + " was stopped, but Orbit's installer was still undoing its work",
 		"when the launcher stopped waiting and ended it",
-		"The folder and the Docker containers and volumes it created may be half restored",
 		"check them before " + again + " again.",
 	}
+	// #294: the Update's note must not say "half restored".
+	if action != "update" {
+		words = append(words, "The folder and the Docker containers and volumes it created may be half restored")
+	}
+	return words
 }
 
 func TestEngineRun_AStopForcedAfterTheGraceLeavesAnExitNoteAndIsNotAFailure(t *testing.T) {

@@ -48,7 +48,14 @@ func updateAs[T tea.Model](t *testing.T, m T, msgs ...tea.Msg) (T, tea.Cmd) {
 // sink collects the messages a model pushes into the event loop from
 // outside the command chain. Only the engine stream reader does that
 // (#159); in production the same route is tea.Program.Send.
-type sink struct{ msgs chan tea.Msg }
+//
+// first makes the driver take a pushed message before the next queued
+// command runs, as the program's own loop sees a message arriving while
+// a command works; drive otherwise runs the whole command chain first.
+type sink struct {
+	msgs  chan tea.Msg
+	first bool
+}
 
 func newSink() *sink { return &sink{msgs: make(chan tea.Msg, 64)} }
 
@@ -83,7 +90,16 @@ func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, 
 			t.Fatal("command chain did not settle")
 		}
 		var msg tea.Msg
+		taken := false
+		if queue != nil && queue.first {
+			select {
+			case msg = <-queue.msgs:
+				taken = true
+			default:
+			}
+		}
 		switch {
+		case taken:
 		case len(cmds) > 0:
 			next := cmds[0]
 			cmds = cmds[1:]

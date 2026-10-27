@@ -63,6 +63,15 @@ const (
 	// rollback (orbit docs/engine-events.md).
 	PhaseOptional = "optional"
 
+	// PhaseCompose is the phase of the compose validation, whose
+	// completed event is the installer's commit; PhasePreparation,
+	// PhaseDatabase and PhaseApplication are the steps that follow it
+	// (orbit docs/engine-events.md, "install.sh after the commit").
+	PhaseCompose     = "compose"
+	PhasePreparation = "preparation"
+	PhaseDatabase    = "database"
+	PhaseApplication = "application"
+
 	// ReasonConfigurationFailure is the non-interactive refusal the
 	// contract documents for incomplete configuration: the engine
 	// refuses before starting Compose, and the consumer should re-run
@@ -102,6 +111,24 @@ func RecoveryCommand(line string) (command string, ok bool) {
 // IsSuccess reports whether e is the contract's success event.
 func (e Event) IsSuccess() bool {
 	return e.Phase == PhaseComplete && e.State == StateCompleted
+}
+
+// AfterCommit reports whether e comes from after the installer's
+// commit: the compose validation's completed event, which is the first
+// event past it, or any event of a later phase. From there an
+// interrupted Update undoes nothing and rolls forward, ending with one
+// terminal failure for the step it stopped in, or complete in the
+// optional phase (orbit docs/engine-events.md, "install.sh after the
+// commit", #1518). A compose failure, and every earlier event, is
+// before the commit.
+func (e Event) AfterCommit() bool {
+	switch e.Phase {
+	case PhaseCompose:
+		return e.State == StateCompleted
+	case PhasePreparation, PhaseDatabase, PhaseApplication, PhaseOptional, PhaseComplete:
+		return true
+	}
+	return false
 }
 
 // IsTerminalFailure reports whether e is a refusal or failure outcome.

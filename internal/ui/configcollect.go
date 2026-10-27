@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -75,8 +77,9 @@ var configStream = streamWrap{
 	},
 }
 
-// configAdoptedMsg reports the collected configuration landing in the
-// target.
+// configAdoptedMsg reports the collected configuration having been kept
+// for the next run's configuration tree (an update's: having landed in
+// the target), or why it could not be.
 type configAdoptedMsg struct{ err error }
 
 // configRecheckMsg carries configure.sh --check's fresh answer, asked
@@ -283,6 +286,8 @@ func FinishDeferredCleanup() {
 	for _, l := range deferredReleases.list() {
 		l.awaitPreparation(time.Until(deadline))
 	}
+	// The session's guided answers go with it (collectedConfig).
+	releaseCollectedTrees()
 }
 
 // hand is a command's result arriving; release frees it. It reports
@@ -670,17 +675,51 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
-// adoptAndRetry lands the collected configuration in the target, then
-// re-runs the engine.
+// adoptAndRetry keeps the collected configuration for the launcher
+// session, then re-runs the engine with it handed in. Nothing is written
+// into the deployment folder: the configuration tree is two-way, so the
+// session's .env-orbit and .orbit-secrets/ are copied into a private
+// tree of their own (collectedConfig) and the retry's fresh tree is
+// seeded from it; on a fresh install the engine writes them through its
+// own install transaction, and its rollbacks take them out again (orbit
+// docs/engine-events.md, Non-interactive contract, #1519). That is what
+// makes the stopped screen's "nothing was changed" true.
+//
+// The exceptions are the contract's own: the installer ignores a
+// handed-in configuration on an update, and whenever the folder already
+// has a .env-orbit of its own, and uses the folder's instead. There the
+// answers are still adopted into the folder, as before #295: the folder
+// was already the person's configuration, and handing the answers in
+// could never complete the install.
 func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 	adopt := r.adoptConfig
 	if adopt == nil {
 		adopt = deploy.AdoptConfig
 	}
-	configTree, targetDir := r.cfg.plan.configTree, r.targetDir
-	return r, func() tea.Msg {
-		return configAdoptedMsg{err: adopt(configTree, targetDir)}
+	configTree := r.cfg.plan.configTree
+	if r.action == deploy.ActionUpdate || folderHasOwnConfig(r.targetDir) {
+		targetDir := r.targetDir
+		return r, func() tea.Msg {
+			return configAdoptedMsg{err: adopt(configTree, targetDir)}
+		}
 	}
+	if r.collected == nil {
+		// A run outside an InstallModel keeps its own.
+		r.collected = &collectedConfig{}
+	}
+	collected := r.collected
+	return r, func() tea.Msg {
+		return configAdoptedMsg{err: collected.keep(configTree, adopt)}
+	}
+}
+
+// folderHasOwnConfig reports whether the deployment folder already
+// holds a .env-orbit: the installer then uses that one and ignores a
+// handed-in tree (orbit docs/engine-events.md, Non-interactive
+// contract, #1519).
+func folderHasOwnConfig(targetDir string) bool {
+	_, err := os.Lstat(filepath.Join(targetDir, deploy.EnvFile))
+	return err == nil
 }
 
 // retryEngine starts a fresh engine run against the now-provisioned

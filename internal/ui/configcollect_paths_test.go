@@ -390,7 +390,10 @@ func TestConfigCollect_InitCompletionRechecksWithTheRealCheck(t *testing.T) {
 	}
 }
 
-func TestConfigCollect_NothingOwedAdoptsIntoTheTargetAndRetries(t *testing.T) {
+// Nothing owed: the session's configuration is kept for the retry's
+// configuration tree, never written into the target (#295), and the
+// engine runs again.
+func TestConfigCollect_NothingOwedKeepsTheConfigurationAndRetries(t *testing.T) {
 	tree := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tree, ".env-orbit"), []byte("APP_URL=https://orbit.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -407,9 +410,12 @@ func TestConfigCollect_NothingOwedAdoptsIntoTheTargetAndRetries(t *testing.T) {
 	if !ok || adopted.err != nil {
 		t.Fatalf("adopt: %#v", adopted)
 	}
-	got, err := os.ReadFile(filepath.Join(r.targetDir, ".env-orbit"))
+	got, err := os.ReadFile(filepath.Join(r.collected.seed(), ".env-orbit"))
 	if err != nil || !strings.Contains(string(got), "https://orbit.example.test") {
-		t.Fatalf("the configuration did not land in the target: %q, %v", got, err)
+		t.Fatalf("the configuration was not kept for the retry: %q, %v", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(r.targetDir, ".env-orbit")); !os.IsNotExist(err) {
+		t.Fatalf("the configuration was written into the target (err=%v)", err)
 	}
 
 	r, cmd = r.update(adopted)

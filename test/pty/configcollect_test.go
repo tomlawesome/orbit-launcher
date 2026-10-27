@@ -31,10 +31,20 @@ const configRefusal = "  echo \"Orbit installer: configuration fields requiring 
 // refuseUntilConfigured opens every fake engine that refuses without
 // configuration and proceeds with it: it logs its arguments, reports the
 // host phase and, until a .env-orbit exists, refuses as the real engine
-// does -- a failed configuration event, guidance on stderr, exit 1.
+// does -- a failed configuration event, guidance on stderr, exit 1. On a
+// fresh install whose folder has neither .env-orbit nor .orbit-secrets
+// it first takes in the configuration handed to it in its configuration
+// tree, as the real engine does (orbit docs/engine-events.md,
+// Non-interactive contract, #1519): the launcher writes nothing into the
+// folder itself (#295).
 const refuseUntilConfigured = `#!/usr/bin/env bash
 printf '%s\n' "$*" >> engine-args.txt
 echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
+tree="${ORBIT_LAUNCHER_CONFIG_TREE:-}"
+if [[ " $* " == *" --install "* && ! -e .env-orbit && ! -e .orbit-secrets && -n "$tree" && -f "$tree/.env-orbit" ]]; then
+  cp -p "$tree/.env-orbit" .env-orbit
+  if [[ -d "$tree/.orbit-secrets" ]]; then cp -pR "$tree/.orbit-secrets" .orbit-secrets; fi
+fi
 if [[ ! -f .env-orbit ]]; then
   echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
 ` + configRefusal + `  exit 1
@@ -192,8 +202,9 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	send("\r")
 	waitForExit(t, cmd)
 
-	// The collected configuration really landed in the target with the
-	// contract's permissions.
+	// The collected configuration really landed in the target, written
+	// by the installer from the handed-in tree, with the contract's
+	// permissions.
 	env, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
 	if err != nil {
 		t.Fatalf("adopted .env-orbit: %v", err)

@@ -119,23 +119,39 @@ func ImportTargetConfigContext(ctx context.Context, configTree, targetDir string
 	})
 }
 
-// AdoptConfig moves the collected configuration into the target:
-// .env-orbit (0600) and .orbit-secrets (0700, entries 0600), creating
-// the target directory if this is a fresh install. Every file is first
+// AdoptConfig copies the configuration a guided session collected into
+// dest, a private configuration tree that already exists: .env-orbit
+// (0600) and, when the session produced one, .orbit-secrets (0700,
+// entries 0600). It is how the launcher hands guided configuration to
+// the installer: the session's files are kept in a tree of their own for
+// the launcher session, and every later run's fresh configuration tree
+// is seeded from that one (stageInstall), so the installer's own
+// transaction is the only thing that writes them into the deployment
+// folder (orbit docs/engine-events.md, Non-interactive contract,
+// #1519). An update, whose installer ignores a handed-in configuration,
+// still adopts into the deployment folder itself.
+//
+// dest is never created: a missing destination is an error, so a
+// mistaken path cannot conjure a folder (it used to MkdirAll a fresh
+// target). The source is only read, never moved or changed, so the same
+// collected tree seeds every run that follows. Every file is first
 // staged beside its destination and only renamed in once all of them
 // are written, so a failure while saving (disk full, permissions)
-// leaves the existing configuration untouched. Target secrets the
-// session didn't produce are left in place.
+// leaves what dest held untouched. Secrets in dest the session didn't
+// produce are left in place.
 func AdoptConfig(configTree, targetDir string) error {
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return fmt.Errorf("prepare target: %w", err)
-	}
 	envSrc := filepath.Join(configTree, EnvFile)
 	if _, err := os.Stat(envSrc); err != nil {
 		return fmt.Errorf("configuration session left no %s: %w", EnvFile, err)
 	}
+	// What dest is, when it is there, is the trust check's to judge.
+	if _, err := os.Lstat(targetDir); err != nil {
+		return fmt.Errorf("prepare target: %w", err)
+	}
 	// Nothing is written or tidied in a directory the launcher does not
-	// trust (#191).
+	// trust (#191). This still applies to a private temp tree: it is a
+	// real directory owned by this user and open to nobody else, which
+	// is also what the installer insists on before it reads one.
 	if err := requireTrustedConfigDirs(targetDir); err != nil {
 		return err
 	}
@@ -300,8 +316,12 @@ func stageAdoption(plan adoptionPlan) (staged []stagedFile, err error) {
 		}
 	}()
 	if plan.secretsDir != "" {
-		if err := os.MkdirAll(plan.secretsDir, 0o700); err != nil {
-			return staged, err
+		// Mkdir, not MkdirAll: only .orbit-secrets itself is ever made,
+		// never the destination above it.
+		if !plan.secretsDirExisted {
+			if err := os.Mkdir(plan.secretsDir, 0o700); err != nil {
+				return staged, err
+			}
 		}
 		if err := os.Chmod(plan.secretsDir, 0o700); err != nil {
 			return staged, err
