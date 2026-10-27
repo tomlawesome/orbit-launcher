@@ -7,8 +7,8 @@ package ui
 // installer ends the optional waits, reports completion and exits 0. The
 // stopping line must say so, in the owner's ratified words, rather than
 // claim the installer is undoing what it started. Before any
-// phase=optional event, and on Update runs (a separate known issue),
-// today's line stays.
+// phase=optional event today's line stays; an Update past its commit
+// drops it (#294).
 //
 // Written from the audit brief alone, without the code. The stop
 // machinery (stoppableStream) is in enginerun_stop_test.go;
@@ -72,16 +72,18 @@ func TestEngineRun_CtrlCBeforeAnyOptionalEventStillSaysTheInstallIsBeingUndone(t
 	}
 }
 
-// T3 (guard): an Update run keeps today's line even after a
-// phase=optional event; this fix covers fresh installs only.
-func TestEngineRun_CtrlCOnAnUpdateAfterAnOptionalEventKeepsTodaysLine(t *testing.T) {
+// T3 (#294, inverted): an Update past its commit -- and every
+// phase=optional event is past it -- undoes nothing when stopped, so its
+// stopping screen drops today's undoing line and adds no line of its
+// own; the fresh-install line is not used either.
+func TestEngineRun_CtrlCOnAnUpdateAfterAnOptionalEventDropsTheUndoingLine(t *testing.T) {
 	screen := stoppingAfterEvents(t, "update", clamavWaiting())
 
 	if !strings.Contains(screen, "stopping the update") {
 		t.Errorf("the stopping screen lacks its title %q:\n%s", "stopping the update", screen)
 	}
-	if !strings.Contains(screen, undoingLine) {
-		t.Errorf("an update's stopping screen lacks %q:\n%s", undoingLine, screen)
+	if strings.Contains(screen, undoingLine) {
+		t.Errorf("an update past its commit is shown as %q:\n%s", undoingLine, screen)
 	}
 	if strings.Contains(screen, finishingWithoutOptional) {
 		t.Errorf("an update's stopping screen uses the fresh-install line:\n%s", screen)
