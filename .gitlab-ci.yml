@@ -39,6 +39,16 @@
 # other job stays untagged on the shared group runner so the privileged one is
 # not the queue for the whole pipeline.
 
+# The shared check for personal details (ai/agent-infra#32, #245): one set
+# of rules for every project, kept on the agent host and in the group
+# variable PRIVATE_DETAILS_RULES, so no project carries its own copy. The job
+# is defined by the template; only its stage and runner are set here, at the
+# `private-details` job below.
+include:
+  - project: ai/agent-infra
+    ref: private-details/v3
+    file: scripts/private-details/ci-template.yml
+
 stages:
   - classify
   - fast
@@ -379,6 +389,24 @@ deps:
 # that reached the remote in an earlier commit and is no longer in the working
 # tree, which a filesystem scan cannot see. --redact keeps any finding out of
 # the build log; the log names the file and rule, never the value.
+# The template's job, in this pipeline's own stage (it names `test`, which
+# this file does not have) and on the shared light runner, starting at once
+# like gitleaks. Its image is the template's own, restated only to carry this
+# file's pull policy (SU-13).
+private-details:
+  stage: fast
+  needs: []
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $CI_IMAGE_CACHE_GHCR/gitleaks/gitleaks:v8.30.1
+    entrypoint: [""]
+  variables:
+    # The scan starts after this commit, the last on dev before the check
+    # was adopted (#245): older merge commits name the assistant's account,
+    # and old messages name its branches, which no path entry can allow.
+    PRIVATE_DETAILS_SINCE: 04f7b59efeaf4b41d57ffb29f525ca212fd39bf0
+
 gitleaks:
   stage: fast
   # Starts immediately rather than queueing behind `classify`: this one is

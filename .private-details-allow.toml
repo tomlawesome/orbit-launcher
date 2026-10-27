@@ -1,0 +1,33 @@
+# Paths the shared private-details check (ai/agent-infra#32) allows on
+# purpose, each for the named rules only (#245). Never list commits here.
+
+[[allowlists]]
+description = "the development disclosure keeps the tool's name (owner, 2026-10-27, answer 11b)"
+targetRules = ["ai-attribution"]
+paths = [
+  '''^README\.md$''',
+  '''^internal/ui/notice\.go$''',
+  '''^internal/ui/testdata/c9/[^/]*notice[^/]*\.golden$''',
+  '''^design/mockups-v7-notice\.html$''',
+]
+
+[[allowlists]]
+description = "tool names: the assistant's glab config directory and its settings and worktree folders"
+targetRules = ["ai-attribution"]
+paths = [
+  '''^AGENTS\.md$''',
+  '''^internal/deploy/deployment_files_test\.go$''',
+]
+
+[[allowlists]]
+description = "third-party licence notices carry their authors' contact addresses"
+targetRules = ["email-address"]
+paths = [
+  '''^internal/notices/THIRD_PARTY_NOTICES\.txt$''',
+  '''^internal/notices/extra/''',
+]
+
+[[allowlists]]
+description = "a four-part version number the release-tag test refuses on purpose reads as an address"
+targetRules = ["ip-address"]
+paths = ['''^scripts/test/release-tag-check\.bats$''']
