@@ -101,6 +101,11 @@ type InstallModel struct {
 
 	run engineRun
 
+	// collected is the guided configuration this flow has collected,
+	// handed to every run it starts (collectedConfig). It lives as long
+	// as the flow, so Install again asks nothing; a new flow asks again.
+	collected *collectedConfig
+
 	// startedAt is when the engine run began: the success screen reads
 	// the claim link from the app's logs since then (#259).
 	startedAt time.Time
@@ -159,6 +164,7 @@ func NewInstallModel(targetDir, version string) InstallModel {
 		volume:      newMenu(installVolumeRows...),
 		memory:      memory,
 		memoryKnown: known,
+		collected:   &collectedConfig{},
 	}
 }
 
@@ -361,6 +367,11 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.state == installStateRunning {
 		var cmd tea.Cmd
 		m.run, cmd = m.run.update(msg)
+		if m.run.Done {
+			// The flow is over: no later run will be seeded from the
+			// answers, so they go now rather than at exit.
+			m.collected.release()
+		}
 		return m, cmd
 	}
 
@@ -498,6 +509,7 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
 	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+	m.run.collected = m.collected
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
 	// The console's own start, so the clock is read once (a later

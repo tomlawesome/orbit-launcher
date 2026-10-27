@@ -52,7 +52,7 @@ import (
 const handoffInstallerHead = `#!/usr/bin/env bash
 out=@OUT@
 n=$(( $(cat "$out/runs" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$out/runs"
-tree="$ORBIT_LAUNCHER_CONFIG_TREE"
+tree="$@TREEENV@"
 ls -A "$PWD" > "$out/folder-$n"
 if [ -n "$tree" ] && [ -d "$tree" ]; then
   (cd "$tree" && find . -mindepth 1 -printf '%m %y %p\n' | LC_ALL=C sort) > "$out/tree-$n"
@@ -141,7 +141,7 @@ type handoffFixture struct {
 func newHandoffFixture(t *testing.T, maxRefusals int, tail string) *handoffFixture {
 	t.Helper()
 	f := &handoffFixture{t: t, dir: t.TempDir(), out: t.TempDir()}
-	script := strings.NewReplacer("@OUT@", shQuote(f.out), "@MAX@", fmt.Sprint(maxRefusals)).Replace(handoffInstallerHead) + tail
+	script := strings.NewReplacer("@OUT@", shQuote(f.out), "@MAX@", fmt.Sprint(maxRefusals), "@TREEENV@", deploy.ConfigTreeEnv).Replace(handoffInstallerHead) + tail
 	installScriptAt(t, script)
 	return f
 }
@@ -286,46 +286,7 @@ func (f *handoffFixture) guidedConfiguration(m InstallModel, s *sink) InstallMod
 // a screen showing one of never comes up on the way.
 func handoffDrive(t *testing.T, m InstallModel, cmd tea.Cmd, s *sink, never []string) InstallModel {
 	t.Helper()
-	cmds := []tea.Cmd{cmd}
-	for i := 0; ; i++ {
-		if i > 1000 {
-			t.Fatal("command chain did not settle")
-		}
-		var msg tea.Msg
-		select {
-		case msg = <-s.msgs:
-		default:
-			if len(cmds) > 0 {
-				next := cmds[0]
-				cmds = cmds[1:]
-				if next == nil {
-					continue
-				}
-				msg = next()
-				break
-			}
-			select {
-			case msg = <-s.msgs:
-			case <-time.After(2 * time.Second):
-				return m
-			}
-		}
-		if batch, ok := msg.(tea.BatchMsg); ok {
-			cmds = append(cmds, batch...)
-			continue
-		}
-		if _, ok := msg.(tickMsg); ok || msg == nil {
-			continue
-		}
-		var more tea.Cmd
-		m, more = updateAs(t, m, msg)
-		for _, gone := range never {
-			if shown := screen(m); strings.Contains(shown, gone) {
-				t.Errorf("a screen showing %q came up after %T:\n%s", gone, msg, shown)
-			}
-		}
-		cmds = append(cmds, more)
-	}
+	return driveWatching(t, m, cmd, never, &sink{msgs: s.msgs, first: true})
 }
 
 // handoffSettled drives m until it has been quiet for two seconds.
@@ -381,8 +342,10 @@ func TestConfigHandoff_GuidedAnswersGoToTheNextRunsTreeNotTheFolder(t *testing.T
 		t.Fatalf("the installer ran %q times, want 2 (the refusal, then the retry); screen:\n%s", got, screen(m))
 	}
 	f.requireSeeded(2)
-	if sc := screen(m); !strings.Contains(sc, "Get into Orbit") {
-		t.Errorf("the retry with the handed-in configuration did not succeed:\n%s", sc)
+	// The success screen is the app's (SuccessModel), drawn from this
+	// outcome; the flow itself draws nothing once its run has succeeded.
+	if out := m.Outcome(); !out.Done || !out.Succeeded {
+		t.Errorf("the retry with the handed-in configuration did not succeed (outcome %+v):\n%s", out, screen(m))
 	}
 	// The fake installer's success writes nothing, so anything in the
 	// folder now was written by the launcher.
@@ -526,36 +489,32 @@ func TestConfigHandoff_StagingFailureLeavesTheFolderUntouched(t *testing.T) {
 
 // --- the configuration session's end, on a plain engineRun ----------------
 
+// runAsModel lets the shared driver play an engineRun, which is drawn
+// by its owning flow and so is not a tea.Model itself.
+type runAsModel struct{ r engineRun }
+
+func (a runAsModel) Init() tea.Cmd { return nil }
+
+func (a runAsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	r, cmd := a.r.update(msg)
+	return runAsModel{r}, cmd
+}
+
+func (a runAsModel) View() tea.View { return tea.NewView(a.r.view(80, 26)) }
+
 // settleRun plays cmd and what follows through r, the way the program
-// would, for a bounded number of steps.
+// would.
 func settleRun(t *testing.T, r engineRun, cmd tea.Cmd) engineRun {
 	t.Helper()
-	cmds := []tea.Cmd{cmd}
-	for i := 0; len(cmds) > 0 && i < 50; i++ {
-		next := cmds[0]
-		cmds = cmds[1:]
-		if next == nil {
-			continue
-		}
-		msg := next()
-		if batch, ok := msg.(tea.BatchMsg); ok {
-			cmds = append(cmds, batch...)
-			continue
-		}
-		if _, ok := msg.(tickMsg); ok || msg == nil {
-			continue
-		}
-		var more tea.Cmd
-		r, more = r.update(msg)
-		cmds = append(cmds, more)
-	}
-	return r
+	return drive(t, runAsModel{r}, cmd).r
 }
 
 // The session's end with nothing owed, through the real adoption: the
 // collected files never reach the deployment folder. This is the inverse
 // of TestConfigCollect_NothingOwedAdoptsIntoTheTargetAndRetries, which
-// pins the old behaviour. Old code: .env-orbit is in the folder.
+// pinned the old behaviour and is now
+// TestConfigCollect_NothingOwedKeepsTheConfigurationAndRetries. Old code:
+// .env-orbit is in the folder.
 func TestConfigHandoff_NothingOwedLeavesTheFolderAlone(t *testing.T) {
 	tree := t.TempDir()
 	writeAnswers(t, tree)
