@@ -46,7 +46,7 @@
 # `private-details` job below.
 include:
   - project: ai/agent-infra
-    ref: private-details/v2
+    ref: private-details/v3
     file: scripts/private-details/ci-template.yml
 
 stages:
