@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -683,16 +685,19 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 // docs/engine-events.md, Non-interactive contract, #1519). That is what
 // makes the stopped screen's "nothing was changed" true.
 //
-// An update is the exception the contract names: its installer ignores
-// a handed-in configuration and uses the folder's own, so an update's
-// answers are still adopted into the folder, as before.
+// The exceptions are the contract's own: the installer ignores a
+// handed-in configuration on an update, and whenever the folder already
+// has a .env-orbit of its own, and uses the folder's instead. There the
+// answers are still adopted into the folder, as before #295: the folder
+// was already the person's configuration, and handing the answers in
+// could never complete the install.
 func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 	adopt := r.adoptConfig
 	if adopt == nil {
 		adopt = deploy.AdoptConfig
 	}
 	configTree := r.cfg.plan.configTree
-	if r.action == deploy.ActionUpdate {
+	if r.action == deploy.ActionUpdate || folderHasOwnConfig(r.targetDir) {
 		targetDir := r.targetDir
 		return r, func() tea.Msg {
 			return configAdoptedMsg{err: adopt(configTree, targetDir)}
@@ -706,6 +711,15 @@ func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 	return r, func() tea.Msg {
 		return configAdoptedMsg{err: collected.keep(configTree, adopt)}
 	}
+}
+
+// folderHasOwnConfig reports whether the deployment folder already
+// holds a .env-orbit: the installer then uses that one and ignores a
+// handed-in tree (orbit docs/engine-events.md, Non-interactive
+// contract, #1519).
+func folderHasOwnConfig(targetDir string) bool {
+	_, err := os.Lstat(filepath.Join(targetDir, deploy.EnvFile))
+	return err == nil
 }
 
 // retryEngine starts a fresh engine run against the now-provisioned

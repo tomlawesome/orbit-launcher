@@ -33,8 +33,13 @@ type AppModel struct {
 	remove        RemoveModel
 	repair        RepairModel
 	install       InstallModel
-	update        UpdateModel
-	success       SuccessModel
+	// collected is the guided configuration this launcher session has
+	// collected (collectedConfig): it outlives one Install flow, so
+	// Install from the menu re-seeds without asking again. Removed on
+	// exit (FinishDeferredCleanup), never kept between sessions.
+	collected *collectedConfig
+	update    UpdateModel
+	success   SuccessModel
 
 	// Configuration remembered so a refreshed splash (after a flow
 	// returns to the menu) is built exactly like the first one.
@@ -424,6 +429,10 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startRepair()
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
+		if m.collected == nil {
+			m.collected = &collectedConfig{}
+		}
+		m.install.collected = m.collected
 		m.install.seams = m.flowSeams
 		m.install.checkVolumes = m.flowCheckVolumes
 		if m.install.checkVolumes == nil {

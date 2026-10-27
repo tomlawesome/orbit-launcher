@@ -101,9 +101,11 @@ type InstallModel struct {
 
 	run engineRun
 
-	// collected is the guided configuration this flow has collected,
-	// handed to every run it starts (collectedConfig). It lives as long
-	// as the flow, so Install again asks nothing; a new flow asks again.
+	// collected is the guided configuration handed to every run this
+	// flow starts (collectedConfig). The app shares one across its
+	// Install flows, so Install again and Install from the menu ask
+	// nothing; a flow built on its own, or a new launcher session, asks
+	// again. It is removed on exit, not when a flow ends.
 	collected *collectedConfig
 
 	// startedAt is when the engine run began: the success screen reads
@@ -367,11 +369,6 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.state == installStateRunning {
 		var cmd tea.Cmd
 		m.run, cmd = m.run.update(msg)
-		if m.run.Done {
-			// The flow is over: no later run will be seeded from the
-			// answers, so they go now rather than at exit.
-			m.collected.release()
-		}
 		return m, cmd
 	}
 
