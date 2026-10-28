@@ -96,12 +96,16 @@ func updateIntoImport(t *testing.T, binPath, dir, tmp, scriptURL string, copied 
 	}
 	console.send("\r")
 
-	deadline := time.Now().Add(30 * time.Second)
+	// A busy shared runner copied as few as 120 secrets a second, so the
+	// wait allows for that; a launcher that stops copying still fails here.
+	// Each count lists a folder of thousands of files, so it is taken every
+	// 50 ms, not every 2 ms, to leave the copy the CPU it is waiting on (#305).
+	deadline := time.Now().Add(2 * time.Minute)
 	for importedSecrets(tmp) < copied {
 		if time.Now().After(deadline) {
 			t.Fatalf("the import never reached %d secrets (now %d):\n%s", copied, importedSecrets(tmp), vtscreen.Screen(console.term))
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	if n := importedSecrets(tmp); n >= importSecrets {
 		t.Fatalf("setup: the import had finished (%d secrets) before the quit could land", n)
