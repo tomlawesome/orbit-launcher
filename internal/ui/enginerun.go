@@ -179,7 +179,12 @@ type engineStreamMsg struct{ msg any }
 // engineStreamEndedMsg reports the engine stream closing. Arriving
 // while the run is still streaming, it means the engine stopped without
 // ever saying how the run went.
-type engineStreamEndedMsg struct{ reason error }
+type engineStreamEndedMsg struct {
+	reason error
+	// stream is the stream that ended: a retry's run ignores the
+	// previous run's late ending (#296). Nil means the current one.
+	stream *engine.Stream
+}
 
 // errNoEngineSender is what a run reports when it was built without a
 // way to deliver engine output. It names the launcher, not the engine:
@@ -209,7 +214,7 @@ type streamWrap struct {
 // engineRunStream is the install/update run's wrapping.
 var engineRunStream = streamWrap{
 	msg:   func(msg any) tea.Msg { return engineStreamMsg{msg: msg} },
-	ended: func(_ *engine.Stream, reason error) tea.Msg { return engineStreamEndedMsg{reason: reason} },
+	ended: func(s *engine.Stream, reason error) tea.Msg { return engineStreamEndedMsg{reason: reason, stream: s} },
 }
 
 type engineRun struct {
@@ -776,6 +781,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.Cmd) {
 	if r.state != runStreaming && r.state != runStopping {
 		return r, nil
+	}
+	if msg.stream != nil && msg.stream != r.stream {
+		return r, nil // the previous run's stream, ending after the retry started (#296)
 	}
 	if r.state == runStopping && errors.Is(msg.reason, errNoEngineSender) {
 		// Nobody was reading the stream, so it has not been seen to
