@@ -206,19 +206,27 @@ variables:
 
 # Credential hygiene for the jobs that run branch or dependency code and
 # need no token (#301, #303): fast, deps, visual, classify and gitleaks run
-# this first, before any of that code. A secret goes only to the job that
+# this once git is available and before any of that code. fast, deps and
+# visual run it first (their images ship git); classify and gitleaks are on
+# $UBUNTU_IMAGE, which has none, so they install git from apt first (apt runs
+# no branch code and needs no token). A secret goes only to the job that
 # uses it, and what cannot be withheld is dropped: GitLab always injects
 # CI_JOB_TOKEN (and CI_BUILD_TOKEN, CI_REGISTRY_PASSWORD and
 # CI_DEPENDENCY_PROXY_PASSWORD, which carry it), CI_REPOSITORY_URL and the
 # clone's origin URL embed it, and ORBIT_REGISTRY_* belong to live-pulls.
-# RENOVATE_TOKEN and GITHUB_COM_TOKEN are scoped to the renovate
-# environment, so they should never be here; they are named anyway, because
-# unsetting an absent name does nothing and a later scope change must not
-# widen their reach silently. Not for the live legs (they keep their own
-# `env -u` wrappers) and not for renovate, which uses its token.
+# ORBIT_READ_TOKEN (live-prepare's orbit-reads environment), RENOVATE_TOKEN
+# and GITHUB_COM_TOKEN (the renovate environment) are scoped elsewhere, so
+# they should never be here; they are named anyway, because unsetting an
+# absent name does nothing and a later scope change must not widen their
+# reach silently. The set-url line fails the job rather than skip: every user
+# clones and the runner always creates origin, so it fails only with no git
+# or no clone, and a job added on a git-less image then fails on its first
+# run instead of silently keeping the token in .git/config. Not for the
+# live legs (they keep their own `env -u` wrappers) and not for renovate,
+# which uses its token.
 .drop_job_credentials: &drop_job_credentials |
-  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN
-  git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true
+  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+  git remote set-url origin "${CI_PROJECT_URL}.git"
 
 # The daemon inside the job's own container, copied from ai/orbit's
 # `.docker_in_job`. The dind *service* pattern cannot be used here: install.sh
@@ -291,10 +299,11 @@ classify:
     # The base commit has to be in the checkout for the diff to read at all.
     GIT_DEPTH: 0
   before_script:
-    # The runner has already cloned; nothing here fetches (#303).
-    - *drop_job_credentials
+    # The runner has already cloned; nothing here fetches. git comes from
+    # apt first because the drop rewrites the origin URL with it (#303).
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends git
+    - *drop_job_credentials
   script:
     - |
       set -euo pipefail
@@ -470,11 +479,11 @@ gitleaks:
   variables:
     GIT_DEPTH: 0
   before_script:
-    # It runs the branch's scripts/ci/fetch-verified.sh, and the runner has
-    # already cloned the history it scans (#303).
-    - *drop_job_credentials
+    # The runner has already cloned; nothing here fetches. git comes from
+    # apt first because the drop rewrites the origin URL with it (#303).
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git
+    - *drop_job_credentials
   script:
     - |
       set -euo pipefail
