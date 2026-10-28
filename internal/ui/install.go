@@ -105,7 +105,8 @@ type InstallModel struct {
 	// flow starts (collectedConfig). The app shares one across its
 	// Install flows, so Install again and Install from the menu ask
 	// nothing; a flow built on its own, or a new launcher session, asks
-	// again. It is removed on exit, not when a flow ends.
+	// again. It is removed when a Remove stand-down completes and on
+	// exit, not when an Install flow ends.
 	collected *collectedConfig
 
 	// startedAt is when the engine run began: the success screen reads
