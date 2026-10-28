@@ -111,7 +111,9 @@ func TestSplashMaintenance_NoStatusRowSoUpFromInstallWrapsToExit(t *testing.T) {
 
 func TestSplashMaintenance_NoChevronAndNoDrawer(t *testing.T) {
 	var m SplashModel
-	for _, k := range []tea.KeyPressMsg{key(tea.KeyRight), key(tea.KeyEnter)} {
+	// Right only: with no status row, Up lands on Exit, where Enter quits
+	// and leaves nothing on screen to check.
+	for _, k := range []tea.KeyPressMsg{key(tea.KeyRight)} {
 		m, _ = updateAs(t, onInstall(t, maintenanceSplash(t)), key(tea.KeyUp), k)
 		s := screen(m)
 		if strings.Contains(s, "›") || strings.Contains(s, "⌄") {
