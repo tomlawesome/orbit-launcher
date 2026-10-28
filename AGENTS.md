@@ -64,6 +64,7 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `launcher/pin.json`.
 - Every GitLab live run is a preview run (the pin's branch and `ORBIT_CHANNEL`
   are preview). It fails only if the job falls back to the GitHub mirror,
-  which has no release manifest (#194): the job token got 401/403 reading
-  ai/orbit (as on Renovate's MRs), or `ORBIT_FILES_SOURCE=github` is set.
+  which has no release manifest (#194): `live-prepare`, which reads Orbit's
+  files for both legs, got 401/403 because `ORBIT_READ_TOKEN` is missing or
+  expired (#303), or `ORBIT_FILES_SOURCE=github` is set.
   `orbit_branch` is an input of the GitHub workflow only, which is stable-only (#196).

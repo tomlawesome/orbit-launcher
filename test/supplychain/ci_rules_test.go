@@ -15,12 +15,14 @@ import (
 	"testing"
 )
 
-// liveJobLines returns the `live` job's raw lines, from after `live:` up to
+// liveJobLines returns a live job's raw lines, from after `<job>:` up to
 // the next top-level key, comments and blank lines included. Both live-job
 // scanners read the job through it. Since #183 the job's body sits in a
-// hidden template the two legs extend, so a template `live:` names in its
+// hidden template the two legs extend, so a template the job names in its
 // own `extends:` contributes its lines first, as GitLab merges it first.
-func liveJobLines(t *testing.T, ciYAML string) []string {
+// Since #303 Orbit's files are fetched by `live-prepare` and only used by
+// `live`, so the scanners name the job they read.
+func liveJobLines(t *testing.T, ciYAML, job string) []string {
 	t.Helper()
 	lines := strings.Split(ciYAML, "\n")
 	block := func(key string) []string {
@@ -45,9 +47,9 @@ func liveJobLines(t *testing.T, ciYAML string) []string {
 		return lines[start+1 : end]
 	}
 
-	own := block("live:")
+	own := block(job + ":")
 	if own == nil {
-		t.Fatal("no top-level `live:` job in .gitlab-ci.yml")
+		t.Fatalf("no top-level `%s:` job in .gitlab-ci.yml", job)
 	}
 	var templates []string
 	for i, l := range own {
@@ -67,7 +69,7 @@ func liveJobLines(t *testing.T, ciYAML string) []string {
 	for _, name := range templates {
 		body := block(name + ":")
 		if body == nil {
-			t.Fatalf("`live:` extends %s, which is not a top-level key", name)
+			t.Fatalf("`%s:` extends %s, which is not a top-level key", job, name)
 		}
 		out = append(out, body...)
 	}
@@ -81,7 +83,7 @@ func liveRules(t *testing.T, ciYAML string) []string {
 	var rules []string
 	var cur []string
 	inRules := false
-	for _, l := range liveJobLines(t, ciYAML) {
+	for _, l := range liveJobLines(t, ciYAML, "live") {
 		trimmed := strings.TrimSpace(l)
 		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
 			continue
