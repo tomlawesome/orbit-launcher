@@ -262,13 +262,14 @@ func TestEngineRun_UpdateStoppingScreenDropsTheUndoingLineAfterTheCommit(t *test
 	}
 }
 
-// 5b (guard): a fresh install still keeps the undoing line on events
-// that are past an Update's commit but before its own optional phase.
+// 5b (guard): a fresh install still says it will undo what it started
+// on events that are past an Update's commit but before its own
+// optional phase, in the after-commit wording (#303).
 func TestEngineRun_InstallStoppingScreenKeepsTheUndoingLineAfterComposeValidation(t *testing.T) {
 	screen := stoppingAfterEvents(t, "install", hostDone, composeValidated, composeUpStarting)
 
-	if !strings.Contains(screen, undoingLine) {
-		t.Errorf("an install's stopping screen lacks %q before its optional phase:\n%s", undoingLine, screen)
+	if !strings.Contains(screen, afterCommitInstallLine) {
+		t.Errorf("an install's stopping screen lacks %q before its optional phase:\n%s", afterCommitInstallLine, screen)
 	}
 }
 

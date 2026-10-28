@@ -60,12 +60,14 @@ func TestEngineRun_CtrlCAfterAnOptionalEventSaysOrbitIsAlreadyInstalled(t *testi
 	}
 }
 
-// T2 (guard): before any phase=optional event, today's line stays.
+// T2 (guard): before any phase=optional event the rollback is still
+// armed. The database event is past the commit, so the line is the one
+// for a stop that must finish its step first (#303).
 func TestEngineRun_CtrlCBeforeAnyOptionalEventStillSaysTheInstallIsBeingUndone(t *testing.T) {
 	screen := stoppingAfterEvents(t, "install", ev("database", "database", "running", "database-health", "health"))
 
-	if !strings.Contains(screen, undoingLine) {
-		t.Errorf("the stopping screen lacks %q before the rollback is disarmed:\n%s", undoingLine, screen)
+	if !strings.Contains(screen, afterCommitInstallLine) {
+		t.Errorf("the stopping screen lacks %q before the rollback is disarmed:\n%s", afterCommitInstallLine, screen)
 	}
 	if strings.Contains(screen, finishingWithoutOptional) {
 		t.Errorf("the stopping screen claims Orbit is installed before the rollback is disarmed:\n%s", screen)
