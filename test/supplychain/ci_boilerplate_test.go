@@ -1292,11 +1292,108 @@ var changedBy300 = []struct {
 	},
 }
 
+// #298: every curl that sends the job token refuses a redirect
+// (--max-redirs 0), because curl re-sends a custom header such as
+// JOB-TOKEN to whatever host a redirect names. This GitLab answers these
+// reads directly (checked 2026-10-28), so a redirect is now a loud
+// failure rather than a leak. Applies after #300.
+var changedBy298 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `  probe="$(curl --silent --location --output /dev/null --write-out '%{http_code}' \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"`,
+		new: `  probe="$(curl --silent --location --max-redirs 0 --output /dev/null --write-out '%{http_code}' \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `      curl --fail --silent --show-error --location \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \`,
+		new: `      curl --fail --silent --show-error --location --max-redirs 0 \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+		new: `  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json.sig \`,
+		new: `  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json.sig \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \`,
+		new: `  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -1319,6 +1416,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedByTokenReview...)
 	all = append(all, changedBy183...)
 	all = append(all, changedBy300...)
+	all = append(all, changedBy298...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

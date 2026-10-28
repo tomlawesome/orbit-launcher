@@ -668,7 +668,7 @@ visual:
       }
       orbit_source="${ORBIT_FILES_SOURCE:-auto}"
       if [ "$orbit_source" = "auto" ]; then
-        probe="$(curl --silent --location --output /dev/null --write-out '%{http_code}' \
+        probe="$(curl --silent --location --max-redirs 0 --output /dev/null --write-out '%{http_code}' \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"
         case "$probe" in
           401|403) orbit_source=github ;;
@@ -680,7 +680,7 @@ visual:
         gitlab)
           echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"
           fetch_orbit_file() {
-            curl --fail --silent --show-error --location \
+            curl --fail --silent --show-error --location --max-redirs 0 \
               --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
               --output "${3:-.live/install-script}/$2" "$(gitlab_orbit_url "$1")" \
               || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"; exit 1; }
@@ -736,11 +736,11 @@ visual:
         # these two stay on the plain branch name; the pair is verified below
         # against the cosign.pub fetched at the pinned commit (or, under
         # ORBIT_BRANCH, by full ref) above (#273).
-        curl --fail --silent --show-error --location \
+        curl --fail --silent --show-error --location --max-redirs 0 \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json \
           "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
-        curl --fail --silent --show-error --location \
+        curl --fail --silent --show-error --location --max-redirs 0 \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json.sig \
           "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
@@ -803,12 +803,12 @@ visual:
             esac
           done
           first_from="ai/orbit jobs ${first_record}/${first_sign}"
-          curl --fail --silent --show-error --location \
+          curl --fail --silent --show-error --location --max-redirs 0 \
             --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
             --output "$first_dir/orbit-release-manifest.json" \
             "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \
             || { echo "could not read the earlier release manifest from ai/orbit job ${first_record} (#198)"; exit 1; }
-          curl --fail --silent --show-error --location \
+          curl --fail --silent --show-error --location --max-redirs 0 \
             --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
             --output "$first_dir/orbit-release-manifest.json.sig" \
             "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \
@@ -818,12 +818,12 @@ visual:
           no_predecessor="ai/orbit's latest ${orbit_branch} build has no readable predecessor (.orbit-supply-chain/previous/ in its record_image artifacts); to run the update leg from an earlier build instead, start the pipeline by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB set to that signed preview pipeline's record_image and sign_evidence job IDs (#263)"
           # By branch name, as the current manifest above: the artifacts
           # endpoint rejects full refs (#273). Both files are record_image's.
-          curl --fail --silent --show-error --location \
+          curl --fail --silent --show-error --location --max-redirs 0 \
             --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
             --output "$first_dir/orbit-release-manifest.json" \
             "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \
             || { echo "$no_predecessor"; exit 1; }
-          curl --fail --silent --show-error --location \
+          curl --fail --silent --show-error --location --max-redirs 0 \
             --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
             --output "$first_dir/orbit-release-manifest.json.sig" \
             "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \
@@ -851,7 +851,7 @@ visual:
           *[!0-9a-f]*) first_commit="" ;;
         esac
         [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
-        curl --fail --silent --show-error --location \
+        curl --fail --silent --show-error --location --max-redirs 0 \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output "$first_dir/install.sh" \
           "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
