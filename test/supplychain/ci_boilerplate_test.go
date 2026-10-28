@@ -1389,11 +1389,89 @@ var changedBy298 = []struct {
 	},
 }
 
+// #301: `fast` drops the job token before any step runs, and the live
+// job logs in to the registry with a read-only deploy token
+// (ORBIT_REGISTRY_USER, ORBIT_REGISTRY_TOKEN) instead of the job token,
+// which its test steps also never see. Applies after #298.
+var changedBy301 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		old:  `export DEBIAN_FRONTEND=noninteractive`,
+		new: `unset CI_JOB_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL
+export DEBIAN_FRONTEND=noninteractive`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `# config, where the registry login below writes the job token, is`,
+		new:  `# config, where the registry login below writes its deploy token, is`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \`,
+		new: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  # The job token goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the job token is not sent there (#193)"; exit 1; }`,
+		new: `  # The registry login goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the registry login is not sent there (#193)"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  # (#292), so it is orbit-ci that logs in: the token is written to
+  # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
+  # inside this job's container only, and after_script removes it.
+  printf '%s' "$CI_JOB_TOKEN" \`,
+		new: `  # (#292), so it is orbit-ci that logs in. The tests run as orbit-ci
+  # too and can read its login (#301), so it is not the job token but
+  # a read-only deploy token on ai/orbit (scope read_registry), held in
+  # the masked variables ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN:
+  # leaked, it reads Orbit's images and nothing else. It is written to
+  # /home/orbit-ci/.docker/config.json, mode 0600, inside this job's
+  # container only, and after_script removes it.
+  [ -n "${ORBIT_REGISTRY_USER:-}" ] && [ -n "${ORBIT_REGISTRY_TOKEN:-}" ] \
+    || { echo "ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN are not set: the live job pulls Orbit's image with a read-only deploy token, not the job token (#301)"; exit 1; }
+  printf '%s' "$ORBIT_REGISTRY_TOKEN" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `      docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin`,
+		new:  `      docker login "$ORBIT_REGISTRY" --username "$ORBIT_REGISTRY_USER" --password-stdin`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \`,
+		new: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
+		new: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -1417,6 +1495,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy183...)
 	all = append(all, changedBy300...)
 	all = append(all, changedBy298...)
+	all = append(all, changedBy301...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

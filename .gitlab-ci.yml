@@ -296,6 +296,10 @@ fast:
     - job: classify
       artifacts: true
   before_script:
+    # Nothing in this job needs the job token, and every step runs the
+    # branch's own code (tests, bats, build tools), so it is dropped before
+    # any of them (#301). CI_REPOSITORY_URL carries it too.
+    - unset CI_JOB_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
@@ -591,7 +595,7 @@ visual:
       # user in the docker group of the daemon above (#292): the launcher,
       # install.sh, the folder it installs into (the test's own temporary
       # folder) and the image pulls are all that user's. Its Docker client
-      # config, where the registry login below writes the job token, is
+      # config, where the registry login below writes its deploy token, is
       # created here first so its owner and mode are known: orbit-ci, 0700.
       useradd --create-home --shell /bin/bash --groups docker orbit-ci
       install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker
@@ -747,7 +751,7 @@ visual:
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
         # install.sh comes from the pinned commit (#193), the manifest from
@@ -767,15 +771,21 @@ visual:
         image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
         export ORBIT_REGISTRY="${image_repository%%/*}"
         export ORBIT_REPOSITORY="${image_repository#*/}"
-        # The job token goes only to this GitLab's own registry (#193).
-        [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the job token is not sent there (#193)"; exit 1; }
+        # The registry login goes only to this GitLab's own registry (#193).
+        [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the registry login is not sent there (#193)"; exit 1; }
         # The login is per Docker client user, and the pulls are orbit-ci's
-        # (#292), so it is orbit-ci that logs in: the token is written to
-        # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
-        # inside this job's container only, and after_script removes it.
-        printf '%s' "$CI_JOB_TOKEN" \
+        # (#292), so it is orbit-ci that logs in. The tests run as orbit-ci
+        # too and can read its login (#301), so it is not the job token but
+        # a read-only deploy token on ai/orbit (scope read_registry), held in
+        # the masked variables ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN:
+        # leaked, it reads Orbit's images and nothing else. It is written to
+        # /home/orbit-ci/.docker/config.json, mode 0600, inside this job's
+        # container only, and after_script removes it.
+        [ -n "${ORBIT_REGISTRY_USER:-}" ] && [ -n "${ORBIT_REGISTRY_TOKEN:-}" ] \
+          || { echo "ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN are not set: the live job pulls Orbit's image with a read-only deploy token, not the job token (#301)"; exit 1; }
+        printf '%s' "$ORBIT_REGISTRY_TOKEN" \
           | setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- env HOME=/home/orbit-ci \
-            docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+            docker login "$ORBIT_REGISTRY" --username "$ORBIT_REGISTRY_USER" --password-stdin
         stat -c 'the registry login is in %n, owned by %U, mode %a' /home/orbit-ci/.docker/config.json
         echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"
         echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
@@ -832,7 +842,7 @@ visual:
         jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
         [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
           || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
         jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
@@ -886,7 +896,7 @@ visual:
     # the image pulls read the login above.
     - |
       bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-        env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+        env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
         go test -tags live -count=1 -v -timeout 30m ./test/live/...
   after_script:
     # The registry login's copy of the job token goes first, pass or fail.
