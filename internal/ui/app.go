@@ -35,8 +35,9 @@ type AppModel struct {
 	install       InstallModel
 	// collected is the guided configuration this launcher session has
 	// collected (collectedConfig): it outlives one Install flow, so
-	// Install from the menu re-seeds without asking again. Removed on
-	// exit (FinishDeferredCleanup), never kept between sessions.
+	// Install from the menu re-seeds without asking again. Removed when
+	// a Remove stand-down completes and on exit (FinishDeferredCleanup),
+	// never kept between sessions.
 	collected *collectedConfig
 	update    UpdateModel
 	success   SuccessModel
@@ -305,6 +306,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateRemove:
 		updated, cmd := m.remove.Update(msg)
 		m.remove = updated.(RemoveModel)
+		// A completed stand-down retires the deployment the held answers
+		// were collected for: drop them, so a later Install into a wiped
+		// folder asks again instead of reusing configuration the person
+		// was told is gone.
+		if m.remove.state == removeStateDone && m.collected != nil {
+			m.collected.release()
+			m.collected = nil
+		}
 		return m.watchOutcome(m.remove.Outcome(), cmd)
 	case appStateRepair:
 		updated, cmd := m.repair.Update(msg)

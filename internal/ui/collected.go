@@ -15,10 +15,11 @@ import (
 // rollbacks are what take them out again (orbit docs/engine-events.md,
 // Non-interactive contract, #1519).
 //
-// InstallModel holds one for its whole life, so Install again re-seeds
-// without asking; a new InstallModel starts with none and asks again.
-// It is removed when the flow ends (release) and, whatever screen ends
-// the launcher, on exit (FinishDeferredCleanup): nothing is kept
+// The app shares one across its Install flows, so Install again and
+// Install from the menu re-seed without asking; an InstallModel built
+// on its own starts with none and asks again. It is removed (release)
+// when a Remove stand-down completes and, whatever screen ends the
+// launcher, on exit (FinishDeferredCleanup): nothing is kept
 // between launcher sessions, and a secret never outlives the session
 // outside the deployment.
 type collectedConfig struct {
