@@ -1389,10 +1389,11 @@ var changedBy298 = []struct {
 	},
 }
 
-// #301: `fast` drops the job token before any step runs, and the live
-// job logs in to the registry with a read-only deploy token
-// (ORBIT_REGISTRY_USER, ORBIT_REGISTRY_TOKEN) instead of the job token,
-// which its test steps also never see. Applies after #298.
+// #301: `fast` drops the job token and the registry deploy token before
+// any step runs; the live job logs in to the registry with a read-only
+// deploy token scoped to its `live-pulls` environment instead of the job
+// token, and the daemons it leaves running beside the tests start
+// without either. Applies after #298.
 var changedBy301 = []struct {
 	jobs     []string
 	key      string
@@ -1401,8 +1402,22 @@ var changedBy301 = []struct {
 	{
 		jobs: []string{"fast"},
 		old:  `export DEBIAN_FRONTEND=noninteractive`,
-		new: `unset CI_JOB_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL
+		new: `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true
 export DEBIAN_FRONTEND=noninteractive`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "environment",
+		new:  `{"action": "prepare", "name": "live-pulls"}`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `nohup dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &`,
+		new: `# The daemon outlives every step and its environment is readable through
+# it, so it starts without the job's credentials (#301).
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &`,
 	},
 	{
 		jobs: []string{"live"},
@@ -1411,11 +1426,21 @@ export DEBIAN_FRONTEND=noninteractive`,
 	},
 	{
 		jobs: []string{"live"},
+		old: `useradd --create-home --shell /bin/bash --groups docker orbit-ci
+install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
+		new: `useradd --create-home --shell /bin/bash --groups docker orbit-ci
+# The clone's origin URL can carry the job token; the tests read the
+# checkout as orbit-ci and nothing here fetches (#301).
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || :
+install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
+	},
+	{
+		jobs: []string{"live"},
 		old: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
     env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
     bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \`,
 		new: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
     bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \`,
 	},
 	{
@@ -1453,8 +1478,15 @@ export DEBIAN_FRONTEND=noninteractive`,
     env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
     bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \`,
 		new: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
     bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
+		new: `# Runs beside the tests, so without the credentials (#301).
+env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 	},
 	{
 		jobs: []string{"live"},
@@ -1462,7 +1494,7 @@ export DEBIAN_FRONTEND=noninteractive`,
   env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
   go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
 		new: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-  env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
   go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
 	},
 }

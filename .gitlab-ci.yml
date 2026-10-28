@@ -225,7 +225,10 @@ variables:
   fi
   docker_data_root="${CI_BUILDS_DIR:-/builds}/.orbit-launcher-docker-data"
   mkdir -p "$docker_data_root"
-  nohup dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
+  # The daemon outlives every step and its environment is readable through
+  # it, so it starts without the job's credentials (#301).
+  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
   for _ in $(seq 1 60); do
     docker info > /dev/null 2>&1 && break
     sleep 1
@@ -296,10 +299,12 @@ fast:
     - job: classify
       artifacts: true
   before_script:
-    # Nothing in this job needs the job token, and every step runs the
-    # branch's own code (tests, bats, build tools), so it is dropped before
-    # any of them (#301). CI_REPOSITORY_URL carries it too.
-    - unset CI_JOB_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL
+    # Nothing in this job needs the job token or the registry deploy token,
+    # and every step runs the branch's own code (tests, bats, build tools),
+    # so they are dropped before any of them (#301). CI_REPOSITORY_URL and
+    # the clone's origin URL can carry the job token too.
+    - unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN
+    - git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
@@ -541,6 +546,12 @@ visual:
 
 .live_leg:
   stage: acceptance
+  # Only jobs in this environment receive ORBIT_REGISTRY_USER and
+  # ORBIT_REGISTRY_TOKEN: the variables are scoped to it (#301). `prepare`
+  # records no deployment.
+  environment:
+    name: live-pulls
+    action: prepare
   extends:
     - .privileged_runner
     - .go_cache
@@ -598,6 +609,9 @@ visual:
       # config, where the registry login below writes its deploy token, is
       # created here first so its owner and mode are known: orbit-ci, 0700.
       useradd --create-home --shell /bin/bash --groups docker orbit-ci
+      # The clone's origin URL can carry the job token; the tests read the
+      # checkout as orbit-ci and nothing here fetches (#301).
+      git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || :
       install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker
       # The raw-log artefacts are written into .live by the test.
       chown orbit-ci .live
@@ -751,7 +765,7 @@ visual:
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
         # install.sh comes from the pinned commit (#193), the manifest from
@@ -842,7 +856,7 @@ visual:
         jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
         [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
           || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
         jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
@@ -878,7 +892,9 @@ visual:
         fi
         echo "the update leg (#198) installs ${first_version} ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"
       fi
-      python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
+      # Runs beside the tests, so without the credentials (#301).
+      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+        python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
         curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
         sleep 1
@@ -896,7 +912,7 @@ visual:
     # the image pulls read the login above.
     - |
       bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-        env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
         go test -tags live -count=1 -v -timeout 30m ./test/live/...
   after_script:
     # The registry login's copy of the job token goes first, pass or fail.
