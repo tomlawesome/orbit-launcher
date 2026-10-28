@@ -21,6 +21,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -1888,7 +1889,12 @@ if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
 	{
 		jobs: []string{"fast"},
 		old:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN`,
-		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN`,
+		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN`,
+	},
+	{ // the drop fails the job rather than skip (#303)
+		jobs: []string{"fast"},
+		old:  `git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true`,
+		new:  `git remote set-url origin "${CI_PROJECT_URL}.git"`,
 	},
 	{
 		jobs: []string{"deps"},
@@ -1902,17 +1908,25 @@ if [ "${DOCS_ONLY:-false}" = "true" ]; then`,
 		new: dropJobCredentials303 + `
 tarball="go${GO_VERSION}.linux-amd64.tar.gz"`,
 	},
+	// classify and gitleaks run on $UBUNTU_IMAGE, which ships no git, so
+	// the drop comes after their git install (#303).
 	{
-		jobs: []string{"classify", "gitleaks"},
-		old:  `export DEBIAN_FRONTEND=noninteractive`,
-		new: dropJobCredentials303 + `
-export DEBIAN_FRONTEND=noninteractive`,
+		jobs: []string{"classify"},
+		old:  `apt-get install -y -qq --no-install-recommends git`,
+		new: `apt-get install -y -qq --no-install-recommends git
+` + dropJobCredentials303,
+	},
+	{
+		jobs: []string{"gitleaks"},
+		old:  `apt-get install -y -qq --no-install-recommends ca-certificates curl git`,
+		new: `apt-get install -y -qq --no-install-recommends ca-certificates curl git
+` + dropJobCredentials303,
 	},
 }
 
 // The two lines of the .drop_job_credentials anchor (#303 C2).
-const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN
-git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true`
+const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+git remote set-url origin "${CI_PROJECT_URL}.git"`
 
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
@@ -2171,6 +2185,170 @@ func TestAptPrologueIsOneAnchor(t *testing.T) {
 		}
 		if !strings.Contains(e.Script, "apt-get install -y -qq --no-install-recommends "+pkg) {
 			t.Errorf("job %q must still install %q after the prologue", job, pkg)
+		}
+	}
+}
+
+// The credential drop's two lines (#303): the anchor that resets origin, its
+// lines, and the jobs that alias it.
+const dropSetURL = `git remote set-url origin "${CI_PROJECT_URL}.git"`
+
+func dropJobCredentialsAnchor(t *testing.T, doc *yamlDoc) (lines []string, jobs []string) {
+	t.Helper()
+	holders := anchorsHolding(doc, "git remote set-url origin")
+	if len(holders) != 1 {
+		t.Fatalf("want exactly one anchor resetting the origin URL (.drop_job_credentials, #303); found %v", holders)
+	}
+	for name, users := range holders {
+		entries, err := doc.anchors[name].node.flatScripts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			for _, l := range strings.Split(e, "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					lines = append(lines, l)
+				}
+			}
+		}
+		for _, u := range users {
+			if !strings.HasPrefix(u, ".") {
+				jobs = append(jobs, u)
+			}
+		}
+	}
+	return lines, jobs
+}
+
+// The drop rewrites the clone's origin URL with git, so it can only work
+// once git is in the image (#303). $UBUNTU_IMAGE and $FEDORA_IMAGE ship no
+// git; a job on either has to install it first, and nothing but package
+// installs (which run no branch code and read no token) may run before the
+// drop.
+func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	anchorLines, jobs := dropJobCredentialsAnchor(t, doc)
+	have := map[string]bool{}
+	for _, j := range jobs {
+		have[j] = true
+	}
+	for _, want := range []string{"classify", "deps", "fast", "gitleaks", "visual"} {
+		if !have[want] {
+			t.Errorf("job %q no longer uses the credential drop (#303); users: %v", want, jobs)
+		}
+	}
+	unsetLine := ""
+	for _, l := range anchorLines {
+		if strings.HasPrefix(l, "unset ") {
+			unsetLine = l
+		}
+	}
+	prologue := map[string]bool{}
+	for name := range anchorsHolding(doc, "apt-get update -qq") {
+		entries, err := doc.anchors[name].node.flatScripts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			for _, l := range strings.Split(e, "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					prologue[l] = true
+				}
+			}
+		}
+	}
+	noGit := map[string]bool{"$UBUNTU_IMAGE": true, "$FEDORA_IMAGE": true}
+	gitInstall := regexp.MustCompile(`^(apt-get|dnf) install\b.*(^|\s)git(\s|$)`)
+	pkgInstall := regexp.MustCompile(`^(apt-get|dnf) install\b`)
+	for _, job := range jobs {
+		e, err := doc.effectiveJob(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		image := ""
+		if img := e.Keys["image"]; img != nil {
+			if img.kind == 'm' {
+				if n := img.vals["name"]; n != nil {
+					image = n.str
+				}
+			} else {
+				image = img.str
+			}
+		}
+		lines := strings.Split(e.Script, "\n")
+		at := -1
+		for i, l := range lines {
+			if strings.HasPrefix(strings.TrimSpace(l), "git remote set-url origin") {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			t.Errorf("job %q aliases the credential drop but never resets origin (#303)", job)
+			continue
+		}
+		installed := false
+		for _, l := range lines[:at] {
+			l = strings.TrimSpace(l)
+			switch {
+			case gitInstall.MatchString(l):
+				installed = true
+			case l == unsetLine, prologue[l], pkgInstall.MatchString(l):
+			default:
+				t.Errorf("job %q runs %q before the credential drop; only package installs may (#303)", job, l)
+			}
+		}
+		if noGit[image] && !installed {
+			t.Errorf("job %q runs on %s, which ships no git, and does not install git before `git remote set-url` (line %d), so the clone keeps the job token (#303)", job, image, at+1)
+		}
+	}
+}
+
+// A hygiene step that cannot run must stop the job, never skip (#303): the
+// set-url line carries no `2>/dev/null`, `|| true` or `|| :`.
+func TestDropJobCredentialsFailsClosed(t *testing.T) {
+	lines, _ := dropJobCredentialsAnchor(t, loadCI(t, readRepoFile(t, ".gitlab-ci.yml")))
+	found := false
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "git remote set-url origin") {
+			continue
+		}
+		found = true
+		if l != dropSetURL {
+			t.Errorf("the credential drop's set-url line is %q; want exactly %q, so a job that cannot reset origin fails (#303)", l, dropSetURL)
+		}
+	}
+	for _, l := range lines {
+		for _, bad := range []string{"2>/dev/null", "|| true", "|| :"} {
+			if strings.Contains(l, bad) {
+				t.Errorf("the credential drop's line %q holds %q; it must fail the job, not skip (#303)", l, bad)
+			}
+		}
+	}
+	if !found {
+		t.Error("the credential drop has no set-url line (#303)")
+	}
+}
+
+// The drop's unset line names every credential GitLab injects or this
+// project defines that the five jobs do not use (#301, #303).
+func TestDropJobCredentialsUnsetsEveryToken(t *testing.T) {
+	lines, _ := dropJobCredentialsAnchor(t, loadCI(t, readRepoFile(t, ".gitlab-ci.yml")))
+	named := map[string]bool{}
+	for _, l := range lines {
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "unset" {
+			for _, n := range f[1:] {
+				named[n] = true
+			}
+		}
+	}
+	for _, want := range []string{
+		"CI_JOB_TOKEN", "CI_BUILD_TOKEN", "CI_REGISTRY_PASSWORD", "CI_DEPENDENCY_PROXY_PASSWORD",
+		"CI_REPOSITORY_URL", "ORBIT_REGISTRY_USER", "ORBIT_REGISTRY_TOKEN", "RENOVATE_TOKEN",
+		"GITHUB_COM_TOKEN", "ORBIT_READ_TOKEN",
+	} {
+		if !named[want] {
+			t.Errorf("the credential drop does not unset %s (#303)", want)
 		}
 	}
 }
