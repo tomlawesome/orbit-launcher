@@ -290,7 +290,8 @@ fast:
     <<: *pull_if_not_present
     name: $GO_IMAGE
   extends: .go_cache
-  timeout: 15m
+  # 25m (#300): successful runs take 11-15 min; 15m left no room on a busy host.
+  timeout: 25m
   needs:
     - job: classify
       artifacts: true

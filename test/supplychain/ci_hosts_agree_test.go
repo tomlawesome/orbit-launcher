@@ -285,9 +285,9 @@ func TestGitHubVisualJobRunsInThePinnedPlaywrightImage(t *testing.T) {
 
 func TestGitHubTimeoutsMatchGitLab(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
-	for _, c := range []struct{ job, file string }{
-		{"fast", "ci.yml"},
-		{"visual", "visual-regression.yml"},
+	for _, c := range []struct{ job, file, minutes string }{
+		{"fast", "ci.yml", "25"}, // #300: 15m timed out on a busy host
+		{"visual", "visual-regression.yml", "15"},
 	} {
 		block := regexp.MustCompile(`(?ms)^` + c.job + `:\n(.*?)^\S`).FindStringSubmatch(ci)
 		if block == nil {
@@ -298,9 +298,9 @@ func TestGitHubTimeoutsMatchGitLab(t *testing.T) {
 		if gl == nil || gh == nil {
 			t.Fatalf("cannot read the %s job's timeout on both hosts (gitlab %v, github %v)", c.job, gl, gh)
 		}
-		if gl[1] != gh[1] || gl[1] != "15" {
-			t.Errorf("the %s job times out after %sm on GitLab and %sm on GitHub; #199 SU-3 aligns both at 15m",
-				c.job, gl[1], gh[1])
+		if gl[1] != gh[1] || gl[1] != c.minutes {
+			t.Errorf("the %s job times out after %sm on GitLab and %sm on GitHub; both should be %sm (#199 SU-3, #300)",
+				c.job, gl[1], gh[1], c.minutes)
 		}
 	}
 }

@@ -1277,11 +1277,26 @@ mkdir -p .live/install-script`,
 	},
 }
 
+// #300 gives `fast` 25 minutes: successful runs take 11-15 minutes and
+// 15m timed out twice on a busy host. Applies after #183.
+var changedBy300 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		key:  "timeout",
+		old:  `"15m"`,
+		new:  `"25m"`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -1303,6 +1318,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy263...)
 	all = append(all, changedByTokenReview...)
 	all = append(all, changedBy183...)
+	all = append(all, changedBy300...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
