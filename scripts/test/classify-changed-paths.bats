@@ -151,6 +151,14 @@ live_pins() { printf '%s' "${lines[1]}"; }
   [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
 }
 
+@test "a bumped Orbit pin alone runs the live install" {
+  mkdir -p orbit
+  printf '{ "branch": "preview", "commit": "%s" }\n' 2222222222222222222222222222222222222222 > orbit/pin.json
+  classify
+  [ "$(docs_only)" = "DOCS_ONLY=false" ]
+  [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
+}
+
 @test "another CI script alone does not run the live install" {
   echo "# change" > scripts/ci/other.sh
   classify

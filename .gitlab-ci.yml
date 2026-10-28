@@ -547,12 +547,14 @@ live:
     # route too (#216). classify-changed-paths.sh's LIVE_PIN_PATHS lists the
     # same files, so the gate below lets the job through for them. The
     # launcher runs through scripts/ci/run-unprivileged.sh (#292), so a change
-    # to it alone does too.
+    # to it alone does too. So does orbit/pin.json: a bump of the Orbit pin is
+    # exactly the change this job exists to test (#193).
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
         - scripts/ci/run-unprivileged.sh
+        - orbit/pin.json
       when: manual
       allow_failure: false
   variables:

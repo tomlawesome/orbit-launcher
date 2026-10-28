@@ -826,7 +826,8 @@ var changedBy277 = []struct {
 // commit from orbit/pin.json, fetches install.sh, the verifier scripts and
 // cosign.pub at the commit, and reads the manifest from the latest build of
 // the pin's branch. ORBIT_BRANCH, set on a pipeline started by hand,
-// overrides the pin, and the #236 refusal says how to bump it. #234's
+// overrides the pin, and the #236 refusal says how to bump it. A change to
+// orbit/pin.json creates the job on the manual route. #234's
 // "configuration tree" rides in the first entry. Same form and the same
 // exactly-once rule as changedBy216; these apply after #277's.
 var changedBy193 = []struct {
@@ -834,6 +835,12 @@ var changedBy193 = []struct {
 	key      string
 	old, new string
 }{
+	{ // a bump of the pin creates the job on the manual route
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+		new:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh", "orbit/pin.json"]`,
+	},
 	{ // the mirror is read at the same commit; and #234's wording fix
 		jobs: []string{"live"},
 		old: `# same branch: GitLab pushes it after each Orbit merge, so it trails by
