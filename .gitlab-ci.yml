@@ -96,7 +96,7 @@ variables:
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
-  UBUNTU_IMAGE: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+  UBUNTU_IMAGE: ubuntu:26.04@sha256:0e73b71479e7bc5f006bca872e25c3cd680dc052a0116f90d63ae363537db0dd
   # The live test's second leg (#183): the same install on Fedora, so a
   # distribution difference in Docker, Compose or the base tools shows up
   # before a user finds it. fedora:44 is Docker Hub's `latest` today.
@@ -1022,7 +1022,7 @@ renovate:
   # gigabytes of pull on a shared runner every week.
   image:
     <<: *pull_if_not_present
-    name: renovate/renovate:44.133.0@sha256:05c512c35c764ef6a179e69c3b30567eca254d67f13a0143479fe3c84852c67a
+    name: renovate/renovate:44.191.0@sha256:3e9be1a29672f4860eea6818e68ef01c1b8fdea984e09c9c664eeaf48b7e150c
   timeout: 1h
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
   # and runs `go mod tidy` inside the job, which can pass the light lane's
