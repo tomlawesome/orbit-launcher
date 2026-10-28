@@ -33,8 +33,7 @@
 
 orbit-launcher is the full-screen terminal program that opens when you
 install Orbit. It runs on the server that hosts Orbit and gives you a
-short menu. Every release is tested installing Orbit on Ubuntu and on
-Fedora.
+short menu. Its live tests install Orbit on Ubuntu and on Fedora.
 
 The menu:
 
