@@ -17,31 +17,61 @@ import (
 
 // liveJobLines returns the `live` job's raw lines, from after `live:` up to
 // the next top-level key, comments and blank lines included. Both live-job
-// scanners read the job through it.
+// scanners read the job through it. Since #183 the job's body sits in a
+// hidden template the two legs extend, so a template `live:` names in its
+// own `extends:` contributes its lines first, as GitLab merges it first.
 func liveJobLines(t *testing.T, ciYAML string) []string {
 	t.Helper()
 	lines := strings.Split(ciYAML, "\n")
-
-	start := -1
-	for i, l := range lines {
-		if l == "live:" {
-			start = i
-			break
+	block := func(key string) []string {
+		start := -1
+		for i, l := range lines {
+			if l == key {
+				start = i
+				break
+			}
 		}
+		if start < 0 {
+			return nil
+		}
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			l := lines[i]
+			if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
+				end = i // next top-level key: the job has ended
+				break
+			}
+		}
+		return lines[start+1 : end]
 	}
-	if start < 0 {
+
+	own := block("live:")
+	if own == nil {
 		t.Fatal("no top-level `live:` job in .gitlab-ci.yml")
 	}
-
-	end := len(lines)
-	for i := start + 1; i < len(lines); i++ {
-		l := lines[i]
-		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
-			end = i // next top-level key: the job has ended
-			break
+	var templates []string
+	for i, l := range own {
+		switch {
+		case strings.HasPrefix(l, "  extends: ."):
+			templates = append(templates, strings.TrimPrefix(l, "  extends: "))
+		case l == "  extends:":
+			for _, item := range own[i+1:] {
+				if !strings.HasPrefix(item, "    - .") {
+					break
+				}
+				templates = append(templates, strings.TrimPrefix(item, "    - "))
+			}
 		}
 	}
-	return lines[start+1 : end]
+	var out []string
+	for _, name := range templates {
+		body := block(name + ":")
+		if body == nil {
+			t.Fatalf("`live:` extends %s, which is not a top-level key", name)
+		}
+		out = append(out, body...)
+	}
+	return append(out, own...)
 }
 
 // liveRules returns the `live` job's rules as one string per `- ` item, with

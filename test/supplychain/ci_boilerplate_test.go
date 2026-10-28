@@ -11,7 +11,8 @@
 // #263 make on purpose, listed in changedBy216, changedBy198, changedBy241,
 // changedBy273, changedBy264, changedBy236, changedBy195, changedBy292,
 // changedBy277, changedBy193, variablesChangedBy193 and changedBy263, and
-// the job-token review's changedByTokenReview.
+// the job-token review's changedByTokenReview; and #183's changedBy183,
+// which also adds the live-fedora job (addedBy183) and FEDORA_IMAGE.
 package supplychain
 
 import (
@@ -112,6 +113,12 @@ func TestCIFixtureMatchesTypedKeyList(t *testing.T) {
 // runner, pull policy and history start point.
 var addedBy245 = []string{"include", "private-details"}
 
+// What #183 adds on purpose: the Fedora leg of the live test, a second job
+// extending the same .live_leg template as `live` (live_fedora_test.go checks
+// that it differs from `live` only in its image, LIVE_DISTRO and package
+// step).
+var addedBy183 = []string{"live-fedora"}
+
 // Passed already: every job and template keeps its name (and extras may only
 // be hidden templates, which GitLab never runs). The restructure adds anchors;
 // it must not rename, split or drop a job.
@@ -145,6 +152,12 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 		typed[k] = true
 		if !have[k] {
 			t.Errorf("%q, which #245 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy183 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #183 adds, is missing from .gitlab-ci.yml", k)
 		}
 	}
 	for _, k := range doc.root.keys {
@@ -286,6 +299,8 @@ func compareTopLevelVariables(t *testing.T, oldDoc, newDoc *yamlDoc) {
 		switch {
 		case !inNew:
 			t.Errorf("top-level variable %s is gone (#236)\nwas: %s", k, o.dump())
+		case !inOld && k == variableAddedBy183:
+			// the Fedora leg's image, a tool pin like UBUNTU_IMAGE
 		case !inOld:
 			t.Errorf("top-level variable %s is new (#236)\nnow: %s", k, n.dump())
 		case isToolPinVariable(k):
@@ -1223,8 +1238,50 @@ orbit_branch_path="$(printf '%s' "$orbit_branch" | sed 's#/#%2F#g')"`,
 	},
 }
 
+// What #183 changes on purpose. The live job's body moves into the hidden
+// .live_leg template that `live` and `live-fedora` both extend, so `live`
+// now extends that (which extends what it used to), names its distribution
+// in LIVE_DISTRO and says it in one line, and its artifact name comes from
+// the job name -- live-raw-log still, live-fedora-raw-log for the other leg.
+// The skip gate moves into the .live_gate anchor each leg runs first; its
+// lines are unchanged. Same form and the same exactly-once rule as
+// changedBy216; these apply last.
+var changedBy183 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		key:  "extends",
+		old:  `[".privileged_runner", ".go_cache"]`,
+		new:  `".live_leg"`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "variables",
+		old:  `{"ORBIT_LAUNCHER_LIVE_RAW_LOG": "$CI_PROJECT_DIR/.live/live-raw.log"}`,
+		new:  `{"LIVE_DISTRO": "ubuntu", "ORBIT_LAUNCHER_LIVE_RAW_LOG": "$CI_PROJECT_DIR/.live/live-raw.log"}`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "artifacts",
+		old:  `"name": "live-raw-log"`,
+		new:  `"name": "$CI_JOB_NAME-raw-log"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `mkdir -p .live/install-script`,
+		new: `echo "live leg: ${LIVE_DISTRO} ($(. /etc/os-release && printf '%s %s' "$ID" "$VERSION_ID"))"
+mkdir -p .live/install-script`,
+	},
+}
+
+// The one top-level variable #183 adds: the Fedora leg's image.
+const variableAddedBy183 = "FEDORA_IMAGE"
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -1245,6 +1302,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy193...)
 	all = append(all, changedBy263...)
 	all = append(all, changedByTokenReview...)
+	all = append(all, changedBy183...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

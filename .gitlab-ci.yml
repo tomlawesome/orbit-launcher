@@ -97,6 +97,10 @@ variables:
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
   UBUNTU_IMAGE: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+  # The live test's second leg (#183): the same install on Fedora, so a
+  # distribution difference in Docker, Compose or the base tools shows up
+  # before a user finds it. fedora:44 is Docker Hub's `latest` today.
+  FEDORA_IMAGE: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
   # Same pins as the workflows. A commit on staticcheck's master, not a
   # release: Go 1.27 writes compiler export data version 5, and every release
   # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
@@ -509,11 +513,29 @@ visual:
 # The suite's own budget is 30m (go test -timeout below). A job cap under it
 # turns a slow-but-passing run into a cancelled one with no Go-level failure to
 # read, which is what happened on GitHub's first orbit-branch dispatch.
-live:
+#
+# Two legs run it (#183): `live` on Ubuntu and `live-fedora` on Fedora, both
+# from the .live_leg template below, and both must pass. They differ only in
+# their image, LIVE_DISTRO and the package step at the top of their
+# before_script; everything else, rules included, is the template's.
+
+# Why the job exists decides whether it does the work. RUN_LIVE and the
+# label are deliberate requests and always run. The third route is not: it
+# fires on any edit to this file, so unless a pin the install actually runs
+# on moved (or a file those downloads go through changed), stop here --
+# before the package install, the Go tarball and the Docker daemon, which is
+# where the minutes are. An unset verdict means run. Each leg runs it first.
+.live_gate: &live_gate |
+  if [ "${RUN_LIVE:-}" != "true" ] \
+    && ! printf '%s' "${CI_MERGE_REQUEST_LABELS:-}" \
+      | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+    && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then
+    echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
+    exit 0
+  fi
+
+.live_leg:
   stage: acceptance
-  image:
-    <<: *pull_if_not_present
-    name: $UBUNTU_IMAGE
   extends:
     - .privileged_runner
     - .go_cache
@@ -559,25 +581,9 @@ live:
       allow_failure: false
   variables:
     ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log
-  before_script:
-    # Why this job exists decides whether it does the work. RUN_LIVE and the
-    # label are deliberate requests and always run. The third route is not: it
-    # fires on any edit to this file, so unless a pin the install actually runs
-    # on moved (or a file those downloads go through changed), stop here -- before the apt-get, the Go tarball and the Docker
-    # daemon below, which is where the minutes are. An unset verdict means run.
-    - |
-      if [ "${RUN_LIVE:-}" != "true" ] \
-        && ! printf '%s' "${CI_MERGE_REQUEST_LABELS:-}" \
-          | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
-        && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then
-        echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
-        exit 0
-      fi
-    - *apt_prologue
-    - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
-    - *go_tarball
-    - *docker_in_job
   script:
+    - |
+      echo "live leg: ${LIVE_DISTRO} ($(. /etc/os-release && printf '%s %s' "$ID" "$VERSION_ID"))"
     - mkdir -p .live/install-script
     - |
       # The launcher refuses root (#291), so the install runs as orbit-ci, a
@@ -888,11 +894,47 @@ live:
     - docker ps -a || true
     - docker volume ls || true
   artifacts:
-    name: live-raw-log
+    # One name per leg: live-raw-log and live-fedora-raw-log.
+    name: $CI_JOB_NAME-raw-log
     when: always
     paths:
       - .live/live-raw.log.*
     expire_in: 7 days
+
+# The Ubuntu leg, under the job name the merge request's play step, the tests
+# and AGENTS.md know.
+live:
+  extends: .live_leg
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  variables:
+    LIVE_DISTRO: ubuntu
+  before_script:
+    - *live_gate
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
+    - *go_tarball
+    - *docker_in_job
+
+# The Fedora leg (#183). Fedora's moby-engine is the Docker daemon and its
+# docker-compose package is the Compose plugin (`docker compose`), printed
+# below so a run shows which one it tested; util-linux brings setpriv and
+# shadow-utils useradd, which the unprivileged install needs (#292). Weak
+# dependencies are left out, as --no-install-recommends does on Ubuntu.
+live-fedora:
+  extends: .live_leg
+  image:
+    <<: *pull_if_not_present
+    name: $FEDORA_IMAGE
+  variables:
+    LIVE_DISTRO: fedora
+  before_script:
+    - *live_gate
+    - dnf install -y -q --setopt=install_weak_deps=False ca-certificates curl git moby-engine docker-compose python3 jq openssl util-linux shadow-utils
+    - docker compose version
+    - *go_tarball
+    - *docker_in_job
 
 # --- maintenance ---------------------------------------------------------
 

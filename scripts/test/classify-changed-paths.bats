@@ -28,6 +28,7 @@ variables:
   GO_VERSION: "1.26.8"
   GO_SHA256: aaa
   UBUNTU_IMAGE: ubuntu:24.04@sha256:aaa
+  FEDORA_IMAGE: fedora:44@sha256:aaa
   STATICCHECK_VERSION: v0.7.0
 YML
   git add -A
@@ -128,6 +129,12 @@ live_pins() { printf '%s' "${lines[1]}"; }
 
 @test "a moved ubuntu image runs the live install" {
   sed -i 's|ubuntu:24.04@sha256:aaa|ubuntu:26.04@sha256:bbb|' .gitlab-ci.yml
+  classify
+  [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
+}
+
+@test "a moved fedora image runs the live install" {
+  sed -i 's|fedora:44@sha256:aaa|fedora:44@sha256:bbb|' .gitlab-ci.yml
   classify
   [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
 }

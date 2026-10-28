@@ -43,11 +43,13 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 ## Live job
 
 - Runs on the MR label `run-live-matrix` or `RUN_LIVE=true` on a hand-started
-  pipeline. An MR that moves the `UBUNTU_IMAGE`, `GO_VERSION` or `GO_SHA256`
-  pin, or edits `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh`,
+  pipeline. An MR that moves the `UBUNTU_IMAGE`, `FEDORA_IMAGE`, `GO_VERSION`
+  or `GO_SHA256` pin, or edits `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh`,
   `scripts/ci/run-unprivileged.sh` or `orbit/pin.json`, needs it started by
   hand (#192, #216, #292, #193).
 
+- Two legs, `live` (Ubuntu) and `live-fedora` (#183), from one `.live_leg`
+  template; both must pass.
 - The update leg (#198) runs by default from the previous build ai/orbit's
   latest `record_image` keeps in `.orbit-supply-chain/previous/` (#263), and
   fails if there is none. `ORBIT_FIRST_RECORD_IMAGE_JOB` and

@@ -36,10 +36,11 @@ is_safe_path() {
   return 1
 }
 
-# The variables the live install actually runs on: the image it installs
-# inside, and the Go tarball it fetches. A change to any of these cannot be
-# proven by any other job, because nothing else installs anything (#164).
-LIVE_PIN_KEYS='UBUNTU_IMAGE|GO_VERSION|GO_SHA256'
+# The variables the live install actually runs on: the images its two legs
+# install inside (#183), and the Go tarball it fetches. A change to any of
+# these cannot be proven by any other job, because nothing else installs
+# anything (#164).
+LIVE_PIN_KEYS='UBUNTU_IMAGE|FEDORA_IMAGE|GO_VERSION|GO_SHA256'
 
 # The files those pins pass through on their way in: the live job fetches the
 # Go tarball through the checked-download script, so a change to it alone is
