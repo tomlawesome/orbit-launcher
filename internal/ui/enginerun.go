@@ -1396,6 +1396,17 @@ func (r engineRun) view(width, height int) string {
 		if r.action == deploy.ActionUpdate && r.committed {
 			detail = ""
 		}
+		if r.action == deploy.ActionInstall && r.committed && !r.optionalSeen {
+			// Past the commit the installer lets compose up run to its
+			// end (its own 300 s bound, no signal reaches it) and only
+			// then rolls back, and beginStop waits that out
+			// (afterCommitStopGrace): a promise of seconds here reads as
+			// a hang and invites the second Ctrl-C that kills the
+			// rollback (orbit docs/engine-events.md, "install.sh after
+			// the commit"; #297).
+			detail = strings.Join(wrapWordsIn("the installer has to finish the step it is on first, then it will undo what it started — this can take a few minutes",
+				measure(width, proseWidth), textArea(width)), "\n")
+		}
 		if r.action == deploy.ActionInstall && r.optionalSeen {
 			// Too long for one row on a narrow screen: it wraps inside
 			// the padding, never past the screen (#288).
