@@ -65,14 +65,32 @@ const (
 // A variable so tests can shorten it.
 var stopGrace = 15 * time.Second
 
-// stopGraceAfterCommit is the wait for an Update stopped after the
-// installer's commit. From there an interrupt undoes nothing and cuts no
-// step part-way: the installer finishes the step it is in, and compose
-// up runs under a 300 s bound of its own, so the launcher allows that
+// stopGraceAfterCommit is the default wait for a run stopped after the
+// installer's commit. From there compose up runs under a 300 s bound of
+// its own that no signal reaches, and only then does an Update roll
+// forward or a fresh Install roll back, so the launcher allows that
 // bound plus a margin before killing it (orbit docs/engine-events.md,
-// "install.sh after the commit", #1518). A second Ctrl-C still kills at
-// once.
+// "install.sh after the commit", #1518, #297). A second Ctrl-C still
+// kills at once.
 var stopGraceAfterCommit = 300*time.Second + 30*time.Second
+
+// composeUpBoundEnv moves Orbit's compose-up bound (1-900 s); the
+// installer inherits the launcher's environment, so the launcher reads
+// the same value (orbit docs/engine-events.md, #297).
+const composeUpBoundEnv = "ORBIT_INSTALLER_COMPOSE_UP_TIMEOUT_SECONDS"
+
+// afterCommitStopGrace is the wait for an Install or Update stopped
+// after the commit: Orbit's compose-up bound, from composeUpBoundEnv
+// when it holds 1 to 900, plus the same 30 s margin; otherwise
+// stopGraceAfterCommit. A value install.sh would refuse falls back to
+// the default rather than guessing.
+func afterCommitStopGrace(getenv func(string) string) time.Duration {
+	n, err := strconv.Atoi(getenv(composeUpBoundEnv))
+	if err != nil || n < 1 || n > 900 {
+		return stopGraceAfterCommit
+	}
+	return time.Duration(n)*time.Second + 30*time.Second
+}
 
 // Seam types: the overridable dependencies an engine run needs, so
 // flow tests never touch the network or a real terminal.
@@ -924,15 +942,16 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 // beginStop is Ctrl-C mid-run: SIGTERM so install.sh's EXIT trap can
 // roll the run back, then a wait on the engine's exit bounded by
 // stopGrace (the pattern of docker stop and systemd's TimeoutStopSec),
-// or by stopGraceAfterCommit for an Update past its commit, which rolls
-// forward through the step it is in instead.
+// or by afterCommitStopGrace past the commit, where compose up runs to
+// its own bound first: an Update then rolls forward, a fresh Install
+// rolls back (#297).
 // Nothing here cancels a context the engine was built on: its
 // detachedCommand cancel would SIGKILL the group before the trap ran,
 // and BuildEngineCommand builds it on context.Background().
 func (r engineRun) beginStop() (engineRun, tea.Cmd) {
 	stream, grace := r.stream, stopGrace
-	if r.action == deploy.ActionUpdate && r.committed {
-		grace = stopGraceAfterCommit
+	if r.committed {
+		grace = afterCommitStopGrace(os.Getenv)
 	}
 	stream.Terminate()
 	r.state = runStopping
