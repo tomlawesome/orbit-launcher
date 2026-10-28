@@ -122,3 +122,39 @@ func TestLivePreviewInstallScriptMatchesTheManifest(t *testing.T) {
 		t.Error("the install.sh/manifest comparison must come before `export ORBIT_RELEASE_MANIFEST=` (#236)")
 	}
 }
+
+// Where the job token reaches (#193, #263). Orbit's verifier is Orbit's own
+// code fetched at run time, so it runs with the token stripped from its
+// environment; the registry login sends the token only to this GitLab's
+// registry; and the Orbit branch must be a plain name before any URL is built
+// from it.
+func TestLiveJobTokenStaysWhereItIsNeeded(t *testing.T) {
+	job := liveJob(t, readRepoFile(t, ".gitlab-ci.yml"))
+	verifies, login, registryCheck, branchCheck, firstURL := 0, -1, -1, -1, -1
+	for i, l := range job {
+		switch {
+		case strings.HasPrefix(l, "bash .live/orbit/scripts/ci/verify-release-manifest.sh"):
+			verifies++
+			if i == 0 || !strings.HasPrefix(job[i-1], "env -u CI_JOB_TOKEN ") {
+				t.Errorf("verify-release-manifest.sh must run under `env -u CI_JOB_TOKEN ...`\nline: %s", l)
+			}
+		case strings.Contains(l, `[ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ]`) && strings.Contains(l, "exit 1"):
+			registryCheck = i
+		case strings.Contains(l, "docker login"):
+			login = i
+		case strings.HasPrefix(l, `orbit_branch_ok "$ORBIT_BRANCH"`) && branchCheck < 0:
+			branchCheck = i
+		case strings.Contains(l, "CI_API_V4_URL") && firstURL < 0:
+			firstURL = i
+		}
+	}
+	if verifies != 2 {
+		t.Errorf("found %d verify-release-manifest.sh runs, want 2 (the current and the earlier release)", verifies)
+	}
+	if registryCheck < 0 || login < 0 || registryCheck > login {
+		t.Error("the `live` job must refuse a manifest registry other than $CI_REGISTRY before `docker login` (#193)")
+	}
+	if branchCheck < 0 || firstURL < 0 || branchCheck > firstURL {
+		t.Error("the `live` job must check ORBIT_BRANCH with orbit_branch_ok before it builds any API URL (#193)")
+	}
+}

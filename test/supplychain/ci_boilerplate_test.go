@@ -10,7 +10,8 @@
 // the ones #216, #198, #241, #273, #264, #236, #195, #292, #277, #193 and
 // #263 make on purpose, listed in changedBy216, changedBy198, changedBy241,
 // changedBy273, changedBy264, changedBy236, changedBy195, changedBy292,
-// changedBy277, changedBy193, variablesChangedBy193 and changedBy263.
+// changedBy277, changedBy193, variablesChangedBy193 and changedBy263, and
+// the job-token review's changedByTokenReview.
 package supplychain
 
 import (
@@ -1126,8 +1127,104 @@ var changedBy263 = []struct {
 	},
 }
 
+// What the review of the job token's reach changes on purpose (#193, #263):
+// the Orbit branch, from the pin or ORBIT_BRANCH, must be a plain name
+// before it reaches a URL that carries the token, and its "/" is encoded in
+// the artifacts path; Orbit's verifier runs without the token in its
+// environment; and the registry login goes only to this GitLab's registry.
+// Same form and the same exactly-once rule as changedBy216; these apply
+// after #263's.
+var changedByTokenReview = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `# manifest from its latest build.
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then`,
+		new: `# manifest from its latest build. ORBIT_BRANCH moves the trust root
+# (cosign.pub and the verifier) to that branch's tip, so only start one
+# against a branch you trust.
+#
+# The branch goes into API URLs that carry the job token, so it must
+# be a plain name in the charset scripts/bump-orbit-pin.sh accepts,
+# with no "..", whichever of the two supplied it.
+orbit_branch_ok() {
+  case "$1" in
+    ''|-*|.*|/*|refs/*|*..*|*[!A-Za-z0-9._/-]*) return 1 ;;
+  esac
+}
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then
+  orbit_branch_ok "$ORBIT_BRANCH" \
+    || { echo "ORBIT_BRANCH must be a plain branch name (letters, digits, . _ / -, no ..), not ${ORBIT_BRANCH} (#193)"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  if [ "${#orbit_commit}" -ne 40 ] || [ -z "$orbit_branch" ] || [ "$orbit_branch" = "null" ]; then
+    echo "orbit/pin.json must name a branch and a 40-hex commit (#193)"`,
+		new: `  if [ "${#orbit_commit}" -ne 40 ] || ! orbit_branch_ok "$orbit_branch"; then
+    echo "orbit/pin.json must name a plain branch name (letters, digits, . _ / -, no ..) and a 40-hex commit (#193)"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi`,
+		new: `  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi
+# The artifacts-by-ref endpoint takes the bare branch name, with "/"
+# encoded like any path segment.
+orbit_branch_path="$(printf '%s' "$orbit_branch" | sed 's#/#%2F#g')"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+		new:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"`,
+		new:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \`,
+		new: `  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `  export ORBIT_REPOSITORY="${image_repository#*/}"`,
+		new: `  export ORBIT_REPOSITORY="${image_repository#*/}"
+  # The job token goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the job token is not sent there (#193)"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+		new:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+		new:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \`,
+		new: `  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -1147,6 +1244,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy277...)
 	all = append(all, changedBy193...)
 	all = append(all, changedBy263...)
+	all = append(all, changedByTokenReview...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

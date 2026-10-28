@@ -69,7 +69,7 @@ teardown() {
 }
 
 @test "no ref, a full ref or a ref that is not a name is refused before any lookup" {
-  for ref in "" refs/heads/preview "-x" "a b"; do
+  for ref in "" refs/heads/preview "-x" "a b" "a/../b"; do
     run --separate-stderr bash "$script" "$ref"
     [ "$status" -eq 1 ]
   done

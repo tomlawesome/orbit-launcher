@@ -39,7 +39,8 @@ ref="${1:-}"
 [[ -n "$ref" ]] || fail 'a branch or tag is required as the first argument, e.g. preview'
 # The short name only: the live job reads the manifest by ref from GitLab's
 # artifacts endpoint, which rejects refs/heads/... (#273).
-[[ "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ref" != refs/* ]] ||
+# The live job refuses any other branch name before it reaches a URL.
+[[ "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ref" != refs/* && "$ref" != *..* ]] ||
   fail "not a plain branch or tag name: ${ref}"
 
 host="${ORBIT_GITLAB_HOST:-gitlab.tomlawson.io}"

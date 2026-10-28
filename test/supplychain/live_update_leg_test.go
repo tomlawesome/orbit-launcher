@@ -22,9 +22,9 @@ func TestLiveUpdateLegGetsAVerifiedEarlierRelease(t *testing.T) {
 	text := strings.Join(job, "\n")
 
 	for _, c := range []struct{ want, why string }{
-		{"/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image",
+		{"/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image",
 			"read the previous build's manifest by branch from record_image by default (#263)"},
-		{"/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image",
+		{"/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image",
 			"read its signature from record_image too (#263)"},
 		{`echo "update leg: previous build ${first_version} ${first_digest} from previous/"`,
 			"say which predecessor it installed, in a line a watcher can grep (#263)"},

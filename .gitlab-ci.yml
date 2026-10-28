@@ -613,9 +613,22 @@ live:
       # unless the two are one release. scripts/bump-orbit-pin.sh <ref>
       # moves the pin. ORBIT_BRANCH, set non-empty on a pipeline started by
       # hand, overrides both: the files come from that branch's tip and the
-      # manifest from its latest build.
+      # manifest from its latest build. ORBIT_BRANCH moves the trust root
+      # (cosign.pub and the verifier) to that branch's tip, so only start one
+      # against a branch you trust.
+      #
+      # The branch goes into API URLs that carry the job token, so it must
+      # be a plain name in the charset scripts/bump-orbit-pin.sh accepts,
+      # with no "..", whichever of the two supplied it.
+      orbit_branch_ok() {
+        case "$1" in
+          ''|-*|.*|/*|refs/*|*..*|*[!A-Za-z0-9._/-]*) return 1 ;;
+        esac
+      }
       project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
       if [ -n "${ORBIT_BRANCH:-}" ]; then
+        orbit_branch_ok "$ORBIT_BRANCH" \
+          || { echo "ORBIT_BRANCH must be a plain branch name (letters, digits, . _ / -, no ..), not ${ORBIT_BRANCH} (#193)"; exit 1; }
         orbit_branch="$ORBIT_BRANCH"
         # The full ref, so a tag with the same name as the branch cannot
         # answer (#273). The files endpoint accepts refs/heads/<branch>.
@@ -630,8 +643,8 @@ live:
         case "$orbit_commit" in
           *[!0-9a-f]*) orbit_commit="" ;;
         esac
-        if [ "${#orbit_commit}" -ne 40 ] || [ -z "$orbit_branch" ] || [ "$orbit_branch" = "null" ]; then
-          echo "orbit/pin.json must name a branch and a 40-hex commit (#193)"
+        if [ "${#orbit_commit}" -ne 40 ] || ! orbit_branch_ok "$orbit_branch"; then
+          echo "orbit/pin.json must name a plain branch name (letters, digits, . _ / -, no ..) and a 40-hex commit (#193)"
           exit 1
         fi
         gitlab_orbit_ref="$orbit_commit"
@@ -640,6 +653,9 @@ live:
         orbit_mismatch="the pin and ai/orbit's latest ${orbit_branch} build differ: bump orbit/pin.json with scripts/bump-orbit-pin.sh ${orbit_branch}, or wait for that build if it is still running"
         echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
       fi
+      # The artifacts-by-ref endpoint takes the bare branch name, with "/"
+      # encoded like any path segment.
+      orbit_branch_path="$(printf '%s' "$orbit_branch" | sed 's#/#%2F#g')"
       gitlab_orbit_url() {
         printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$gitlab_orbit_ref"
       }
@@ -716,14 +732,15 @@ live:
         curl --fail --silent --show-error --location \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json \
-          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
         curl --fail --silent --show-error --location \
           --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json.sig \
-          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
         # install.sh comes from the pinned commit (#193), the manifest from
@@ -743,6 +760,8 @@ live:
         image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
         export ORBIT_REGISTRY="${image_repository%%/*}"
         export ORBIT_REPOSITORY="${image_repository#*/}"
+        # The job token goes only to this GitLab's own registry (#193).
+        [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the job token is not sent there (#193)"; exit 1; }
         # The login is per Docker client user, and the pulls are orbit-ci's
         # (#292), so it is orbit-ci that logs in: the token is written to
         # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
@@ -795,17 +814,18 @@ live:
           curl --fail --silent --show-error --location \
             --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
             --output "$first_dir/orbit-release-manifest.json" \
-            "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \
+            "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \
             || { echo "$no_predecessor"; exit 1; }
           curl --fail --silent --show-error --location \
             --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
             --output "$first_dir/orbit-release-manifest.json.sig" \
-            "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \
+            "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \
             || { echo "$no_predecessor"; exit 1; }
         fi
         jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
         [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+          env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
           || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
         jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
