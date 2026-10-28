@@ -1521,6 +1521,9 @@ env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_P
 // env -u wrappers really do: orbit-ci's docker group makes the tests root
 // in the container, so nothing in it is hidden from them. The renovate job
 // gets an environment so its two tokens can be scoped to it.
+//
+// C2: fast, deps, visual, classify and gitleaks drop the credentials they
+// do not need before running any branch or dependency code.
 var changedBy303 = []struct {
 	jobs     []string
 	key      string
@@ -1878,7 +1881,38 @@ if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
 		key:  "environment",
 		new:  `{"action": "prepare", "name": "renovate"}`,
 	},
+	// C2: every job that runs branch or dependency code and needs no token
+	// drops the credentials first, through the .drop_job_credentials
+	// anchor, and fast's list (now that anchor) names the two Renovate
+	// tokens as a backstop to their environment scope.
+	{
+		jobs: []string{"fast"},
+		old:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN`,
+		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN`,
+	},
+	{
+		jobs: []string{"deps"},
+		old:  `if [ "${DOCS_ONLY:-false}" = "true" ]; then`,
+		new: dropJobCredentials303 + `
+if [ "${DOCS_ONLY:-false}" = "true" ]; then`,
+	},
+	{
+		jobs: []string{"visual"},
+		old:  `tarball="go${GO_VERSION}.linux-amd64.tar.gz"`,
+		new: dropJobCredentials303 + `
+tarball="go${GO_VERSION}.linux-amd64.tar.gz"`,
+	},
+	{
+		jobs: []string{"classify", "gitleaks"},
+		old:  `export DEBIAN_FRONTEND=noninteractive`,
+		new: dropJobCredentials303 + `
+export DEBIAN_FRONTEND=noninteractive`,
+	},
 }
+
+// The two lines of the .drop_job_credentials anchor (#303 C2).
+const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true`
 
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"

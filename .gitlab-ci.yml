@@ -202,6 +202,22 @@ variables:
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
 
+# Credential hygiene for the jobs that run branch or dependency code and
+# need no token (#301, #303): fast, deps, visual, classify and gitleaks run
+# this first, before any of that code. A secret goes only to the job that
+# uses it, and what cannot be withheld is dropped: GitLab always injects
+# CI_JOB_TOKEN (and CI_BUILD_TOKEN, CI_REGISTRY_PASSWORD and
+# CI_DEPENDENCY_PROXY_PASSWORD, which carry it), CI_REPOSITORY_URL and the
+# clone's origin URL embed it, and ORBIT_REGISTRY_* belong to live-pulls.
+# RENOVATE_TOKEN and GITHUB_COM_TOKEN are scoped to the renovate
+# environment, so they should never be here; they are named anyway, because
+# unsetting an absent name does nothing and a later scope change must not
+# widen their reach silently. Not for the live legs (they keep their own
+# `env -u` wrappers) and not for renovate, which uses its token.
+.drop_job_credentials: &drop_job_credentials |
+  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN
+  git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true
+
 # The daemon inside the job's own container, copied from ai/orbit's
 # `.docker_in_job`. The dind *service* pattern cannot be used here: install.sh
 # publishes Orbit on the loopback address and the live test health-checks
@@ -273,6 +289,8 @@ classify:
     # The base commit has to be in the checkout for the diff to read at all.
     GIT_DEPTH: 0
   before_script:
+    # The runner has already cloned; nothing here fetches (#303).
+    - *drop_job_credentials
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends git
   script:
@@ -302,12 +320,10 @@ fast:
     - job: classify
       artifacts: true
   before_script:
-    # Nothing in this job needs the job token or the registry deploy token,
-    # and every step runs the branch's own code (tests, bats, build tools),
-    # so they are dropped before any of them (#301). CI_REPOSITORY_URL and
-    # the clone's origin URL can carry the job token too.
-    - unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN
-    - git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true
+    # Nothing in this job needs a token, and every step runs the branch's
+    # own code (tests, bats, build tools), so the credentials are dropped
+    # before any of them (#301, #303; see .drop_job_credentials).
+    - *drop_job_credentials
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends shellcheck
   script:
@@ -384,6 +400,10 @@ deps:
   needs:
     - job: classify
       artifacts: true
+  # go install and go run reach the public module proxy, which needs no
+  # token, and both run dependency code (#303).
+  before_script:
+    - *drop_job_credentials
   script:
     - *docs_only_skip
     - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
@@ -439,6 +459,9 @@ gitleaks:
   variables:
     GIT_DEPTH: 0
   before_script:
+    # It runs the branch's scripts/ci/fetch-verified.sh, and the runner has
+    # already cloned the history it scans (#303).
+    - *drop_job_credentials
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git
   script:
@@ -486,6 +509,9 @@ visual:
         - scripts/ci/fetch-verified.sh
         - scripts/ci/run-unprivileged.sh
   before_script:
+    # npm ci, Playwright and the binary it builds all inherit this shell's
+    # environment, and none needs a token (#303).
+    - *drop_job_credentials
     - *go_tarball
     - |
       bash scripts/ci/fetch-verified.sh \
@@ -1104,10 +1130,15 @@ live-fedora:
 # shared untagged runner and never queues behind `orbit-launcher-build`.
 #
 # Two CI/CD variables the owner creates under Settings > CI/CD > Variables.
-# Mask both. Leave both unprotected unless the schedule's branch is itself
-# protected: a protected variable is simply absent from a job running on an
-# unprotected branch, and Renovate then fails at start-up with an
-# authentication error that says nothing about variable settings.
+# Mask, hide and protect both: the schedule runs on dev, which is
+# protected, so they arrive here, while no merge-request pipeline from an
+# unprotected branch receives them. Give both the environment scope
+# `renovate`, the environment this job names, so no other job receives
+# them (#303); the jobs that run branch code drop the names too, as a
+# backstop (.drop_job_credentials). Set the scope only once this job's
+# `environment:` is on dev: before that, the next scheduled run gets
+# neither variable and fails at start-up with an authentication error that
+# says nothing about variable settings.
 #
 #   RENOVATE_TOKEN     A project access token on ai/orbit-launcher, or a bot
 #                      account's personal access token, with the `api` scope
