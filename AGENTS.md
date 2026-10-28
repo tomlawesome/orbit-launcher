@@ -47,10 +47,12 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   pin, or edits `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh` or
   `scripts/ci/run-unprivileged.sh`, needs it started by hand (#192, #216, #292).
 
-- The update leg (#198) skips unless the pipeline is started with
-  `ORBIT_FIRST_RECORD_IMAGE_JOB` and `ORBIT_FIRST_SIGN_EVIDENCE_JOB`: the
-  `record_image` and `sign_evidence` job IDs of an earlier signed ai/orbit
-  preview pipeline. The job token can't list pipelines to find them itself.
+- The update leg (#198) runs by default from the previous build ai/orbit's
+  latest `record_image` keeps in `.orbit-supply-chain/previous/` (#263), and
+  fails if there is none. `ORBIT_FIRST_RECORD_IMAGE_JOB` and
+  `ORBIT_FIRST_SIGN_EVIDENCE_JOB` on a hand-started pipeline override it: the
+  job IDs of an earlier signed ai/orbit preview pipeline. Never give them a
+  default.
 - Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
   `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
   a hand-started pipeline overrides the pin: files from that branch's tip.

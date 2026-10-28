@@ -84,8 +84,8 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	firstScript := os.Getenv(firstScriptEnv)
 	if currentManifest == "" || firstManifest == "" || firstScript == "" {
 		t.Skipf("no earlier Orbit release to update from: %s, %s and ORBIT_RELEASE_MANIFEST must all be set. "+
-			"In CI, start the pipeline with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB naming an earlier "+
-			"ai/orbit preview pipeline's record_image and sign_evidence jobs (#198)", firstManifestEnv, firstScriptEnv)
+			"In CI the live job sets them from the previous build ai/orbit's record_image keeps (#263), or from "+
+			"ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB on a hand-started pipeline (#198)", firstManifestEnv, firstScriptEnv)
 	}
 	newDigest := readManifestDigest(t, currentManifest)
 	oldDigest := readManifestDigest(t, firstManifest)

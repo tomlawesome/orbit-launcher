@@ -7,10 +7,10 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198, #241, #273, #264, #236, #195, #292, #277 and #193
-// make on purpose, listed in changedBy216, changedBy198, changedBy241,
+// the ones #216, #198, #241, #273, #264, #236, #195, #292, #277, #193 and
+// #263 make on purpose, listed in changedBy216, changedBy198, changedBy241,
 // changedBy273, changedBy264, changedBy236, changedBy195, changedBy292,
-// changedBy277, changedBy193 and variablesChangedBy193.
+// changedBy277, changedBy193, variablesChangedBy193 and changedBy263.
 package supplychain
 
 import (
@@ -976,8 +976,151 @@ var variablesChangedBy193 = map[string]struct{ old, new string }{
 	"ORBIT_BRANCH": {`"preview"`, `""`},
 }
 
+// What #263 changes on purpose: the update leg reads the previous preview
+// build's manifest and signature from .orbit-supply-chain/previous/ in the
+// latest record_image artifacts of the pin's branch, keeps the by-ID read
+// only as a hand override, fails instead of skipping when there is no
+// readable predecessor, and names the predecessor in one greppable line.
+// Same form and the same exactly-once rule as changedBy216; these apply
+// after #193's.
+var changedBy263 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `  # The update leg's first install (#198): an earlier preview release,
+  # so the update goes from one signed image to another. Its manifest
+  # and signature are read by job ID, since a branch only ever names
+  # its latest pipeline; the IDs come from whoever starts the pipeline
+  # (ORBIT_FIRST_RECORD_IMAGE_JOB, ORBIT_FIRST_SIGN_EVIDENCE_JOB),
+  # because this job's token cannot list ai/orbit's pipelines.
+  # Verified exactly as above. Its install.sh comes from the commit the
+  # manifest names and must match the sha256 the manifest records for
+  # it, so script and image stay one generation. Unset, the leg skips.
+  first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+  first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+  if [ -z "$first_record" ] && [ -z "$first_sign" ]; then
+    echo "no ORBIT_FIRST_RECORD_IMAGE_JOB / ORBIT_FIRST_SIGN_EVIDENCE_JOB: the update leg (#198) skips"
+  else`,
+		new: `  # The update leg's first install (#198): the preview build before
+  # the current one, so the update goes from one signed image to
+  # another. ai/orbit's record_image keeps that build's signed manifest
+  # and signature under .orbit-supply-chain/previous/ in its artifacts
+  # (#263), read here by branch like the current manifest. A pipeline
+  # started by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and
+  # ORBIT_FIRST_SIGN_EVIDENCE_JOB overrides that: the record_image and
+  # sign_evidence job IDs of an earlier signed ai/orbit preview
+  # pipeline, read by ID instead. Either way the earlier release is
+  # verified exactly as above, and its install.sh comes from the
+  # commit its manifest names and must match the sha256 the manifest
+  # records for it, so script and image stay one generation. The leg
+  # never skips: no readable predecessor stops the job.
+  first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+  first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+  first_dir=.live/orbit/release/first
+  mkdir -p "$first_dir"
+  if [ -n "$first_record" ] || [ -n "$first_sign" ]; then`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    first_dir=.live/orbit/release/first
+    mkdir -p "$first_dir"`,
+		new: `    first_from="ai/orbit jobs ${first_record}/${first_sign}"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "ai/orbit job ${first_record} did not return a JSON release manifest (#198)"; exit 1; }
+    [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "ai/orbit job ${first_sign} returned an empty signature (#198)"; exit 1; }
+    COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+      bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+      || { echo "the earlier release manifest from ai/orbit jobs ${first_record}/${first_sign} failed verification; nothing is installed from it (#198)"; exit 1; }
+    jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+      || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+    first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+    [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+      || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+    first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+    current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+    if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+      echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+      exit 1
+    fi
+    first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+    case "$first_commit" in
+      *[!0-9a-f]*) first_commit="" ;;
+    esac
+    [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/install.sh" \
+      "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+      || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+    [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+      || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+    export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+    export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+    echo "the update leg (#198) installs ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"
+  fi`,
+		new: `  else
+    first_from="previous/ of ai/orbit's latest ${orbit_branch} build"
+    no_predecessor="ai/orbit's latest ${orbit_branch} build has no readable predecessor (.orbit-supply-chain/previous/ in its record_image artifacts); to run the update leg from an earlier build instead, start the pipeline by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB set to that signed preview pipeline's record_image and sign_evidence job IDs (#263)"
+    # By branch name, as the current manifest above: the artifacts
+    # endpoint rejects full refs (#273). Both files are record_image's.
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \
+      || { echo "$no_predecessor"; exit 1; }
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \
+      || { echo "$no_predecessor"; exit 1; }
+  fi
+  jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
+  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+    || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
+  jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+    || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+  first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+  [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+    || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+  first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+  current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+  if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+    echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+    exit 1
+  fi
+  first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+  case "$first_commit" in
+    *[!0-9a-f]*) first_commit="" ;;
+  esac
+  [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \
+    "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+    || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+  [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+    || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+  export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+  first_version="$(jq -r .version "$first_dir/orbit-release-manifest.json")"
+  if [ -n "$first_record" ]; then
+    echo "update leg: previous build from job IDs ${first_record}/${first_sign}"
+  else
+    echo "update leg: previous build ${first_version} ${first_digest} from previous/"
+  fi
+  echo "the update leg (#198) installs ${first_version} ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"`,
+	},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -996,6 +1139,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy292...)
 	all = append(all, changedBy277...)
 	all = append(all, changedBy193...)
+	all = append(all, changedBy263...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
