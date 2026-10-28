@@ -130,10 +130,10 @@ func TestLivePrepareIsUnprivilegedAndScopedToOrbitReads(t *testing.T) {
 			t.Errorf("%s must need live-prepare with its artifacts, which carry Orbit's files (#303); needs are %s", job, needs)
 		}
 	}
-	if !strings.Contains(prep.Keys["artifacts"].dump(), `".live/install-script/"`) ||
-		!strings.Contains(prep.Keys["artifacts"].dump(), `".live/orbit/"`) ||
-		!strings.Contains(prep.Keys["artifacts"].dump(), `"dotenv": ".live/prepare.env"`) {
-		t.Errorf("live-prepare must hand over .live/install-script/ and .live/orbit/ and the dotenv .live/prepare.env; artifacts are %s (#303)", prep.Keys["artifacts"].dump())
+	// Not the whole of .live/orbit/: Orbit's verifier caches its cosign
+	// download under .live/orbit/.orbit-cosign, which the legs never use.
+	if got := prep.Keys["artifacts"].dump(); got != `{"expire_in": "1 day", "paths": [".live/install-script/", ".live/orbit/release/"], "reports": {"dotenv": ".live/prepare.env"}}` {
+		t.Errorf("live-prepare must hand over exactly .live/install-script/, .live/orbit/release/ and the dotenv .live/prepare.env; artifacts are %s (#303)", got)
 	}
 }
 

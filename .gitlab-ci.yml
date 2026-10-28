@@ -907,10 +907,13 @@ live-prepare:
         fi
       } > .live/prepare.env
       cat .live/prepare.env
+  # Only what the legs use: install.sh and the verified manifests with the
+  # earlier install.sh. Not the rest of .live/orbit/, where Orbit's verifier
+  # caches its cosign download (.live/orbit/.orbit-cosign).
   artifacts:
     paths:
       - .live/install-script/
-      - .live/orbit/
+      - .live/orbit/release/
     reports:
       dotenv: .live/prepare.env
     expire_in: 1 day
