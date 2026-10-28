@@ -55,10 +55,14 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   success screen the URL is deliberately the *only* gold object.
 - **Approach-blue `#8fb8ff`** is gold's companion (the pair's partner).
 - **State colours outrank brand** on the mark: alive `#4ade80` green,
-  degraded `#fb923c` deep amber ("up but wrong" — never red, red means
-  stopped/failed). A status word is never a guess: unknown health renders
-  the FQDN with no word at all.
-- Status vocabulary: **dormant / alive / degraded**. Fixed.
+  maintenance `#facc15` yellow, degraded `#fb923c` deep amber ("up but
+  wrong" — never red, red means stopped/failed). A status word is never a
+  guess: unknown health renders the FQDN with no word at all.
+- Status vocabulary: **dormant / alive / maintenance / degraded**. Fixed.
+  `maintenance` is Orbit's own health answer saying it is closed to users
+  (owner, 2026-10-28, #302 answer 11): up and healthy, closed on purpose,
+  so it is neither alive nor degraded. Beneath it, one faint line:
+  `closed to users`. No status row or drawer; those stay degraded-only.
 
 ## Layout grammar
 
