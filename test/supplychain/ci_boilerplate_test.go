@@ -7,9 +7,10 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198, #241, #273, #264, #236 and #195 make on purpose,
-// listed in changedBy216, changedBy198, changedBy241, changedBy273,
-// changedBy264, changedBy236 and changedBy195.
+// the ones #216, #198, #241, #273, #264, #236, #195, #292, #277 and #193
+// make on purpose, listed in changedBy216, changedBy198, changedBy241,
+// changedBy273, changedBy264, changedBy236, changedBy195, changedBy292,
+// changedBy277, changedBy193 and variablesChangedBy193.
 package supplychain
 
 import (
@@ -287,6 +288,10 @@ func compareTopLevelVariables(t *testing.T, oldDoc, newDoc *yamlDoc) {
 		case !inOld:
 			t.Errorf("top-level variable %s is new (#236)\nnow: %s", k, n.dump())
 		case isToolPinVariable(k):
+		case variablesChangedBy193[k].new != "":
+			if w := variablesChangedBy193[k]; o.dump() != w.old || n.dump() != w.new {
+				t.Errorf("top-level variable %s should change from %s to %s (#193)\n got: %s -> %s", k, w.old, w.new, o.dump(), n.dump())
+			}
 		case o.dump() != n.dump():
 			t.Errorf("top-level variable %s changed (#236)\nwant: %s\n got: %s", k, o.dump(), n.dump())
 		default:
@@ -817,8 +822,162 @@ var changedBy277 = []struct {
 	},
 }
 
+// What #193 changes on purpose: the live job reads ai/orbit's branch and
+// commit from orbit/pin.json, fetches install.sh, the verifier scripts and
+// cosign.pub at the commit, and reads the manifest from the latest build of
+// the pin's branch. ORBIT_BRANCH, set on a pipeline started by hand,
+// overrides the pin, and the #236 refusal says how to bump it. #234's
+// "configuration tree" rides in the first entry. Same form and the same
+// exactly-once rule as changedBy216; these apply after #277's.
+var changedBy193 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the mirror is read at the same commit; and #234's wording fix
+		jobs: []string{"live"},
+		old: `# same branch: GitLab pushes it after each Orbit merge, so it trails by
+# minutes at most. The configure tree reaches the launcher through`,
+		new: `# same commit: GitLab pushes it after each Orbit merge, so it trails by
+# minutes at most. The configuration tree reaches the launcher through`,
+	},
+	{ // which Orbit: the pin, or ORBIT_BRANCH's tip as an override
+		jobs: []string{"live"},
+		old: `project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+# The full ref, so a tag with the same name as the branch cannot answer
+# (#273). The files endpoint accepts refs/heads/<branch>.
+gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"`,
+		new: `#
+# Which Orbit (#193): the commit orbit/pin.json names, so every run
+# installs a fixed partner and an Orbit merge alone cannot turn this
+# pipeline red. install.sh, the verifier scripts and cosign.pub are
+# read at that commit; the release manifest comes from the latest
+# build of the pin's branch, and the #236 check below stops the run
+# unless the two are one release. scripts/bump-orbit-pin.sh <ref>
+# moves the pin. ORBIT_BRANCH, set non-empty on a pipeline started by
+# hand, overrides both: the files come from that branch's tip and the
+# manifest from its latest build.
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then
+  orbit_branch="$ORBIT_BRANCH"
+  # The full ref, so a tag with the same name as the branch cannot
+  # answer (#273). The files endpoint accepts refs/heads/<branch>.
+  gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
+  github_orbit_ref="$ORBIT_BRANCH"
+  orbit_at="the tip of ${ORBIT_BRANCH}"
+  orbit_mismatch="ai/orbit's ${ORBIT_BRANCH} pipeline has not caught up with the branch yet; rerun this job once it has"
+  echo "ORBIT_BRANCH=${ORBIT_BRANCH} overrides orbit/pin.json: Orbit's files come from the tip of ${ORBIT_BRANCH} (#193)"
+else
+  orbit_branch="$(jq -r .branch orbit/pin.json)" || { echo "orbit/pin.json cannot be read (#193)"; exit 1; }
+  orbit_commit="$(jq -r .commit orbit/pin.json)" || { echo "orbit/pin.json cannot be read (#193)"; exit 1; }
+  case "$orbit_commit" in
+    *[!0-9a-f]*) orbit_commit="" ;;
+  esac
+  if [ "${#orbit_commit}" -ne 40 ] || [ -z "$orbit_branch" ] || [ "$orbit_branch" = "null" ]; then
+    echo "orbit/pin.json must name a branch and a 40-hex commit (#193)"
+    exit 1
+  fi
+  gitlab_orbit_ref="$orbit_commit"
+  github_orbit_ref="$orbit_commit"
+  orbit_at="${orbit_commit} (orbit/pin.json)"
+  orbit_mismatch="the pin and ai/orbit's latest ${orbit_branch} build differ: bump orbit/pin.json with scripts/bump-orbit-pin.sh ${orbit_branch}, or wait for that build if it is still running"
+  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab, ${ORBIT_BRANCH}"`,
+		new:  `    echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `        || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${ORBIT_BRANCH}"; exit 1; }`,
+		new:  `        || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO}, ${ORBIT_BRANCH} at $(git ls-remote "https://github.com/${ORBIT_GITHUB_REPO}.git" "refs/heads/${ORBIT_BRANCH}" | cut -f1)"`,
+		new:  `    echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO} at ${orbit_at}"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `        "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1" \
+        || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${ORBIT_BRANCH}"; exit 1; }`,
+		new: `        "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${github_orbit_ref}/$1" \
+        || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${orbit_at}"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }`,
+		new:  `head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script at ${orbit_at}"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `# same branch as install.sh, then hand the path over. Preview's`,
+		new:  `# same commit as install.sh, then hand the path over. Preview's`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${ORBIT_BRANCH}"; exit 1; }
+  done
+  head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${ORBIT_BRANCH}"; exit 1; }
+  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched by full ref above (#273).`,
+		new: `    head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${orbit_at}"; exit 1; }
+  done
+  head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${orbit_at}"; exit 1; }
+  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched at the pinned commit (or, under
+  # ORBIT_BRANCH, by full ref) above (#273).`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+		new:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+  jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${ORBIT_BRANCH} is not a JSON release manifest"; exit 1; }
+  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${ORBIT_BRANCH} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+    || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
+  # install.sh comes from the branch tip, the manifest from the branch's
+  # latest preview pipeline, which trails the tip by minutes. In that
+  # gap the run would pair a newer install.sh with the previous
+  # commit's image, so it stops until the two are one release (#236).
+  [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+    || { echo "install.sh at the tip of ${ORBIT_BRANCH} is not the one the latest signed preview release records: ai/orbit's preview pipeline has not caught up with the branch yet; rerun this job once it has (#236)"; exit 1; }`,
+		new: `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+  jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
+  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+    || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
+  # install.sh comes from the pinned commit (#193), the manifest from
+  # the latest preview pipeline of the pin's branch. Once that branch
+  # moves on, or while the pinned commit's own build is still running,
+  # the two differ, and the run would pair one commit's install.sh with
+  # another's image, so it stops until they are one release (#236).
+  # Under ORBIT_BRANCH install.sh is the branch tip, and the gap is
+  # that branch's pipeline catching up.
+  [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+    || { echo "install.sh at ${orbit_at} is not the one the latest signed preview release records: ${orbit_mismatch} (#193, #236)"; exit 1; }`,
+	},
+}
+
+// What #193 changes on purpose in the top-level variables: ORBIT_BRANCH
+// loses its default, because orbit/pin.json names the Orbit branch now and
+// ORBIT_BRANCH is only an override set on a pipeline started by hand.
+var variablesChangedBy193 = map[string]struct{ old, new string }{
+	"ORBIT_BRANCH": {`"preview"`, `""`},
+}
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -836,6 +995,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy195...)
 	all = append(all, changedBy292...)
 	all = append(all, changedBy277...)
+	all = append(all, changedBy193...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

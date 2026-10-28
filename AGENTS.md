@@ -51,8 +51,14 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `ORBIT_FIRST_RECORD_IMAGE_JOB` and `ORBIT_FIRST_SIGN_EVIDENCE_JOB`: the
   `record_image` and `sign_evidence` job IDs of an earlier signed ai/orbit
   preview pipeline. The job token can't list pipelines to find them itself.
-- Every GitLab live run is a preview run (`ORBIT_BRANCH` and `ORBIT_CHANNEL`
-  default to preview). It fails only if the job falls back to the GitHub mirror,
+- Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
+  `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
+  a hand-started pipeline overrides the pin: files from that branch's tip.
+- A contract change goes: Orbit side on Orbit `dev` → bump `orbit/pin.json`
+  here (live green against a fixed partner) → launcher release → Orbit bumps
+  `launcher/pin.json`.
+- Every GitLab live run is a preview run (the pin's branch and `ORBIT_CHANNEL`
+  are preview). It fails only if the job falls back to the GitHub mirror,
   which has no release manifest (#194): the job token got 401/403 reading
   ai/orbit (as on Renovate's MRs), or `ORBIT_FILES_SOURCE=github` is set.
   `orbit_branch` is an input of the GitHub workflow only, which is stable-only (#196).
