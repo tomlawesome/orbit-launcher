@@ -41,6 +41,7 @@ func (f *handoffFixture) handoffApp(seams engineRunSeams) (AppModel, *sink) {
 	m.targetDir = f.dir
 	m.flowSeams = seams
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(f.t)
 	m.flowReadClaim = func(context.Context, string, string, time.Time) (string, error) { return "", nil }
 	m, _ = updateAs(f.t, m, tea.WindowSizeMsg{Width: 80, Height: 40})
 	return m, queue

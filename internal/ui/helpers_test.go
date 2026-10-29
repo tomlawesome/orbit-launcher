@@ -142,6 +142,18 @@ func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, 
 	}
 }
 
+// shortNoticeTick makes the notice's countdown redraw every millisecond
+// instead of every second for the rest of the test. A test that shortens
+// the countdown itself (noticeDuration, flowNoticeDuration) calls this
+// too, or every redraw still waits a real second. Call it before the
+// program starts, so the cleanup runs after the program has stopped.
+func shortNoticeTick(t testing.TB) {
+	t.Helper()
+	old := noticeTickInterval
+	noticeTickInterval = time.Millisecond
+	t.Cleanup(func() { noticeTickInterval = old })
+}
+
 // screen is what a person would see of a model, escapes stripped.
 func screen(m tea.Model) string { return ansi.Strip(m.View().Content) }
 

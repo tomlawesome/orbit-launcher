@@ -185,6 +185,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
@@ -234,6 +235,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 
 	sender := &deferredSender{}
 	m.flowSend = sender.Send

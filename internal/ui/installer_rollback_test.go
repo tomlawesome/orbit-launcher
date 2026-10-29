@@ -131,6 +131,7 @@ func installApp(t *testing.T, script string, width, height int) (AppModel, *sink
 	}}
 	m.flowReadClaim = func(context.Context, string, string, time.Time) (string, error) { return "", nil }
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: height})
 
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install

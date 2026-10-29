@@ -443,6 +443,7 @@ func TestNotice_TeaTest_PassesTheNoticeAt80x26(t *testing.T) {
 	m := NewInstallModel("/opt/orbit", "v9.9.9")
 	m.checkVolumes = noStaleVolumes
 	m.noticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	m.seams = engineRunSeams{prepareEngine: fakeEngineStreaming(t, ev("host", "host", "completed", "host-tools", "check"))}
 	sender := &deferredSender{}
 	m.send = sender.Send
