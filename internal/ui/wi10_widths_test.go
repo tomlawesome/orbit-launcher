@@ -15,8 +15,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -216,9 +214,10 @@ func wi10Importer(fset *token.FileSet) types.ImporterFrom {
 // this test binary was, so under -race it reuses the race build already
 // in the cache rather than compiling the dependencies a second way.
 func wi10ExportData() (map[string]string, error) {
+	// Without go on PATH the caller falls back to the source importer.
 	goTool, err := exec.LookPath("go")
 	if err != nil {
-		goTool = filepath.Join(runtime.GOROOT(), "bin", "go")
+		return nil, err
 	}
 	args := []string{"list", "-export", "-deps"}
 	if info, ok := debug.ReadBuildInfo(); ok {
