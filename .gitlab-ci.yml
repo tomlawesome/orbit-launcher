@@ -58,17 +58,23 @@ stages:
   - release
   - maintenance
 
+# Test once, then promote what passed (#306): each pipeline runs only what an
+# earlier stage could not. A merge request into `dev` runs the checks; the one
+# into `preview` adds the live installs; the one into `main` adds nothing; the
+# push that lands any of them runs nothing, because merges need an up-to-date
+# branch (semi-linear history) and so land exactly what was tested. Only a push
+# to `main` creates a pipeline, for the release buttons. Each job's `rules:`
+# below picks its stage; this block decides whether a pipeline exists at all.
 workflow:
   rules:
     # Tags publish nothing here: Orbit builds and ships a pinned tag (#171).
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    # Once a branch has an open merge request, the merge-request pipeline is
-    # the one that matters.
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^(dev|preview|main)$/
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE == "true"
+    # Started by hand (RUN_LIVE=true and the like), from the web or the API.
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
 
 default:
   tags:
@@ -267,6 +273,13 @@ variables:
 # --- fast --------------------------------------------------------------------
 
 # ci.yml `fast`, step for step.
+# The merge-request stage (#306): the checks that run on a merge request into
+# `dev`, and on a pipeline started by hand. Not on `preview` or `main`
+# merge requests, which carry exactly the code `dev` passed.
+.checks_rules: &checks_rules
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+  - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+
 # --- classify ----------------------------------------------------------------
 #
 # Reads the diff once and answers two questions. Whether it is documentation
@@ -283,13 +296,14 @@ variables:
 # their own `script:`, reporting "skipped" rather than vanishing. Orbit's
 # classifier works the same way (ai/orbit#883).
 #
-# Only an ordinary merge request is ever classified. A push to a delivery
-# branch, the promotion into `main`, and anything else that reaches here get an
-# empty base commit, and the script answers false to every question it cannot
-# settle -- so the full gate is what happens by default, and skipping is opt-in
-# against the named safe paths in the script.
+# Only a merge request into `dev` is ever classified (#306); the promotions
+# run no classify, and a pipeline started by hand gets an empty base commit.
+# The script answers false to every question it cannot settle -- so the full
+# gate is what happens by default, and skipping is opt-in against the named
+# safe paths in the script.
 classify:
   stage: classify
+  rules: *checks_rules
   tags: [light]
   image:
     <<: *pull_if_not_present
@@ -308,8 +322,7 @@ classify:
     - |
       set -euo pipefail
       base=""
-      if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ] \
-        && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" != "main" ]; then
+      if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ]; then
         base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
       fi
       bash scripts/ci/classify-changed-paths.sh "$base" "$CI_COMMIT_SHA" \
@@ -321,6 +334,7 @@ classify:
 
 fast:
   stage: fast
+  rules: *checks_rules
   image:
     <<: *pull_if_not_present
     name: $GO_IMAGE
@@ -399,6 +413,7 @@ fast:
 # allowed, so a dependency under AGPL still fails.
 deps:
   stage: fast
+  rules: *checks_rules
   # Short scanners run on the light lane (2 CPU / 2 GB, three at a time) so
   # they stop holding a big-lane slot; if one is ever killed for memory,
   # move it back to big (owner decision, ai/agent-infra#3, 2026-09-05).
@@ -449,6 +464,7 @@ deps:
 # carries a pin Renovate watches (an ai/agent-infra issue).
 private-details:
   stage: fast
+  rules: *checks_rules
   needs: []
   tags: [light]
   image:
@@ -467,6 +483,7 @@ private-details:
 # the build log; the log names the file and rule, never the value.
 gitleaks:
   stage: fast
+  rules: *checks_rules
   # Starts immediately rather than queueing behind `classify`: this one is
   # never skipped, so it has nothing to learn from the verdict, and a secret
   # is the finding you want soonest.
@@ -521,7 +538,7 @@ visual:
     # a change to it alone is a change to what this job runs on (#216).
     # The suite runs through scripts/ci/run-unprivileged.sh (#292), so a
     # change to it alone starts this job too.
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
       changes:
         - internal/ui/**/*
         - test/visual/**/*
@@ -632,11 +649,12 @@ live-prepare:
     - job: classify
       artifacts: true
       optional: true
-  # The legs' three routes, with the change route automatic.
+  # The legs' four routes, with the change route automatic.
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
@@ -1033,6 +1051,13 @@ live-prepare:
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
+    # The promotion into `preview` (#306): the one place the live installs
+    # run for every change, because it carries exactly the code `dev` passed
+    # and nothing else installs anything. Automatic and blocking, not
+    # label-dependent; the skip gate below lets it through because no
+    # classify runs there, and an unset verdict means run. The change route
+    # below is for merge requests into `dev` only.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview"
     # The third route in (#164). !157 bumped UBUNTU_IMAGE, and its pipeline was
     # green because nothing that ran installs anything into that image -- the
     # live job, the only one that does, was never created. `changes:` is
@@ -1055,7 +1080,7 @@ live-prepare:
     # launcher runs through scripts/ci/run-unprivileged.sh (#292), so a change
     # to it alone does too. So does orbit/pin.json: a bump of the Orbit pin is
     # exactly the change this job exists to test (#193).
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
@@ -1225,6 +1250,25 @@ live-fedora:
     - docker compose version
     - *go_tarball
     - *docker_in_job
+
+# --- promotion into main -----------------------------------------------------
+
+# A merge request from `preview` into `main` carries code that already passed
+# `dev`'s checks and `preview`'s live installs, so it runs nothing new (#306).
+# GitLab's "pipelines must succeed" needs a pipeline to pass, and a pipeline
+# needs a job: this is that job. It tests nothing.
+promoted:
+  stage: fast
+  needs: []
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  timeout: 2m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+  script:
+    - echo "nothing to run here (#306); the checks ran on dev's merge request and the live installs on the merge request into preview"
 
 # --- maintenance ---------------------------------------------------------
 

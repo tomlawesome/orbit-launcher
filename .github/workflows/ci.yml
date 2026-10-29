@@ -1,11 +1,11 @@
 name: CI
 
+# GitLab runs these checks on a merge request into dev and on nothing after the
+# merge (#306), so the mirrored push of dev, preview and main does not run
+# them here either. Hotfix branches have no stage on GitLab; they keep theirs.
 on:
   push:
     branches:
-      - main
-      - dev
-      - preview
       - "hotfix/**"
   pull_request:
     branches:

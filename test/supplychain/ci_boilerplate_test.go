@@ -12,7 +12,9 @@
 // changedBy273, changedBy264, changedBy236, changedBy195, changedBy292,
 // changedBy277, changedBy193, variablesChangedBy193 and changedBy263, and
 // the job-token review's changedByTokenReview; and #183's changedBy183,
-// which also adds the live-fedora job (addedBy183) and FEDORA_IMAGE.
+// which also adds the live-fedora job (addedBy183) and FEDORA_IMAGE; and
+// #306's changedBy306 and workflowChangedBy306, which also add the promoted
+// job (addedBy306).
 package supplychain
 
 import (
@@ -126,6 +128,11 @@ var addedBy303 = []string{"live-prepare"}
 // step).
 var addedBy183 = []string{"live-fedora"}
 
+// What #306 adds on purpose: the one cheap job a merge request into main
+// runs, so "pipelines must succeed" has a pipeline to pass when the
+// promotion into main otherwise runs nothing (ci_stages_test.go checks it).
+var addedBy306 = []string{"promoted"}
+
 // Passed already: every job and template keeps its name (and extras may only
 // be hidden templates, which GitLab never runs). The restructure adds anchors;
 // it must not rename, split or drop a job.
@@ -173,6 +180,12 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 			t.Errorf("%q, which #303 adds, is missing from .gitlab-ci.yml", k)
 		}
 	}
+	for _, k := range addedBy306 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #306 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
 	for _, k := range doc.root.keys {
 		if !typed[k] && !strings.HasPrefix(k, ".") {
 			t.Errorf("new top-level key %q is not a hidden template (it would be a new job): the restructure may add only `.`-prefixed templates (#217)", k)
@@ -199,7 +212,11 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	// holds the pins Renovate moves, and `default:` is compared through each
 	// job, so neither is compared whole.
 	for _, k := range []string{"stages", "workflow"} {
-		if o, n := oldDoc.root.vals[k].dump(), newDoc.root.vals[k].dump(); o != n {
+		o, n := oldDoc.root.vals[k].dump(), newDoc.root.vals[k].dump()
+		if k == "workflow" {
+			o = workflowChangedBy306
+		}
+		if o != n {
 			t.Errorf("top-level %q changed (#217)\nwant: %s\n got: %s", k, o, n)
 		}
 	}
@@ -1974,11 +1991,59 @@ var changedBy307 = []struct {
 const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
 git remote set-url origin "${CI_PROJECT_URL}.git"`
 
+// #306: each pipeline runs only what an earlier stage could not (the table is
+// in ci_stages_test.go, which checks the behaviour). workflow: now creates a
+// pipeline only for a merge request into dev, preview or main, a push to
+// main, Renovate's schedule and a pipeline started by hand; the "branch with
+// an open merge request" rule goes, because no branch push creates one. The
+// checks run on a merge request into dev and on a hand-started pipeline;
+// visual's and the live jobs' merge-request routes name their target; the
+// live jobs gain the automatic route for a merge request into preview.
+// Applies after #307.
+const workflowChangedBy306 = `{"rules": [{"if": "$CI_COMMIT_TAG", "when": "never"}, {"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^(dev|preview|main)$/"}, {"if": "$CI_PIPELINE_SOURCE == \"push\" && $CI_COMMIT_BRANCH == \"main\""}, {"if": "$CI_PIPELINE_SOURCE == \"schedule\" && $RENOVATE == \"true\""}, {"if": "$CI_PIPELINE_SOURCE == \"web\" || $CI_PIPELINE_SOURCE == \"api\""}]}`
+
+var changedBy306 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the .checks_rules anchor: added keys, none of these jobs had rules
+		jobs: []string{"classify", "fast", "deps", "gitleaks"},
+		key:  "rules",
+		new:  `[{"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\""}, {"if": "$CI_PIPELINE_SOURCE == \"web\" || $CI_PIPELINE_SOURCE == \"api\""}]`,
+	},
+	{ // classify only ever sees a merge request into dev now, so the
+		// "not main" exception is dead
+		jobs: []string{"classify"},
+		old: `if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ] \
+  && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" != "main" ]; then`,
+		new: `if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ]; then`,
+	},
+	{
+		jobs: []string{"visual"},
+		key:  "rules",
+		old:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\""}]`,
+		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\""}]`,
+	},
+	{ // the promotion into preview: automatic and blocking
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `run-live-matrix(,|$)/"}, {"allow_failure"`,
+		new:  `run-live-matrix(,|$)/"}, {"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\""}, {"allow_failure"`,
+	},
+	{ // the pin-change route belongs to merge requests into dev
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\"", "when": "manual"}`,
+		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\"", "when": "manual"}`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307, then #306 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -2005,6 +2070,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy301...)
 	all = append(all, changedBy303...)
 	all = append(all, changedBy307...)
+	all = append(all, changedBy306...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
