@@ -55,7 +55,7 @@ func stoppingInstallArmed(t *testing.T, script string, events ...any) (engineRun
 }
 
 // 1-3: after the commit a fresh install is given the long grace: the
-// short grace does not force the stop within settleStop's five seconds.
+// short grace does not force the stop within 25 times its length.
 // Before the commit the short grace still forces it. A second Ctrl-C
 // still kills at once.
 func TestEngineRun_InstallStopGraceIsLongerAfterTheCommit(t *testing.T) {
@@ -70,20 +70,23 @@ func TestEngineRun_InstallStopGraceIsLongerAfterTheCommit(t *testing.T) {
 		}
 	})
 	t.Run("after the commit", func(t *testing.T) {
-		shortenStopGrace(t, 200*time.Millisecond)
+		// The short grace is 40 ms and the wait 25 times that, the same
+		// ratio as 200 ms to five seconds: a stop that used the short
+		// grace would be forced in the first 40 ms of it.
+		shortenStopGrace(t, 40*time.Millisecond)
 		r, _, cmd := stoppingInstallArmed(t, stubbornScript, hostDone, composeValidated, composeUpStarting)
 		s := r.stream
 
-		r, stopped, quit := settleStop(t, r, cmd)
+		r, stopped, quit := settleStopWithin(t, r, cmd, 25*stopGrace)
 
 		if quit {
-			t.Fatal("after the commit the launcher gave up on the installer within five seconds; it must wait out compose up")
+			t.Fatal("after the commit the launcher gave up on the installer within 25 times the short grace; it must wait out compose up")
 		}
 		if stopped != nil && stopped.forced {
-			t.Fatal("after the commit the stop was forced within five seconds")
+			t.Fatal("after the commit the stop was forced within 25 times the short grace")
 		}
 		if closed(s.Done(), 100*time.Millisecond) {
-			t.Fatal("after the commit the installer was killed within five seconds")
+			t.Fatal("after the commit the installer was killed within 25 times the short grace")
 		}
 		if r.state != runStopping {
 			t.Fatalf("state = %v, want runStopping while the installer finishes:\n%s", r.state, runScreen(r))

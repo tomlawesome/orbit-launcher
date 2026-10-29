@@ -148,10 +148,19 @@ func runCmdInto(cmd tea.Cmd, out chan<- tea.Msg) {
 // (stoppableStream), so a test can still wait on s.Done() itself.
 func settleStop(t *testing.T, r engineRun, cmd tea.Cmd) (after engineRun, stopped *engineStoppedMsg, quit bool) {
 	t.Helper()
+	return settleStopWithin(t, r, cmd, 5*time.Second)
+}
+
+// settleStopWithin is settleStop for a wait of window rather than five
+// seconds. A test that shows a stop is not forced by waiting passes a
+// window that is a fixed multiple of the grace it set, so the wait is
+// proportionate to what it proves and not a flat five seconds.
+func settleStopWithin(t *testing.T, r engineRun, cmd tea.Cmd, window time.Duration) (after engineRun, stopped *engineStoppedMsg, quit bool) {
+	t.Helper()
 	out := make(chan tea.Msg, 256)
 	runCmdInto(cmd, out)
 	tail := streamTail(r.stream)
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(window)
 	for {
 		var next tea.Cmd
 		select {

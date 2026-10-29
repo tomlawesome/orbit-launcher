@@ -275,7 +275,7 @@ func TestEngineRun_InstallStoppingScreenKeepsTheUndoingLineAfterComposeValidatio
 
 // 6: after the commit the installer is given Orbit's compose-up bound:
 // a grace that ends before the commit is not used, so the stop is not
-// forced within settleStop's five seconds. Before the commit the short
+// forced within 25 times the short grace. Before the commit the short
 // grace still forces it. A second Ctrl-C still kills at once.
 func TestEngineRun_UpdateStopGraceIsLongerAfterTheCommit(t *testing.T) {
 	t.Run("before the commit", func(t *testing.T) {
@@ -289,19 +289,22 @@ func TestEngineRun_UpdateStopGraceIsLongerAfterTheCommit(t *testing.T) {
 		}
 	})
 	t.Run("after the commit", func(t *testing.T) {
-		shortenStopGrace(t, 200*time.Millisecond)
+		// The short grace is 40 ms and the wait 25 times that, the same
+		// ratio as 200 ms to five seconds: a stop that used the short
+		// grace would be forced in the first 40 ms of it.
+		shortenStopGrace(t, 40*time.Millisecond)
 		r, s, _, cmd := stoppingUpdateArmed(t, stubbornScript, hostDone, composeValidated, composeUpStarting)
 
-		r, stopped, quit := settleStop(t, r, cmd)
+		r, stopped, quit := settleStopWithin(t, r, cmd, 25*stopGrace)
 
 		if quit {
-			t.Fatal("after the commit the launcher gave up on the installer within five seconds; it must wait out Orbit's 300 s compose-up bound")
+			t.Fatal("after the commit the launcher gave up on the installer within 25 times the short grace; it must wait out Orbit's 300 s compose-up bound")
 		}
 		if stopped != nil && stopped.forced {
-			t.Fatal("after the commit the stop was forced within five seconds")
+			t.Fatal("after the commit the stop was forced within 25 times the short grace")
 		}
 		if closed(s.Done(), 100*time.Millisecond) {
-			t.Fatal("after the commit the installer was killed within five seconds")
+			t.Fatal("after the commit the installer was killed within 25 times the short grace")
 		}
 		if r.state != runStopping {
 			t.Fatalf("state = %v, want runStopping while the installer finishes:\n%s", r.state, runScreen(r))
