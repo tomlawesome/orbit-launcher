@@ -169,6 +169,7 @@ func TestInstallModel_EscapeFromTheNoticeReturnsToProfile(t *testing.T) {
 }
 
 func TestInstallModel_StandardNeverStartsTheEngineAutomatically(t *testing.T) {
+	shortNoticeTick(t) // the test runs the tick command, which waits one interval
 	engineCalled := false
 	seams := engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
