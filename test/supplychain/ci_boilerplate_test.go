@@ -133,6 +133,12 @@ var addedBy183 = []string{"live-fedora"}
 // promotion into main otherwise runs nothing (ci_stages_test.go checks it).
 var addedBy306 = []string{"promoted"}
 
+// What #310 adds on purpose: flake-check, the blocking job that runs the
+// shared flake check from ai/agent-infra on docs/flakes.md in the first stage
+// (flake_check_test.go checks it). It is a new job, so no fixture job's lines
+// change and no changedBy310 rewrite is needed.
+var addedBy310 = []string{"flake-check"}
+
 // Passed already: every job and template keeps its name (and extras may only
 // be hidden templates, which GitLab never runs). The restructure adds anchors;
 // it must not rename, split or drop a job.
@@ -184,6 +190,12 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 		typed[k] = true
 		if !have[k] {
 			t.Errorf("%q, which #306 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy310 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #310 adds, is missing from .gitlab-ci.yml", k)
 		}
 	}
 	for _, k := range doc.root.keys {

@@ -94,3 +94,20 @@ jobs:
           name: coverage
           path: coverage.out
           retention-days: 14
+
+  # The shared flake check (#310), the same command as GitLab's `flake-check`
+  # job: it fails when a flake in docs/flakes.md has three sightings and no
+  # issue, is not in scripts/quarantine.txt, or has a malformed sighting.
+  flake-check:
+    name: Flake check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the flake log
+        run: sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md

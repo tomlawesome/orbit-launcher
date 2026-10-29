@@ -211,10 +211,11 @@ variables:
   apt-get update -qq
 
 # Credential hygiene for the jobs that run branch or dependency code and
-# need no token (#301, #303): fast, deps, visual, classify and gitleaks run
-# this once git is available and before any of that code. fast, deps and
-# visual run it first (their images ship git); classify and gitleaks are on
-# $UBUNTU_IMAGE, which has none, so they install git from apt first (apt runs
+# need no token (#301, #303): fast, deps, visual, classify, gitleaks and
+# flake-check run this once git is available and before any of that code.
+# fast, deps and visual run it first (their images ship git); classify,
+# gitleaks and flake-check are on $UBUNTU_IMAGE, which has none, so they
+# install git from apt first (apt runs
 # no branch code and needs no token). A secret goes only to the job that
 # uses it, and what cannot be withheld is dropped: GitLab always injects
 # CI_JOB_TOKEN (and CI_BUILD_TOKEN, CI_REGISTRY_PASSWORD and
@@ -331,6 +332,30 @@ classify:
     reports:
       dotenv: classify.env
     expire_in: 1 day
+
+# The shared flake check (#310; agent-infra scripts/flake-check/). It makes
+# the flake rule in docs/flakes.md act: it fails the pipeline when a flake has
+# three sightings and no issue link, is still in the merge gate (not listed in
+# scripts/quarantine.txt, the file that also skips the tests), or has a
+# malformed sighting line. Blocking, and not skipped for documentation-only
+# changes, because docs/flakes.md is a documentation file. It runs the
+# branch's copy of the script, so the credentials are dropped first (#303);
+# git comes from apt for that, as in classify. The script needs only sh and
+# awk.
+flake-check:
+  stage: classify
+  needs: []
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  timeout: 5m
+  before_script:
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends git
+    - *drop_job_credentials
+  script:
+    - sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
 
 fast:
   stage: fast
