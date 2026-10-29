@@ -899,6 +899,66 @@ live-prepare:
         [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
           || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
         first_version="$(jq -r .version "$first_dir/orbit-release-manifest.json")"
+        # The update leg's first install runs the launcher that shipped with
+        # the earlier release, not the one under test (#307): a deployment on
+        # that release was installed with it, and its install.sh predates
+        # what the current launcher seeds. Orbit's build_launcher job keeps
+        # that launcher's archive as an artifact for 90 days. The job ID is
+        # only a lookup, so nothing about it is trusted: the successful
+        # ai/orbit pipelines at the manifest's commit are listed, each one's
+        # successful build_launcher job is tried, and the first archive whose
+        # sha256 equals the one the signed manifest records is kept. When
+        # none does, the job stops and says why; the current launcher is
+        # never used in its place and the leg is never left out.
+        first_archive=orbit-launcher_linux_amd64.tar.gz
+        first_launcher_sha="$(jq -r '.files["orbit-launcher_linux_amd64.tar.gz"]' "$first_dir/orbit-release-manifest.json")"
+        first_launcher_hex="${first_launcher_sha#sha256:}"
+        case "$first_launcher_sha" in
+          sha256:*) ;;
+          *) first_launcher_hex="" ;;
+        esac
+        case "$first_launcher_hex" in
+          *[!0-9a-f]*) first_launcher_hex="" ;;
+        esac
+        first_launcher_fail() { echo "the update leg needs release ${first_version}'s own launcher (ai/orbit ${first_commit}) and has none: $1; it never uses the current launcher in its place (#307)"; exit 1; }
+        [ "${#first_launcher_hex}" -eq 64 ] || first_launcher_fail "the signed manifest records no sha256 for ${first_archive}"
+        mkdir -p .live/first-launcher
+        curl --fail --silent --show-error --location --max-redirs 0 \
+          --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+          --output .live/first-launcher/pipelines.json \
+          "${CI_API_V4_URL}/projects/${project}/pipelines?sha=${first_commit}&status=success&per_page=100" \
+          || first_launcher_fail "ai/orbit's successful pipelines at that commit cannot be listed"
+        first_launcher_tried=0
+        for first_pipeline in $(jq -r '.[].id' .live/first-launcher/pipelines.json); do
+          case "$first_pipeline" in
+            ''|*[!0-9]*) continue ;;
+          esac
+          curl --fail --silent --show-error --location --max-redirs 0 \
+            --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+            --output .live/first-launcher/jobs.json \
+            "${CI_API_V4_URL}/projects/${project}/pipelines/${first_pipeline}/jobs?scope=success&per_page=100" \
+            || continue
+          for first_job in $(jq -r '.[] | select(.name == "build_launcher") | .id' .live/first-launcher/jobs.json); do
+            case "$first_job" in
+              ''|*[!0-9]*) continue ;;
+            esac
+            rm -f .live/first-launcher/candidate.tar.gz
+            curl --fail --silent --show-error --location --max-redirs 0 \
+              --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+              --output .live/first-launcher/candidate.tar.gz \
+              "${CI_API_V4_URL}/projects/${project}/jobs/${first_job}/artifacts/.orbit-launcher-artifacts/${first_archive}" \
+              || continue
+            first_launcher_tried=$((first_launcher_tried + 1))
+            if [ "$(sha256sum .live/first-launcher/candidate.tar.gz | cut -d' ' -f1)" = "$first_launcher_hex" ]; then
+              mv .live/first-launcher/candidate.tar.gz "$first_dir/$first_archive"
+              first_launcher_job="$first_job"
+              break 2
+            fi
+          done
+        done
+        [ -s "$first_dir/$first_archive" ] \
+          || { echo "the update leg needs release ${first_version}'s own launcher (ai/orbit ${first_commit}) and has none: none of the ${first_launcher_tried} ${first_archive} archive(s) kept by the successful build_launcher jobs of ai/orbit's pipelines at that commit matches the ${first_launcher_sha} the signed manifest records (the archives expire after 90 days, or no such job succeeded); it never uses the current launcher in its place (#307)"; exit 1; }
+        echo "update leg: earlier launcher archive ${first_archive} from ai/orbit job ${first_launcher_job}, ${first_launcher_sha}"
         if [ -n "$first_record" ]; then
           echo "update leg: previous build from job IDs ${first_record}/${first_sign}"
         else
@@ -1034,7 +1094,7 @@ live-prepare:
       echo "install.sh and the release manifests come from live-prepare (Orbit's files from ${ORBIT_SOURCE:-an unrecorded source})"
       if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
         first_dir=.live/orbit/release/first
-        for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh"; do
+        for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh" "$first_dir/orbit-launcher_linux_amd64.tar.gz"; do
           [ -s "$handed" ] || { echo "live-prepare did not hand over install.sh / the release manifests (no ${handed}); its log says why (#303)"; exit 1; }
         done
         export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
@@ -1068,6 +1128,30 @@ live-prepare:
         # exactly as the current release is.
         export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
         export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+        # The launcher that shipped with that release installs it (#307).
+        # live-prepare kept the archive only if its sha256 equals the one
+        # the signed manifest records; it is checked again here, as the
+        # other handed-over files are, then unpacked where orbit-ci can
+        # read and run it.
+        first_archive="$CI_PROJECT_DIR/$first_dir/orbit-launcher_linux_amd64.tar.gz"
+        first_launcher_sha="$(jq -r '.files["orbit-launcher_linux_amd64.tar.gz"]' "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST")"
+        [ "sha256:$(sha256sum "$first_archive" | cut -d' ' -f1)" = "$first_launcher_sha" ] \
+          || { echo "the earlier launcher archive does not match the sha256 the earlier release manifest records for it (${first_launcher_sha}) (#307)"; exit 1; }
+        first_members="$(tar -tzf "$first_archive" | grep -E '(^|/)orbit-launcher$' || :)"
+        [ -n "$first_members" ] && [ "$(printf '%s\n' "$first_members" | wc -l)" -eq 1 ] \
+          || { echo "the earlier launcher archive holds no single orbit-launcher binary (#307)"; exit 1; }
+        case "$first_members" in
+          /*|*..*) echo "the earlier launcher archive names an unsafe path, ${first_members} (#307)"; exit 1 ;;
+        esac
+        first_launcher_dir=/tmp/orbit-earlier-launcher
+        rm -rf "$first_launcher_dir"
+        install -d -m 0755 "$first_launcher_dir"
+        tar -xzf "$first_archive" -C "$first_launcher_dir" --no-same-owner -- "$first_members"
+        chmod -R a+rX "$first_launcher_dir"
+        [ -f "$first_launcher_dir/$first_members" ] && [ -x "$first_launcher_dir/$first_members" ] \
+          || { echo "the earlier launcher archive's orbit-launcher is not an executable file (#307)"; exit 1; }
+        export ORBIT_LIVE_FIRST_LAUNCHER="$first_launcher_dir/$first_members"
+        echo "update leg: earlier launcher $(jq -r .launcher.tag "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST") ($(jq -r .launcher.commit "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST")) ${first_launcher_sha}"
         echo "the update leg (#198) installs ${FIRST_VERSION:-?} ${FIRST_DIGEST:-?} (ai/orbit ${FIRST_COMMIT:-?}, ${FIRST_FROM:-?}) first, then updates to the current preview"
       fi
       # Runs beside the tests, so without the credentials (#301).

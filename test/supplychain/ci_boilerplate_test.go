@@ -1924,6 +1924,52 @@ tarball="go${GO_VERSION}.linux-amd64.tar.gz"`,
 	},
 }
 
+// #307: the update leg's first install runs the launcher that shipped with
+// the earlier release. live-prepare (addedBy303, not pinned line by line)
+// keeps its archive only if the sha256 equals the signed earlier manifest's;
+// the live leg, which live-fedora extends, checks that again, unpacks the
+// binary where orbit-ci can run it and exports its path. Applies after #303.
+var changedBy307 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old:  `  for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh"; do`,
+		new:  `  for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh" "$first_dir/orbit-launcher_linux_amd64.tar.gz"; do`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"`,
+		new: `  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+  # The launcher that shipped with that release installs it (#307).
+  # live-prepare kept the archive only if its sha256 equals the one
+  # the signed manifest records; it is checked again here, as the
+  # other handed-over files are, then unpacked where orbit-ci can
+  # read and run it.
+  first_archive="$CI_PROJECT_DIR/$first_dir/orbit-launcher_linux_amd64.tar.gz"
+  first_launcher_sha="$(jq -r '.files["orbit-launcher_linux_amd64.tar.gz"]' "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST")"
+  [ "sha256:$(sha256sum "$first_archive" | cut -d' ' -f1)" = "$first_launcher_sha" ] \
+    || { echo "the earlier launcher archive does not match the sha256 the earlier release manifest records for it (${first_launcher_sha}) (#307)"; exit 1; }
+  first_members="$(tar -tzf "$first_archive" | grep -E '(^|/)orbit-launcher$' || :)"
+  [ -n "$first_members" ] && [ "$(printf '%s\n' "$first_members" | wc -l)" -eq 1 ] \
+    || { echo "the earlier launcher archive holds no single orbit-launcher binary (#307)"; exit 1; }
+  case "$first_members" in
+    /*|*..*) echo "the earlier launcher archive names an unsafe path, ${first_members} (#307)"; exit 1 ;;
+  esac
+  first_launcher_dir=/tmp/orbit-earlier-launcher
+  rm -rf "$first_launcher_dir"
+  install -d -m 0755 "$first_launcher_dir"
+  tar -xzf "$first_archive" -C "$first_launcher_dir" --no-same-owner -- "$first_members"
+  chmod -R a+rX "$first_launcher_dir"
+  [ -f "$first_launcher_dir/$first_members" ] && [ -x "$first_launcher_dir/$first_members" ] \
+    || { echo "the earlier launcher archive's orbit-launcher is not an executable file (#307)"; exit 1; }
+  export ORBIT_LIVE_FIRST_LAUNCHER="$first_launcher_dir/$first_members"
+  echo "update leg: earlier launcher $(jq -r .launcher.tag "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST") ($(jq -r .launcher.commit "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST")) ${first_launcher_sha}"`,
+	},
+}
+
 // The two lines of the .drop_job_credentials anchor (#303 C2).
 const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
 git remote set-url origin "${CI_PROJECT_URL}.git"`
@@ -1932,7 +1978,7 @@ git remote set-url origin "${CI_PROJECT_URL}.git"`
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -1958,6 +2004,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy298...)
 	all = append(all, changedBy301...)
 	all = append(all, changedBy303...)
+	all = append(all, changedBy307...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

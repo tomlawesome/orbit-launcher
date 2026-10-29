@@ -44,6 +44,12 @@ const (
 	// ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH, the way get-orbit.sh hands over a
 	// verified copy.
 	firstScriptEnv = "ORBIT_LIVE_FIRST_INSTALL_SCRIPT"
+	// firstLauncherEnv is the launcher that shipped with that release (#307),
+	// unpacked by the job from the archive its signed manifest records. A
+	// deployment on the earlier release was installed with it, and its
+	// install.sh predates what the launcher under test seeds, so InstallEarlier
+	// runs it; Update and Remove run the launcher under test.
+	firstLauncherEnv = "ORBIT_LIVE_FIRST_LAUNCHER"
 )
 
 // TestLive_UpdateReconfiguresOnTheNewImage is #197's update case: when an
@@ -87,6 +93,16 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 			"In CI the live job sets them from the previous build ai/orbit's record_image keeps (#263), or from "+
 			"ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB on a hand-started pipeline (#198)", firstManifestEnv, firstScriptEnv)
 	}
+	// The first-release manifest and script are set, so the job means to run
+	// the update leg: it needs the earlier launcher, and without it fails
+	// rather than skip or install with the launcher under test (#307).
+	firstLauncher := os.Getenv(firstLauncherEnv)
+	if firstLauncher == "" {
+		t.Fatalf("%s is not set: the update leg's first install runs the launcher that shipped with the earlier release, and the job sets it from the archive its manifest records (#307)", firstLauncherEnv)
+	}
+	if info, err := os.Stat(firstLauncher); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("%s=%q is not an executable file (stat: %v) (#307)", firstLauncherEnv, firstLauncher, err)
+	}
 	newDigest := readManifestDigest(t, currentManifest)
 	oldDigest := readManifestDigest(t, firstManifest)
 	if oldDigest == newDigest {
@@ -103,7 +119,9 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 
 	var oldRef string
 	installed := t.Run("InstallEarlier", func(t *testing.T) {
-		session := startLiveEnv(t, binPath, dir,
+		// The earlier release's own launcher drives the first install (#307);
+		// the screens it draws are those of the launcher it shipped with.
+		session := startLiveEnv(t, firstLauncher, dir,
 			"ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH="+firstScript,
 			"ORBIT_RELEASE_MANIFEST="+firstManifest)
 		installThroughConsole(t, session, appURL, clientID, secret, "Get into Orbit")
