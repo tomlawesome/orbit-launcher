@@ -63,7 +63,7 @@ func (f *handoffFixture) removeApp() (AppModel, *sink) {
 // configuration to the success screen, then Esc back to the main menu.
 func installGuidedToMenu(t *testing.T, f *handoffFixture, m AppModel, s *sink) AppModel {
 	t.Helper()
-	m = appStartInstall(t, m, s, nil)
+	m = appStartInstall(t, m, s, nil, appAtRest)
 	m = appAnswerGuided(t, m, s)
 	if got := f.runs(); got != "2" {
 		t.Fatalf("setup: the installer ran %q times, want 2 (the refusal, then the retry); screen:\n%s", got, screen(m))
@@ -165,7 +165,7 @@ func TestRemoveForgets_InstallAfterACompletedRemoveAsksAgain(t *testing.T) {
 	deleteConfiguration(t, f.dir)
 
 	m = caretToRow(t, m, "Install")
-	m = appStartInstall(t, m, s, nil)
+	m = appStartInstall(t, m, s, nil, appAtRest)
 	if got := f.runs(); got != "3" {
 		t.Errorf("Install after the Remove ran the installer %q times in all, want 3 (one refused, unseeded run, then the questions)", got)
 	}
@@ -250,7 +250,7 @@ func TestRemoveForgets_RemoveThatDidNothingKeepsTheAnswers(t *testing.T) {
 
 			m = caretToRow(t, m, "Install")
 			never := []string{"How will people sign in?", "Public Orbit origin"}
-			m = appStartInstall(t, m, s, never)
+			m = appStartInstall(t, m, s, never, appAtRest)
 			if n := f.prepares.Load(); n != 1 {
 				t.Errorf("a configuration session was prepared %d times, want once (the Remove did nothing)", n)
 			}
@@ -291,7 +291,7 @@ func TestRemoveForgets_InstallIntoTheIntactFolderAsksNothing(t *testing.T) {
 
 	m = caretToRow(t, m, "Install")
 	never := []string{"How will people sign in?", "Public Orbit origin"}
-	m = appStartInstall(t, m, s, never)
+	m = appStartInstall(t, m, s, never, appAtRest)
 	if n := f.prepares.Load(); n != 1 {
 		t.Errorf("a configuration session was prepared %d times, want once", n)
 	}

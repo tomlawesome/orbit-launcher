@@ -313,7 +313,10 @@ func (q quitSpy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func TestInstall_CtrlCAfterTheRollbackIsDisarmedLandsOnTheSuccessScreen(t *testing.T) {
-	m, queue := installApp(t, disarmedInstallScript, 80, 40)
+	// The script reads its own sleeper before it prints the scanner's
+	// "starting" event, so that event on screen is the sign its Ctrl+C
+	// handler is in place.
+	m, queue := installAppUntil(t, disarmedInstallScript, 80, 40, shows("clamav"))
 	if s := screen(m); m.state != appStateInstall || !strings.Contains(s, "clamav") && !strings.Contains(s, "Install") {
 		t.Fatalf("the fake installer is not mid-run (state %v); the test premise is broken:\n%s", m.state, s)
 	}

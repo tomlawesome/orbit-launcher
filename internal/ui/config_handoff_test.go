@@ -261,12 +261,12 @@ func (f *handoffFixture) guidedConfiguration(m InstallModel, s *sink) InstallMod
 	f.t.Helper()
 	t := f.t
 	m, cmd := startInstallRun(t, m)
-	m = handoffSettled(t, m, cmd, s)
+	m = handoffSettled(t, m, cmd, s, runAtRest)
 	if sc := screen(m); !strings.Contains(sc, "How will people sign in?") {
 		t.Fatalf("setup: guided configuration did not open:\n%s", sc)
 	}
 	m, cmd = updateAs(t, m, key(tea.KeyEnter)) // Local accounts
-	m = handoffSettled(t, m, cmd, s)
+	m = handoffSettled(t, m, cmd, s, anyOf(shows("Public Orbit origin"), runAtRest))
 	if sc := screen(m); !strings.Contains(sc, "Public Orbit origin") {
 		t.Fatalf("setup: the origin was not asked:\n%s", sc)
 	}
@@ -275,7 +275,7 @@ func (f *handoffFixture) guidedConfiguration(m InstallModel, s *sink) InstallMod
 		m = drive(t, m, cmd)
 	}
 	m, cmd = updateAs(t, m, key(tea.KeyEnter))
-	return handoffSettled(t, m, cmd, s)
+	return handoffSettled(t, m, cmd, s, runAtRest)
 }
 
 // handoffDrive is drive with one difference: a message the engine
@@ -284,15 +284,15 @@ func (f *handoffFixture) guidedConfiguration(m InstallModel, s *sink) InstallMod
 // runs the whole command chain first, so the first run's stream end would
 // only reach the model after the retry had started.) It fails the test if
 // a screen showing one of never comes up on the way.
-func handoffDrive(t *testing.T, m InstallModel, cmd tea.Cmd, s *sink, never []string) InstallModel {
+func handoffDrive(t *testing.T, m InstallModel, cmd tea.Cmd, s *sink, never []string, done func(tea.Model) bool) InstallModel {
 	t.Helper()
-	return driveWatching(t, m, cmd, never, &sink{msgs: s.msgs, first: true})
+	return driveWatchingUntil(t, m, cmd, never, done, &sink{msgs: s.msgs, first: true})
 }
 
-// handoffSettled drives m until it has been quiet for two seconds.
-func handoffSettled(t *testing.T, m InstallModel, cmd tea.Cmd, s *sink) InstallModel {
+// handoffSettled drives m until done holds.
+func handoffSettled(t *testing.T, m InstallModel, cmd tea.Cmd, s *sink, done func(tea.Model) bool) InstallModel {
 	t.Helper()
-	return handoffDrive(t, m, cmd, s, nil)
+	return handoffDrive(t, m, cmd, s, nil, done)
 }
 
 // handoffListing is every entry under dir with its mode, sorted.
@@ -361,7 +361,7 @@ func TestConfigHandoff_RetryRefusedBeforeWritingChangesNothing(t *testing.T) {
 	before := handoffListing(t, f.dir)
 	m, s := f.model(f.seams(false, nil))
 	m, cmd := startInstallRun(t, m)
-	m = handoffSettled(t, m, cmd, s)
+	m = handoffSettled(t, m, cmd, s, runAtRest)
 
 	if got := f.runs(); got != "2" {
 		t.Fatalf("the installer ran %q times, want 2; screen:\n%s", got, screen(m))
@@ -382,7 +382,7 @@ func TestConfigHandoff_FailureAfterTheCommitLeavesTheFolderAsFound(t *testing.T)
 	before := handoffListing(t, f.dir)
 	m, s := f.model(f.seams(false, nil))
 	m, cmd := startInstallRun(t, m)
-	m = handoffSettled(t, m, cmd, s)
+	m = handoffSettled(t, m, cmd, s, runAtRest)
 
 	if got := f.runs(); got != "2" {
 		t.Fatalf("the installer ran %q times, want 2; screen:\n%s", got, screen(m))
@@ -415,7 +415,7 @@ func TestConfigHandoff_InstallAgainReseedsWithoutAsking(t *testing.T) {
 
 	m = caretToRow(t, m, "Install again")
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
-	m = handoffDrive(t, m, cmd, s, []string{"How will people sign in?", "Public Orbit origin"})
+	m = handoffDrive(t, m, cmd, s, []string{"How will people sign in?", "Public Orbit origin"}, runAtRest)
 	if sc := screen(m); strings.Contains(sc, "How will people sign in?") || strings.Contains(sc, "Public Orbit origin") {
 		t.Errorf("Install again asked for configuration again:\n%s", sc)
 	}
@@ -448,7 +448,7 @@ func TestConfigHandoff_ANewSessionAsksAgain(t *testing.T) {
 
 	second, s2 := f.model(f.seams(true, nil))
 	second, cmd := startInstallRun(t, second)
-	second = handoffSettled(t, second, cmd, s2)
+	second = handoffSettled(t, second, cmd, s2, runAtRest)
 	if got := f.runs(); got != "3" {
 		t.Fatalf("the second session's install did not run (runs %q); screen:\n%s", got, screen(second))
 	}
@@ -476,7 +476,7 @@ func TestConfigHandoff_StagingFailureLeavesTheFolderUntouched(t *testing.T) {
 	breakStaging := func() { os.Setenv("TMPDIR", missing) }
 	m, s := f.model(f.seams(false, breakStaging))
 	m, cmd := startInstallRun(t, m)
-	m = handoffSettled(t, m, cmd, s)
+	m = handoffSettled(t, m, cmd, s, runAtRest)
 
 	if got := f.runs(); got != "1" {
 		t.Errorf("the installer ran %q times, want once (the retry could not be staged)", got)

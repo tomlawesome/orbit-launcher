@@ -66,12 +66,27 @@ func (s *sink) Send(msg tea.Msg) { s.msgs <- msg }
 // run, and every other message goes back into Update. A test driving an
 // engine run passes that run's sink, which drive drains the way
 // bubbletea drains its own message queue — a command result and a
-// pushed message are the same thing once they reach Update — until it
-// has been quiet for two seconds. The sky's ticks are dropped: they only
-// move stars, and a frozen test has no use for an endless chain.
+// pushed message are the same thing once they reach Update. The sky's
+// ticks are dropped: they only move stars, and a frozen test has no use
+// for an endless chain.
+//
+// With a sink, drive ends when the engine stream ends and nothing more
+// follows it. A drive that stops anywhere else says what ends it with
+// driveUntil, which returns the moment that holds; a drive that never
+// reaches its end fails after driveDeadline with the screen it was
+// stuck on, rather than returning early with a screen nobody checked.
 func drive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, pushed ...*sink) M {
 	t.Helper()
-	return driveWatching(t, m, cmd, nil, pushed...)
+	return driveLoop(t, m, cmd, nil, nil, 0, pushed...)
+}
+
+// driveUntil is drive that also ends as soon as done(m) holds once every
+// command has run and every message already pushed has been taken. done
+// must be false for the model the drive starts from, or the drive ends
+// before the message it was started for has arrived.
+func driveUntil[M tea.Model](t *testing.T, m M, cmd tea.Cmd, done func(tea.Model) bool, pushed ...*sink) M {
+	t.Helper()
+	return driveLoop(t, m, cmd, nil, done, 0, pushed...)
 }
 
 // driveWatching is drive that also looks at the screen after every update
@@ -80,10 +95,36 @@ func drive[M tea.Model](t *testing.T, m M, cmd tea.Cmd, pushed ...*sink) M {
 // way and replaced; this one can.
 func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, pushed ...*sink) M {
 	t.Helper()
+	return driveLoop(t, m, cmd, never, nil, 0, pushed...)
+}
+
+// driveWatchingUntil is driveUntil and driveWatching together.
+func driveWatchingUntil[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, done func(tea.Model) bool, pushed ...*sink) M {
+	t.Helper()
+	return driveLoop(t, m, cmd, never, done, 0, pushed...)
+}
+
+// driveQuiet is the one drive that waits out a clock. It is for a test
+// that asserts nothing more happens: it takes every message pushed and
+// ends once window has passed with none, since "nothing arrived" is
+// only ever shown by waiting.
+func driveQuiet[M tea.Model](t *testing.T, m M, cmd tea.Cmd, window time.Duration, pushed ...*sink) M {
+	t.Helper()
+	return driveLoop(t, m, cmd, nil, nil, window, pushed...)
+}
+
+// driveDeadline is how long a drive with a sink may wait for what ends
+// it. Generous: a drive that reaches its end returns at once, so the
+// deadline is only ever spent by a drive that has already failed.
+const driveDeadline = 30 * time.Second
+
+func driveLoop[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, done func(tea.Model) bool, quiet time.Duration, pushed ...*sink) M {
+	t.Helper()
 	var queue *sink
 	if len(pushed) > 0 {
 		queue = pushed[0]
 	}
+	deadline := time.Now().Add(driveDeadline)
 	cmds := []tea.Cmd{cmd}
 	for i := 0; ; i++ {
 		if i > 1000 {
@@ -108,10 +149,28 @@ func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, 
 			}
 			msg = next()
 		case queue != nil:
+			// Everything already pushed is taken before done is asked, so
+			// a model is never judged with a message waiting for it.
 			select {
 			case msg = <-queue.msgs:
-			case <-time.After(2 * time.Second):
-				return m
+			default:
+				if done != nil && done(m) {
+					return m
+				}
+				wait, stop := time.Until(deadline), "did not settle"
+				if quiet > 0 {
+					wait, stop = quiet, ""
+				}
+				timer := time.NewTimer(wait)
+				select {
+				case msg = <-queue.msgs:
+					timer.Stop()
+				case <-timer.C:
+					if stop == "" {
+						return m
+					}
+					t.Fatalf("the drive %s within %v; the screen it stopped on:\n%s", stop, driveDeadline, screen(m))
+				}
 			}
 		default:
 			return m
@@ -134,11 +193,96 @@ func driveWatching[M tea.Model](t *testing.T, m M, cmd tea.Cmd, never []string, 
 			}
 		}
 		// Nothing follows the stream ending, so waiting for more would
-		// only spend the timeout above.
+		// only spend the deadline above.
 		if _, ended := msg.(engineStreamEndedMsg); ended && more == nil && len(cmds) == 0 {
 			return m
 		}
 		cmds = append(cmds, more)
+	}
+}
+
+// runOf is the engine run of the flow m is showing: an Install or Update
+// model's own, or the app's while it is on one of those flows.
+func runOf(m tea.Model) (engineRun, bool) {
+	switch v := m.(type) {
+	case InstallModel:
+		return v.run, v.state == installStateRunning
+	case UpdateModel:
+		return v.run, true
+	case AppModel:
+		switch v.state {
+		case appStateInstall:
+			return v.install.run, v.install.state == installStateRunning
+		case appStateUpdate:
+			return v.update.run, true
+		}
+	}
+	return engineRun{}, false
+}
+
+// runIn is a drive's end: the model's engine run is in one of states.
+// A failed run is not counted until the stopped screen's folder read has
+// answered, because that answer changes what the screen shows.
+func runIn(states ...engineRunState) func(tea.Model) bool {
+	return func(m tea.Model) bool {
+		r, ok := runOf(m)
+		if !ok || (r.state == runFailed && r.folderPending) {
+			return false
+		}
+		for _, s := range states {
+			if r.state == s {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// runEnded is a drive's end when the run has finished either way.
+var runEnded = runIn(runFailed, runSucceeded)
+
+// runAtRest is a drive's end when the run is waiting for the person (the
+// sign-in choice), finished, or left: nothing is on its way into it.
+var runAtRest = runIn(runConfigSignInMode, runFailed, runSucceeded, runLeft)
+
+// appAtRest is a drive's end for the whole app: a run at rest, or the
+// success screen the app moves to when a run succeeds.
+var appAtRest = anyOf(onApp(appStateSuccess), runAtRest)
+
+// shows is a drive's end when the screen holds every one of wants.
+func shows(wants ...string) func(tea.Model) bool {
+	return func(m tea.Model) bool {
+		s := screen(m)
+		for _, want := range wants {
+			if !strings.Contains(s, want) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// settleQuiet is how long driveQuiet waits for a message that a test
+// says must not come: the one clock left in the drives, kept short.
+const settleQuiet = 500 * time.Millisecond
+
+// anyOf is a drive's end when any of conds holds.
+func anyOf(conds ...func(tea.Model) bool) func(tea.Model) bool {
+	return func(m tea.Model) bool {
+		for _, c := range conds {
+			if c(m) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// onApp is a drive's end when the app is on state.
+func onApp(state appState) func(tea.Model) bool {
+	return func(m tea.Model) bool {
+		a, ok := m.(AppModel)
+		return ok && a.state == state
 	}
 }
 

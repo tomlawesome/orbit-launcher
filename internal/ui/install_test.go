@@ -228,7 +228,7 @@ func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
 		),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd, s)
+	m = driveUntil(t, m, cmd, shows("running", "Resolving image identity"), s)
 
 	view := m.View().Content
 	if !strings.Contains(view, "image") || !strings.Contains(view, "running") {

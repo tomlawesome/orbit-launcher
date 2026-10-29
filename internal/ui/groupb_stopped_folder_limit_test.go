@@ -113,7 +113,8 @@ func TestGroupB_L3_AReadThatDoesNotAnswerInTimeIsCouldNotBeRead(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the released reader never returned")
 	}
-	m = drive(t, m, nil, q)
+	// Nothing is expected to arrive, so this is the one wait on a clock.
+	m = driveQuiet(t, m, nil, settleQuiet, q)
 	if after := screen(m); after != s {
 		t.Errorf("a late answer changed the screen:\n--- before\n%s\n--- after\n%s", s, after)
 	}
