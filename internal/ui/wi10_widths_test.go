@@ -6,11 +6,18 @@ package ui
 // escape sequences through the one shared ansi.Strip.
 
 import (
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -183,6 +190,61 @@ func TestWidthMeasure_FiftySixIsTypedOnce(t *testing.T) {
 	}
 }
 
+// wi10Importer imports the package's dependencies from the compiled export
+// data the go tool lists for them (go list -export), which is what the
+// compiler itself reads. Type-checking them from source instead means
+// checking every package the launcher depends on, the standard library
+// included, which took half a minute under the race detector. Only if the
+// go tool cannot list the export data does it fall back to checking from
+// source, so the test is slower there and never weaker.
+func wi10Importer(fset *token.FileSet) types.ImporterFrom {
+	exports, err := wi10ExportData()
+	if err != nil {
+		return importer.ForCompiler(fset, "source", nil).(types.ImporterFrom)
+	}
+	return importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
+		file, ok := exports[path]
+		if !ok {
+			return nil, fmt.Errorf("no export data listed for %q", path)
+		}
+		return os.Open(file)
+	}).(types.ImporterFrom)
+}
+
+// wi10ExportData is the export data file of every package the package
+// under test depends on, by import path. The listing is built the way
+// this test binary was, so under -race it reuses the race build already
+// in the cache rather than compiling the dependencies a second way.
+func wi10ExportData() (map[string]string, error) {
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		goTool = filepath.Join(runtime.GOROOT(), "bin", "go")
+	}
+	args := []string{"list", "-export", "-deps"}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "-race" && s.Value == "true" {
+				args = append(args, "-race")
+			}
+		}
+	}
+	args = append(args, "-f", "{{if .Export}}{{.ImportPath}}={{.Export}}{{end}}", ".")
+	out, err := exec.Command(goTool, args...).Output()
+	if err != nil {
+		return nil, err
+	}
+	exports := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if path, file, ok := strings.Cut(line, "="); ok {
+			exports[path] = file
+		}
+	}
+	if len(exports) == 0 {
+		return nil, fmt.Errorf("go list gave no export data")
+	}
+	return exports, nil
+}
+
 // notice.go measured copy with len() on strings, which counts bytes: a
 // curly apostrophe (three bytes, one cell) would misalign the box. No
 // len() of a string remains. The check is typed so a len() of a slice is
@@ -202,7 +264,7 @@ func TestNotice_NeverMeasuresDisplayTextWithLen(t *testing.T) {
 	}
 	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}}
 	conf := types.Config{
-		Importer: importer.ForCompiler(fset, "source", nil),
+		Importer: wi10Importer(fset),
 		Error:    func(error) {}, // a partial result is enough; the sanity check below catches an empty one
 	}
 	_, _ = conf.Check("ui", fset, files, info)
