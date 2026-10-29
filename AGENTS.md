@@ -42,11 +42,15 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 
 ## Live job
 
-- Runs on the MR label `run-live-matrix` or `RUN_LIVE=true` on a hand-started
-  pipeline. An MR that moves the `UBUNTU_IMAGE`, `FEDORA_IMAGE`, `GO_VERSION`
-  or `GO_SHA256` pin, or edits `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh`,
-  `scripts/ci/run-unprivileged.sh` or `orbit/pin.json`, needs it started by
-  hand (#192, #216, #292, #193).
+- Stages (#306): live runs by itself, blocking, on every MR into `preview`,
+  and nowhere else by default. Pushes to `dev`, `preview`, `main` and to a
+  branch with no MR run nothing (`main` only offers the release buttons); an
+  MR into `main` runs a no-op. An MR into `dev` runs the checks, and live
+  only on the MR label `run-live-matrix`, or `RUN_LIVE=true` on a
+  hand-started pipeline. An MR into `dev` that moves the `UBUNTU_IMAGE`,
+  `FEDORA_IMAGE`, `GO_VERSION` or `GO_SHA256` pin, or edits `.gitlab-ci.yml`,
+  `scripts/ci/fetch-verified.sh`, `scripts/ci/run-unprivileged.sh` or
+  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193).
 
 - Two legs, `live` (Ubuntu) and `live-fedora` (#183), from one `.live_leg`
   template; both must pass.
