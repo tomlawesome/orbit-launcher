@@ -20,6 +20,9 @@
 # the tests that need root still get it (#292). Their counters land in the
 # same two directories and merge as one profile.
 #
+# Tests listed in scripts/quarantine.txt are skipped here (#310): they leave
+# the merge gate once a flake has three sightings (docs/flakes.md).
+#
 # Usage: scripts/coverage.sh [extra go test flags, e.g. -race]
 # Then:  go run ./tools/coveragefloor coverage.out
 set -euo pipefail
@@ -32,6 +35,12 @@ mkdir -p "$dir/unit" "$dir/binary"
 module=github.com/tomlawesome/orbit-launcher
 cover=(-count=1 -cover -covermode=atomic "-coverpkg=$module/...")
 pkgs=(./...)
+# An empty pattern would skip every test, so the flag is added only for a name.
+skip=()
+quarantined="$(bash scripts/ci/quarantine-skip.sh)"
+if [ -n "$quarantined" ]; then
+  skip=(-skip "$quarantined")
+fi
 spawners=()
 if [ "$(id -u)" -eq 0 ]; then
   mapfile -t spawners < <(go list -f '{{.ImportPath}}{{range .TestImports}} {{.}}{{end}}{{range .XTestImports}} {{.}}{{end}}' ./... \
@@ -49,11 +58,11 @@ fi
 unprivileged=""
 if [ "${#spawners[@]}" -gt 0 ]; then
   GOCACHE="$dir/gocache" bash scripts/ci/run-unprivileged.sh -- env ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" \
-    go test "$@" "${cover[@]}" "${spawners[@]}" -args -test.gocoverdir="$dir/unit" &
+    go test "$@" "${skip[@]}" "${cover[@]}" "${spawners[@]}" -args -test.gocoverdir="$dir/unit" &
   unprivileged=$!
 fi
 status=0
-ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" go test "$@" "${cover[@]}" "${pkgs[@]}" \
+ORBIT_LAUNCHER_BINARY_COVERDIR="$dir/binary" go test "$@" "${skip[@]}" "${cover[@]}" "${pkgs[@]}" \
   -args -test.gocoverdir="$dir/unit" || status=$?
 if [ -n "$unprivileged" ]; then
   wait "$unprivileged" || status=$?

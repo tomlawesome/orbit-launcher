@@ -1,0 +1,13 @@
+# Quarantined Go tests: one test name per line, blank lines and # comments
+# ignored. A name skips every test whose name contains it, in the gate.
+#
+# This one file is both what skips the tests (scripts/ci/quarantine-skip.sh,
+# read by scripts/coverage.sh and scripts/ci/nonroot-tests.sh) and what the
+# `flake-check` job passes to --quarantined, so the skip and the check cannot
+# drift apart (agent-infra scripts/flake-check/README.md, "Quarantine
+# adapters"). Each name must also appear in its heading in docs/flakes.md.
+#
+# Adding a name takes the test out of the merge gate, so also add a
+# non-blocking job that runs the quarantined tests with
+# `go test -run "$(bash scripts/ci/quarantine-skip.sh)"`; none exists yet
+# because nothing is quarantined.
