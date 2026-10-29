@@ -1748,7 +1748,9 @@ func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = term.Close() })
 
-	cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+	// yes, not a shell loop: Fedora's sh (bash) ran it with SIGQUIT
+	// ignored, so the diagnosis never ended it there (#311).
+	cmd := exec.Command("yes", "tick")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := term.Start(cmd); err != nil {
 		t.Fatalf("start noisy child: %v", err)
@@ -1852,7 +1854,7 @@ func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
 	}{
 		{
 			// capBudget leaves nothing, so the wait fails at once; the only
-			// time spent is diagnose's dump wait, which the sh child never
+			// time spent is diagnose's dump wait, which the child never
 			// answers, and its SIGQUIT is the proof the diagnosis ran.
 			name: "reserve already spent", deadline: cleanupReserve - time.Second, stderr: true,
 			wantSubs: []string{"test deadline is within"}, wantSIGQUIT: true,
@@ -1871,7 +1873,9 @@ func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = term.Close() })
 
-			cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+			// yes, not a shell loop: Fedora's sh (bash) ran it with SIGQUIT
+			// ignored, so the diagnosis never ended it there (#311).
+			cmd := exec.Command("yes", "tick")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 			if err := term.Start(cmd); err != nil {
 				t.Fatalf("start noisy child: %v", err)
