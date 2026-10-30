@@ -1527,7 +1527,7 @@ install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
 		jobs: []string{"live"},
 		old:  `python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 		new: `# Runs beside the tests, so without the credentials (#301).
-env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
   python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 	},
 	{
@@ -1574,7 +1574,7 @@ nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPEND
 # credentials (#301). That keeps them out of its logs and dumps; it does
 # not hide them from the tests, which can read this whole container
 # (see .live_leg, #303).
-nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \`,
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \`,
 	},
 	{ // C1
 		jobs: []string{"live"},
@@ -2071,7 +2071,7 @@ var changedByAuditE = []struct {
   go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
 		new: `quarantined="$(bash scripts/ci/quarantine-skip.sh)"
 bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
   go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
 	},
 	{ // a merge request into preview or main from any branch but the stage
@@ -2398,7 +2398,7 @@ func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
 	for _, j := range jobs {
 		have[j] = true
 	}
-	for _, want := range []string{"classify", "deps", "fast", "gitleaks", "visual"} {
+	for _, want := range []string{"classify", "deps", "fast", "flake-check", "gitleaks", "visual"} {
 		if !have[want] {
 			t.Errorf("job %q no longer uses the credential drop (#303); users: %v", want, jobs)
 		}

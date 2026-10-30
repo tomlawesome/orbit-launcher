@@ -272,7 +272,7 @@ variables:
   # credentials (#301). That keeps them out of its logs and dumps; it does
   # not hide them from the tests, which can read this whole container
   # (see .live_leg, #303).
-  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
     dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
   for _ in $(seq 1 60); do
     docker info > /dev/null 2>&1 && break
@@ -1251,7 +1251,7 @@ live-prepare:
         echo "the update leg (#198) installs ${FIRST_VERSION:-?} ${FIRST_DIGEST:-?} (ai/orbit ${FIRST_COMMIT:-?}, ${FIRST_FROM:-?}) first, then updates to the current preview"
       fi
       # Runs beside the tests, so without the credentials (#301).
-      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
         python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
         curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
@@ -1276,7 +1276,7 @@ live-prepare:
     - |
       quarantined="$(bash scripts/ci/quarantine-skip.sh)"
       bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
         go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...
   after_script:
     # The registry login (the deploy token) goes first, pass or fail.
