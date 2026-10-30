@@ -361,7 +361,9 @@ func updateTestFirstLauncherProblems(t *testing.T, src string) []string {
 			return true
 		}
 		ast.Inspect(body.Body, func(m ast.Node) bool {
-			if c, ok := m.(*ast.CallExpr); ok {
+			// Only the call that starts the install counts: a log line
+			// naming the value must not satisfy this.
+			if c, ok := m.(*ast.CallExpr); ok && isIdent(c.Fun, "startLiveEnv") {
 				for _, a := range c.Args {
 					if id, ok := a.(*ast.Ident); ok && id.Name == value {
 						uses = true
@@ -396,6 +398,7 @@ func f(t T) {
 		{"guard without fatal", strings.Replace(good, `t.Fatalf("not set")`, `t.Log("not set")`, 1), "must call t.Fatalf"},
 		{"env not read", strings.Replace(good, `os.Getenv(firstLauncherEnv)`, `os.Getenv("OTHER")`, 1), "must read"},
 		{"launcher unused", strings.Replace(good, `startLiveEnv(t, firstLauncher, dir)`, `startLiveEnv(t, binPath, dir)`, 1), "InstallEarlier subtest must pass"},
+		{"launcher only logged", strings.Replace(good, `startLiveEnv(t, firstLauncher, dir)`, `t.Logf("%s", firstLauncher); startLiveEnv(t, binPath, dir)`, 1), "InstallEarlier subtest must pass"},
 		{"no constant", strings.Replace(good, `"ORBIT_LIVE_FIRST_LAUNCHER"`, `"OTHER"`, 1), "must declare a constant"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -526,4 +529,9 @@ func TestLivePrepareJobIDRouteStillUsesThePipelineLookup(t *testing.T) {
 		}
 	}
 	t.Error("the `live-prepare` job must keep the `pipelines?sha=` lookup, which the job-ID route depends on (#313)")
+}
+
+func isIdent(e ast.Expr, name string) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == name
 }
