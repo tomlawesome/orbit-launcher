@@ -481,7 +481,9 @@ func TestCIStages_AMergeRequestFromDevIntoPreviewRunsTheLiveInstallsAndNoChecks(
 // Any source other than the stage before is not a promotion: it is an
 // ordinary change aimed at a later branch, and it runs the same checks as the
 // same branch aimed at dev. The comparison is against the simulated dev
-// pipeline, so the test does not hard-code the list of checks.
+// pipeline, so the test does not hard-code the list of checks. The live
+// family is left out of the comparison: these merge requests run the live
+// installs on every change, tested separately below (#313).
 func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheSameChecksAsIntoDev(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
 	cases := []struct{ source, target string }{
@@ -504,6 +506,9 @@ func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheSameChe
 			assertAbsent(t, got, releaseJobs...)
 			assertAbsent(t, got, "renovate")
 			for _, n := range jobNames(want) {
+				if isLiveFamily(n) {
+					continue // asserted by the live-installs test below
+				}
 				w := want[n]
 				g, ok := got[n]
 				if !ok {
@@ -516,21 +521,93 @@ func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheSameChe
 				}
 			}
 			for _, n := range jobNames(got) {
+				if isLiveFamily(n) {
+					continue
+				}
 				if _, ok := want[n]; !ok {
 					t.Errorf("%s: the pipeline must not create `%s`, which a merge request into dev does not; dev creates %v",
 						where, n, jobNames(want))
 				}
 			}
-			// The privileged live legs are never automatic here. live-prepare
-			// is left to the comparison with dev above: on a pin change it
-			// starts by itself there too, as the unprivileged fetch step.
+		}
+	}
+}
+
+func isLiveFamily(name string) bool {
+	for _, n := range liveFamily {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Test once, then promote what passed -- but a merge request into preview or
+// main from any branch other than the stage before has not been through dev,
+// so the live installs run on it whatever files it changes (#313). With the CI
+// files changed the manual gate (#192) still wins and the privileged legs wait
+// for a person; with the run-live-matrix label they start by themselves. An
+// ordinary merge request into dev is unchanged: no live job unless the files
+// changed or the label is set.
+func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheLiveInstallsAsItsOnlyStage(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	cases := []struct{ source, target string }{
+		{"feature/x", "preview"},
+		{"hotfix/y", "preview"},
+		{"feature/x", "main"},
+		{"hotfix/y", "main"},
+		{"dev", "main"},
+		{"main", "preview"},
+	}
+	for _, c := range cases {
+		where := fmt.Sprintf("%s -> %s", c.source, c.target)
+
+		// Files not matching the change route: the live installs run anyway,
+		// automatically, and block the merge.
+		jobs := pipelineFor(t, doc, mrVars(c.source, c.target), false)
+		assertPresent(t, jobs, liveFamily...)
+		for _, n := range liveFamily {
+			if j, ok := jobs[n]; ok && j.manual {
+				t.Errorf("%s (changes=false): `%s` must run automatically, not wait for a person (#313)", where, n)
+			}
+		}
+		for _, n := range []string{"live", "live-fedora"} {
+			if j, ok := jobs[n]; ok && !j.blocking {
+				t.Errorf("%s (changes=false): `%s` must block the merge (allow_failure false) (#313)", where, n)
+			}
+		}
+
+		// CI files changed: the #192 manual gate wins for the privileged legs.
+		jobs = pipelineFor(t, doc, mrVars(c.source, c.target), true)
+		assertPresent(t, jobs, liveFamily...)
+		for _, n := range []string{"live", "live-fedora"} {
+			if j, ok := jobs[n]; ok && (!j.manual || !j.blocking) {
+				t.Errorf("%s (changes=true): `%s` must be manual and blocking: the #192 gate wins when the CI files changed; got manual=%v blocking=%v",
+					where, n, j.manual, j.blocking)
+			}
+		}
+		if j, ok := jobs["live-prepare"]; ok && j.manual {
+			t.Errorf("%s (changes=true): `live-prepare` must not be manual: it is the unprivileged fetch step", where)
+		}
+
+		// The label is a person's own request: automatic and blocking.
+		for _, changes := range []bool{false, true} {
+			v := mrVars(c.source, c.target)
+			v["CI_MERGE_REQUEST_LABELS"] = "run-live-matrix"
+			jobs = pipelineFor(t, doc, v, changes)
+			assertPresent(t, jobs, "live", "live-fedora")
 			for _, n := range []string{"live", "live-fedora"} {
-				if j, ok := got[n]; ok && !j.manual {
-					t.Errorf("%s: `%s` must be absent or manual (when: manual) without the run-live-matrix label", where, n)
+				if j, ok := jobs[n]; ok && (j.manual || !j.blocking) {
+					t.Errorf("%s with the label (changes=%v): `%s` must be automatic and blocking; got manual=%v blocking=%v",
+						where, changes, n, j.manual, j.blocking)
 				}
 			}
 		}
 	}
+
+	// Unchanged: an ordinary merge request into dev creates no live job when
+	// the files did not change.
+	assertAbsent(t, pipelineFor(t, doc, mrVars("feat/x", "dev"), false), "live", "live-fedora")
 }
 
 // A push to main offers only the release jobs.

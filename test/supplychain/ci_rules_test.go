@@ -163,3 +163,43 @@ func TestLiveCIChangeRouteIsAManualGate(t *testing.T) {
 		}
 	}
 }
+
+// A merge request into preview or main from any branch but the stage before
+// has not been through dev, so the live installs run on it whatever files it
+// changes (#313). That is a rule without `changes:`, and it comes after the
+// manual change route: the first matching rule wins, so a change to the CI
+// files must meet the #192 gate before this automatic route can claim it.
+func TestLiveRunsOnEveryMergeRequestPastDevAfterTheManualRoute(t *testing.T) {
+	rules := liveRules(t, readRepoFile(t, ".gitlab-ci.yml"))
+
+	changeIdx := -1
+	var matches []int
+	for i, r := range rules {
+		if strings.Contains(r, "changes:") && hasLine(r, "- .gitlab-ci.yml") {
+			changeIdx = i
+		}
+		if strings.Contains(r, "changes:") {
+			continue
+		}
+		if strings.Contains(r, `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview"`) &&
+			strings.Contains(r, `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev"`) &&
+			strings.Contains(r, `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"`) &&
+			strings.Contains(r, `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"`) {
+			matches = append(matches, i)
+		}
+	}
+	if changeIdx < 0 {
+		t.Fatal("the `live` job has no rule with `changes: [.gitlab-ci.yml]` (#164)")
+	}
+	if len(matches) != 1 {
+		t.Fatalf("the `live` job must have exactly one rule, without `changes:`, for a merge request into preview (source not dev) or main (source not preview); found %d (#313)", len(matches))
+	}
+	rule := rules[matches[0]]
+	if hasLine(rule, "when: manual") {
+		t.Errorf("the every-change rule must be automatic, not `when: manual` (#313)\nrule:\n%s", rule)
+	}
+	if matches[0] < changeIdx {
+		t.Errorf("the every-change rule must come after the manual change route: the first match wins, "+
+			"so the #192 gate must be met first (#313)\nrule:\n%s", rule)
+	}
+}
