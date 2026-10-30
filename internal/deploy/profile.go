@@ -75,9 +75,28 @@ func WithScanner(cmd *exec.Cmd, scanner string) {
 	cmd.Env = append(cmd.Env, ScannerEnv+"="+scanner)
 }
 
+// CurrentProfile is the profile an installed deployment runs, read from
+// the COMPOSE_PROFILES list Detect has cleaned and split: no profiles is
+// Standard, exactly "processing" is Documents. ok is false for anything
+// else (a local model, a mix, a duplicate, another case, an empty or
+// unknown entry), which the launcher cannot change.
+func CurrentProfile(d *Deployment) (profile string, ok bool) {
+	if d == nil {
+		return "", false
+	}
+	switch {
+	case len(d.Profiles) == 0:
+		return ProfileStandard, true
+	case len(d.Profiles) == 1 && d.Profiles[0] == ProfileDocuments:
+		return ProfileDocuments, true
+	}
+	return "", false
+}
+
 // WithProfile adds ProfileEnv=profile to cmd's environment, after
 // whatever the person's own environment holds so it wins. An empty
-// profile adds nothing: an update never sends one.
+// profile adds nothing: an Update run sends none, while Install and
+// Configure (a profile change, which also runs as an update) name theirs.
 func WithProfile(cmd *exec.Cmd, profile string) {
 	if profile == "" {
 		return
