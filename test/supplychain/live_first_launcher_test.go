@@ -200,3 +200,124 @@ func TestLiveUpdateTestInstallsEarlierWithTheEarlierLauncherAndFailsWithoutIt(t 
 		t.Error("test/live/update_test.go must keep the InstallEarlier step (#307)")
 	}
 }
+
+// The earlier launcher is read from ai/orbit's previous/ archive first (#313,
+// #307). Orbit's record_image job keeps the earlier build's launcher archive
+// under .orbit-supply-chain/previous/ beside the manifest, so the common case
+// needs no search through Orbit's pipelines; the search stays as the second
+// route, and for the hand-started job-ID route.
+
+const previousLauncherPath = ".orbit-supply-chain/previous/" + earlierLauncherArchive
+
+// previousArchiveCurl returns the index of the line in job that reads the
+// previous/ archive, or -1.
+func previousArchiveCurl(job []string) int {
+	for i, l := range job {
+		if strings.Contains(l, previousLauncherPath) && strings.Contains(l, "?job=record_image") && strings.Contains(l, "${orbit_branch_path}") {
+			return i
+		}
+	}
+	return -1
+}
+
+func movesArchive(l string) bool {
+	return (strings.Contains(l, "mv ") || strings.Contains(l, "cp ")) &&
+		strings.Contains(l, "first_dir") &&
+		(strings.Contains(l, earlierLauncherArchive) || strings.Contains(l, "first_archive"))
+}
+
+func TestLivePrepareLooksForTheEarlierLauncherInPreviousBeforeOrbitsPipelines(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	job := liveJob(t, ci, "live-prepare")
+	curl := previousArchiveCurl(job)
+	if curl < 0 {
+		t.Fatalf("the `live-prepare` job must read %s?job=record_image by branch (${orbit_branch_path} on the same line, like the previous/ manifest read) (#313)", previousLauncherPath)
+	}
+	for i, l := range job {
+		if strings.Contains(l, "pipelines?sha=") {
+			if i < curl {
+				return
+			}
+			t.Errorf("the `live-prepare` job must try the previous/ archive (line %d) before the `pipelines?sha=` lookup (line %d) (#313)", curl, i)
+			return
+		}
+	}
+	t.Error("the `live-prepare` job must keep the `pipelines?sha=` lookup as the second route (#313)")
+}
+
+func TestLivePrepareKeepsThePreviousArchiveOnlyIfItsSha256MatchesTheSignedManifest(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	job := liveJob(t, ci, "live-prepare")
+	curl := previousArchiveCurl(job)
+	if curl < 0 {
+		t.Fatalf("the `live-prepare` job must read %s?job=record_image by branch (#313)", previousLauncherPath)
+	}
+	move := -1
+	for i := curl + 1; i < len(job); i++ {
+		if movesArchive(job[i]) {
+			move = i
+			break
+		}
+	}
+	if move < 0 {
+		t.Fatal("after reading the previous/ archive, the `live-prepare` job must move or copy it into first_dir (#313)")
+	}
+	for i := curl + 1; i < move; i++ {
+		if strings.Contains(job[i], "sha256sum") {
+			return
+		}
+	}
+	t.Errorf("the `live-prepare` job must compute the previous/ archive's sha256 (sha256sum) between reading it (line %d) and moving it into first_dir (line %d): it is kept only if it matches the signed manifest (#313)", curl, move)
+}
+
+func TestLivePrepareMissingPreviousArchiveDoesNotStopTheJob(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	job := liveJob(t, ci, "live-prepare")
+	if previousArchiveCurl(job) < 0 {
+		t.Fatalf("the `live-prepare` job must read %s?job=record_image by branch (#313)", previousLauncherPath)
+	}
+	for i, l := range job {
+		if !strings.Contains(l, earlierLauncherArchive) || !strings.Contains(l, "previous/") {
+			continue
+		}
+		next := ""
+		if i+1 < len(job) {
+			next = job[i+1]
+		}
+		if strings.Contains(l, "exit 1") || strings.Contains(next, "exit 1") {
+			t.Errorf("a missing previous/ archive must fall through to the build_launcher lookup, not stop the job (#313)\nline: %s\nnext: %s", l, next)
+		}
+	}
+}
+
+func TestLivePrepareNoEarlierLauncherFailureNamesTheWayOut(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	job := liveJob(t, ci, "live-prepare")
+	if !failsAfter(job, "build_launcher", "previous/", "build_launcher", "preview build", "ORBIT_FIRST_RECORD_IMAGE_JOB") {
+		t.Error("the `live-prepare` job's no-earlier-launcher failure must name previous/, build_launcher, a new ai/orbit `preview build` (what fixes it) and ORBIT_FIRST_RECORD_IMAGE_JOB (the hand-started route) (#313)")
+	}
+}
+
+func TestLivePrepareJobIDRouteStillUsesThePipelineLookup(t *testing.T) {
+	ci := readRepoFile(t, ".gitlab-ci.yml")
+	job := liveJob(t, ci, "live-prepare")
+	closing := -1
+	for i, l := range job {
+		if strings.Contains(l, `jq -e '.channel == "preview"'`) {
+			closing = i
+			break
+		}
+	}
+	if closing < 0 {
+		t.Fatal(`the live-prepare job must check jq -e '.channel == "preview"' on the earlier manifest (#198)`)
+	}
+	for i, l := range job {
+		if strings.Contains(l, "pipelines?sha=") {
+			if i < closing {
+				t.Errorf("the `pipelines?sha=` lookup (line %d) must come after the block that reads the earlier manifest (line %d), so it also runs when ORBIT_FIRST_RECORD_IMAGE_JOB is set (#313)", i, closing)
+			}
+			return
+		}
+	}
+	t.Error("the `live-prepare` job must keep the `pipelines?sha=` lookup, which the job-ID route depends on (#313)")
+}
