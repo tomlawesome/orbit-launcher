@@ -5,10 +5,11 @@
 # It reproduces the GitHub gate job for job -- ci.yml's static and unit
 # checks, secret-scan.yml, visual-regression.yml and live-install-test.yml --
 # running the same commands against the same pinned tool versions, so a
-# finding on one host means the same thing on the other. GitHub still runs
-# its workflows on the mirrored push as a second opinion; nothing here
-# publishes or promotes, except the release buttons below (#178, #264), which the
-# owner presses to cut a version tag.
+# finding on one host means the same thing on the other. On GitHub, a push
+# to dev, preview or main runs only secret-scan and codeql; ci, visual and
+# live run on pull requests, and ci and visual also on hotfix/** pushes.
+# Nothing here publishes or promotes, except the release buttons below (#178,
+# #264), which the owner presses to cut a version tag.
 #
 # The mirror is set up in the GitLab project settings, not in this file. Its
 # identity is a GitLab-generated SSH key held as a write-access deploy key on
@@ -53,7 +54,8 @@
 # every pipeline here, including the push to main and jobs it could send to
 # the privileged runner; #192 cannot see a change made in another repository.
 # A new private-details tag is adopted by moving this commit and the comment
-# on the same line together: test/supplychain checks they agree. Until the
+# on the same line together. The agreement is checked wherever an agent-infra
+# checkout exists; CI checks the format only. Until the
 # template can take a commit, its job still clones the scan script by tag.
 include:
   - project: ai/agent-infra
@@ -308,8 +310,9 @@ variables:
 # their own `script:`, reporting "skipped" rather than vanishing. Orbit's
 # classifier works the same way (ai/orbit#883).
 #
-# Only a merge request into `dev` is ever classified (#306); the promotions
-# run no classify, and a pipeline started by hand gets an empty base commit.
+# The two promotions (dev to preview, preview to main) run no classify; any
+# other merge request does (#306). A pipeline started by hand gets an empty
+# base commit.
 # The script answers false to every question it cannot settle -- so the full
 # gate is what happens by default, and skipping is opt-in against the named
 # safe paths in the script.
@@ -725,12 +728,12 @@ live-prepare:
       # ORBIT_FILES_SOURCE=github forces the mirror, to prove this path; with
       # a preview channel that now fails, so prove it on a stable one.
       #
-      # Which Orbit (#193): the commit orbit/pin.json names, so every run
-      # installs a fixed partner and an Orbit merge alone cannot turn this
-      # pipeline red. install.sh, the verifier scripts and cosign.pub are
-      # read at that commit; the release manifest comes from the latest
-      # build of the pin's branch, and the #236 check below stops the run
-      # unless the two are one release. scripts/bump-orbit-pin.sh <ref>
+      # Which Orbit (#193): the commit orbit/pin.json names. Only install.sh,
+      # the verifier scripts and cosign.pub are fixed at that commit; the
+      # image and release manifest come from the latest build of the pin's
+      # branch, so an Orbit merge to that branch can turn this pipeline red
+      # until the pin is bumped. The #236 check below stops the run unless
+      # the two are one release. scripts/bump-orbit-pin.sh <ref>
       # moves the pin. ORBIT_BRANCH, set non-empty on a pipeline started by
       # hand, overrides both: the files come from that branch's tip and the
       # manifest from its latest build. ORBIT_BRANCH moves the trust root
@@ -859,11 +862,13 @@ live-prepare:
         curl --fail --silent --show-error --location --max-redirs 0 \
           --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json \
-          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image" \
+          || { echo "no signed release manifest on ${orbit_branch}: pin preview or a hotfix/* branch"; exit 1; }
         curl --fail --silent --show-error --location --max-redirs 0 \
           --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json.sig \
-          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence" \
+          || { echo "no signed release manifest on ${orbit_branch}: pin preview or a hotfix/* branch"; exit 1; }
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
@@ -1469,8 +1474,9 @@ renovate:
 # refuses unless that tag does not exist yet, sorts above every tag already
 # cut, the commit carries no v* tag yet (one tag per commit), and it is
 # still the tip of main (scripts/ci/release-tag-check.sh, tested by
-# scripts/test/release-tag-check.bats). It has no `needs:`, so the button is
-# not playable until every earlier stage has passed. The follow-on job then
+# scripts/test/release-tag-check.bats). It has no `needs:`, and a push-to-main
+# pipeline holds only the release jobs, so the button is playable at once; the
+# guard is scripts/ci/release-tag-check.sh, not stage order. The follow-on job then
 # creates the annotated tag and its GitLab release with release-cli, acting
 # with the rights of whoever pressed the button. Tag pipelines run nothing
 # (workflow: above); GitLab's push mirror carries the tag to GitHub.
