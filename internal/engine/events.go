@@ -29,6 +29,12 @@ type Event struct {
 	// Simulation is true when the engine appended simulation=true —
 	// a rehearsal run that must never be presented as a real one.
 	Simulation bool
+
+	// Recovery is the trailing recovery= field of a terminal failure:
+	// RecoveryHasCommand when the stdout line just before it was a
+	// recovery-command line (orbit docs/engine-events.md, "Recovery
+	// command (v0)"). Empty on every other event.
+	Recovery string
 }
 
 // The contract's state vocabulary (orbit docs/engine-events.md,
@@ -47,16 +53,82 @@ const (
 
 	PhaseComplete = "complete"
 
+	// PhaseRollback is the phase of the events a failed fresh install's
+	// rollback emits (ai/orbit#1456): running while it puts the folder
+	// back, completed once it has.
+	PhaseRollback = "rollback"
+
+	// PhaseOptional is the phase of the events about the optional
+	// services, emitted only once the installer has disarmed its
+	// rollback (orbit docs/engine-events.md).
+	PhaseOptional = "optional"
+
+	// PhaseCompose is the phase of the compose validation, whose
+	// completed event is the installer's commit; PhasePreparation,
+	// PhaseDatabase and PhaseApplication are the steps that follow it
+	// (orbit docs/engine-events.md, "install.sh after the commit").
+	PhaseCompose     = "compose"
+	PhasePreparation = "preparation"
+	PhaseDatabase    = "database"
+	PhaseApplication = "application"
+
 	// ReasonConfigurationFailure is the non-interactive refusal the
 	// contract documents for incomplete configuration: the engine
 	// refuses before starting Compose, and the consumer should re-run
 	// configuration interactively (the terminal handoff stretch).
 	ReasonConfigurationFailure = "configuration-failure"
+
+	// The contract's action vocabulary on a terminal failure (orbit
+	// docs/engine-events.md, "action"): ActionRetry is a failure another
+	// attempt can clear once its cause is fixed; ActionRepair leaves a
+	// deployment whose services are in place, for Repair; ActionAbort
+	// marks a failure no retry can clear, so the consumer stops rather
+	// than offer another attempt. ActionContinue is an optional
+	// service's ending that does not fail the run.
+	ActionRetry    = "retry"
+	ActionRepair   = "repair"
+	ActionAbort    = "abort"
+	ActionContinue = "continue"
+
+	// RecoveryHasCommand is the recovery= value saying a
+	// recovery-command line came just before the event.
+	RecoveryHasCommand = "command"
 )
+
+// recoveryCommandPrefix leads the one stdout line that carries a command
+// for the person to run (orbit docs/engine-events.md, "Recovery command
+// (v0)"): the prefix and one space are fixed, the rest is the command.
+const recoveryCommandPrefix = "recovery-command: "
+
+// RecoveryCommand reads a recovery-command line, returning the command
+// verbatim; ok is false for any other line. The command is shown as it
+// is, never parsed: install.sh has already shell-quoted every word.
+func RecoveryCommand(line string) (command string, ok bool) {
+	command, ok = strings.CutPrefix(line, recoveryCommandPrefix)
+	return command, ok && command != ""
+}
 
 // IsSuccess reports whether e is the contract's success event.
 func (e Event) IsSuccess() bool {
 	return e.Phase == PhaseComplete && e.State == StateCompleted
+}
+
+// AfterCommit reports whether e comes from after the installer's
+// commit: the compose validation's completed event, which is the first
+// event past it, or any event of a later phase. From there an
+// interrupted Update undoes nothing and rolls forward, ending with one
+// terminal failure for the step it stopped in, or complete in the
+// optional phase (orbit docs/engine-events.md, "install.sh after the
+// commit", #1518). A compose failure, and every earlier event, is
+// before the commit.
+func (e Event) AfterCommit() bool {
+	switch e.Phase {
+	case PhaseCompose:
+		return e.State == StateCompleted
+	case PhasePreparation, PhaseDatabase, PhaseApplication, PhaseOptional, PhaseComplete:
+		return true
+	}
+	return false
 }
 
 // IsTerminalFailure reports whether e is a refusal or failure outcome.
@@ -108,6 +180,7 @@ func ParseEvent(line string) (e Event, ok bool) {
 		Action:         fields["action"],
 		ElapsedSeconds: parseElapsed(fields["elapsed"]),
 		Simulation:     fields["simulation"] == "true",
+		Recovery:       fields["recovery"],
 	}, true
 }
 

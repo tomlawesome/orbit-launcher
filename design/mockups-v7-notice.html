@@ -38,7 +38,7 @@
 
 <h1>orbit-launcher · v7 — the development notice · #175</h1>
 <div class="sub">
-  <i>Partly superseded (2026-10-20, #248): the confirm screen named below is gone; Standard on the profile screen opens the notice, and Back returns there. Also superseded: the timer is a flat 20 seconds (2026-10-17, #250; the 70-second timer and the 1:08/1:10 captions below are the record); the right-gutter track and ↓ arrow exist (2026-10-21, #249); the pinned row reads "Back", not "Go back" (2026-10-20, #248).</i><br>
+  <i>Partly superseded (2026-10-20, #248): the confirm screen named below is gone; Standard on the profile screen opens the notice, and Back returns there. Also superseded: the timer is a flat 20 seconds (2026-10-17, #250; the 70-second timer and the 1:08/1:10 captions below are the record); the right-gutter track and ↓ arrow exist (2026-10-21, #249); the pinned row reads "Back", not "Go back" (2026-10-11, #228).</i><br>
   One new screen in the Install flow: profile → confirm → <b>notice</b> → mission console.
   Three things gate the install: the prose has been on screen to its last line, a 70-second timer has run
   out, and the person has typed <b>I've read this and I understand</b> into a text box. The timer, the
@@ -54,7 +54,7 @@
 <section>
   <h2><span>a</span> First view — 80×26, the house minimum</h2>
   <div class="term scene" id="scene-a"><pre class="cells" id="n-a" role="img"
-    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then the first fourteen rows of prose with the emphasised sentence I'm a mechatronics engineer by trade, not a professional software engineer in bold across two rows; the last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 1:08 at its end, a faint prompt To install, type I've read this and I understand, a rounded text box drawn in the console frame's quiet border with the same phrase inside it as example text, and the caret on Go back."></pre></div>
+    aria-label="Notice screen at 80 by 26 cells: amber orbit mark, bold title A note before you install, Project state alpha, then the first ten rows of prose with the emphasised sentence I'm a mechatronics engineer by trade, not a professional software engineer in bold across two rows; the last visible row is faint and cut mid-sentence. Pinned beneath: a thin timer line just starting to fill gold with 1:08 at its end, a faint prompt To install, type I've read this and I understand, a rounded text box drawn in the console frame's quiet border with the same phrase inside it as example text, and the caret on Go back."></pre></div>
   <div class="cap">Header and the bottom region (timer, prompt, text box, Go back) are pinned; only the
     prose between them scrolls — here ten of its forty-seven rows. The last visible prose row
     steps down to faint and is cut mid-sentence: the sign there is more. The countdown is already
@@ -180,6 +180,7 @@
 
   <h3>5 · 80×26, and tall</h3>
   <p><b>Superseded 2026-10-21 (#249):</b> the notice now draws a right-gutter scroll track (│/┃) and a ↓ arrow below the prose, and the prose window is the viewport less two rows (10 rows at 80×26, not 12).</p>
+  <p><b>Also superseded:</b> at 120×50 the prose window is now 34 rows, not 36 (the height less 16; <code>viewport</code> and <code>prose</code> in <code>internal/ui/notice.go</code>). The scene e caption above and the 120×50 figures below are the record.</p>
   <p>The approved copy wraps to <b>forty-seven rows</b> at the 56-column measure (ten paragraphs,
     nine gaps). At 80×26 the header (blank, ⟡, blank, title, state, blank) takes six rows and the
     bottom region (timer, prompt, the box's three rows, feedback, Go back, blank) eight — the box
@@ -416,14 +417,15 @@ function clock(sec){const m=Math.floor(sec/60),s=sec%60;return m+":"+(s<10?"0":"
 // the screen appeared), run (animate the countdown from `elapsed`, looping).
 // The view is one content block: header (blank, ⟡, blank, title, state,
 // blank), the visible prose rows, then the bottom region (timer, prompt,
-// box top, box middle, box bottom, feedback, Go back, blank). Viewport =
-// H - 14 rows; skyBlock's 0.42 optical centre positions the block when it
+// box top, box middle, box bottom, feedback, Go back, blank). Prose window =
+// H - 16 rows (H - 14 less the blank and the arrow row #249 added; the
+// arrow row is not drawn here); skyBlock's 0.42 optical centre positions the block when it
 // is shorter than the screen.
 function noticeScreen(id,W,H,state){
   const S=mkScreen(id,W,H); if(!S)return;
   const CX=Math.floor(W/2), CY=Math.floor(H/2)-1;
   const stars=mkStars(Math.round(W*H/38), 6, Math.floor(W/2)+6);
-  const viewport=H-14;                          // header 6 rows + bottom region 8 rows
+  const viewport=H-16;                          // header 6 + bottom region 8 + 2 spare rows (#249)
   const fits=DOC.length<=viewport;
   const offset=fits?0:Math.min(state.offset, DOC.length-viewport);
   const visible=DOC.slice(offset, offset+viewport);
@@ -435,7 +437,7 @@ function noticeScreen(id,W,H,state){
     lastShown++; visible[visible.length-1]=DOC[lastShown];
   }
   const endReached=fits||lastShown>=DOC.length-1;
-  const nLines=6+visible.length+8;               // header + viewport rows + bottom region
+  const nLines=6+visible.length+2+8;             // header + prose rows + 2 spare rows + bottom region
   const top=Math.floor(0.42*(H-1-nLines));
   const left=CX-Math.floor(MEASURE/2);          // the block's left edge
 
@@ -472,7 +474,7 @@ function noticeScreen(id,W,H,state){
         });
       }
     });
-    r+=visible.length;
+    r+=visible.length+2;                         // the prose rows, then the two spare rows
     // bottom region, row 1: the timer (blank once done — the gate is gone, so is its object)
     if(!timerDone){
       const fill=Math.floor(elapsed/TIMER_S*BAR_CELLS);
@@ -521,7 +523,7 @@ function noticeScreen(id,W,H,state){
 }
 
 noticeScreen("n-a",80,26,{offset:0,  elapsed:2});
-noticeScreen("n-b",80,26,{offset:11, elapsed:20});          // one PgDn: viewport (12) less one row
+noticeScreen("n-b",80,26,{offset:9,  elapsed:20});          // one PgDn: prose window (10) less one row
 noticeScreen("n-f",80,26,{offset:99, elapsed:56, run:true});
 noticeScreen("n-c",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I've read th"});
 noticeScreen("n-g",80,26,{offset:99, elapsed:TIMER_S, focus:"field", typed:"I read this and I understand", refused:true});

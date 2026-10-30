@@ -24,24 +24,30 @@ import (
 // owns; own is the check's answer.
 type repairForeignMsg struct{ own deploy.Ownership }
 
-var foreignMenu = []string{removeCopy, "Menu", "Exit"}
+// foreignMenu is the stop screen's rows: Diagnose again is what the
+// screen tells the person to do once the files are back (#277).
+var foreignMenu = []string{removeCopy, "Diagnose again", "Menu", "Exit"}
 
 // startDiagnosis is startRun for a run start (Init, "Diagnose again"):
-// the foreignOwned check runs first, inside the same command, so the
-// screen is never held up by it and each start asks afresh. Foreign
-// files stop the start; a check that fails does not, as the engine's own
-// diagnosis still reads what it can. A nil seam checks nothing (the c9
-// harness).
+// the folder's name is checked first, by RepairCommand's own rule, so
+// nothing in a control-named folder is read and it gets the name refusal
+// (#277 W3). The foreignOwned check runs next, inside the same command,
+// so the screen is never held up by it and each start asks afresh.
+// Foreign files stop the start; a check that fails does not, as the
+// engine's own diagnosis still reads what it can. A nil seam checks no
+// ownership (the c9 harness).
 func (m RepairModel) startDiagnosis(mode deploy.RepairMode) tea.Cmd {
 	run := m.startRun(mode)
 	check := m.foreignOwned
-	if check == nil {
-		return run
-	}
 	targetDir := m.targetDir
 	return func() tea.Msg {
-		if own, err := check(targetDir); err == nil && len(own.Files) > 0 {
-			return repairForeignMsg{own: own}
+		if err := deploy.CheckFolderName(targetDir); err != nil {
+			return repairReadyMsg{err: err}
+		}
+		if check != nil {
+			if own, err := check(targetDir); err == nil && len(own.Files) > 0 {
+				return repairForeignMsg{own: own}
+			}
 		}
 		return run()
 	}
@@ -56,6 +62,8 @@ func (m RepairModel) handleForeignKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.copied = true
 			words := deploy.ChownCommandWords(m.targetDir, m.foreign)
 			return m, copyToClipboard(m.clipboardWriter(), strings.Join(words, " "))
+		case "Diagnose again":
+			return m.diagnoseAgain()
 		case "Menu":
 			m.Done = true
 			m.WantsMenu = true
@@ -108,17 +116,14 @@ func (m RepairModel) viewForeign() string {
 	// prose measure and reads better whole wherever it fits.
 	wide := measure(m.width, errorWidth)
 	fmt.Fprintln(&tail)
-	writeWrapped(&tail, style.MutedText, "their contents can't be checked and nothing can restore them", wide)
-	writeWrapped(&tail, style.MutedText, "give them back to this account, then diagnose again", wide)
+	writeWrappedIn(&tail, style.MutedText, "their contents can't be checked and nothing can restore them", wide, textArea(m.width))
+	writeWrappedIn(&tail, style.MutedText, "give them back to this account, then diagnose again", wide, textArea(m.width))
 	fmt.Fprintln(&tail)
 
-	// The command in a box, as Remove's: the words escaped for the
-	// screen, Copy command keeping the quoted raw line to run.
-	raw := deploy.ChownCommandWords(m.targetDir, m.foreign)
-	words := make([]string, len(raw))
-	for i, w := range raw {
-		words[i] = visibleText(w)
-	}
+	// The command in a box, as Remove's: the words drawn as they are
+	// (an odd folder's word is already in printable $'...' form), so the
+	// box and Copy command's line are the same bytes (#277 W2).
+	words := deploy.ChownCommandWords(m.targetDir, m.foreign)
 	lines := wrapShellCommand(words, m.width-8)
 	boxW := 0
 	for _, l := range lines {

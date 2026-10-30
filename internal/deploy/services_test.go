@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -99,13 +100,35 @@ func TestServiceStates_UnreadableOutputIsAnError(t *testing.T) {
 	}
 }
 
+// slowDockerLimit is the caller's deadline in the test below.
+const slowDockerLimit = time.Second
+
+// The error names the caller's deadline, not the launcher's own longer
+// limit (#207). What it names is what was left of the deadline when the
+// call began, which is a little under slowDockerLimit by however long the
+// trusted-path check took (#283), so the test reads the duration out of
+// the text instead of expecting "1s". The folder is made before the
+// deadline starts so set-up time does not eat into it.
 func TestServiceStates_SlowDockerIsCutOffAndSaysSo(t *testing.T) {
 	hangingDockerOnPath(t)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	dir := servicesDeployment(t)
+	ctx, cancel := context.WithTimeout(t.Context(), slowDockerLimit)
 	defer cancel()
-	_, err := ServiceStates(ctx, servicesDeployment(t))
-	if err == nil || !strings.Contains(err.Error(), "did not finish within 1s") {
-		t.Errorf("err = %v, want one saying it did not finish within 1s", err)
+	_, err := ServiceStates(ctx, dir)
+	if err == nil {
+		t.Fatal("err = nil, want one saying docker did not finish in time")
+	}
+	m := regexp.MustCompile(`did not finish within (\S+?):`).FindStringSubmatch(err.Error())
+	if m == nil {
+		t.Fatalf("err = %v, want one saying how long it did not finish within", err)
+	}
+	named, perr := time.ParseDuration(m[1])
+	if perr != nil {
+		t.Fatalf("err = %v: %q is not a duration: %v", err, m[1], perr)
+	}
+	if named <= 0 || named > slowDockerLimit {
+		t.Errorf("err = %v: names %v, want the caller's deadline (above 0, at most %v), not the launcher's own limit %v",
+			err, named, slowDockerLimit, ServiceStatesTimeout)
 	}
 }
 

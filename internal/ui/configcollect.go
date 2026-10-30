@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -74,8 +77,9 @@ var configStream = streamWrap{
 	},
 }
 
-// configAdoptedMsg reports the collected configuration landing in the
-// target.
+// configAdoptedMsg reports the collected configuration having been kept
+// for the next run's configuration tree (an update's: having landed in
+// the target), or why it could not be.
 type configAdoptedMsg struct{ err error }
 
 // configRecheckMsg carries configure.sh --check's fresh answer, asked
@@ -129,10 +133,161 @@ type configCollect struct {
 // in the app its result then reaches the main menu, not this run, so a
 // result made after leaving is released by the command itself, and one
 // handed over but not yet taken is released by the leaving.
+//
+// The preparation also writes into the run's configuration tree (the
+// import), so the tree must not be removed under it: a removal racing
+// the copy can leave an empty folder in TMPDIR that nothing removes
+// (#277). Leaving cancels the preparation (close cancels its context,
+// which the import checks before every file), and while it runs the
+// run's release of its files waits here; the preparation runs it once
+// it has returned, so nothing is written into the tree after it is
+// removed.
 type configLate struct {
 	mu      sync.Mutex
 	stopped bool
 	held    func()
+
+	preparing bool
+	// ended is closed once the running preparation has ended and the
+	// release that waited for it, if any, has finished.
+	ended     chan struct{}
+	runFiles  func() // the run's files' release, waiting for it
+	releasing bool   // end is running runFiles
+}
+
+// begin is a preparation starting. False means the session was left
+// before it started: there is nothing to prepare for.
+func (l *configLate) begin() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stopped {
+		return false
+	}
+	l.preparing = true
+	l.ended = make(chan struct{})
+	return true
+}
+
+// end is the preparation finished with the tree: a release of the run's
+// files that waited for it runs now, and only once it has finished is
+// anyone waiting on the preparation let go, so nothing quits in the
+// middle of the removal.
+func (l *configLate) end() {
+	l.mu.Lock()
+	release := l.runFiles
+	l.runFiles, l.preparing, l.releasing = nil, false, release != nil
+	l.mu.Unlock()
+	if release != nil {
+		release()
+	}
+	close(l.ended)
+	deferredReleases.drop(l)
+}
+
+// releaseRunFilesAfter keeps release for the running preparation to run
+// once it ends, reporting whether it did; false means none is running
+// and the caller releases now.
+func (l *configLate) releaseRunFilesAfter(release func()) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.preparing {
+		return false
+	}
+	l.runFiles = release
+	deferredReleases.add(l)
+	return true
+}
+
+// awaitPreparation returns once a preparation that has started has
+// ended and the release that waited for it has finished, waiting at
+// most limit for the preparation itself. Past the limit, a release
+// still waiting runs here instead, and is finished before this returns:
+// the launcher is quitting and nothing else would run it. A release the
+// preparation has already begun is waited for to its end; a preparation
+// with no release waiting is not waited for past the limit.
+func (l *configLate) awaitPreparation(limit time.Duration) {
+	l.mu.Lock()
+	ended := l.ended
+	l.mu.Unlock()
+	if ended == nil {
+		return
+	}
+	select {
+	case <-ended:
+		return
+	case <-time.After(limit):
+	}
+	l.mu.Lock()
+	release, releasing := l.runFiles, l.releasing
+	l.runFiles = nil
+	l.mu.Unlock()
+	switch {
+	case release != nil:
+		release()
+		deferredReleases.drop(l)
+	case releasing:
+		<-ended
+	}
+}
+
+// deferredReleases are the sessions whose preparation still holds a
+// release of the run's files. Whatever screen ends the launcher, the
+// process must not exit before they are done (FinishDeferredCleanup):
+// a session left with Esc during the import is no longer on any screen
+// when the menu quits.
+var deferredReleases releaseSet
+
+type releaseSet struct {
+	mu   sync.Mutex
+	held map[*configLate]struct{}
+}
+
+func (s *releaseSet) add(l *configLate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held == nil {
+		s.held = map[*configLate]struct{}{}
+	}
+	s.held[l] = struct{}{}
+}
+
+func (s *releaseSet) drop(l *configLate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.held, l)
+}
+
+func (s *releaseSet) list() []*configLate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ls []*configLate
+	for l := range s.held {
+		ls = append(ls, l)
+	}
+	return ls
+}
+
+// deferredCleanupWait bounds how long the launcher's exit waits for a
+// configuration preparation still writing into a run's configuration
+// tree. It is a backstop only: leaving the session cancels the
+// preparation's context, its import stops within one file and its
+// configure.sh --check is stopped, so the wait is normally that one
+// file.
+const deferredCleanupWait = 2 * time.Second
+
+// FinishDeferredCleanup is for the launcher's exit, once the program has
+// ended: it waits, at most deferredCleanupWait in all, for every removal
+// of a run's files that is waiting on a configuration preparation, and
+// past that runs the ones still waiting itself; it returns once all have
+// finished (the pattern of a graceful shutdown draining in-flight work
+// before the process ends).
+func FinishDeferredCleanup() {
+	deadline := time.Now().Add(deferredCleanupWait)
+	for _, l := range deferredReleases.list() {
+		l.awaitPreparation(time.Until(deadline))
+	}
+	// The session's guided answers go with it (collectedConfig).
+	releaseCollectedTrees()
 }
 
 // hand is a command's result arriving; release frees it. It reports
@@ -202,7 +357,7 @@ func defaultPrepareConfig(ctx context.Context, targetDir, configTree string) con
 	if err != nil {
 		return configPlanMsg{err: err}
 	}
-	if err := deploy.ImportTargetConfig(configTree, targetDir); err != nil {
+	if err := deploy.ImportTargetConfigContext(ctx, configTree, targetDir); err != nil {
 		cleanup()
 		return configPlanMsg{err: err}
 	}
@@ -237,8 +392,13 @@ func (r engineRun) beginConfigCollect() (engineRun, tea.Cmd) {
 	}
 	targetDir, configTree := r.targetDir, r.configTree
 	return r, func() tea.Msg {
+		if !late.begin() {
+			return nil
+		}
 		msg := prepare(ctx, targetDir, configTree)
-		if !late.hand(func() { releaseConfigMsg(msg) }) {
+		handed := late.hand(func() { releaseConfigMsg(msg) })
+		late.end()
+		if !handed {
 			return nil
 		}
 		return msg
@@ -515,17 +675,51 @@ func (r engineRun) handleConfigStream(msg any) (engineRun, tea.Cmd) {
 	return r, nil
 }
 
-// adoptAndRetry lands the collected configuration in the target, then
-// re-runs the engine.
+// adoptAndRetry keeps the collected configuration for the launcher
+// session, then re-runs the engine with it handed in. Nothing is written
+// into the deployment folder: the configuration tree is two-way, so the
+// session's .env-orbit and .orbit-secrets/ are copied into a private
+// tree of their own (collectedConfig) and the retry's fresh tree is
+// seeded from it; on a fresh install the engine writes them through its
+// own install transaction, and its rollbacks take them out again (orbit
+// docs/engine-events.md, Non-interactive contract, #1519). That is what
+// makes the stopped screen's "nothing was changed" true.
+//
+// The exceptions are the contract's own: the installer ignores a
+// handed-in configuration on an update, and whenever the folder already
+// has a .env-orbit of its own, and uses the folder's instead. There the
+// answers are still adopted into the folder, as before #295: the folder
+// was already the person's configuration, and handing the answers in
+// could never complete the install.
 func (r engineRun) adoptAndRetry() (engineRun, tea.Cmd) {
 	adopt := r.adoptConfig
 	if adopt == nil {
 		adopt = deploy.AdoptConfig
 	}
-	configTree, targetDir := r.cfg.plan.configTree, r.targetDir
-	return r, func() tea.Msg {
-		return configAdoptedMsg{err: adopt(configTree, targetDir)}
+	configTree := r.cfg.plan.configTree
+	if r.action == deploy.ActionUpdate || folderHasOwnConfig(r.targetDir) {
+		targetDir := r.targetDir
+		return r, func() tea.Msg {
+			return configAdoptedMsg{err: adopt(configTree, targetDir)}
+		}
 	}
+	if r.collected == nil {
+		// A run outside an InstallModel keeps its own.
+		r.collected = &collectedConfig{}
+	}
+	collected := r.collected
+	return r, func() tea.Msg {
+		return configAdoptedMsg{err: collected.keep(configTree, adopt)}
+	}
+}
+
+// folderHasOwnConfig reports whether the deployment folder already
+// holds a .env-orbit: the installer then uses that one and ignores a
+// handed-in tree (orbit docs/engine-events.md, Non-interactive
+// contract, #1519).
+func folderHasOwnConfig(targetDir string) bool {
+	_, err := os.Lstat(filepath.Join(targetDir, deploy.EnvFile))
+	return err == nil
 }
 
 // retryEngine starts a fresh engine run against the now-provisioned
@@ -534,10 +728,11 @@ func (r engineRun) retryEngine() (engineRun, tea.Cmd) {
 	// The retry is a new engine run with its own configuration tree.
 	r.releaseRunFiles()
 	r.configRefused = false
-	r.lastFailed = nil
-	r.stderrTail = nil
+	r.waiting, r.completed, r.completion = nil, false, nil
+	r.forgetStop()
 	r.runErr = nil
 	r.handoffErr = nil
+	r.handoffByHand = false
 	r.menu = menu{}
 	return r.start(r.width, r.height)
 }

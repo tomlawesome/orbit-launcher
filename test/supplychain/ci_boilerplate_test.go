@@ -7,9 +7,14 @@
 // script and every other key -- compared with the file as it stood at
 // ce4b412, kept in testdata/ and read by ci_miniyaml_test.go with anchors,
 // merge keys, `extends:` and `default:` resolved. The only differences are
-// the ones #216, #198, #241, #273, #264, #236 and #195 make on purpose,
-// listed in changedBy216, changedBy198, changedBy241, changedBy273,
-// changedBy264, changedBy236 and changedBy195.
+// the ones #216, #198, #241, #273, #264, #236, #195, #292, #277, #193 and
+// #263 make on purpose, listed in changedBy216, changedBy198, changedBy241,
+// changedBy273, changedBy264, changedBy236, changedBy195, changedBy292,
+// changedBy277, changedBy193, variablesChangedBy193 and changedBy263, and
+// the job-token review's changedByTokenReview; and #183's changedBy183,
+// which also adds the live-fedora job (addedBy183) and FEDORA_IMAGE; and
+// #306's changedBy306 and workflowChangedBy306, which also add the promoted
+// job (addedBy306); and the second audit round's changedByAuditE.
 package supplychain
 
 import (
@@ -18,6 +23,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -104,6 +110,35 @@ func TestCIFixtureMatchesTypedKeyList(t *testing.T) {
 	}
 }
 
+// What #245 adds on purpose: the shared private-details check from
+// ai/agent-infra, brought in by `include:` and run as the template's
+// `private-details` job, which .gitlab-ci.yml gives this pipeline's stage,
+// runner, pull policy and history start point.
+var addedBy245 = []string{"include", "private-details"}
+
+// What #303 adds on purpose: live-prepare, the unprivileged job that reads
+// and verifies Orbit's files for the two live legs with ORBIT_READ_TOKEN, so
+// the privileged legs hold no credential worth taking (live_prepare_test.go
+// checks it).
+var addedBy303 = []string{"live-prepare"}
+
+// What #183 adds on purpose: the Fedora leg of the live test, a second job
+// extending the same .live_leg template as `live` (live_fedora_test.go checks
+// that it differs from `live` only in its image, LIVE_DISTRO and package
+// step).
+var addedBy183 = []string{"live-fedora"}
+
+// What #306 adds on purpose: the one cheap job a merge request into main
+// runs, so "pipelines must succeed" has a pipeline to pass when the
+// promotion into main otherwise runs nothing (ci_stages_test.go checks it).
+var addedBy306 = []string{"promoted"}
+
+// What #310 adds on purpose: flake-check, the blocking job that runs the
+// shared flake check from ai/agent-infra on docs/flakes.md in the first stage
+// (flake_check_test.go checks it). It is a new job, so no fixture job's lines
+// change and no changedBy310 rewrite is needed.
+var addedBy310 = []string{"flake-check"}
+
 // Passed already: every job and template keeps its name (and extras may only
 // be hidden templates, which GitLab never runs). The restructure adds anchors;
 // it must not rename, split or drop a job.
@@ -133,6 +168,36 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 			t.Errorf("top-level key %q from ce4b412 is gone from .gitlab-ci.yml: job names must not change (#217)", k)
 		}
 	}
+	for _, k := range addedBy245 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #245 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy183 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #183 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy303 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #303 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy306 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #306 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy310 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #310 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
 	for _, k := range doc.root.keys {
 		if !typed[k] && !strings.HasPrefix(k, ".") {
 			t.Errorf("new top-level key %q is not a hidden template (it would be a new job): the restructure may add only `.`-prefixed templates (#217)", k)
@@ -159,7 +224,11 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 	// holds the pins Renovate moves, and `default:` is compared through each
 	// job, so neither is compared whole.
 	for _, k := range []string{"stages", "workflow"} {
-		if o, n := oldDoc.root.vals[k].dump(), newDoc.root.vals[k].dump(); o != n {
+		o, n := oldDoc.root.vals[k].dump(), newDoc.root.vals[k].dump()
+		if k == "workflow" {
+			o = workflowChangedBy306
+		}
+		if o != n {
 			t.Errorf("top-level %q changed (#217)\nwant: %s\n got: %s", k, o, n)
 		}
 	}
@@ -272,9 +341,15 @@ func compareTopLevelVariables(t *testing.T, oldDoc, newDoc *yamlDoc) {
 		switch {
 		case !inNew:
 			t.Errorf("top-level variable %s is gone (#236)\nwas: %s", k, o.dump())
+		case !inOld && k == variableAddedBy183:
+			// the Fedora leg's image, a tool pin like UBUNTU_IMAGE
 		case !inOld:
 			t.Errorf("top-level variable %s is new (#236)\nnow: %s", k, n.dump())
 		case isToolPinVariable(k):
+		case variablesChangedBy193[k].new != "":
+			if w := variablesChangedBy193[k]; o.dump() != w.old || n.dump() != w.new {
+				t.Errorf("top-level variable %s should change from %s to %s (#193)\n got: %s -> %s", k, w.old, w.new, o.dump(), n.dump())
+			}
 		case o.dump() != n.dump():
 			t.Errorf("top-level variable %s changed (#236)\nwant: %s\n got: %s", k, o.dump(), n.dump())
 		default:
@@ -705,8 +780,1322 @@ bash scripts/ci/nonroot-tests.sh`,
 	},
 }
 
+// What #292 changes on purpose: the launcher refuses root (#291), so the
+// visual suite runs as an unprivileged user through
+// scripts/ci/run-unprivileged.sh, and the live install runs as orbit-ci, a
+// user in the job daemon's docker group, which also makes the registry login
+// and has it removed in after_script. A change to that script alone starts
+// the visual and live jobs. Same form and the same exactly-once rule as
+// changedBy216.
+var changedBy292 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
+		new:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		key:  "rules",
+		old:  `"changes": ["internal/ui/**/*", "test/visual/**/*", ".gitlab-ci.yml", "scripts/ci/fetch-verified.sh"]`,
+		new:  `"changes": ["internal/ui/**/*", "test/visual/**/*", ".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		old: `cd test/visual
+npm ci
+npx playwright test`,
+		new: `bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+  --keep test/visual/playwright-report --keep test/visual/test-results \
+  -- bash -c 'npm ci && npx playwright test'`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `mkdir -p .live/install-script`,
+		new: `mkdir -p .live/install-script
+# The launcher refuses root (#291), so the install runs as orbit-ci, a
+# user in the docker group of the daemon above (#292): the launcher,
+# install.sh, the folder it installs into (the test's own temporary
+# folder) and the image pulls are all that user's. Its Docker client
+# config, where the registry login below writes the job token, is
+# created here first so its owner and mode are known: orbit-ci, 0700.
+useradd --create-home --shell /bin/bash --groups docker orbit-ci
+install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker
+# The raw-log artefacts are written into .live by the test.
+chown orbit-ci .live
+setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- docker info > /dev/null \
+  || { echo "orbit-ci cannot reach the job's Docker daemon"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `  printf '%s' "$CI_JOB_TOKEN" | docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin`,
+		new: `  # The login is per Docker client user, and the pulls are orbit-ci's
+  # (#292), so it is orbit-ci that logs in: the token is written to
+  # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
+  # inside this job's container only, and after_script removes it.
+  printf '%s' "$CI_JOB_TOKEN" \
+    | setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- env HOME=/home/orbit-ci \
+      docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin
+  stat -c 'the registry login is in %n, owned by %U, mode %a' /home/orbit-ci/.docker/config.json`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `go test -tags live -count=1 -v -timeout 30m ./test/live/...
+docker ps -a || true`,
+		new: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...
+rm -f /home/orbit-ci/.docker/config.json
+docker ps -a || true`,
+	},
+}
+
+// What #277 changes on purpose: the visual suite's config has only the
+// list reporter, so no playwright-report folder is ever made; only
+// test-results, where a failure's screenshots and diffs go, comes back.
+// Same form and the same exactly-once rule as changedBy216.
+var changedBy277 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"visual"},
+		key:  "artifacts",
+		old:  `"paths": ["test/visual/playwright-report/", "test/visual/test-results/"]`,
+		new:  `"paths": ["test/visual/test-results/"]`,
+	},
+	{
+		jobs: []string{"visual"},
+		old: `bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+  --keep test/visual/playwright-report --keep test/visual/test-results \
+  -- bash -c 'npm ci && npx playwright test'`,
+		new: `bash scripts/ci/run-unprivileged.sh --chdir test/visual \
+  --keep test/visual/test-results \
+  -- bash -c 'npm ci && npx playwright test'`,
+	},
+}
+
+// What #193 changes on purpose: the live job reads ai/orbit's branch and
+// commit from orbit/pin.json, fetches install.sh, the verifier scripts and
+// cosign.pub at the commit, and reads the manifest from the latest build of
+// the pin's branch. ORBIT_BRANCH, set on a pipeline started by hand,
+// overrides the pin, and the #236 refusal says how to bump it. A change to
+// orbit/pin.json creates the job on the manual route. #234's
+// "configuration tree" rides in the first entry. Same form and the same
+// exactly-once rule as changedBy216; these apply after #277's.
+var changedBy193 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // a bump of the pin creates the job on the manual route
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh"]`,
+		new:  `"changes": [".gitlab-ci.yml", "scripts/ci/fetch-verified.sh", "scripts/ci/run-unprivileged.sh", "orbit/pin.json"]`,
+	},
+	{ // the mirror is read at the same commit; and #234's wording fix
+		jobs: []string{"live"},
+		old: `# same branch: GitLab pushes it after each Orbit merge, so it trails by
+# minutes at most. The configure tree reaches the launcher through`,
+		new: `# same commit: GitLab pushes it after each Orbit merge, so it trails by
+# minutes at most. The configuration tree reaches the launcher through`,
+	},
+	{ // which Orbit: the pin, or ORBIT_BRANCH's tip as an override
+		jobs: []string{"live"},
+		old: `project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+# The full ref, so a tag with the same name as the branch cannot answer
+# (#273). The files endpoint accepts refs/heads/<branch>.
+gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"`,
+		new: `#
+# Which Orbit (#193): the commit orbit/pin.json names, so every run
+# installs a fixed partner and an Orbit merge alone cannot turn this
+# pipeline red. install.sh, the verifier scripts and cosign.pub are
+# read at that commit; the release manifest comes from the latest
+# build of the pin's branch, and the #236 check below stops the run
+# unless the two are one release. scripts/bump-orbit-pin.sh <ref>
+# moves the pin. ORBIT_BRANCH, set non-empty on a pipeline started by
+# hand, overrides both: the files come from that branch's tip and the
+# manifest from its latest build.
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then
+  orbit_branch="$ORBIT_BRANCH"
+  # The full ref, so a tag with the same name as the branch cannot
+  # answer (#273). The files endpoint accepts refs/heads/<branch>.
+  gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
+  github_orbit_ref="$ORBIT_BRANCH"
+  orbit_at="the tip of ${ORBIT_BRANCH}"
+  orbit_mismatch="ai/orbit's ${ORBIT_BRANCH} pipeline has not caught up with the branch yet; rerun this job once it has"
+  echo "ORBIT_BRANCH=${ORBIT_BRANCH} overrides orbit/pin.json: Orbit's files come from the tip of ${ORBIT_BRANCH} (#193)"
+else
+  orbit_branch="$(jq -r .branch orbit/pin.json)" || { echo "orbit/pin.json cannot be read (#193)"; exit 1; }
+  orbit_commit="$(jq -r .commit orbit/pin.json)" || { echo "orbit/pin.json cannot be read (#193)"; exit 1; }
+  case "$orbit_commit" in
+    *[!0-9a-f]*) orbit_commit="" ;;
+  esac
+  if [ "${#orbit_commit}" -ne 40 ] || [ -z "$orbit_branch" ] || [ "$orbit_branch" = "null" ]; then
+    echo "orbit/pin.json must name a branch and a 40-hex commit (#193)"
+    exit 1
+  fi
+  gitlab_orbit_ref="$orbit_commit"
+  github_orbit_ref="$orbit_commit"
+  orbit_at="${orbit_commit} (orbit/pin.json)"
+  orbit_mismatch="the pin and ai/orbit's latest ${orbit_branch} build differ: bump orbit/pin.json with scripts/bump-orbit-pin.sh ${orbit_branch}, or wait for that build if it is still running"
+  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab, ${ORBIT_BRANCH}"`,
+		new:  `    echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `        || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${ORBIT_BRANCH}"; exit 1; }`,
+		new:  `        || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO}, ${ORBIT_BRANCH} at $(git ls-remote "https://github.com/${ORBIT_GITHUB_REPO}.git" "refs/heads/${ORBIT_BRANCH}" | cut -f1)"`,
+		new:  `    echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO} at ${orbit_at}"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `        "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${ORBIT_BRANCH}/$1" \
+        || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${ORBIT_BRANCH}"; exit 1; }`,
+		new: `        "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${github_orbit_ref}/$1" \
+        || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${orbit_at}"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script for ref ${ORBIT_BRANCH}"; exit 1; }`,
+		new:  `head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script at ${orbit_at}"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `# same branch as install.sh, then hand the path over. Preview's`,
+		new:  `# same commit as install.sh, then hand the path over. Preview's`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${ORBIT_BRANCH}"; exit 1; }
+  done
+  head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${ORBIT_BRANCH}"; exit 1; }
+  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched by full ref above (#273).`,
+		new: `    head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${orbit_at}"; exit 1; }
+  done
+  head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${orbit_at}"; exit 1; }
+  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched at the pinned commit (or, under
+  # ORBIT_BRANCH, by full ref) above (#273).`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+		new:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${ORBIT_BRANCH}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+  jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${ORBIT_BRANCH} is not a JSON release manifest"; exit 1; }
+  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${ORBIT_BRANCH} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+    || { echo "the preview release manifest at ${ORBIT_BRANCH} failed verification; nothing is installed from it (#194)"; exit 1; }
+  # install.sh comes from the branch tip, the manifest from the branch's
+  # latest preview pipeline, which trails the tip by minutes. In that
+  # gap the run would pair a newer install.sh with the previous
+  # commit's image, so it stops until the two are one release (#236).
+  [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+    || { echo "install.sh at the tip of ${ORBIT_BRANCH} is not the one the latest signed preview release records: ai/orbit's preview pipeline has not caught up with the branch yet; rerun this job once it has (#236)"; exit 1; }`,
+		new: `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+  jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
+  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+    || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
+  # install.sh comes from the pinned commit (#193), the manifest from
+  # the latest preview pipeline of the pin's branch. Once that branch
+  # moves on, or while the pinned commit's own build is still running,
+  # the two differ, and the run would pair one commit's install.sh with
+  # another's image, so it stops until they are one release (#236).
+  # Under ORBIT_BRANCH install.sh is the branch tip, and the gap is
+  # that branch's pipeline catching up.
+  [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+    || { echo "install.sh at ${orbit_at} is not the one the latest signed preview release records: ${orbit_mismatch} (#193, #236)"; exit 1; }`,
+	},
+}
+
+// What #193 changes on purpose in the top-level variables: ORBIT_BRANCH
+// loses its default, because orbit/pin.json names the Orbit branch now and
+// ORBIT_BRANCH is only an override set on a pipeline started by hand.
+var variablesChangedBy193 = map[string]struct{ old, new string }{
+	"ORBIT_BRANCH": {`"preview"`, `""`},
+}
+
+// What #263 changes on purpose: the update leg reads the previous preview
+// build's manifest and signature from .orbit-supply-chain/previous/ in the
+// latest record_image artifacts of the pin's branch, keeps the by-ID read
+// only as a hand override, fails instead of skipping when there is no
+// readable predecessor, and names the predecessor in one greppable line.
+// Same form and the same exactly-once rule as changedBy216; these apply
+// after #193's.
+var changedBy263 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `  # The update leg's first install (#198): an earlier preview release,
+  # so the update goes from one signed image to another. Its manifest
+  # and signature are read by job ID, since a branch only ever names
+  # its latest pipeline; the IDs come from whoever starts the pipeline
+  # (ORBIT_FIRST_RECORD_IMAGE_JOB, ORBIT_FIRST_SIGN_EVIDENCE_JOB),
+  # because this job's token cannot list ai/orbit's pipelines.
+  # Verified exactly as above. Its install.sh comes from the commit the
+  # manifest names and must match the sha256 the manifest records for
+  # it, so script and image stay one generation. Unset, the leg skips.
+  first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+  first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+  if [ -z "$first_record" ] && [ -z "$first_sign" ]; then
+    echo "no ORBIT_FIRST_RECORD_IMAGE_JOB / ORBIT_FIRST_SIGN_EVIDENCE_JOB: the update leg (#198) skips"
+  else`,
+		new: `  # The update leg's first install (#198): the preview build before
+  # the current one, so the update goes from one signed image to
+  # another. ai/orbit's record_image keeps that build's signed manifest
+  # and signature under .orbit-supply-chain/previous/ in its artifacts
+  # (#263), read here by branch like the current manifest. A pipeline
+  # started by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and
+  # ORBIT_FIRST_SIGN_EVIDENCE_JOB overrides that: the record_image and
+  # sign_evidence job IDs of an earlier signed ai/orbit preview
+  # pipeline, read by ID instead. Either way the earlier release is
+  # verified exactly as above, and its install.sh comes from the
+  # commit its manifest names and must match the sha256 the manifest
+  # records for it, so script and image stay one generation. The leg
+  # never skips: no readable predecessor stops the job.
+  first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+  first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+  first_dir=.live/orbit/release/first
+  mkdir -p "$first_dir"
+  if [ -n "$first_record" ] || [ -n "$first_sign" ]; then`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    first_dir=.live/orbit/release/first
+    mkdir -p "$first_dir"`,
+		new: `    first_from="ai/orbit jobs ${first_record}/${first_sign}"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "ai/orbit job ${first_record} did not return a JSON release manifest (#198)"; exit 1; }
+    [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "ai/orbit job ${first_sign} returned an empty signature (#198)"; exit 1; }
+    COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+      bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+      || { echo "the earlier release manifest from ai/orbit jobs ${first_record}/${first_sign} failed verification; nothing is installed from it (#198)"; exit 1; }
+    jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+      || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+    first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+    [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+      || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+    first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+    current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+    if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+      echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+      exit 1
+    fi
+    first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+    case "$first_commit" in
+      *[!0-9a-f]*) first_commit="" ;;
+    esac
+    [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/install.sh" \
+      "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+      || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+    [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+      || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+    export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+    export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+    echo "the update leg (#198) installs ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"
+  fi`,
+		new: `  else
+    first_from="previous/ of ai/orbit's latest ${orbit_branch} build"
+    no_predecessor="ai/orbit's latest ${orbit_branch} build has no readable predecessor (.orbit-supply-chain/previous/ in its record_image artifacts); to run the update leg from an earlier build instead, start the pipeline by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB set to that signed preview pipeline's record_image and sign_evidence job IDs (#263)"
+    # By branch name, as the current manifest above: the artifacts
+    # endpoint rejects full refs (#273). Both files are record_image's.
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \
+      || { echo "$no_predecessor"; exit 1; }
+    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \
+      || { echo "$no_predecessor"; exit 1; }
+  fi
+  jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
+  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+    || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
+  jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+    || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+  first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+  [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+    || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+  first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+  current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+  if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+    echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+    exit 1
+  fi
+  first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+  case "$first_commit" in
+    *[!0-9a-f]*) first_commit="" ;;
+  esac
+  [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \
+    "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+    || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+  [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+    || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+  export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+  first_version="$(jq -r .version "$first_dir/orbit-release-manifest.json")"
+  if [ -n "$first_record" ]; then
+    echo "update leg: previous build from job IDs ${first_record}/${first_sign}"
+  else
+    echo "update leg: previous build ${first_version} ${first_digest} from previous/"
+  fi
+  echo "the update leg (#198) installs ${first_version} ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"`,
+	},
+}
+
+// What the review of the job token's reach changes on purpose (#193, #263):
+// the Orbit branch, from the pin or ORBIT_BRANCH, must be a plain name
+// before it reaches a URL that carries the token, and its "/" is encoded in
+// the artifacts path; Orbit's verifier runs without the token in its
+// environment; and the registry login goes only to this GitLab's registry.
+// Same form and the same exactly-once rule as changedBy216; these apply
+// after #263's.
+var changedByTokenReview = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `# manifest from its latest build.
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then`,
+		new: `# manifest from its latest build. ORBIT_BRANCH moves the trust root
+# (cosign.pub and the verifier) to that branch's tip, so only start one
+# against a branch you trust.
+#
+# The branch goes into API URLs that carry the job token, so it must
+# be a plain name in the charset scripts/bump-orbit-pin.sh accepts,
+# with no "..", whichever of the two supplied it.
+orbit_branch_ok() {
+  case "$1" in
+    ''|-*|.*|/*|refs/*|*..*|*[!A-Za-z0-9._/-]*) return 1 ;;
+  esac
+}
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then
+  orbit_branch_ok "$ORBIT_BRANCH" \
+    || { echo "ORBIT_BRANCH must be a plain branch name (letters, digits, . _ / -, no ..), not ${ORBIT_BRANCH} (#193)"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  if [ "${#orbit_commit}" -ne 40 ] || [ -z "$orbit_branch" ] || [ "$orbit_branch" = "null" ]; then
+    echo "orbit/pin.json must name a branch and a 40-hex commit (#193)"`,
+		new: `  if [ "${#orbit_commit}" -ne 40 ] || ! orbit_branch_ok "$orbit_branch"; then
+    echo "orbit/pin.json must name a plain branch name (letters, digits, . _ / -, no ..) and a 40-hex commit (#193)"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi`,
+		new: `  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi
+# The artifacts-by-ref endpoint takes the bare branch name, with "/"
+# encoded like any path segment.
+orbit_branch_path="$(printf '%s' "$orbit_branch" | sed 's#/#%2F#g')"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+		new:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"`,
+		new:  `    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \`,
+		new: `  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `  export ORBIT_REPOSITORY="${image_repository#*/}"`,
+		new: `  export ORBIT_REPOSITORY="${image_repository#*/}"
+  # The job token goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the job token is not sent there (#193)"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+		new:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+		new:  `      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \`,
+		new: `  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \`,
+	},
+}
+
+// What #183 changes on purpose. The live job's body moves into the hidden
+// .live_leg template that `live` and `live-fedora` both extend, so `live`
+// now extends that (which extends what it used to), names its distribution
+// in LIVE_DISTRO and says it in one line, and its artifact name comes from
+// the job name -- live-raw-log still, live-fedora-raw-log for the other leg.
+// The skip gate moves into the .live_gate anchor each leg runs first; its
+// lines are unchanged. Same form and the same exactly-once rule as
+// changedBy216; these apply last.
+var changedBy183 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		key:  "extends",
+		old:  `[".privileged_runner", ".go_cache"]`,
+		new:  `".live_leg"`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "variables",
+		old:  `{"ORBIT_LAUNCHER_LIVE_RAW_LOG": "$CI_PROJECT_DIR/.live/live-raw.log"}`,
+		new:  `{"LIVE_DISTRO": "ubuntu", "ORBIT_LAUNCHER_LIVE_RAW_LOG": "$CI_PROJECT_DIR/.live/live-raw.log"}`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "artifacts",
+		old:  `"name": "live-raw-log"`,
+		new:  `"name": "$CI_JOB_NAME-raw-log"`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `mkdir -p .live/install-script`,
+		new: `echo "live leg: ${LIVE_DISTRO} ($(. /etc/os-release && printf '%s %s' "$ID" "$VERSION_ID"))"
+mkdir -p .live/install-script`,
+	},
+}
+
+// #300 gives `fast` 25 minutes: successful runs take 11-15 minutes and
+// 15m timed out twice on a busy host. Applies after #183.
+var changedBy300 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		key:  "timeout",
+		old:  `"15m"`,
+		new:  `"25m"`,
+	},
+}
+
+// #298: every curl that sends the job token refuses a redirect
+// (--max-redirs 0), because curl re-sends a custom header such as
+// JOB-TOKEN to whatever host a redirect names. This GitLab answers these
+// reads directly (checked 2026-10-28), so a redirect is now a loud
+// failure rather than a leak. Applies after #300.
+var changedBy298 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `  probe="$(curl --silent --location --output /dev/null --write-out '%{http_code}' \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"`,
+		new: `  probe="$(curl --silent --location --max-redirs 0 --output /dev/null --write-out '%{http_code}' \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `      curl --fail --silent --show-error --location \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \`,
+		new: `      curl --fail --silent --show-error --location --max-redirs 0 \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+		new: `  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json.sig \`,
+		new: `  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json.sig \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `    curl --fail --silent --show-error --location \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+		new: `    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  curl --fail --silent --show-error --location \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \`,
+		new: `  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \`,
+	},
+}
+
+// #301: `fast` drops the job token and the registry deploy token before
+// any step runs; the live job logs in to the registry with a read-only
+// deploy token scoped to its `live-pulls` environment instead of the job
+// token, and the daemons it leaves running beside the tests start
+// without either. Applies after #298.
+var changedBy301 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		old:  `export DEBIAN_FRONTEND=noninteractive`,
+		new: `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true
+export DEBIAN_FRONTEND=noninteractive`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "environment",
+		new:  `{"action": "prepare", "name": "live-pulls"}`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `nohup dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &`,
+		new: `# The daemon outlives every step and its environment is readable through
+# it, so it starts without the job's credentials (#301).
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `# config, where the registry login below writes the job token, is`,
+		new:  `# config, where the registry login below writes its deploy token, is`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `useradd --create-home --shell /bin/bash --groups docker orbit-ci
+install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
+		new: `useradd --create-home --shell /bin/bash --groups docker orbit-ci
+# The clone's origin URL can carry the job token; the tests read the
+# checkout as orbit-ci and nothing here fetches (#301).
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || :
+install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \`,
+		new: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  # The job token goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the job token is not sent there (#193)"; exit 1; }`,
+		new: `  # The registry login goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the registry login is not sent there (#193)"; exit 1; }`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  # (#292), so it is orbit-ci that logs in: the token is written to
+  # /home/orbit-ci/.docker/config.json, owned by orbit-ci, mode 0600,
+  # inside this job's container only, and after_script removes it.
+  printf '%s' "$CI_JOB_TOKEN" \`,
+		new: `  # (#292), so it is orbit-ci that logs in. The tests run as orbit-ci
+  # too and can read its login (#301), so it is not the job token but
+  # a read-only deploy token on ai/orbit (scope read_registry), held in
+  # the masked variables ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN:
+  # leaked, it reads Orbit's images and nothing else. It is written to
+  # /home/orbit-ci/.docker/config.json, mode 0600, inside this job's
+  # container only, and after_script removes it.
+  [ -n "${ORBIT_REGISTRY_USER:-}" ] && [ -n "${ORBIT_REGISTRY_TOKEN:-}" ] \
+    || { echo "ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN are not set: the live job pulls Orbit's image with a read-only deploy token, not the job token (#301)"; exit 1; }
+  printf '%s' "$ORBIT_REGISTRY_TOKEN" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `      docker login "$ORBIT_REGISTRY" --username gitlab-ci-token --password-stdin`,
+		new:  `      docker login "$ORBIT_REGISTRY" --username "$ORBIT_REGISTRY_USER" --password-stdin`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \`,
+		new: `  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
+		new: `# Runs beside the tests, so without the credentials (#301).
+env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
+	},
+	{
+		jobs: []string{"live"},
+		old: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
+		new: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
+	},
+}
+
+// #303, the CI security fixes from the v0.4.3 audit. Applies after #301.
+//
+// C1: the live legs no longer read ai/orbit. live-prepare (addedBy303), an
+// unprivileged job on the shared runner, fetches and verifies Orbit's files
+// with ORBIT_READ_TOKEN and hands them over as artifacts; the legs need it,
+// check that the files arrived and keep only the exports, the registry
+// login and the log lines. The #301 comments are rewritten to say what the
+// env -u wrappers really do: orbit-ci's docker group makes the tests root
+// in the container, so nothing in it is hidden from them. The renovate job
+// gets an environment so its two tokens can be scoped to it.
+//
+// C2: fast, deps, visual, classify and gitleaks drop the credentials they
+// do not need before running any branch or dependency code.
+var changedBy303 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // C1
+		jobs: []string{"live"},
+		key:  "needs",
+		old:  `[{"artifacts": "true", "job": "classify", "optional": "true"}]`,
+		new:  `[{"artifacts": "true", "job": "classify", "optional": "true"}, {"artifacts": "true", "job": "live-prepare"}]`,
+	},
+	{ // C1
+		jobs: []string{"live"},
+		old: `# The daemon outlives every step and its environment is readable through
+# it, so it starts without the job's credentials (#301).
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \`,
+		new: `# The daemon outlives every step, so it starts without the job's
+# credentials (#301). That keeps them out of its logs and dumps; it does
+# not hide them from the tests, which can read this whole container
+# (see .live_leg, #303).
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \`,
+	},
+	{ // C1
+		jobs: []string{"live"},
+		old: `useradd --create-home --shell /bin/bash --groups docker orbit-ci
+# The clone's origin URL can carry the job token; the tests read the
+# checkout as orbit-ci and nothing here fetches (#301).
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || :`,
+		new: `useradd --create-home --shell /bin/bash --groups docker orbit-ci
+# The clone's origin URL can carry the job token, and nothing here
+# fetches (#301). That keeps it out of the checkout's config, not out
+# of the tests' reach (see .live_leg, #303).
+git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || :`,
+	},
+	{ // C1: the whole fetch-and-verify block moves to live-prepare
+		jobs: []string{"live"},
+		old: `# Where the files come from (#173): ai/orbit on this GitLab, read with
+# the job token. That token carries the access of whoever started the
+# pipeline, and Renovate's project bot can never read another project,
+# so on its merge requests GitLab answers 403. Then, and only then,
+# install.sh comes from Orbit's public GitHub mirror instead, at the
+# same commit: GitLab pushes it after each Orbit merge, so it trails by
+# minutes at most. The configuration tree reaches the launcher through
+# install.sh's own handover (#190); the only other files fetched are the
+# preview release manifest and what verifies it (#194, below).
+# ORBIT_FILES_SOURCE=github forces the mirror, to prove this path; with
+# a preview channel that now fails, so prove it on a stable one.
+#
+# Which Orbit (#193): the commit orbit/pin.json names, so every run
+# installs a fixed partner and an Orbit merge alone cannot turn this
+# pipeline red. install.sh, the verifier scripts and cosign.pub are
+# read at that commit; the release manifest comes from the latest
+# build of the pin's branch, and the #236 check below stops the run
+# unless the two are one release. scripts/bump-orbit-pin.sh <ref>
+# moves the pin. ORBIT_BRANCH, set non-empty on a pipeline started by
+# hand, overrides both: the files come from that branch's tip and the
+# manifest from its latest build. ORBIT_BRANCH moves the trust root
+# (cosign.pub and the verifier) to that branch's tip, so only start one
+# against a branch you trust.
+#
+# The branch goes into API URLs that carry the job token, so it must
+# be a plain name in the charset scripts/bump-orbit-pin.sh accepts,
+# with no "..", whichever of the two supplied it.
+orbit_branch_ok() {
+  case "$1" in
+    ''|-*|.*|/*|refs/*|*..*|*[!A-Za-z0-9._/-]*) return 1 ;;
+  esac
+}
+project="$(printf '%s' "$ORBIT_PROJECT" | sed 's#/#%2F#g')"
+if [ -n "${ORBIT_BRANCH:-}" ]; then
+  orbit_branch_ok "$ORBIT_BRANCH" \
+    || { echo "ORBIT_BRANCH must be a plain branch name (letters, digits, . _ / -, no ..), not ${ORBIT_BRANCH} (#193)"; exit 1; }
+  orbit_branch="$ORBIT_BRANCH"
+  # The full ref, so a tag with the same name as the branch cannot
+  # answer (#273). The files endpoint accepts refs/heads/<branch>.
+  gitlab_orbit_ref="$(printf 'refs/heads/%s' "$ORBIT_BRANCH" | sed 's#/#%2F#g')"
+  github_orbit_ref="$ORBIT_BRANCH"
+  orbit_at="the tip of ${ORBIT_BRANCH}"
+  orbit_mismatch="ai/orbit's ${ORBIT_BRANCH} pipeline has not caught up with the branch yet; rerun this job once it has"
+  echo "ORBIT_BRANCH=${ORBIT_BRANCH} overrides orbit/pin.json: Orbit's files come from the tip of ${ORBIT_BRANCH} (#193)"
+else
+  orbit_branch="$(jq -r .branch orbit/pin.json)" || { echo "orbit/pin.json cannot be read (#193)"; exit 1; }
+  orbit_commit="$(jq -r .commit orbit/pin.json)" || { echo "orbit/pin.json cannot be read (#193)"; exit 1; }
+  case "$orbit_commit" in
+    *[!0-9a-f]*) orbit_commit="" ;;
+  esac
+  if [ "${#orbit_commit}" -ne 40 ] || ! orbit_branch_ok "$orbit_branch"; then
+    echo "orbit/pin.json must name a plain branch name (letters, digits, . _ / -, no ..) and a 40-hex commit (#193)"
+    exit 1
+  fi
+  gitlab_orbit_ref="$orbit_commit"
+  github_orbit_ref="$orbit_commit"
+  orbit_at="${orbit_commit} (orbit/pin.json)"
+  orbit_mismatch="the pin and ai/orbit's latest ${orbit_branch} build differ: bump orbit/pin.json with scripts/bump-orbit-pin.sh ${orbit_branch}, or wait for that build if it is still running"
+  echo "Orbit is pinned at ${orbit_commit} on ${orbit_branch} by orbit/pin.json (#193)"
+fi
+# The artifacts-by-ref endpoint takes the bare branch name, with "/"
+# encoded like any path segment.
+orbit_branch_path="$(printf '%s' "$orbit_branch" | sed 's#/#%2F#g')"
+gitlab_orbit_url() {
+  printf '%s/projects/%s/repository/files/%s/raw?ref=%s' "$CI_API_V4_URL" "$project" "$(printf '%s' "$1" | sed 's#/#%2F#g')" "$gitlab_orbit_ref"
+}
+orbit_source="${ORBIT_FILES_SOURCE:-auto}"
+if [ "$orbit_source" = "auto" ]; then
+  probe="$(curl --silent --location --max-redirs 0 --output /dev/null --write-out '%{http_code}' \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "$(gitlab_orbit_url scripts/install.sh)" || true)"
+  case "$probe" in
+    401|403) orbit_source=github ;;
+    *) orbit_source=gitlab ;;
+  esac
+  echo "ai/orbit on GitLab answered ${probe} for install.sh"
+fi
+case "$orbit_source" in
+  gitlab)
+    echo "Orbit's files come from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"
+    fetch_orbit_file() {
+      curl --fail --silent --show-error --location --max-redirs 0 \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --output "${3:-.live/install-script}/$2" "$(gitlab_orbit_url "$1")" \
+        || { echo "could not fetch $1 from ${ORBIT_PROJECT} on GitLab at ${orbit_at}"; exit 1; }
+    }
+    ;;
+  github)
+    echo "Orbit's files come from github.com/${ORBIT_GITHUB_REPO} at ${orbit_at}"
+    fetch_orbit_file() {
+      curl --fail --silent --show-error --location \
+        --output "${3:-.live/install-script}/$2" \
+        "https://raw.githubusercontent.com/${ORBIT_GITHUB_REPO}/${github_orbit_ref}/$1" \
+        || { echo "could not fetch $1 from github.com/${ORBIT_GITHUB_REPO} at ${orbit_at}"; exit 1; }
+    }
+    ;;
+  *)
+    echo "ORBIT_FILES_SOURCE must be auto, gitlab or github, not ${orbit_source}"
+    exit 1
+    ;;
+esac
+fetch_orbit_file scripts/install.sh install.sh
+head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script at ${orbit_at}"; exit 1; }
+# A preview install gets its release manifest from this job, not from
+# install.sh (#194). install.sh fetches a manifest on its own only for
+# the stable channel, whose manifest is a GitHub release asset; for
+# preview it refuses and wants one handed over, already verified, in
+# ORBIT_RELEASE_MANIFEST (ai/orbit#1107, ADR-0031). So the job does
+# what get-orbit.sh does for stable: read the manifest and its
+# signature, verify both with Orbit's own verifier and key from the
+# same commit as install.sh, then hand the path over. Preview's
+# manifest exists only as job artifacts of ai/orbit's preview pipeline
+# (record_image writes it, sign_evidence its signature), read with the
+# job token like the files above.
+#
+# The GitHub mirror has no pipeline artifacts, so a preview run that
+# can only reach the mirror fails here rather than skipping: a skip
+# would let an image bump go green with nothing installed into it,
+# which is how #164 happened. A pipeline the owner starts by hand with
+# RUN_LIVE=true carries the owner's access and reads ai/orbit directly.
+if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
+  if [ "$orbit_source" = "github" ]; then
+    echo "the preview release manifest cannot be read from ${ORBIT_PROJECT} with this job's token, and the GitHub mirror has none; start the pipeline by hand with RUN_LIVE=true (#194)"
+    exit 1
+  fi
+  mkdir -p .live/orbit/scripts/ci .live/orbit/release
+  fetch_orbit_file scripts/ci/verify-release-manifest.sh verify-release-manifest.sh .live/orbit/scripts/ci
+  fetch_orbit_file scripts/ci/ensure-cosign.sh ensure-cosign.sh .live/orbit/scripts/ci
+  fetch_orbit_file cosign.pub cosign.pub .live/orbit
+  for script in verify-release-manifest.sh ensure-cosign.sh; do
+    head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${orbit_at}"; exit 1; }
+  done
+  head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${orbit_at}"; exit 1; }
+  # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+  # these two stay on the plain branch name; the pair is verified below
+  # against the cosign.pub fetched at the pinned commit (or, under
+  # ORBIT_BRANCH, by full ref) above (#273).
+  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json \
+    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image"
+  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output .live/orbit/release/orbit-release-manifest.json.sig \
+    "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence"
+  jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
+  [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
+    || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
+  # install.sh comes from the pinned commit (#193), the manifest from
+  # the latest preview pipeline of the pin's branch. Once that branch
+  # moves on, or while the pinned commit's own build is still running,
+  # the two differ, and the run would pair one commit's install.sh with
+  # another's image, so it stops until they are one release (#236).
+  # Under ORBIT_BRANCH install.sh is the branch tip, and the gap is
+  # that branch's pipeline catching up.
+  [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+    || { echo "install.sh at ${orbit_at} is not the one the latest signed preview release records: ${orbit_mismatch} (#193, #236)"; exit 1; }
+  export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
+  # Install what the manifest names (#241): its image is in the GitLab
+  # registry that built it. install.sh ignores the manifest's
+  # repository and defaults to ghcr.io, where the GitHub copy can lag
+  # by up to two hours or never arrive. The token goes in on stdin.
+  image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
+  export ORBIT_REGISTRY="${image_repository%%/*}"
+  export ORBIT_REPOSITORY="${image_repository#*/}"
+  # The registry login goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the registry login is not sent there (#193)"; exit 1; }
+  # The login is per Docker client user, and the pulls are orbit-ci's
+  # (#292), so it is orbit-ci that logs in. The tests run as orbit-ci
+  # too and can read its login (#301), so it is not the job token but
+  # a read-only deploy token on ai/orbit (scope read_registry), held in
+  # the masked variables ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN:
+  # leaked, it reads Orbit's images and nothing else. It is written to
+  # /home/orbit-ci/.docker/config.json, mode 0600, inside this job's
+  # container only, and after_script removes it.
+  [ -n "${ORBIT_REGISTRY_USER:-}" ] && [ -n "${ORBIT_REGISTRY_TOKEN:-}" ] \
+    || { echo "ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN are not set: the live job pulls Orbit's image with a read-only deploy token, not the job token (#301)"; exit 1; }
+  printf '%s' "$ORBIT_REGISTRY_TOKEN" \
+    | setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- env HOME=/home/orbit-ci \
+      docker login "$ORBIT_REGISTRY" --username "$ORBIT_REGISTRY_USER" --password-stdin
+  stat -c 'the registry login is in %n, owned by %U, mode %a' /home/orbit-ci/.docker/config.json
+  echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"
+  echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
+  # The update leg's first install (#198): the preview build before
+  # the current one, so the update goes from one signed image to
+  # another. ai/orbit's record_image keeps that build's signed manifest
+  # and signature under .orbit-supply-chain/previous/ in its artifacts
+  # (#263), read here by branch like the current manifest. A pipeline
+  # started by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and
+  # ORBIT_FIRST_SIGN_EVIDENCE_JOB overrides that: the record_image and
+  # sign_evidence job IDs of an earlier signed ai/orbit preview
+  # pipeline, read by ID instead. Either way the earlier release is
+  # verified exactly as above, and its install.sh comes from the
+  # commit its manifest names and must match the sha256 the manifest
+  # records for it, so script and image stay one generation. The leg
+  # never skips: no readable predecessor stops the job.
+  first_record="${ORBIT_FIRST_RECORD_IMAGE_JOB:-}"
+  first_sign="${ORBIT_FIRST_SIGN_EVIDENCE_JOB:-}"
+  first_dir=.live/orbit/release/first
+  mkdir -p "$first_dir"
+  if [ -n "$first_record" ] || [ -n "$first_sign" ]; then
+    for job_id in "$first_record" "$first_sign"; do
+      case "$job_id" in
+        ''|*[!0-9]*) echo "ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB must both be ai/orbit job IDs (#198)"; exit 1 ;;
+      esac
+    done
+    first_from="ai/orbit jobs ${first_record}/${first_sign}"
+    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \
+      || { echo "could not read the earlier release manifest from ai/orbit job ${first_record} (#198)"; exit 1; }
+    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/${first_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \
+      || { echo "could not read the earlier release signature from ai/orbit job ${first_sign} (#198)"; exit 1; }
+  else
+    first_from="previous/ of ai/orbit's latest ${orbit_branch} build"
+    no_predecessor="ai/orbit's latest ${orbit_branch} build has no readable predecessor (.orbit-supply-chain/previous/ in its record_image artifacts); to run the update leg from an earlier build instead, start the pipeline by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB set to that signed preview pipeline's record_image and sign_evidence job IDs (#263)"
+    # By branch name, as the current manifest above: the artifacts
+    # endpoint rejects full refs (#273). Both files are record_image's.
+    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json?job=record_image" \
+      || { echo "$no_predecessor"; exit 1; }
+    curl --fail --silent --show-error --location --max-redirs 0 \
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      --output "$first_dir/orbit-release-manifest.json.sig" \
+      "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-release-manifest.json.sig?job=record_image" \
+      || { echo "$no_predecessor"; exit 1; }
+  fi
+  jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
+  [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
+  COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
+    env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+    bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
+    || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
+  jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
+    || { echo "the earlier release manifest is not a preview release (#198)"; exit 1; }
+  first_digest="$(jq -r .image.digest "$first_dir/orbit-release-manifest.json")"
+  [ "$first_digest" != "$(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST")" ] \
+    || { echo "the earlier release names the same image as the current one, ${first_digest}; an update between them proves nothing (#198)"; exit 1; }
+  first_at="$(jq -r .recordedAt "$first_dir/orbit-release-manifest.json")"
+  current_at="$(jq -r .recordedAt "$ORBIT_RELEASE_MANIFEST")"
+  if [ "$first_at" = "$current_at" ] || [ "$(printf '%s\n%s\n' "$first_at" "$current_at" | sort | head -1)" != "$first_at" ]; then
+    echo "the earlier release (recorded ${first_at}) is not older than the current one (recorded ${current_at}) (#198)"
+    exit 1
+  fi
+  first_commit="$(jq -r .commit "$first_dir/orbit-release-manifest.json")"
+  case "$first_commit" in
+    *[!0-9a-f]*) first_commit="" ;;
+  esac
+  [ "${#first_commit}" -eq 40 ] || { echo "the earlier release manifest names no source commit (#198)"; exit 1; }
+  curl --fail --silent --show-error --location --max-redirs 0 \
+    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+    --output "$first_dir/install.sh" \
+    "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${first_commit}" \
+    || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${first_commit} (#198)"; exit 1; }
+  [ "sha256:$(sha256sum "$first_dir/install.sh" | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' "$first_dir/orbit-release-manifest.json")" ] \
+    || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
+  export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+  first_version="$(jq -r .version "$first_dir/orbit-release-manifest.json")"
+  if [ -n "$first_record" ]; then
+    echo "update leg: previous build from job IDs ${first_record}/${first_sign}"
+  else
+    echo "update leg: previous build ${first_version} ${first_digest} from previous/"
+  fi
+  echo "the update leg (#198) installs ${first_version} ${first_digest} (ai/orbit ${first_commit}) first, then updates to the current preview"`,
+		new: `# Orbit's files come from live-prepare (#303), which read and verified
+# them on the shared runner; this leg reads nothing from ai/orbit.
+[ -s .live/install-script/install.sh ] \
+  || { echo "live-prepare did not hand over install.sh / the release manifests; its log says why, or its artifacts expired: retry it (#303)"; exit 1; }
+echo "install.sh and the release manifests come from live-prepare (Orbit's files from ${ORBIT_SOURCE:-an unrecorded source})"
+if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
+  first_dir=.live/orbit/release/first
+  for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh"; do
+    [ -s "$handed" ] || { echo "live-prepare did not hand over install.sh / the release manifests (no ${handed}); its log says why (#303)"; exit 1; }
+  done
+  export ORBIT_RELEASE_MANIFEST="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
+  # Install what the manifest names (#241): its image is in the GitLab
+  # registry that built it. install.sh ignores the manifest's
+  # repository and defaults to ghcr.io, where the GitHub copy can lag
+  # by up to two hours or never arrive. The token goes in on stdin.
+  image_repository="$(jq -r .image.repository "$ORBIT_RELEASE_MANIFEST")"
+  export ORBIT_REGISTRY="${image_repository%%/*}"
+  export ORBIT_REPOSITORY="${image_repository#*/}"
+  # The registry login goes only to this GitLab's own registry (#193).
+  [ "$ORBIT_REGISTRY" = "$CI_REGISTRY" ] || { echo "the manifest names image registry ${ORBIT_REGISTRY}, not this GitLab's ${CI_REGISTRY}; the registry login is not sent there (#193)"; exit 1; }
+  # The login is per Docker client user, and the pulls are orbit-ci's
+  # (#292), so it is orbit-ci that logs in. Nothing in this container
+  # is hidden from the tests (see .live_leg, #303), so the login is
+  # not the job token but a read-only deploy token on ai/orbit (scope
+  # read_registry), held in the masked variables ORBIT_REGISTRY_USER
+  # and ORBIT_REGISTRY_TOKEN (#301): leaked, it reads Orbit's images,
+  # which are public on ghcr.io anyway. It is written to
+  # /home/orbit-ci/.docker/config.json, mode 0600, inside this job's
+  # container only, and after_script removes it.
+  [ -n "${ORBIT_REGISTRY_USER:-}" ] && [ -n "${ORBIT_REGISTRY_TOKEN:-}" ] \
+    || { echo "ORBIT_REGISTRY_USER and ORBIT_REGISTRY_TOKEN are not set: the live job pulls Orbit's image with a read-only deploy token, not the job token (#301)"; exit 1; }
+  printf '%s' "$ORBIT_REGISTRY_TOKEN" \
+    | setpriv --reuid=orbit-ci --regid=orbit-ci --init-groups -- env HOME=/home/orbit-ci \
+      docker login "$ORBIT_REGISTRY" --username "$ORBIT_REGISTRY_USER" --password-stdin
+  stat -c 'the registry login is in %n, owned by %U, mode %a' /home/orbit-ci/.docker/config.json
+  echo "the manifest's image lives at ${image_repository}; install.sh pulls its digest from there, not from the GitHub mirror"
+  echo "the verified preview release manifest names image $(jq -r .image.digest "$ORBIT_RELEASE_MANIFEST"); install.sh installs that"
+  # The update leg's first install (#198), checked by live-prepare
+  # exactly as the current release is.
+  export ORBIT_LIVE_FIRST_RELEASE_MANIFEST="$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json"
+  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+  echo "the update leg (#198) installs ${FIRST_VERSION:-?} ${FIRST_DIGEST:-?} (ai/orbit ${FIRST_COMMIT:-?}, ${FIRST_FROM:-?}) first, then updates to the current preview"`,
+	},
+	{ // C1
+		jobs: []string{"renovate"},
+		key:  "environment",
+		new:  `{"action": "prepare", "name": "renovate"}`,
+	},
+	// C2: every job that runs branch or dependency code and needs no token
+	// drops the credentials first, through the .drop_job_credentials
+	// anchor, and fast's list (now that anchor) names the two Renovate
+	// tokens as a backstop to their environment scope.
+	{
+		jobs: []string{"fast"},
+		old:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN`,
+		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN`,
+	},
+	{ // the drop fails the job rather than skip (#303)
+		jobs: []string{"fast"},
+		old:  `git remote set-url origin "${CI_PROJECT_URL}.git" 2>/dev/null || true`,
+		new:  `git remote set-url origin "${CI_PROJECT_URL}.git"`,
+	},
+	{
+		jobs: []string{"deps"},
+		old:  `if [ "${DOCS_ONLY:-false}" = "true" ]; then`,
+		new: dropJobCredentials303 + `
+if [ "${DOCS_ONLY:-false}" = "true" ]; then`,
+	},
+	{
+		jobs: []string{"visual"},
+		old:  `tarball="go${GO_VERSION}.linux-amd64.tar.gz"`,
+		new: dropJobCredentials303 + `
+tarball="go${GO_VERSION}.linux-amd64.tar.gz"`,
+	},
+	// classify and gitleaks run on $UBUNTU_IMAGE, which ships no git, so
+	// the drop comes after their git install (#303).
+	{
+		jobs: []string{"classify"},
+		old:  `apt-get install -y -qq --no-install-recommends git`,
+		new: `apt-get install -y -qq --no-install-recommends git
+` + dropJobCredentials303,
+	},
+	{
+		jobs: []string{"gitleaks"},
+		old:  `apt-get install -y -qq --no-install-recommends ca-certificates curl git`,
+		new: `apt-get install -y -qq --no-install-recommends ca-certificates curl git
+` + dropJobCredentials303,
+	},
+}
+
+// #307: the update leg's first install runs the launcher that shipped with
+// the earlier release. live-prepare (addedBy303, not pinned line by line)
+// keeps its archive only if the sha256 equals the signed earlier manifest's;
+// the live leg, which live-fedora extends, checks that again, unpacks the
+// binary where orbit-ci can run it and exports its path. Applies after #303.
+var changedBy307 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old:  `  for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh"; do`,
+		new:  `  for handed in .live/orbit/release/orbit-release-manifest.json "$first_dir/orbit-release-manifest.json" "$first_dir/install.sh" "$first_dir/orbit-launcher_linux_amd64.tar.gz"; do`,
+	},
+	{
+		jobs: []string{"live"},
+		old:  `  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"`,
+		new: `  export ORBIT_LIVE_FIRST_INSTALL_SCRIPT="$CI_PROJECT_DIR/$first_dir/install.sh"
+  # The launcher that shipped with that release installs it (#307).
+  # live-prepare kept the archive only if its sha256 equals the one
+  # the signed manifest records; it is checked again here, as the
+  # other handed-over files are, then unpacked where orbit-ci can
+  # read and run it.
+  first_archive="$CI_PROJECT_DIR/$first_dir/orbit-launcher_linux_amd64.tar.gz"
+  first_launcher_sha="$(jq -r '.files["orbit-launcher_linux_amd64.tar.gz"]' "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST")"
+  [ "sha256:$(sha256sum "$first_archive" | cut -d' ' -f1)" = "$first_launcher_sha" ] \
+    || { echo "the earlier launcher archive does not match the sha256 the earlier release manifest records for it (${first_launcher_sha}) (#307)"; exit 1; }
+  first_members="$(tar -tzf "$first_archive" | grep -E '(^|/)orbit-launcher$' || :)"
+  [ -n "$first_members" ] && [ "$(printf '%s\n' "$first_members" | wc -l)" -eq 1 ] \
+    || { echo "the earlier launcher archive holds no single orbit-launcher binary (#307)"; exit 1; }
+  case "$first_members" in
+    /*|*..*) echo "the earlier launcher archive names an unsafe path, ${first_members} (#307)"; exit 1 ;;
+  esac
+  first_launcher_dir=/tmp/orbit-earlier-launcher
+  rm -rf "$first_launcher_dir"
+  install -d -m 0755 "$first_launcher_dir"
+  tar -xzf "$first_archive" -C "$first_launcher_dir" --no-same-owner -- "$first_members"
+  chmod -R a+rX "$first_launcher_dir"
+  [ -f "$first_launcher_dir/$first_members" ] && [ -x "$first_launcher_dir/$first_members" ] \
+    || { echo "the earlier launcher archive's orbit-launcher is not an executable file (#307)"; exit 1; }
+  export ORBIT_LIVE_FIRST_LAUNCHER="$first_launcher_dir/$first_members"
+  echo "update leg: earlier launcher $(jq -r .launcher.tag "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST") ($(jq -r .launcher.commit "$ORBIT_LIVE_FIRST_RELEASE_MANIFEST")) ${first_launcher_sha}"`,
+	},
+}
+
+// The two lines of the .drop_job_credentials anchor (#303 C2).
+const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+git remote set-url origin "${CI_PROJECT_URL}.git"`
+
+// #306: each pipeline runs only what an earlier stage could not (the table is
+// in ci_stages_test.go, which checks the behaviour). workflow: now creates a
+// pipeline only for a merge request into dev, preview or main, a push to
+// main, Renovate's schedule and a pipeline started by hand; the "branch with
+// an open merge request" rule goes, because no branch push creates one. The
+// checks run on a merge request into dev and on a hand-started pipeline;
+// visual's and the live jobs' merge-request routes name their target; the
+// live jobs gain the automatic route for a merge request into preview.
+// Applies after #307.
+const workflowChangedBy306 = `{"rules": [{"if": "$CI_COMMIT_TAG", "when": "never"}, {"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^(dev|preview|main)$/"}, {"if": "$CI_PIPELINE_SOURCE == \"push\" && $CI_COMMIT_BRANCH == \"main\""}, {"if": "$CI_PIPELINE_SOURCE == \"schedule\" && $RENOVATE == \"true\""}, {"if": "$CI_PIPELINE_SOURCE == \"web\" || $CI_PIPELINE_SOURCE == \"api\""}]}`
+
+var changedBy306 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the .checks_rules anchor: added keys, none of these jobs had rules
+		jobs: []string{"classify", "fast", "deps", "gitleaks"},
+		key:  "rules",
+		new:  `[{"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))"}, {"if": "$CI_PIPELINE_SOURCE == \"web\" || $CI_PIPELINE_SOURCE == \"api\""}]`,
+	},
+	{ // classify only ever sees a merge request into dev now, so the
+		// "not main" exception is dead
+		jobs: []string{"classify"},
+		old: `if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ] \
+  && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" != "main" ]; then`,
+		new: `if [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ]; then`,
+	},
+	{
+		jobs: []string{"visual"},
+		key:  "rules",
+		old:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\""}]`,
+		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))"}]`,
+	},
+	{ // the promotion from dev into preview: automatic and blocking
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `run-live-matrix(,|$)/"}, {"allow_failure"`,
+		new:  `run-live-matrix(,|$)/"}, {"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == \"dev\""}, {"allow_failure"`,
+	},
+	{ // the pin-change route belongs to merge requests into dev, and to
+		// any other branch into preview or main (review of !241)
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\"", "when": "manual"}`,
+		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))", "when": "manual"}`,
+	},
+}
+
+// The fixes from the v0.4.3 audit's second round. Applies after #306.
+//
+// The live leg skips the tests scripts/quarantine.txt names, as the gate
+// does, so a quarantined live test cannot block a promotion (#310). A merge
+// request into preview or main from any branch but the stage before runs the
+// live installs whatever changed, and the skip gate excuses only a merge
+// request into dev (#313).
+var changedByAuditE = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
+		new: `quarantined="$(bash scripts/ci/quarantine-skip.sh)"
+bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
+	},
+	{ // a merge request into preview or main from any branch but the stage
+		// before runs the live installs whatever changed (#313)
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"when": "manual"}]`,
+		new:  `"when": "manual"}, {"allow_failure": "false", "if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))"}]`,
+	},
+	{ // and the skip gate lets only a merge request into dev skip (#313)
+		jobs: []string{"live"},
+		old: `    | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+  && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then`,
+		new: `    | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+  && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" = "dev" ] \
+  && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then`,
+	},
+}
+
+// The one top-level variable #183 adds: the Fedora leg's image.
+const variableAddedBy183 = "FEDORA_IMAGE"
+
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307, then #306, then the second audit round do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -722,6 +2111,19 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy264...)
 	all = append(all, changedBy236...)
 	all = append(all, changedBy195...)
+	all = append(all, changedBy292...)
+	all = append(all, changedBy277...)
+	all = append(all, changedBy193...)
+	all = append(all, changedBy263...)
+	all = append(all, changedByTokenReview...)
+	all = append(all, changedBy183...)
+	all = append(all, changedBy300...)
+	all = append(all, changedBy298...)
+	all = append(all, changedBy301...)
+	all = append(all, changedBy303...)
+	all = append(all, changedBy307...)
+	all = append(all, changedBy306...)
+	all = append(all, changedByAuditE...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
@@ -949,6 +2351,170 @@ func TestAptPrologueIsOneAnchor(t *testing.T) {
 		}
 		if !strings.Contains(e.Script, "apt-get install -y -qq --no-install-recommends "+pkg) {
 			t.Errorf("job %q must still install %q after the prologue", job, pkg)
+		}
+	}
+}
+
+// The credential drop's two lines (#303): the anchor that resets origin, its
+// lines, and the jobs that alias it.
+const dropSetURL = `git remote set-url origin "${CI_PROJECT_URL}.git"`
+
+func dropJobCredentialsAnchor(t *testing.T, doc *yamlDoc) (lines []string, jobs []string) {
+	t.Helper()
+	holders := anchorsHolding(doc, "git remote set-url origin")
+	if len(holders) != 1 {
+		t.Fatalf("want exactly one anchor resetting the origin URL (.drop_job_credentials, #303); found %v", holders)
+	}
+	for name, users := range holders {
+		entries, err := doc.anchors[name].node.flatScripts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			for _, l := range strings.Split(e, "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					lines = append(lines, l)
+				}
+			}
+		}
+		for _, u := range users {
+			if !strings.HasPrefix(u, ".") {
+				jobs = append(jobs, u)
+			}
+		}
+	}
+	return lines, jobs
+}
+
+// The drop rewrites the clone's origin URL with git, so it can only work
+// once git is in the image (#303). $UBUNTU_IMAGE and $FEDORA_IMAGE ship no
+// git; a job on either has to install it first, and nothing but package
+// installs (which run no branch code and read no token) may run before the
+// drop.
+func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	anchorLines, jobs := dropJobCredentialsAnchor(t, doc)
+	have := map[string]bool{}
+	for _, j := range jobs {
+		have[j] = true
+	}
+	for _, want := range []string{"classify", "deps", "fast", "gitleaks", "visual"} {
+		if !have[want] {
+			t.Errorf("job %q no longer uses the credential drop (#303); users: %v", want, jobs)
+		}
+	}
+	unsetLine := ""
+	for _, l := range anchorLines {
+		if strings.HasPrefix(l, "unset ") {
+			unsetLine = l
+		}
+	}
+	prologue := map[string]bool{}
+	for name := range anchorsHolding(doc, "apt-get update -qq") {
+		entries, err := doc.anchors[name].node.flatScripts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			for _, l := range strings.Split(e, "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					prologue[l] = true
+				}
+			}
+		}
+	}
+	noGit := map[string]bool{"$UBUNTU_IMAGE": true, "$FEDORA_IMAGE": true}
+	gitInstall := regexp.MustCompile(`^(apt-get|dnf) install\b.*(^|\s)git(\s|$)`)
+	pkgInstall := regexp.MustCompile(`^(apt-get|dnf) install\b`)
+	for _, job := range jobs {
+		e, err := doc.effectiveJob(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		image := ""
+		if img := e.Keys["image"]; img != nil {
+			if img.kind == 'm' {
+				if n := img.vals["name"]; n != nil {
+					image = n.str
+				}
+			} else {
+				image = img.str
+			}
+		}
+		lines := strings.Split(e.Script, "\n")
+		at := -1
+		for i, l := range lines {
+			if strings.HasPrefix(strings.TrimSpace(l), "git remote set-url origin") {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			t.Errorf("job %q aliases the credential drop but never resets origin (#303)", job)
+			continue
+		}
+		installed := false
+		for _, l := range lines[:at] {
+			l = strings.TrimSpace(l)
+			switch {
+			case gitInstall.MatchString(l):
+				installed = true
+			case l == unsetLine, prologue[l], pkgInstall.MatchString(l):
+			default:
+				t.Errorf("job %q runs %q before the credential drop; only package installs may (#303)", job, l)
+			}
+		}
+		if noGit[image] && !installed {
+			t.Errorf("job %q runs on %s, which ships no git, and does not install git before `git remote set-url` (line %d), so the clone keeps the job token (#303)", job, image, at+1)
+		}
+	}
+}
+
+// A hygiene step that cannot run must stop the job, never skip (#303): the
+// set-url line carries no `2>/dev/null`, `|| true` or `|| :`.
+func TestDropJobCredentialsFailsClosed(t *testing.T) {
+	lines, _ := dropJobCredentialsAnchor(t, loadCI(t, readRepoFile(t, ".gitlab-ci.yml")))
+	found := false
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "git remote set-url origin") {
+			continue
+		}
+		found = true
+		if l != dropSetURL {
+			t.Errorf("the credential drop's set-url line is %q; want exactly %q, so a job that cannot reset origin fails (#303)", l, dropSetURL)
+		}
+	}
+	for _, l := range lines {
+		for _, bad := range []string{"2>/dev/null", "|| true", "|| :"} {
+			if strings.Contains(l, bad) {
+				t.Errorf("the credential drop's line %q holds %q; it must fail the job, not skip (#303)", l, bad)
+			}
+		}
+	}
+	if !found {
+		t.Error("the credential drop has no set-url line (#303)")
+	}
+}
+
+// The drop's unset line names every credential GitLab injects or this
+// project defines that the five jobs do not use (#301, #303).
+func TestDropJobCredentialsUnsetsEveryToken(t *testing.T) {
+	lines, _ := dropJobCredentialsAnchor(t, loadCI(t, readRepoFile(t, ".gitlab-ci.yml")))
+	named := map[string]bool{}
+	for _, l := range lines {
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "unset" {
+			for _, n := range f[1:] {
+				named[n] = true
+			}
+		}
+	}
+	for _, want := range []string{
+		"CI_JOB_TOKEN", "CI_BUILD_TOKEN", "CI_REGISTRY_PASSWORD", "CI_DEPENDENCY_PROXY_PASSWORD",
+		"CI_REPOSITORY_URL", "ORBIT_REGISTRY_USER", "ORBIT_REGISTRY_TOKEN", "RENOVATE_TOKEN",
+		"GITHUB_COM_TOKEN", "ORBIT_READ_TOKEN",
+	} {
+		if !named[want] {
+			t.Errorf("the credential drop does not unset %s (#303)", want)
 		}
 	}
 }

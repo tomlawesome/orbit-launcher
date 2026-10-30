@@ -119,7 +119,7 @@ const maxConsoleEntries = 200
 // observeEvent records a parsed engine event.
 func (c ConsoleModel) observeEvent(e engine.Event) ConsoleModel {
 	c.entries = appendEntry(c.entries, consoleEntry{isEvent: true, event: e})
-	if e.Phase == "rollback" {
+	if e.Phase == engine.PhaseRollback {
 		c.rollback = true
 		return c
 	}
@@ -189,6 +189,12 @@ func (c ConsoleModel) stageWord() string {
 	if c.rollback {
 		return "Rolling back"
 	}
+	return c.progressWord()
+}
+
+// progressWord is the furthest stage the run reached, a rollback aside:
+// the step that failed, as the stopped screen names it (#257, owner 2a).
+func (c ConsoleModel) progressWord() string {
 	if c.unknownStage != "" {
 		return c.unknownStage
 	}

@@ -37,6 +37,11 @@ type SuccessModel struct {
 	elapsed time.Duration
 	version string
 
+	// serviceNotes are the installer's lines for optional services still
+	// starting or stopped (ai/orbit#1456): the install succeeded without
+	// them, and the person should know.
+	serviceNotes []string
+
 	menu menu // successMenu
 
 	// Chosen is which action the user picked: "terminal" quits, "menu"
@@ -157,8 +162,16 @@ func (m SuccessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case claimLinkMsg:
 		if msg.link != "" {
+			// The caret stays on the row it was on, whose label keeps
+			// its screen row (claimPending).
+			selected := m.menu.selected()
 			m.claimLink = msg.link
 			m.menu = m.menu.over(successClaimMenu)
+			for i, label := range successClaimMenu {
+				if label == selected {
+					m.menu.sel = i
+				}
+			}
 		}
 		return m, nil
 
@@ -283,7 +296,9 @@ func (m SuccessModel) centreBlockLines() []string {
 	if m.appURL != "" {
 		// Escaped for the screen only: open() above still gets the raw
 		// address, as the Remove box shows escaped and runs raw.
-		address := style.AccentText.Render(visibleText(m.appURL))
+		// Without its account part: a user name and password stay off
+		// the screen, as on the confirm screens (#277).
+		address := style.AccentText.Render(visibleText(withoutAccount(m.appURL)))
 		if m.claimLink != "" {
 			// The address a person reads, opening the claim page a
 			// terminal that knows OSC 8 lets them click.
@@ -296,6 +311,17 @@ func (m SuccessModel) centreBlockLines() []string {
 		status += style.Separator + style.DegradedText.Render("unclaimed")
 	}
 	lines = append(lines, status)
+	if len(m.serviceNotes) > 0 {
+		lines = append(lines, "")
+		for _, note := range m.serviceNotes {
+			// Installer lines, like the stopped screen's: a word that fits
+			// the text area stays whole, a wider one is cut at the measure,
+			// every character kept (#277 L4).
+			for _, row := range wrapWordsIn(visibleText(note), measure(m.width, errorWidth), textArea(m.width)) {
+				lines = append(lines, style.MutedText.Render(row))
+			}
+		}
+	}
 	lines = append(lines, "")
 
 	// The copy row says so once it has copied; the menu's own label,
@@ -312,6 +338,9 @@ func (m SuccessModel) centreBlockLines() []string {
 	}
 	for i, label := range rows {
 		lines = append(lines, menuRow(label, i == m.menu.sel))
+		if i == 0 && m.claimPending() {
+			lines = append(lines, "")
+		}
 	}
 	if m.copied {
 		lines = append(lines, "")
@@ -324,6 +353,14 @@ func (m SuccessModel) centreBlockLines() []string {
 		lines = append(lines, style.Tagline.Render("no browser here — copy the URL above"))
 	}
 	return lines
+}
+
+// claimPending reports whether a screen that reads a claim link has none
+// to show: the blank slot under Get into Orbit is Copy claim link's,
+// should a link arrive, and stays blank when none does, so no row moves
+// under the caret either way (#277).
+func (m SuccessModel) claimPending() bool {
+	return m.readClaim != nil && m.claimLink == ""
 }
 
 // claimLinkRows lays the claim link out in rows of at most limit cells:

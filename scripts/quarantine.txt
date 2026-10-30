@@ -1,0 +1,32 @@
+# Quarantined Go tests: one test name per line, blank lines and # comments
+# ignored. A name skips every test whose name contains it, in the gate.
+#
+# This one file is both what skips the tests (scripts/ci/quarantine-skip.sh,
+# read by scripts/coverage.sh, scripts/ci/nonroot-tests.sh, .live_leg in
+# .gitlab-ci.yml and .github/workflows/live-install-test.yml) and what the
+# `flake-check` job passes to --quarantined, so the skip and the check cannot
+# drift apart (agent-infra scripts/flake-check/README.md, "Quarantine
+# adapters"). Each name must also appear in its heading in docs/flakes.md.
+#
+# It covers the Go suites only: the Playwright and bats suites have no
+# quarantine (agent-infra's README gives the Playwright adapter if one is ever
+# needed). test/live is the only package built with the `live` tag, and the
+# live legs skip only there.
+#
+# Each name is a test name as `go test -run` matches it, `TestX` or
+# `TestX/sub`. test/supplychain rejects a `TestX` that `go test -list` does
+# not find, and a `/sub` that no string literal in TestX's own function body
+# spells, after Go prints spaces as underscores (subtests are only named at
+# run time, so this is a source check, not a run). A subtest named in a
+# helper or a package-level table cannot be seen that way:
+# quarantine the parent `TestX` instead.
+# A subtest a sibling depends on takes that sibling with it: quarantining a
+# live `TestX/Install` means its `Remove` skips itself, with the reason,
+# because there is nothing to remove; name the parent `TestX` instead if the
+# whole journey should leave the gate.
+#
+# Adding a name takes the test out of the merge gate, so also add a
+# non-blocking job that runs the quarantined tests with
+# `go test -run "$(bash scripts/ci/quarantine-skip.sh)"` (for a test/live
+# name, `go test -tags live -run ... ./test/live/...`); none exists yet
+# because nothing is quarantined.

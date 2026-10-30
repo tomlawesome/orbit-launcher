@@ -1,0 +1,30 @@
+                [38;2;248;113;113m✗[m [1;38;2;231;233;238mInstall stopped[m                 
+                                                  
+    [38;2;231;233;238mThe install was undone in the folder, but[m     
+  [38;2;231;233;238msomething it started in Docker is still there.[m  
+              [38;2;124;134;153mstage: Starting Orbit[m               
+                        [38;2;74;84;104m…[m                         
+  [38;2;74;84;104mOrbit installer: .env-orbit and .orbit-secrets[m  
+   [38;2;74;84;104mwill be put back exactly as they were before[m   
+   [38;2;74;84;104mthis install; anything changed in them while[m   
+   [38;2;74;84;104mit ran is replaced. A copy of this folder's[m    
+  [38;2;74;84;104moriginal files is kept in /srv/orbit/orbit-ins[m  
+     [38;2;74;84;104mtall-backups/20261020T101010Z/originals.[m     
+                 [38;2;74;84;104m.[m                                
+  [38;2;28;36;52m╭────────────────────────────────────────────╮[m  
+  [38;2;28;36;52m│[m [38;2;231;233;238mcd \[m                                       [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m [38;2;231;233;238m  /srv/orbit/orbit-install-backups/202610\[m [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m [38;2;231;233;238m20T101010Z/engine \[m                        [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m [38;2;231;233;238m  && docker compose --project-name orbit \[m [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m [38;2;231;233;238m  --env-file .env-orbit down \[m             [38;2;28;36;52m│[m  
+  [38;2;28;36;52m│[m [38;2;231;233;238m  --remove-orphans[m                         [38;2;28;36;52m│[m  
+  [38;2;28;36;52m╰────────────────────────────────────────────╯[m  
+   [38;2;124;134;153mRun this in a terminal, then choose Install[m    
+                      [38;2;124;134;153magain[m                       
+        [38;2;203;213;225m●[m   [38;2;251;113;133m·[m                                   [38;2;74;84;104m.[m 
+                 [38;2;216;180;90m▸[m [38;2;231;233;238mCopy command[m                   
+        [38;2;74;84;104m.[m         [38;2;124;134;153mInstall again[m                   
+                       [38;2;124;134;153mMenu[m                       
+                       [38;2;124;134;153mExit[m                       
+                                                  
+                                                  

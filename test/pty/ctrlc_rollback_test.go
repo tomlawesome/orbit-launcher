@@ -56,7 +56,9 @@ func TestConsole_RealPTY_CtrlCMidInstallLetsTheInstallerRollBack(t *testing.T) {
 	if err := console.expectString("stopping the install"); err != nil {
 		t.Fatalf("Ctrl-C mid-install did not show the stopping line: %v", err)
 	}
-	if err := console.expectString("the installer is undoing what it started"); err != nil {
+	// The fake engine's application event is past the commit, so the
+	// line says the installer must finish its step first (#303).
+	if err := console.expectString("the installer has to finish the step it is on first"); err != nil {
 		t.Fatalf("the stopping screen did not say what is happening: %v", err)
 	}
 

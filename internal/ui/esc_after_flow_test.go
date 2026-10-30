@@ -239,6 +239,7 @@ func appOnInstallSuccess(t *testing.T) AppModel {
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install

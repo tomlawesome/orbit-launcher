@@ -44,6 +44,12 @@ const (
 	// ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH, the way get-orbit.sh hands over a
 	// verified copy.
 	firstScriptEnv = "ORBIT_LIVE_FIRST_INSTALL_SCRIPT"
+	// firstLauncherEnv is the launcher that shipped with that release (#307),
+	// unpacked by the job from the archive its signed manifest records. A
+	// deployment on the earlier release was installed with it, and its
+	// install.sh predates what the launcher under test seeds, so InstallEarlier
+	// runs it; Update and Remove run the launcher under test.
+	firstLauncherEnv = "ORBIT_LIVE_FIRST_LAUNCHER"
 )
 
 // TestLive_UpdateReconfiguresOnTheNewImage is #197's update case: when an
@@ -84,8 +90,18 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	firstScript := os.Getenv(firstScriptEnv)
 	if currentManifest == "" || firstManifest == "" || firstScript == "" {
 		t.Skipf("no earlier Orbit release to update from: %s, %s and ORBIT_RELEASE_MANIFEST must all be set. "+
-			"In CI, start the pipeline with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB naming an earlier "+
-			"ai/orbit preview pipeline's record_image and sign_evidence jobs (#198)", firstManifestEnv, firstScriptEnv)
+			"In CI the live job sets them from the previous build ai/orbit's record_image keeps (#263), or from "+
+			"ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB on a hand-started pipeline (#198)", firstManifestEnv, firstScriptEnv)
+	}
+	// The first-release manifest and script are set, so the job means to run
+	// the update leg: it needs the earlier launcher, and without it fails
+	// rather than skip or install with the launcher under test (#307).
+	firstLauncher := os.Getenv(firstLauncherEnv)
+	if firstLauncher == "" {
+		t.Fatalf("%s is not set: the update leg's first install runs the launcher that shipped with the earlier release, and the job sets it from the archive its manifest records (#307)", firstLauncherEnv)
+	}
+	if info, err := os.Stat(firstLauncher); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("%s=%q is not an executable file (stat: %v) (#307)", firstLauncherEnv, firstLauncher, err)
 	}
 	newDigest := readManifestDigest(t, currentManifest)
 	oldDigest := readManifestDigest(t, firstManifest)
@@ -102,8 +118,25 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	const clientID, secret = "orbit-launcher-live-update-test", "ci-live-update-fake-secret"
 
 	var oldRef string
-	installed := t.Run("InstallEarlier", func(t *testing.T) {
-		session := startLiveEnv(t, binPath, dir,
+	var installed bool // set by InstallEarlier itself: a filtered-out t.Run returns true (#310)
+	t.Run("InstallEarlier", func(t *testing.T) {
+		// The earlier release's own launcher draws these screens, so every
+		// wait goes through test/live/screens.go (#307).
+		firstData, err := os.ReadFile(firstManifest)
+		if err != nil {
+			t.Fatalf("read release manifest: %v", err)
+		}
+		tag, commit, err := manifestLauncher(firstData)
+		if err != nil {
+			t.Fatalf("%s: %v", firstManifest, err)
+		}
+		t.Logf("InstallEarlier drives the earlier release's launcher %s (%s); the screens are that launcher's", tag, commit)
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("a wait that timed out here most likely names a screen the launcher under test has renamed since %s; add that wording beside the old one in test/live/screens.go, never in its place", tag)
+			}
+		})
+		session := startLiveEnv(t, firstLauncher, dir,
 			"ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH="+firstScript,
 			"ORBIT_RELEASE_MANIFEST="+firstManifest)
 		installThroughConsole(t, session, appURL, clientID, secret, "Get into Orbit")
@@ -114,11 +147,12 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		if got := digestOf(oldRef); got != oldDigest {
 			t.Fatalf("the first install recorded ORBIT_IMAGE=%q, want the earlier release's %s", oldRef, oldDigest)
 		}
+		installed = !t.Failed()
 	})
 
 	t.Run("Update", func(t *testing.T) {
 		if !installed {
-			t.Skip("the earlier install failed; nothing to update")
+			t.Skip("the earlier install did not run or failed; nothing to update")
 		}
 		emptyOIDCSecret(t, dir)
 

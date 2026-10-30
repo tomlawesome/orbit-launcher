@@ -1,0 +1,30 @@
+                                                [38;2;74;84;104m.[m                                                                    [38;2;74;84;104m.[m  
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                          [38;2;74;84;104m✦[m          [38;2;74;84;104m✦[m                                                                                  
+                                 [38;2;74;84;104m.[m                                                                                      
+               [38;2;74;84;104m·[m                                    [38;2;74;84;104m·[m      [38;2;216;180;90m⟡[m                         [38;2;143;184;255m●[m                 [38;2;216;180;90m●[m               [38;2;74;84;104m·[m
+                     [38;2;74;84;104m·[m                         [38;2;74;84;104m·[m                                                   [38;2;74;84;104m·[m                    
+                                              [38;2;74;84;104m✦[m [1;38;2;231;233;238mHow will people sign in?[m                                                
+                                                                                                                        
+                            [38;2;124;134;153mLocal accounts[m                                                    [38;2;74;84;104m·[m                         
+                          [38;2;124;134;153m    People get a password managed by Orbit. Nothing else to set up.[m                           
+                          [38;2;124;134;153m    A provider can be added later with configure.sh.[m                    [38;2;74;84;104m·[m                     
+                                                                                                                        
+                          [38;2;216;180;90m▸[m [38;2;231;233;238mSingle sign-on (SSO) with an identity provider[m                                              
+                          [38;2;124;134;153m    People sign in through your OIDC provider — Authentik, Keycloak,[m                          
+                          [38;2;124;134;153m    Entra ID and the like. Orbit asks for its address and client[m                              
+                          [38;2;124;134;153m    details next. Local accounts stay available as well.[m                                      
+                                                                                                                        
+                                             [38;2;74;84;104m.[m                                                                          
+                                                                   [38;2;74;84;104m.[m                                                    
+                                              [38;2;74;84;104m·[m         [38;2;74;84;104m✦[m             [38;2;74;84;104m·[m                                                 
+                                                [38;2;74;84;104m✦[m                                                                       
+                   [38;2;203;213;225m●[m    [38;2;251;113;133m·[m                                                                          [38;2;74;84;104m·[m                    
+                                                                                                                        
+                                                                                                                        
+                                                     [38;2;74;84;104m··[m                                                                 
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        

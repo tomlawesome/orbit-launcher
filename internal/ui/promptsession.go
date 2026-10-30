@@ -117,15 +117,15 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	fmt.Fprintln(b, style.Ink.Render(label))
 	// The hint and each note wrap at spaces to the screen's width, as
 	// other prose does (#269); an unsized screen (width 0) prints them
-	// whole. wrapWords keeps a word wider than the screen whole (a long
-	// example URL), so it is cut at the screen's edge here; a URL that
-	// fits stays on one line.
+	// whole. A word that fits the text area (a long example URL) stays
+	// on one line, and a longer one is cut by wrapWordsIn (#277); the
+	// cut at the screen's edge here is a backstop.
 	prose := func(ink lipgloss.Style, text string) {
 		if width <= 0 {
 			fmt.Fprintln(b, ink.Render(text))
 			return
 		}
-		for _, row := range wrapWords(text, measure(width, errorWidth)) {
+		for _, row := range wrapWordsIn(text, measure(width, errorWidth), textArea(width)) {
 			for _, part := range strings.Split(xansi.Hardwrap(row, width, true), "\n") {
 				fmt.Fprintln(b, ink.Render(part))
 			}

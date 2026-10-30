@@ -42,7 +42,8 @@ func (r *claimRecorder) read(_ context.Context, dir, appURL string, since time.T
 // wiringModel builds an AppModel whose engine completes at dir, the
 // deployment found there answering with appURL, and the claim read
 // replaced by rec.
-func wiringModel(dir, appURL string, rec *claimRecorder) (AppModel, *sink) {
+func wiringModel(t *testing.T, dir, appURL string, rec *claimRecorder) (AppModel, *sink) {
+	t.Helper()
 	queue := newSink()
 	m := NewAppModelNoAnimation().WithSender(queue.Send).WithoutVolumeCheck().WithVersion("v9.9.9")
 	m.targetDir = dir
@@ -53,6 +54,7 @@ func wiringModel(dir, appURL string, rec *claimRecorder) (AppModel, *sink) {
 		},
 	}
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	m.flowReadClaim = rec.read
 	return m, queue
 }
@@ -81,7 +83,7 @@ func installToEnd(t *testing.T, m AppModel, queue *sink) (AppModel, time.Time) {
 func TestClaimWiring_InstallSuccessReadsTheClaimOnce(t *testing.T) {
 	dir := t.TempDir()
 	rec := &claimRecorder{link: wiringLink}
-	m, queue := wiringModel(dir, wiringApp, rec)
+	m, queue := wiringModel(t, dir, wiringApp, rec)
 
 	m, before := installToEnd(t, m, queue)
 	if m.state != appStateSuccess {
@@ -120,7 +122,7 @@ func TestClaimWiring_UpdateSuccessNeverReadsTheClaim(t *testing.T) {
 	dir := shortTempDir(t)
 	writeEnv(t, dir, "APP_URL="+wiringApp+"\n")
 	rec := &claimRecorder{link: wiringLink}
-	m, queue := wiringModel(dir, wiringApp, rec)
+	m, queue := wiringModel(t, dir, wiringApp, rec)
 
 	m = openUpdate(t, m, nil)
 	if s := screen(m); !strings.Contains(s, "Pull the latest Orbit and update this deployment") {
@@ -147,7 +149,7 @@ func TestClaimWiring_UpdateSuccessNeverReadsTheClaim(t *testing.T) {
 // claim for.
 func TestClaimWiring_InstallSuccessWithNoAddressReadsNothing(t *testing.T) {
 	rec := &claimRecorder{link: wiringLink}
-	m, queue := wiringModel(t.TempDir(), "", rec)
+	m, queue := wiringModel(t, t.TempDir(), "", rec)
 
 	m, _ = installToEnd(t, m, queue)
 	if m.state != appStateSuccess {

@@ -145,8 +145,8 @@ func TestInstallModel_SelectingStandardOpensTheNotice(t *testing.T) {
 	}
 }
 
-func TestInstallModel_SelectingDocumentsAgentOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
-	for _, sel := range []int{1, 2, 3} { // Documents, Agent, Full
+func TestInstallModel_SelectingAgentOrFullShowsUnavailableNotFakeProgress(t *testing.T) {
+	for _, sel := range []int{2, 3} { // Agent, Full
 		m, _ := newTestInstallModel(engineRunSeams{})
 		m.profile.sel = sel
 		updated, _ := m.Update(key(tea.KeyEnter))
@@ -169,6 +169,7 @@ func TestInstallModel_EscapeFromTheNoticeReturnsToProfile(t *testing.T) {
 }
 
 func TestInstallModel_StandardNeverStartsTheEngineAutomatically(t *testing.T) {
+	shortNoticeTick(t) // the test runs the tick command, which waits one interval
 	engineCalled := false
 	seams := engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -227,7 +228,7 @@ func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
 		),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd, s)
+	m = driveUntil(t, m, cmd, shows("running", "Resolving image identity"), s)
 
 	view := m.View().Content
 	if !strings.Contains(view, "image") || !strings.Contains(view, "running") {
@@ -291,10 +292,14 @@ func TestInstallModel_EngineFailureShowsReasonWordsAndStderrTail(t *testing.T) {
 		t.Fatalf("run state = %v, want runFailed", m.run.state)
 	}
 	view := m.View().Content
-	for _, want := range []string{"Install stopped", "image-registry", "Could not pull"} {
+	for _, want := range []string{"Install stopped", "Could not pull"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("failure view missing %q", want)
 		}
+	}
+	// #257: the reason token is engine vocabulary and stays off screen.
+	if strings.Contains(view, "image-registry") {
+		t.Errorf("failure view shows the raw reason token image-registry")
 	}
 
 	// Menu is the second option — choosing it asks for the splash back.

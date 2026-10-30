@@ -31,6 +31,13 @@ func measure(width, limit int) int {
 	return max(1, min(width-4, limit))
 }
 
+// textArea is a screen's text area, the edge wrapWordsIn and
+// writeWrappedIn keep a fitting word whole within: the width less the
+// margin measure leaves, never under one cell.
+func textArea(width int) int {
+	return max(1, width-4)
+}
+
 // wrapShellCommand lays a shell command, given as its already-quoted
 // words, out on lines of at most limit cells that a shell reads back as
 // those words joined by spaces: every line that continues ends in " \",
@@ -44,7 +51,6 @@ func measure(width, limit int) int {
 // (§2.2.1: a backslash-newline continues a line; §2.2.2: adjacent quoted
 // strings join into one word; see cutUnit). The next unit starts a fresh row.
 func wrapShellCommand(words []string, limit int) []string {
-	words = shownQuotes(words)
 	if cmd := strings.Join(words, " "); lipgloss.Width(cmd) <= limit {
 		return []string{cmd}
 	}
@@ -109,19 +115,6 @@ func endCut(text string, limit int) string {
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`
 
-// shownQuotes puts back the escaped apostrophes visibleText doubled the
-// backslash of in words shown on screen: they are the shell's quoting,
-// not text from the folder, so the box writes them as the shell does
-// and cutUnit still knows them. Inside a quoted word every apostrophe
-// is a quote or part of one, so the doubled form is never anything else.
-func shownQuotes(words []string) []string {
-	out := make([]string, len(words))
-	for i, w := range words {
-		out[i] = strings.ReplaceAll(w, `'\\''`, escapedQuote)
-	}
-	return out
-}
-
 // cutUnit cuts a unit too wide for one row (an option with its value, or
 // a word) into rows that read back as it. It returns every row but the
 // last, each ending in a backslash that continues the line, and the last
@@ -130,7 +123,7 @@ func shownQuotes(words []string) []string {
 // left. A cut inside a single-quoted word closes the quote and reopens
 // it: a row ends in `'\` and the next starts with `'`. A cut inside a
 // bare word ends the row in a backslash glued to the text. A cut falls
-// between escapeUnits, never leaves an empty fragment, and never
+// between shell lexemes (shellEscape), never leaves an empty fragment, and never
 // falls beside or inside an escaped apostrophe. A unit with no place to
 // cut is returned whole.
 func cutUnit(u string, limit int) (rows []string, last string) {
@@ -144,11 +137,19 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 	open, closing := "", ""
 	if len(u) >= 2 && u[0] == '\'' && u[len(u)-1] == '\'' {
 		open, closing, u = "'", "'", u[1:len(u)-1]
+	} else if len(u) >= 3 && strings.HasPrefix(u, "$'") && u[len(u)-1] == '\'' {
+		// bash's $'...' form (#277 W2): reopened as $' so each fragment
+		// keeps its escapes, and \' is never split.
+		open, closing, u = "$'", "'", u[2:len(u)-1]
 	}
 	var atoms []string
 	for rest := u; rest != ""; {
 		a := escapedQuote
-		if !strings.HasPrefix(rest, a) {
+		switch {
+		case strings.HasPrefix(rest, a):
+		case open != "'" && rest[0] == '\\':
+			a = shellEscape(rest, open == "$'")
+		default:
 			a = firstUnit(rest) // an escape such as \x1b is never cut
 		}
 		atoms = append(atoms, a)
@@ -185,6 +186,46 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 	return rows, head + open + strings.Join(atoms, "") + closing
 }
 
+// shellEscape is the backslash at the start of rest together with what
+// it escapes, as bash reads it: in a bare word the next character (POSIX
+// 2.2.1); inside $'…' the ANSI-C escape (\nnn up to three octal digits,
+// \xHH up to two hex, \uHHHH up to four, \UHHHHHHHH up to eight, \cX,
+// or one character). printf %q, which writes the installer's recovery
+// line, uses these forms; escapeLen knows only visibleText's. A cut
+// between the backslash and its character ends a row in `\\` (read as a
+// literal backslash, and the command ends there) or `\'` (read as an
+// escaped quote, so the quoting runs out of phase).
+func shellEscape(rest string, ansiC bool) string {
+	if len(rest) < 2 {
+		return rest
+	}
+	const hex = "0123456789abcdefABCDEF"
+	start, most, digits := 1, 0, ""
+	if ansiC {
+		switch c := rest[1]; {
+		case c >= '0' && c <= '7':
+			most, digits = 3, "01234567"
+		case c == 'x':
+			start, most, digits = 2, 2, hex
+		case c == 'u':
+			start, most, digits = 2, 4, hex
+		case c == 'U':
+			start, most, digits = 2, 8, hex
+		case c == 'c':
+			start = 2
+		}
+	}
+	if digits == "" { // the backslash (or \c) and the next character
+		c, _ := xansi.FirstGraphemeCluster(rest[start:], xansi.GraphemeWidth)
+		return rest[:start+len(c)]
+	}
+	end := start
+	for end < len(rest) && end < start+most && strings.IndexByte(digits, rest[end]) >= 0 {
+		end++
+	}
+	return rest[:end]
+}
+
 // commandUnits groups a command's words into the pieces a line may end
 // after: each word, with an option glued to the value that follows it.
 func commandUnits(words []string) []string {
@@ -208,9 +249,21 @@ func commandUnits(words []string) []string {
 // line breaks stay. A line that fits is kept as given; one
 // that does not breaks at spaces, the spaces at a break being the
 // break, while its indent and runs of spaces elsewhere stay. A single
-// word wider than limit stays whole. Trailing line breaks are dropped,
-// and empty text is no lines.
+// word wider than limit is cut across rows at limit, by cells and
+// between escapeUnits (never inside a wide character), every character
+// kept in order (#277). Trailing line breaks are dropped, and empty text
+// is no lines. A screen draws through wrapWordsIn instead, so a word
+// that fits the terminal stays whole.
 func wrapWords(text string, limit int) []string {
+	return wrapWordsIn(text, limit, limit)
+}
+
+// wrapWordsIn is wrapWords for a screen whose text area (textArea) is
+// edge cells wide, the rule wrapHard follows for folder names: a word
+// wider than limit that still fits edge gets a row of its own, whole,
+// since what fits the terminal is never cut; a word wider than edge is
+// cut at limit. An edge under limit counts as limit.
+func wrapWordsIn(text string, limit, edge int) []string {
 	// Trailing line breaks are not rows: command output ends in one.
 	text = strings.TrimRight(ansi.Strip(text), "\r\n")
 	if text == "" {
@@ -218,7 +271,7 @@ func wrapWords(text string, limit int) []string {
 	}
 	var rows []string
 	for _, line := range strings.Split(text, "\n") {
-		rows = append(rows, wrapLine(cleanLine(line), limit)...)
+		rows = append(rows, wrapLine(cleanLine(line), limit, max(edge, limit))...)
 	}
 	// Trailing rows that clean to nothing (a NUL, a tab, spaces) are
 	// not rows either; a blank row inside the text stays.
@@ -235,7 +288,10 @@ func wrapWords(text string, limit int) []string {
 // return keeps the last non-empty segment after it: what a terminal
 // shows once the progress it overwrote has finished, and a CRLF line
 // end loses nothing. A tab is one space (it measures 0 cells but
-// renders as four), and any other control character is dropped.
+// renders as four), and any other control character is dropped. An
+// invisible direction or joining character (see isInvisibleControl) is
+// shown as visibleText shows it (\u202e, \u200b), so it cannot turn the
+// rest of the row around or hide inside a word (#277).
 func cleanLine(line string) string {
 	if strings.Contains(line, "\r") {
 		segs := strings.Split(line, "\r")
@@ -247,15 +303,35 @@ func cleanLine(line string) string {
 			}
 		}
 	}
-	return strings.Map(func(r rune) rune {
+	var b strings.Builder
+	for _, r := range line {
 		switch {
 		case r == '\t':
-			return ' '
+			b.WriteByte(' ')
 		case r < 0x20, r == 0x7f, r >= 0x80 && r < 0xa0:
-			return -1
+		case isInvisibleControl(r):
+			b.WriteString(visibleText(string(r)))
+		default:
+			b.WriteRune(r)
 		}
-		return r
-	}, line)
+	}
+	return b.String()
+}
+
+// isInvisibleControl reports the characters that draw nothing yet change
+// how the text around them reads: the embedding and override controls
+// (U+202A to U+202E), the isolates (U+2066 to U+2069), the direction
+// marks LRM, RLM and ALM (U+200E, U+200F, U+061C), the zero-width
+// space, non-joiner and joiner (U+200B to U+200D), the word joiner
+// (U+2060) and the byte order mark (U+FEFF).
+func isInvisibleControl(r rune) bool {
+	switch {
+	case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+		return true
+	case r >= '\u200b' && r <= '\u200f':
+		return true
+	}
+	return r == '\u061c' || r == '\u2060' || r == '\ufeff'
 }
 
 // wrapLine is wrapWords for one line of text, in one pass. It breaks
@@ -264,8 +340,10 @@ func cleanLine(line string) string {
 // and elsewhere it is kept as written. The row's width is a running
 // count (a space never joins a grapheme cluster, so widths add), and a
 // run is written only when a word follows it on the same row. An
-// indent stays while it and the first word fit.
-func wrapLine(line string, limit int) []string {
+// indent stays while it and the first word fit. A word wider than edge
+// joins the row (or starts a fresh one when the row has no room left)
+// and is cut at limit by hardCut, as wrapHard cuts a path.
+func wrapLine(line string, limit, edge int) []string {
 	if lipgloss.Width(line) <= limit {
 		return []string{line}
 	}
@@ -287,6 +365,22 @@ func wrapLine(line string, limit int) []string {
 		rest = rest[end:]
 
 		gapW, w := lipgloss.Width(gap), lipgloss.Width(word)
+		if w > edge {
+			if !hasWord || rowW+gapW >= limit { // no room left: the gap is the break
+				if hasWord {
+					rows = append(rows, row.String())
+				}
+				row.Reset()
+				rowW, gap = 0, ""
+			}
+			parts := hardCut(row.String()+gap+word, limit)
+			rows = append(rows, parts[:len(parts)-1]...)
+			last := parts[len(parts)-1]
+			row.Reset()
+			row.WriteString(last)
+			rowW, hasWord = lipgloss.Width(last), true
+			continue
+		}
 		switch {
 		case hasWord && rowW+gapW+w > limit: // the gap is the break
 			rows = append(rows, row.String())
@@ -304,10 +398,16 @@ func wrapLine(line string, limit int) []string {
 }
 
 // writeWrapped writes text that nobody sized — a path, Docker's own
-// words — in ink, as wrapWords lines, so it is never cut at the
-// screen's edge. Blank text is one blank line.
+// words — in ink, as wrapWords lines, so it never runs past limit.
+// Blank text is one blank line. A screen draws through writeWrappedIn.
 func writeWrapped(b *strings.Builder, ink lipgloss.Style, text string, limit int) {
-	lines := wrapWords(text, limit)
+	writeWrappedIn(b, ink, text, limit, limit)
+}
+
+// writeWrappedIn is writeWrapped as wrapWordsIn lays it out, for a
+// screen whose text area is edge cells wide.
+func writeWrappedIn(b *strings.Builder, ink lipgloss.Style, text string, limit, edge int) {
+	lines := wrapWordsIn(text, limit, edge)
 	if len(lines) == 0 {
 		lines = []string{""}
 	}

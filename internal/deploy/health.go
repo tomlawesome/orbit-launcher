@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -19,8 +22,15 @@ import (
 const healthProbeTimeout = 2 * time.Second
 
 // healthClient is the client the probe goes through; http.DefaultClient
-// has no timeout at all.
-var healthClient = &http.Client{Timeout: healthProbeTimeout}
+// has no timeout at all. It never follows a redirect (#277 W1): a
+// redirect would contact an address .env-orbit never named, and the 3xx
+// answer already shows the deployment is responding.
+var healthClient = &http.Client{
+	Timeout: healthProbeTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // HealthReason says why a deployment reads as degraded; the empty
 // reason means it answered (#254).
@@ -34,22 +44,40 @@ const (
 	HealthServerError         HealthReason = "server error"
 	HealthCertificateRejected HealthReason = "certificate rejected"
 	HealthUnchecked           HealthReason = "could not check"
+	// HealthMaintenance is a deployment Orbit itself reports as closed to
+	// users for maintenance: up and healthy, not degraded (#302).
+	HealthMaintenance HealthReason = "closed to users"
 )
 
-// ProbeHealth asks the deployment at appURL whether it is responding: a
-// single GET against the app's own URL. A 2xx to 4xx answer is
-// responding, a 5xx is a server error, and a transport failure is named
-// by its cause (a name that does not exist, certificate) or reads as not responding. This is
-// deliberately coarse, a reachability check for the splash's
-// alive/degraded state, not a per-service sweep. It gives up after
-// healthProbeTimeout, or sooner if ctx ends.
+// ProbeHealth asks the deployment at appURL whether it is responding.
+// It first reads Orbit's own health answer, <APP_URL>/api/health, which
+// tells a deployment closed for maintenance (HealthMaintenance) from a
+// failing one (#302); Orbit answers its pages with 503 in maintenance, so
+// the page alone would read as a server error. An Orbit without that
+// answer (a 3xx or 4xx, or no status in it) is asked the old way: a GET
+// against the app's own URL, where a 2xx to 4xx answer is responding and
+// a 5xx a server error. A transport failure is named by its cause (a name
+// that does not exist, certificate) or reads as not responding, and is
+// not retried. This is deliberately coarse, a reachability check for the
+// splash's state, not a per-service sweep. Both requests together give up
+// after healthProbeTimeout, or sooner if ctx ends.
 func ProbeHealth(ctx context.Context, appURL string) HealthReason {
 	// APP_URL comes from a file the launcher may not have written, so
 	// only a web address is ever asked; any other scheme is not checked.
-	if u, err := url.Parse(appURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	u, err := url.Parse(appURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return HealthUnchecked
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appURL, nil)
+	// Go's client turns a user:password@ in the address into Basic auth;
+	// the probe never needs credentials (a 401 already counts as
+	// responding), so none are sent (#277 W1).
+	u.User = nil
+	ctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+	defer cancel()
+	if reason, decided := probeAPIHealth(ctx, *u); decided {
+		return reason
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return HealthUnchecked
 	}
@@ -62,6 +90,41 @@ func ProbeHealth(ctx context.Context, appURL string) HealthReason {
 		return HealthServerError
 	}
 	return HealthResponding
+}
+
+// probeAPIHealth reads Orbit's health answer under the app's URL. It
+// decides when Orbit gave one (a 2xx naming a status, or a 5xx) or the
+// request failed outright; anything else (a redirect, a 4xx from an Orbit
+// without the endpoint, a body that is not its JSON) leaves the decision
+// to the page probe.
+func probeAPIHealth(ctx context.Context, u url.URL) (HealthReason, bool) {
+	u.Path = strings.TrimSuffix(u.Path, "/") + "/api/health"
+	u.RawPath, u.RawQuery, u.Fragment = "", "", ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", false
+	}
+	resp, err := healthClient.Do(req)
+	if err != nil {
+		return transportReason(err), true
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 500:
+		return HealthServerError, true
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		return "", false
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body) != nil || body.Status == "" {
+		return "", false
+	}
+	if body.Status == "maintenance" {
+		return HealthMaintenance, true
+	}
+	return HealthResponding, true
 }
 
 // transportReason names a failed request's cause.

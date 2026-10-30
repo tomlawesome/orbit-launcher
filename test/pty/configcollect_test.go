@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/testutil"
 	"github.com/tomlawesome/orbit-launcher/test/internal/launcher"
 )
@@ -30,10 +31,20 @@ const configRefusal = "  echo \"Orbit installer: configuration fields requiring 
 // refuseUntilConfigured opens every fake engine that refuses without
 // configuration and proceeds with it: it logs its arguments, reports the
 // host phase and, until a .env-orbit exists, refuses as the real engine
-// does -- a failed configuration event, guidance on stderr, exit 1.
+// does -- a failed configuration event, guidance on stderr, exit 1. On a
+// fresh install whose folder has neither .env-orbit nor .orbit-secrets
+// it first takes in the configuration handed to it in its configuration
+// tree, as the real engine does (orbit docs/engine-events.md,
+// Non-interactive contract, #1519): the launcher writes nothing into the
+// folder itself (#295).
 const refuseUntilConfigured = `#!/usr/bin/env bash
 printf '%s\n' "$*" >> engine-args.txt
 echo "phase=host component=host state=completed reason=host-tools action=check elapsed=0s"
+tree="${ORBIT_LAUNCHER_CONFIG_TREE:-}"
+if [[ " $* " == *" --install "* && ! -e .env-orbit && ! -e .orbit-secrets && -n "$tree" && -f "$tree/.env-orbit" ]]; then
+  cp -p "$tree/.env-orbit" .env-orbit
+  if [[ -d "$tree/.orbit-secrets" ]]; then cp -pR "$tree/.orbit-secrets" .orbit-secrets; fi
+fi
 if [[ ! -f .env-orbit ]]; then
   echo "phase=configuration component=configuration state=failed reason=configuration-failure action=retry elapsed=0s"
 ` + configRefusal + `  exit 1
@@ -191,8 +202,9 @@ func TestConfig_RealPTY_InConsolePromptsThenRetrySucceeds(t *testing.T) {
 	send("\r")
 	waitForExit(t, cmd)
 
-	// The collected configuration really landed in the target with the
-	// contract's permissions.
+	// The collected configuration really landed in the target, written
+	// by the installer from the handed-in tree, with the contract's
+	// permissions.
 	env, err := os.ReadFile(filepath.Join(dir, ".env-orbit"))
 	if err != nil {
 		t.Fatalf("adopted .env-orbit: %v", err)
@@ -325,6 +337,7 @@ func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	placeRepairScript(t, dir, fakeRepairPlan)
 	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
@@ -361,6 +374,7 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	placeRepairScript(t, dir, fakeRepairCheckOnly)
 	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)
@@ -404,6 +418,7 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	// No scripts/repair.sh in the deployment — one from before the
 	// repair diagnosis. The source still offers one, where the launcher
 	// used to fetch it from; it must not be taken (#190).
@@ -457,6 +472,7 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env-orbit"), []byte("APP_URL=https://repair.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 	placeRepairScript(t, dir, fakeRepairModal)
 	scriptURL := launcher.ServeScript(t, fakeConfigAwareEngine)
 	console, cmd := startConsolePTY(t, binPath, dir, scriptURL)

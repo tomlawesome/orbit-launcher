@@ -15,33 +15,65 @@ import (
 	"testing"
 )
 
-// liveJobLines returns the `live` job's raw lines, from after `live:` up to
+// liveJobLines returns a live job's raw lines, from after `<job>:` up to
 // the next top-level key, comments and blank lines included. Both live-job
-// scanners read the job through it.
-func liveJobLines(t *testing.T, ciYAML string) []string {
+// scanners read the job through it. Since #183 the job's body sits in a
+// hidden template the two legs extend, so a template the job names in its
+// own `extends:` contributes its lines first, as GitLab merges it first.
+// Since #303 Orbit's files are fetched by `live-prepare` and only used by
+// `live`, so the scanners name the job they read.
+func liveJobLines(t *testing.T, ciYAML, job string) []string {
 	t.Helper()
 	lines := strings.Split(ciYAML, "\n")
+	block := func(key string) []string {
+		start := -1
+		for i, l := range lines {
+			if l == key {
+				start = i
+				break
+			}
+		}
+		if start < 0 {
+			return nil
+		}
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			l := lines[i]
+			if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
+				end = i // next top-level key: the job has ended
+				break
+			}
+		}
+		return lines[start+1 : end]
+	}
 
-	start := -1
-	for i, l := range lines {
-		if l == "live:" {
-			start = i
-			break
+	own := block(job + ":")
+	if own == nil {
+		t.Fatalf("no top-level `%s:` job in .gitlab-ci.yml", job)
+	}
+	var templates []string
+	for i, l := range own {
+		switch {
+		case strings.HasPrefix(l, "  extends: ."):
+			templates = append(templates, strings.TrimPrefix(l, "  extends: "))
+		case l == "  extends:":
+			for _, item := range own[i+1:] {
+				if !strings.HasPrefix(item, "    - .") {
+					break
+				}
+				templates = append(templates, strings.TrimPrefix(item, "    - "))
+			}
 		}
 	}
-	if start < 0 {
-		t.Fatal("no top-level `live:` job in .gitlab-ci.yml")
-	}
-
-	end := len(lines)
-	for i := start + 1; i < len(lines); i++ {
-		l := lines[i]
-		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "#") {
-			end = i // next top-level key: the job has ended
-			break
+	var out []string
+	for _, name := range templates {
+		body := block(name + ":")
+		if body == nil {
+			t.Fatalf("`%s:` extends %s, which is not a top-level key", job, name)
 		}
+		out = append(out, body...)
 	}
-	return lines[start+1 : end]
+	return append(out, own...)
 }
 
 // liveRules returns the `live` job's rules as one string per `- ` item, with
@@ -51,7 +83,7 @@ func liveRules(t *testing.T, ciYAML string) []string {
 	var rules []string
 	var cur []string
 	inRules := false
-	for _, l := range liveJobLines(t, ciYAML) {
+	for _, l := range liveJobLines(t, ciYAML, "live") {
 		trimmed := strings.TrimSpace(l)
 		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
 			continue
@@ -129,5 +161,45 @@ func TestLiveCIChangeRouteIsAManualGate(t *testing.T) {
 		if strings.Contains(r, "when: manual") {
 			t.Errorf("the `live` job's %s rule must stay automatic: a person already asked for the run (#192)\nrule:\n%s", name, r)
 		}
+	}
+}
+
+// A merge request into preview or main from any branch but the stage before
+// has not been through dev, so the live installs run on it whatever files it
+// changes (#313). That is a rule without `changes:`, and it comes after the
+// manual change route: the first matching rule wins, so a change to the CI
+// files must meet the #192 gate before this automatic route can claim it.
+func TestLiveRunsOnEveryMergeRequestPastDevAfterTheManualRoute(t *testing.T) {
+	rules := liveRules(t, readRepoFile(t, ".gitlab-ci.yml"))
+
+	changeIdx := -1
+	var matches []int
+	for i, r := range rules {
+		if strings.Contains(r, "changes:") && hasLine(r, "- .gitlab-ci.yml") {
+			changeIdx = i
+		}
+		if strings.Contains(r, "changes:") {
+			continue
+		}
+		if strings.Contains(r, `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview"`) &&
+			strings.Contains(r, `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev"`) &&
+			strings.Contains(r, `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"`) &&
+			strings.Contains(r, `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"`) {
+			matches = append(matches, i)
+		}
+	}
+	if changeIdx < 0 {
+		t.Fatal("the `live` job has no rule with `changes: [.gitlab-ci.yml]` (#164)")
+	}
+	if len(matches) != 1 {
+		t.Fatalf("the `live` job must have exactly one rule, without `changes:`, for a merge request into preview (source not dev) or main (source not preview); found %d (#313)", len(matches))
+	}
+	rule := rules[matches[0]]
+	if hasLine(rule, "when: manual") {
+		t.Errorf("the every-change rule must be automatic, not `when: manual` (#313)\nrule:\n%s", rule)
+	}
+	if matches[0] < changeIdx {
+		t.Errorf("the every-change rule must come after the manual change route: the first match wins, "+
+			"so the #192 gate must be met first (#313)\nrule:\n%s", rule)
 	}
 }

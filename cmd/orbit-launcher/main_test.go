@@ -3,12 +3,21 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/tomlawesome/orbit-launcher/internal/notices"
 	"github.com/tomlawesome/orbit-launcher/internal/release"
 )
+
+// The launcher refuses root (#291), and CI runs this package's tests as
+// root, so the tests see a normal user unless one injects root itself
+// (groupb_root_test.go).
+func TestMain(m *testing.M) {
+	effectiveUID = func() int { return 1000 }
+	os.Exit(m.Run())
+}
 
 // --version prints the same version shape every screen does (#230,
 // #200 C8): "orbit-launcher <DisplayVersion> (<revision>)", v-prefixed,
