@@ -279,19 +279,27 @@ func TestFlakeCheckJobChecksTheLogWithTheQuarantineList(t *testing.T) {
 	}
 }
 
+// TestFlakeCheckPassesTheCurrentLog runs the check exactly as the job's script
+// line does (same interpreter, same arguments, the repository root as the
+// working directory), so the quarantine list it reads is the committed
+// scripts/quarantine.txt, not a list the test makes up: a test-only empty list
+// would let a bad entry in the real one through (#310).
 func TestFlakeCheckPassesTheCurrentLog(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, flakeScript)); err != nil {
 		t.Fatalf("%s must exist (#310): %v", flakeScript, err)
 	}
-	quarantine := filepath.Join(t.TempDir(), "quarantine-list.txt")
-	if err := os.WriteFile(quarantine, nil, 0o644); err != nil {
-		t.Fatal(err)
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	job, _ := flakeCheckJob(t, doc)
+	line := flakeCheckInvocation(t, doc, job)
+	fields := strings.Fields(line)
+	if len(fields) < 2 || !strings.Contains(fields[1], flakeScript) {
+		t.Fatalf("%s runs the check as something other than `<shell> %s <args>`, which this test cannot repeat: %s", job, flakeScript, line)
 	}
-	cmd := exec.Command("/bin/sh", flakeScript, "--quarantined", quarantine, flakeLog)
+	cmd := exec.Command(fields[0], fields[1:]...)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("the flake check fails on the committed %s, so the job would not be green when it lands (#310): %v\n%s", flakeLog, err, out)
+		t.Fatalf("the flake check fails on the committed %s with the job's own arguments (%s), so the job would not be green when it lands (#310): %v\n%s", flakeLog, line, err, out)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "NOTE\tsummary\t") {
@@ -301,5 +309,218 @@ func TestFlakeCheckPassesTheCurrentLog(t *testing.T) {
 		if strings.HasPrefix(l, "ERROR\t") {
 			t.Errorf("the check reports an error on the committed %s: %s", flakeLog, l)
 		}
+	}
+}
+
+// --- the quarantine list is what the live legs skip (#310, #313) -----------
+
+const quarantineFile = "scripts/quarantine.txt"
+const quarantineSkipScript = "scripts/ci/quarantine-skip.sh"
+
+// skipIsGuarded reports whether the go test line's -skip flag only appears
+// when the pattern is not empty: an empty -skip pattern skips every test. The
+// guard is the `${name:+-skip "$name"}` form on the line itself, or an
+// `if [ -n` on an earlier line.
+func skipIsGuarded(lines []string, goTest int) bool {
+	if strings.Contains(lines[goTest], ":+-skip") {
+		return true
+	}
+	for _, l := range lines[:goTest] {
+		if strings.Contains(l, "if [ -n") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestLiveLegsSkipTheQuarantinedTests(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	for _, job := range []string{"live", "live-fedora"} {
+		lines := nonCommentScriptLines(t, doc, job)
+		skipAt, goTest := -1, -1
+		for i, l := range lines {
+			if skipAt < 0 && strings.Contains(l, quarantineSkipScript) {
+				skipAt = i
+			}
+			if strings.Contains(l, "go test") && strings.Contains(l, "-tags live") {
+				goTest = i
+			}
+		}
+		if goTest < 0 {
+			t.Errorf("%s has no `go test -tags live` line", job)
+			continue
+		}
+		if skipAt < 0 {
+			t.Errorf("%s never runs %s, so a quarantined test still runs in the live leg and can block the gate (#310)", job, quarantineSkipScript)
+		} else if skipAt > goTest {
+			t.Errorf("%s runs %s after the go test line that needs its output (#310)", job, quarantineSkipScript)
+		}
+		if !strings.Contains(lines[goTest], "-skip") {
+			t.Errorf("%s: the go test line has no -skip, so quarantined tests run in the live leg (#310): %s", job, lines[goTest])
+		} else if !skipIsGuarded(lines, goTest) {
+			t.Errorf("%s: -skip must be conditional on a non-empty pattern (`${name:+-skip \"$name\"}` or an `if [ -n` before it), because an empty -skip pattern skips every test (#310): %s", job, lines[goTest])
+		}
+	}
+}
+
+// githubStepContaining returns the text of the workflow step whose lines
+// include needle: from its `- ` line to the line before the next step.
+func githubStepContaining(src, needle string) string {
+	lines := strings.Split(src, "\n")
+	hit := -1
+	for i, l := range lines {
+		if strings.Contains(l, needle) && !strings.HasPrefix(strings.TrimSpace(l), "#") {
+			hit = i
+			break
+		}
+	}
+	if hit < 0 {
+		return ""
+	}
+	start, indent := 0, 0
+	for i := hit; i >= 0; i-- {
+		if tl := strings.TrimLeft(lines[i], " "); strings.HasPrefix(tl, "- ") {
+			start, indent = i, len(lines[i])-len(tl)
+			break
+		}
+	}
+	end := len(lines)
+	for i := hit + 1; i < len(lines); i++ {
+		if tl := strings.TrimLeft(lines[i], " "); strings.HasPrefix(tl, "- ") && len(lines[i])-len(tl) <= indent {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+func TestGitHubLiveWorkflowSkipsTheQuarantinedTests(t *testing.T) {
+	src, ok := workflows(t)["live-install-test.yml"]
+	if !ok {
+		t.Fatal("no .github/workflows/live-install-test.yml")
+	}
+	step := githubStepContaining(src, "go test -tags live")
+	if step == "" {
+		t.Fatal("live-install-test.yml has no step running `go test -tags live`")
+	}
+	lines := strings.Split(step, "\n")
+	goTest := -1
+	for i, l := range lines {
+		if strings.Contains(l, "go test -tags live") {
+			goTest = i
+		}
+	}
+	if !strings.Contains(step, quarantineSkipScript) {
+		t.Errorf("the live step never runs %s, so a quarantined test still runs there (#310):\n%s", quarantineSkipScript, step)
+	}
+	if !strings.Contains(lines[goTest], "-skip") {
+		t.Errorf("the live step's go test command has no -skip (#310): %s", lines[goTest])
+	} else if !skipIsGuarded(lines, goTest) {
+		t.Errorf("the live step's -skip must be conditional on a non-empty pattern, because an empty -skip pattern skips every test (#310): %s", lines[goTest])
+	}
+}
+
+// --- every quarantined name is a test that exists --------------------------
+
+// quarantinedTests returns the test names in a quarantine list: the part of
+// each non-comment, non-blank line before its first `/` outside brackets.
+func quarantinedTests(list string) []string {
+	var out []string
+	for _, l := range strings.Split(list, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		depth, cut := 0, len(l)
+		for i, r := range l {
+			if r == '[' {
+				depth++
+			} else if r == ']' && depth > 0 {
+				depth--
+			} else if r == '/' && depth == 0 {
+				cut = i
+				break
+			}
+		}
+		out = append(out, l[:cut])
+	}
+	return out
+}
+
+// goTestLister prints the names `go test -list` finds for a pattern, one
+// invocation per call; tags and packages say where to look.
+type goTestLister func(tags, pattern string, pkgs ...string) string
+
+// quarantinedWithoutTests returns the quarantined test names that no test in
+// the module has: a name that matches nothing skips nothing, and the flake
+// check would trust a gate that is not there. With no names it runs nothing.
+func quarantinedWithoutTests(list string, lister goTestLister) []string {
+	names := quarantinedTests(list)
+	if len(names) == 0 {
+		return nil
+	}
+	esc := make([]string, len(names))
+	for i, n := range names {
+		esc[i] = regexp.QuoteMeta(n)
+	}
+	pattern := "^(" + strings.Join(esc, "|") + ")$"
+	found := map[string]bool{}
+	for _, out := range []string{
+		lister("", pattern, "./..."),
+		lister("live", pattern, "./test/live/..."),
+	} {
+		for _, l := range strings.Split(out, "\n") {
+			found[strings.TrimSpace(l)] = true
+		}
+	}
+	var missing []string
+	for _, n := range names {
+		if !found[n] {
+			missing = append(missing, n)
+		}
+	}
+	return missing
+}
+
+func TestQuarantinedNamesMatcherReportsANameWithNoTest(t *testing.T) {
+	list := "# a comment\n\nTestReal/Sub\nUnidentified internal/ui failure\n"
+	lister := func(tags, pattern string, pkgs ...string) string {
+		if tags == "" {
+			return "TestReal\nok  \texample.com/x\t0.01s\n"
+		}
+		return "ok  \texample.com/y\t0.01s\n"
+	}
+	missing := quarantinedWithoutTests(list, lister)
+	if len(missing) != 1 || missing[0] != "Unidentified internal" {
+		t.Errorf("a list naming `Unidentified internal` must report exactly that as naming no test, got %q", missing)
+	}
+	if got := quarantinedTests("Parent[a/b]/Sub\n"); len(got) != 1 || got[0] != "Parent[a/b]" {
+		t.Errorf("the name stops at the first unbracketed `/`, got %q", got)
+	}
+	called := false
+	if m := quarantinedWithoutTests("# nothing quarantined\n\n", func(string, string, ...string) string { called = true; return "" }); len(m) != 0 || called {
+		t.Errorf("an empty list passes without running go; missing %q, ran go %v", m, called)
+	}
+}
+
+func TestEveryQuarantinedNameIsATestThatExists(t *testing.T) {
+	list := readRepoFile(t, quarantineFile)
+	lister := func(tags, pattern string, pkgs ...string) string {
+		args := []string{"test"}
+		if tags != "" {
+			args = append(args, "-tags", tags)
+		}
+		args = append(args, "-list", pattern)
+		args = append(args, pkgs...)
+		cmd := exec.Command("go", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return string(out)
+	}
+	for _, n := range quarantinedWithoutTests(list, lister) {
+		t.Errorf("%s names %q, which is no test in the module (go test -list finds nothing): it skips nothing, and the flake check trusts a gate that is not there (#310)", quarantineFile, n)
 	}
 }
