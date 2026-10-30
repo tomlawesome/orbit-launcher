@@ -192,19 +192,25 @@ func compareIssuer(answer string, body []byte) IssuerCheck {
 	if !json.Valid(body) {
 		return IssuerCheck{Reason: IssuerNotJSON}
 	}
-	var doc struct {
-		Issuer json.RawMessage `json:"issuer"`
-	}
+	// A map, not a struct: encoding/json matches struct fields whatever
+	// their case, and only the exact key "issuer" counts (Discovery §3).
+	var doc map[string]json.RawMessage
 	var published string
-	if json.Unmarshal(body, &doc) != nil || len(doc.Issuer) == 0 || doc.Issuer[0] != '"' ||
-		json.Unmarshal(doc.Issuer, &published) != nil {
+	issuer := []byte(nil)
+	if json.Unmarshal(body, &doc) == nil {
+		issuer = doc["issuer"]
+	}
+	if len(issuer) == 0 || issuer[0] != '"' || json.Unmarshal(issuer, &published) != nil {
 		return IssuerCheck{Reason: IssuerNoIssuer}
 	}
 	verdict := IssuerDiffers
 	switch {
 	case published == answer:
 		return IssuerCheck{Verdict: IssuerMatches}
-	case answer+"/" == published, published+"/" == answer:
+	// One trailing slash, on one side only: "x/" against "x//" is no
+	// simple slash difference, and the words for one would mislead.
+	case answer+"/" == published && !strings.HasSuffix(answer, "/"),
+		published+"/" == answer && !strings.HasSuffix(published, "/"):
 		verdict = IssuerSlashDiffers
 	}
 	if !EchoableIssuer(published) {
