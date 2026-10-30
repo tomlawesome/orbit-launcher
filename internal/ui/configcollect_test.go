@@ -166,6 +166,12 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	return tm
 }
 
+// issuerMatches is a provider whose discovery document names every
+// issuer answer exactly (#314), so a journey never reaches the network.
+func issuerMatches(context.Context, string) deploy.IssuerCheck {
+	return deploy.IssuerCheck{Verdict: deploy.IssuerMatches}
+}
+
 func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 	adopted := make(chan struct{}, 1)
 	tm := startConfigJourney(t, engineRunSeams{
@@ -177,7 +183,8 @@ func TestAppModel_InConsoleConfigCollectThenRetrySucceeds(t *testing.T) {
 			adopted <- struct{}{}
 			return nil
 		},
-		detect: fakeDetect("https://orbit.example.test"),
+		detect:      fakeDetect("https://orbit.example.test"),
+		checkIssuer: issuerMatches,
 	})
 
 	// Each wait can list several strings expected on the same frame —
@@ -255,7 +262,8 @@ func TestAppModel_InitTurnsOnOIDCSoRecheckAsksForSecret(t *testing.T) {
 			adopted <- struct{}{}
 			return nil
 		},
-		detect: fakeDetect("https://orbit.example.test"),
+		detect:      fakeDetect("https://orbit.example.test"),
+		checkIssuer: issuerMatches,
 	})
 
 	wait := func(want string) {
@@ -314,7 +322,8 @@ func TestAppModel_InitLeavesOIDCOffRecheckSkipsSecret(t *testing.T) {
 			adopted <- struct{}{}
 			return nil
 		},
-		detect: fakeDetect("https://orbit.example.test"),
+		detect:      fakeDetect("https://orbit.example.test"),
+		checkIssuer: issuerMatches,
 	})
 
 	// Every wait reads through rec, which keeps what WaitFor consumes, so

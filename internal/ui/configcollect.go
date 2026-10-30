@@ -119,6 +119,9 @@ type configCollect struct {
 	// for the --init step it gates. Empty until the person chooses.
 	authMode deploy.AuthMode
 
+	// issuer is the OIDC issuer check's state (#314, issuercheck.go).
+	issuer issuerCheck
+
 	// late is shared with the prepare and start commands still running.
 	late *configLate
 
@@ -332,6 +335,7 @@ func (c *configCollect) close() {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	c.issuer.stop()
 	if c.late != nil {
 		c.late.stop()
 	}
@@ -527,6 +531,9 @@ func (r engineRun) handleConfigMsg(msg tea.Msg) (engineRun, tea.Cmd) {
 
 	case configStreamMsg:
 		return r.handleConfigStream(msg.msg)
+
+	case issuerCheckedMsg:
+		return r.handleIssuerChecked(msg)
 
 	case configStreamEndedMsg:
 		if msg.stream != r.cfg.stream {
@@ -774,10 +781,20 @@ func (r engineRun) handleConfigSignInModeKey(msg tea.KeyPressMsg) (engineRun, te
 
 // handleConfigKey is the typing surface (promptSession.key: typing,
 // and Enter submits the answer line); esc cancels the whole session
-// back to the main menu.
+// back to the main menu. Enter on a well-shaped OIDC issuer checks it
+// first (#314): keys wait while it runs, then work its decision menu.
 func (r engineRun) handleConfigKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
 		return r.cancelConfigToMenu()
+	}
+	switch {
+	case r.cfg.issuer.pending:
+		return r, nil
+	case r.cfg.issuer.deciding():
+		return r.decideIssuer(msg)
+	}
+	if answer, check := r.wantsIssuerCheck(msg); check {
+		return r.startIssuerCheck(answer)
 	}
 	var field, answer string
 	r.cfg.session, field, answer = r.cfg.session.key(msg, r.cfg.stdin)
@@ -955,5 +972,6 @@ func (r engineRun) viewConfigCollect(width, height int) string {
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "Orbit needs your configuration")
 
 	r.cfg.session.view(&b, r.cfg.origin, width, r.console.spinner)
+	r.cfg.issuer.view(&b, width, r.console.spinner)
 	return skyBlock(r.console.sky, width, height, b.String())
 }

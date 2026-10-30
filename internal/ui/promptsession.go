@@ -24,6 +24,12 @@ const secretMaskWidth = 8
 type promptSession struct {
 	prompt *engine.Prompt // non-nil while one answer is being typed
 	reason string         // honest words for the last rejection
+	// detail is a second reason row, drawn in ink under reason (the
+	// issuer the provider publishes, #314); "" draws none.
+	detail string
+	// frozen draws the answer muted with no cursor while a flow holds
+	// it (the issuer check, #314); the flow keeps keys from it.
+	frozen bool
 	// last and aborted name the field last asked for and not yet
 	// accepted, and the one the engine gave up on (its prompt-abort
 	// line); "" until they happen.
@@ -49,10 +55,10 @@ func (s promptSession) applyLine(text string) (_ promptSession, ok bool) {
 		s.sawPrompt = true
 		s.input = inputLine{}
 	case engine.PromptReject:
-		s.reason = rejectionWords(p.Reason)
+		s.reason, s.detail = rejectionWords(p.Reason), ""
 		s.prompt = nil
 	case engine.PromptAccept:
-		s.reason = ""
+		s.reason, s.detail = "", ""
 		s.prompt = nil
 		// An accepted field is no longer being asked for, so a later
 		// give-up must not name it.
@@ -77,15 +83,49 @@ func (s promptSession) key(msg tea.KeyPressMsg, stdin io.Writer) (_ promptSessio
 		return s, "", ""
 	}
 	if msg.Code == tea.KeyEnter {
-		field, answer = s.prompt.Field, s.input.String()
-		if stdin != nil {
-			fmt.Fprintln(stdin, answer)
-		}
-		s.prompt, s.input = nil, inputLine{}
-		return s, field, answer
+		return s.submit(s.input.String(), stdin)
 	}
 	s.input, _ = s.input.edit(msg)
 	return s, "", ""
+}
+
+// submit is the one way an answer reaches the engine: value and its
+// newline go to stdin (when there is one) and the prompt closes. It
+// returns the field answered and value, as key does. With no prompt
+// open it does nothing.
+func (s promptSession) submit(value string, stdin io.Writer) (_ promptSession, field, answer string) {
+	if s.prompt == nil {
+		return s, "", ""
+	}
+	field = s.prompt.Field
+	if stdin != nil {
+		fmt.Fprintln(stdin, value)
+	}
+	s.prompt, s.input, s.frozen = nil, inputLine{}, false
+	return s, field, value
+}
+
+// asking is the field open for an answer and the answer typed so far;
+// field is "" with no prompt open.
+func (s promptSession) asking() (field, answer string) {
+	if s.prompt == nil {
+		return "", ""
+	}
+	return s.prompt.Field, s.input.String()
+}
+
+// hold freezes the answer while a flow checks it: drawn without a
+// cursor, the earlier reason rows gone.
+func (s promptSession) hold() promptSession {
+	s.frozen, s.reason, s.detail = true, "", ""
+	return s
+}
+
+// reopen opens the held answer for typing again, kept as it was, with
+// reason and detail as its reason rows.
+func (s promptSession) reopen(reason, detail string) promptSession {
+	s.frozen, s.reason, s.detail = false, reason, detail
+	return s
 }
 
 // paste adds a paste to the answer while a prompt is open (inputLine.
@@ -150,6 +190,15 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	var before, after string
 	inkBefore := style.Ink
 	switch {
+	case s.frozen:
+		// Held while it is checked: muted, with no cursor, shown by its
+		// end like the answer being typed.
+		cursor = ""
+		inkBefore = style.MutedText
+		before = s.input.String()
+		if over := lipgloss.Width(before) - max(width-lipgloss.Width(caret), 0); width > 0 && over > 0 {
+			before = xansi.TruncateLeft(before, over, "")
+		}
 	case p.Kind == "secret":
 		// after stays empty, so the cursor stays drawn after the mask.
 		if !s.input.empty() {
@@ -170,6 +219,11 @@ func (s promptSession) view(b *strings.Builder, origin string, width, frame int)
 	if s.reason != "" {
 		fmt.Fprintln(b)
 		fmt.Fprintln(b, style.DegradedText.Render(s.reason))
+	}
+	if s.detail != "" {
+		for _, row := range valueRows(s.detail, width) {
+			fmt.Fprintln(b, style.Ink.Render(row))
+		}
 	}
 	if p.Attempt > 1 {
 		fmt.Fprintln(b, style.Tagline.Render(fmt.Sprintf("attempt %d of %d", p.Attempt, engine.PromptMaxAttempts)))
