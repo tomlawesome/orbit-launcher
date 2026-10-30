@@ -20,6 +20,10 @@
 # run time, so this is a source check, not a run). A subtest named in a
 # helper or a package-level table cannot be seen that way:
 # quarantine the parent `TestX` instead.
+# A subtest a sibling depends on takes that sibling with it: quarantining a
+# live `TestX/Install` means its `Remove` skips itself, with the reason,
+# because there is nothing to remove; name the parent `TestX` instead if the
+# whole journey should leave the gate.
 #
 # Adding a name takes the test out of the merge gate, so also add a
 # non-blocking job that runs the quarantined tests with

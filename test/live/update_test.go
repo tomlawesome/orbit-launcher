@@ -118,7 +118,8 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	const clientID, secret = "orbit-launcher-live-update-test", "ci-live-update-fake-secret"
 
 	var oldRef string
-	installed := t.Run("InstallEarlier", func(t *testing.T) {
+	var installed bool // set by InstallEarlier itself: a filtered-out t.Run returns true (#310)
+	t.Run("InstallEarlier", func(t *testing.T) {
 		// The earlier release's own launcher draws these screens, so every
 		// wait goes through test/live/screens.go (#307).
 		firstData, err := os.ReadFile(firstManifest)
@@ -146,11 +147,12 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		if got := digestOf(oldRef); got != oldDigest {
 			t.Fatalf("the first install recorded ORBIT_IMAGE=%q, want the earlier release's %s", oldRef, oldDigest)
 		}
+		installed = !t.Failed()
 	})
 
 	t.Run("Update", func(t *testing.T) {
 		if !installed {
-			t.Skip("the earlier install failed; nothing to update")
+			t.Skip("the earlier install did not run or failed; nothing to update")
 		}
 		emptyOIDCSecret(t, dir)
 

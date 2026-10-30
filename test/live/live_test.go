@@ -1085,17 +1085,22 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	// the launcher through a Remove anyway only waits for a screen that
 	// never comes: on GitLab pipeline 214 a 31s Install failure was
 	// followed by 602s of Remove before the hang diagnosis fired (#145).
-	installed := t.Run("Install", func(t *testing.T) {
+	// Install records its own success: go test -skip/-run makes a
+	// filtered-out subtest's t.Run return true, so that result cannot say
+	// Install ran (#310).
+	var installed bool
+	t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
 		assertMemoryDefaultsMatchLauncher(t, dir)
+		installed = !t.Failed()
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
-			t.Skip("Install failed; nothing to remove")
+			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
@@ -1221,17 +1226,19 @@ func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
 
 	appURL := fmt.Sprintf("https://orbit-live-local-%d.internal", time.Now().UnixNano())
 
-	installed := t.Run("Install", func(t *testing.T) {
+	var installed bool // set by Install itself, as in the SSO journey (#310)
+	t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 		installLocalThroughConsole(t, session, appURL, "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
 		assertLocalAccountsDeployment(t, dir)
+		installed = !t.Failed()
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
-			t.Skip("Install failed; nothing to remove")
+			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
