@@ -96,7 +96,7 @@ func cfg286Resize(t *testing.T, m AppModel, w, h int) AppModel {
 // taken off) is label, or -1.
 func cfg286RowIndex(s, label string) int {
 	for i, line := range strings.Split(s, "\n") {
-		if screenRow(line) == label {
+		if screenRow(line) == screenRow(label) {
 			return i
 		}
 	}
@@ -716,6 +716,16 @@ func TestConfigure286_RunIsAnUpdateCarryingTheChosenProfileInItsEnvironment(t *t
 	}
 }
 
+// cfg286OpenUpdate opens Update on an installed folder, where the menu
+// already rests on Update (openUpdate presses Down from Install). No
+// sink: nothing is pushed before the run starts.
+func cfg286OpenUpdate(t *testing.T, m AppModel) AppModel {
+	t.Helper()
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	return drive(t, m, cmd)
+}
+
 // Fault: Update itself starting to send a profile (the guard the
 // Configure change must not break): an Update run sees the variable
 // unset.
@@ -723,7 +733,7 @@ func TestConfigure286_UpdateStillSendsNoProfile(t *testing.T) {
 	target, out := docs260Recorder(t)
 	cfg286Folder(t, target, "processing", true)
 	m, queue := cfg286App(t, target)
-	m = openUpdate(t, m, queue)
+	m = cfg286OpenUpdate(t, m)
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	drive(t, m, cmd, queue)
 	if got := docs260Lines(t, out, "profile"); len(got) != 1 || got[0] != "<unset>" {
@@ -745,7 +755,7 @@ func cfg286StoppingScreen(t *testing.T, flow string) string {
 	started := func(tea.Model) bool { _, err := os.Stat(mark); return err == nil }
 	var cmd tea.Cmd
 	if flow == "update" {
-		m = openUpdate(t, m, queue)
+		m = cfg286OpenUpdate(t, m)
 		m, cmd = updateAs(t, m, key(tea.KeyEnter))
 	} else {
 		m = cfg286ToConfirm(t, m, "Documents")
