@@ -562,7 +562,7 @@ func (m SplashModel) centreBlockLines() []string {
 	case stateMaintenance:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, style.MaintenanceText.Render("maintenance"))
-		lines = append(lines, style.MutedText.Render(string(deploy.HealthMaintenance)))
+		lines = append(lines, style.Tagline.Render(string(deploy.HealthMaintenance)))
 	case stateDegraded:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, m.statusRow())
