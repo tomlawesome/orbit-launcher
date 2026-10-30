@@ -4,7 +4,11 @@ A check that failed and passed again on unchanged code. One heading per flake,
 one line per sighting: date · commit · pipeline/job · symptom. The third
 sighting files an issue, linked from the heading; fixing the cause deletes the
 heading. A heading names the test as `go test -run` matches it: the third
-sighting leaves the gate by that name.
+sighting leaves the gate by that name. A failure no test can be named for yet
+is logged under a plain heading; at its third sighting, reproduce it with the
+output kept (`go test -count=20 -v` on the package) and rename the heading to
+the test, or, if it will not reproduce, move its sightings into the issue and
+delete the heading.
 
 ## TestDiagnose_FindsASessionDetachedDescendant (test/live)
 
