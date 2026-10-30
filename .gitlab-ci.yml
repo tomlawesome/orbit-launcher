@@ -46,9 +46,18 @@
 # before was deleted (ai/agent-infra#32, 2026-10-27). No project carries its
 # own copy. The job is defined by the template; its stage, runner and image
 # pin are set here, at the `private-details` job below.
+#
+# The ref is the commit the tag names, not the tag (SEC-S1-3, #313). GitLab
+# lets any Maintainer of ai/agent-infra delete a protected tag through the UI
+# or API and create it again on other code, and this template is merged into
+# every pipeline here, including the push to main and jobs it could send to
+# the privileged runner; #192 cannot see a change made in another repository.
+# A new private-details tag is adopted by moving this commit and the comment
+# on the same line together: test/supplychain checks they agree. Until the
+# template can take a commit, its job still clones the scan script by tag.
 include:
   - project: ai/agent-infra
-    ref: private-details/v3
+    ref: c93bc8e78bf5807b8f2c2f5d7c13784f4a54746d  # private-details/v3
     file: scripts/private-details/ci-template.yml
 
 stages:
