@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1094,8 +1095,17 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
-		assertMemoryDefaultsMatchLauncher(t, dir)
 		installed = !t.Failed()
+	})
+
+	// Drift in Orbit's shipped memory defaults is its own result: failing
+	// inside Install would clear installed and make Remove skip as if
+	// Install had failed, leaving the stack behind.
+	t.Run("MemoryDefaults", func(t *testing.T) {
+		if !installed {
+			t.Skip("Install did not run or failed; no installed files to read")
+		}
+		assertMemoryDefaultsMatchLauncher(t, dir)
 	})
 
 	t.Run("Remove", func(t *testing.T) {
@@ -1166,17 +1176,61 @@ func assertMemoryDefaultsMatchLauncher(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("read the installed memory defaults: %v", err)
 	}
-	for name, want := range deploy.MemoryDefaults {
+	for _, problem := range memoryDefaultProblems(found, deploy.MemoryDefaults) {
+		t.Error(problem)
+	}
+}
+
+// memoryDefaultProblems compares what the installed Orbit ships (found, from
+// memoryLimitDefaults) with the launcher's table (want) and returns one
+// message per disagreement. It is pure so a test can feed it a mismatch.
+func memoryDefaultProblems(found map[string][]string, want map[string]uint64) []string {
+	var problems []string
+	names := make([]string, 0, len(want))
+	for name := range want {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		bytes := want[name]
 		values := found[name]
 		if len(values) == 0 {
-			t.Errorf("the installed docker-compose.yml and .env-orbit.example name no default for %s; the launcher's table assumes %d bytes", name, want)
+			problems = append(problems, fmt.Sprintf("the installed docker-compose.yml and .env-orbit.example name no default for %s; the launcher's table assumes %d bytes", name, bytes))
 			continue
 		}
 		for _, v := range values {
-			if got, ok := memoryBytes(v); !ok || got != want {
-				t.Errorf("%s defaults to %q in the installed Orbit; the launcher's table (deploy.MemoryDefaults) has %d bytes", name, v, want)
+			if got, ok := memoryBytes(v); !ok || got != bytes {
+				problems = append(problems, fmt.Sprintf("%s defaults to %q in the installed Orbit; the launcher's table (deploy.MemoryDefaults) has %d bytes", name, v, bytes))
 			}
 		}
+	}
+	return problems
+}
+
+func TestMemoryDefaultProblems(t *testing.T) {
+	want := map[string]uint64{"ORBIT_MEMORY_LIMIT": 2 << 30, "TIKA_MEMORY_LIMIT": 1 << 30}
+	for _, tc := range []struct {
+		name  string
+		found map[string][]string
+		want  []string // substrings, one per expected problem
+	}{
+		{"all match", map[string][]string{"ORBIT_MEMORY_LIMIT": {"2g", "2048m"}, "TIKA_MEMORY_LIMIT": {"1g"}}, nil},
+		{"mismatch", map[string][]string{"ORBIT_MEMORY_LIMIT": {"3g"}, "TIKA_MEMORY_LIMIT": {"1g"}}, []string{`ORBIT_MEMORY_LIMIT defaults to "3g"`}},
+		{"one of two files disagrees", map[string][]string{"ORBIT_MEMORY_LIMIT": {"2g", "1g"}, "TIKA_MEMORY_LIMIT": {"1g"}}, []string{`ORBIT_MEMORY_LIMIT defaults to "1g"`}},
+		{"missing name", map[string][]string{"ORBIT_MEMORY_LIMIT": {"2g"}}, []string{"no default for TIKA_MEMORY_LIMIT"}},
+		{"bad unit", map[string][]string{"ORBIT_MEMORY_LIMIT": {"2x"}, "TIKA_MEMORY_LIMIT": {"1g"}}, []string{`ORBIT_MEMORY_LIMIT defaults to "2x"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := memoryDefaultProblems(tc.found, want)
+			if len(got) != len(tc.want) {
+				t.Fatalf("problems = %q, want %d matching %q", got, len(tc.want), tc.want)
+			}
+			for i, sub := range tc.want {
+				if !strings.Contains(got[i], sub) {
+					t.Errorf("problem %d = %q, want it to contain %q", i, got[i], sub)
+				}
+			}
+		})
 	}
 }
 
