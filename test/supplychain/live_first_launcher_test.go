@@ -14,6 +14,10 @@
 package supplychain
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -176,28 +180,166 @@ func TestLiveLegsKeepUsingNoTokenToFetchTheEarlierLauncher(t *testing.T) {
 
 func TestLiveUpdateTestInstallsEarlierWithTheEarlierLauncherAndFailsWithoutIt(t *testing.T) {
 	goLeg := readRepoFile(t, "test", "live", "update_test.go")
-	const env = `"ORBIT_LIVE_FIRST_LAUNCHER"`
-	if !strings.Contains(goLeg, env) {
-		t.Fatalf("test/live/update_test.go must read %s, the name the `live` job exports (#307)", env)
+	for _, problem := range updateTestFirstLauncherProblems(t, goLeg) {
+		t.Error(problem + " (#307)")
 	}
-	lines := strings.Split(goLeg, "\n")
-	for i, l := range lines {
-		if !strings.Contains(l, "ORBIT_LIVE_FIRST_LAUNCHER") {
-			continue
-		}
-		// The read is followed, within a few lines, by the checks on it.
-		end := i + 8
-		if end > len(lines) {
-			end = len(lines)
-		}
-		for _, near := range lines[i:end] {
-			if strings.Contains(near, "t.Skip") {
-				t.Errorf("test/live/update_test.go must fail, not skip, when ORBIT_LIVE_FIRST_LAUNCHER is missing (#307)\nline: %s", near)
+}
+
+// updateTestFirstLauncherProblems parses test/live/update_test.go and checks
+// the update leg's use of the earlier launcher: the environment variable's
+// name is the one the `live` job exports, the value comes from reading it,
+// an empty value reaches t.Fatalf (never t.Skip*), and InstallEarlier runs
+// the value. It reads the syntax tree, not lines, so a constant or a comment
+// that merely names the variable cannot satisfy it.
+func updateTestFirstLauncherProblems(t *testing.T, src string) []string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "update_test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse test/live/update_test.go: %v", err)
+	}
+	const envName = "ORBIT_LIVE_FIRST_LAUNCHER"
+	var problems []string
+
+	// The constant naming the variable.
+	envConst := ""
+	ast.Inspect(file, func(n ast.Node) bool {
+		if vs, ok := n.(*ast.ValueSpec); ok {
+			for i, id := range vs.Names {
+				if i < len(vs.Values) {
+					if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Value == strconv.Quote(envName) {
+						envConst = id.Name
+					}
+				}
 			}
 		}
+		return true
+	})
+	if envConst == "" {
+		return []string{"test/live/update_test.go must declare a constant for " + envName + ", the name the `live` job exports"}
 	}
-	if !strings.Contains(goLeg, "InstallEarlier") {
-		t.Error("test/live/update_test.go must keep the InstallEarlier step (#307)")
+
+	// firstLauncher := os.Getenv(<that constant>)
+	value := ""
+	ast.Inspect(file, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		call, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		arg, argOK := call.Args[0].(*ast.Ident)
+		lhs, lhsOK := as.Lhs[0].(*ast.Ident)
+		if ok && argOK && lhsOK && sel.Sel.Name == "Getenv" && arg.Name == envConst {
+			value = lhs.Name
+		}
+		return true
+	})
+	if value == "" {
+		return append(problems, "test/live/update_test.go must read "+envName+" with os.Getenv("+envConst+")")
+	}
+
+	// if <value> == "" { t.Fatalf(...) } with no t.Skip anywhere in the block.
+	guarded := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		ifs, ok := n.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		cond, ok := ifs.Cond.(*ast.BinaryExpr)
+		if !ok || cond.Op != token.EQL {
+			return true
+		}
+		id, idOK := cond.X.(*ast.Ident)
+		lit, litOK := cond.Y.(*ast.BasicLit)
+		if !idOK || !litOK || id.Name != value || lit.Value != `""` {
+			return true
+		}
+		guarded = true
+		fatal, skip := false, ""
+		ast.Inspect(ifs.Body, func(m ast.Node) bool {
+			if call, ok := m.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					switch {
+					case sel.Sel.Name == "Fatalf" || sel.Sel.Name == "Fatal":
+						fatal = true
+					case strings.HasPrefix(sel.Sel.Name, "Skip"):
+						skip = sel.Sel.Name
+					}
+				}
+			}
+			return true
+		})
+		if skip != "" {
+			problems = append(problems, "test/live/update_test.go must fail, not skip (t."+skip+"), when "+envName+" is missing")
+		}
+		if !fatal {
+			problems = append(problems, "test/live/update_test.go must call t.Fatalf when "+envName+" is missing")
+		}
+		return true
+	})
+	if !guarded {
+		problems = append(problems, "test/live/update_test.go must check `"+value+` == ""`+"`"+" ("+envName+" missing) and fail")
+	}
+
+	// t.Run("InstallEarlier", func(...) { ... <value> ... })
+	uses := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 2 {
+			return true
+		}
+		name, nameOK := call.Args[0].(*ast.BasicLit)
+		body, bodyOK := call.Args[1].(*ast.FuncLit)
+		if !nameOK || !bodyOK || name.Value != `"InstallEarlier"` {
+			return true
+		}
+		ast.Inspect(body.Body, func(m ast.Node) bool {
+			if c, ok := m.(*ast.CallExpr); ok {
+				for _, a := range c.Args {
+					if id, ok := a.(*ast.Ident); ok && id.Name == value {
+						uses = true
+					}
+				}
+			}
+			return true
+		})
+		return true
+	})
+	if !uses {
+		problems = append(problems, "test/live/update_test.go's InstallEarlier subtest must pass the earlier launcher ("+value+") to the call that starts it")
+	}
+	return problems
+}
+
+func TestUpdateTestFirstLauncherProblemsCatchesEachFault(t *testing.T) {
+	const good = `package live
+const firstLauncherEnv = "ORBIT_LIVE_FIRST_LAUNCHER"
+func f(t T) {
+	firstLauncher := os.Getenv(firstLauncherEnv)
+	if firstLauncher == "" {
+		t.Fatalf("not set")
+	}
+	t.Run("InstallEarlier", func(t T) { startLiveEnv(t, firstLauncher, dir) })
+}`
+	for _, tc := range []struct{ name, src, want string }{
+		{"good", good, ""},
+		{"skip instead of fail", strings.Replace(good, `t.Fatalf("not set")`, `t.Skip("not set")`, 1), "must fail, not skip"},
+		{"skip beside fail", strings.Replace(good, `t.Fatalf("not set")`, `t.Fatalf("not set"); t.Skipf("x")`, 1), "must fail, not skip"},
+		{"no guard", strings.Replace(good, `if firstLauncher == "" {`, `if false {`, 1), "must check"},
+		{"guard without fatal", strings.Replace(good, `t.Fatalf("not set")`, `t.Log("not set")`, 1), "must call t.Fatalf"},
+		{"env not read", strings.Replace(good, `os.Getenv(firstLauncherEnv)`, `os.Getenv("OTHER")`, 1), "must read"},
+		{"launcher unused", strings.Replace(good, `startLiveEnv(t, firstLauncher, dir)`, `startLiveEnv(t, binPath, dir)`, 1), "InstallEarlier subtest must pass"},
+		{"no constant", strings.Replace(good, `"ORBIT_LIVE_FIRST_LAUNCHER"`, `"OTHER"`, 1), "must declare a constant"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(updateTestFirstLauncherProblems(t, tc.src), "\n")
+			if tc.want == "" && got != "" || tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Errorf("problems = %q, want one containing %q", got, tc.want)
+			}
+		})
 	}
 }
 
