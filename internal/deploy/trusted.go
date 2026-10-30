@@ -141,6 +141,32 @@ func requireTrustedConfigDirs(dir string) error {
 	return err
 }
 
+// requireTrustedCollectedTree is requireTrustedConfigDirs for a
+// collected configuration tree before its answers are adopted (#304):
+// the tree itself, and its .orbit-secrets when that is a directory. An
+// .orbit-secrets that is a symlink or a file is left to planAdoption,
+// which refuses it before anything is written, as a plain error.
+func requireTrustedCollectedTree(tree string) error {
+	tree = filepath.Clean(tree)
+	owner, err := trustedRoot(tree)
+	if err != nil {
+		return err
+	}
+	secrets := filepath.Join(tree, SecretsDir)
+	info, err := os.Lstat(secrets)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	_, err = checkTrustedDir(secrets, info, owner)
+	return err
+}
+
 // orbitScripts are the scripts in a deployment's scripts/ directory that
 // source one another: trusting one of them means trusting all that are
 // there. configuration.sh and engine-check.sh stay on the list for

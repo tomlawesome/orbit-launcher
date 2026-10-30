@@ -84,9 +84,19 @@ func TestSplashMaintenance_FaintLineSaysClosedToUsers(t *testing.T) {
 	if string(deploy.HealthMaintenance) != maintenanceNote {
 		t.Fatalf("HealthMaintenance = %q, want %q", string(deploy.HealthMaintenance), maintenanceNote)
 	}
+	// #304 A-Fprop2-2: design/DECISIONS.md asks for "one faint line",
+	// and the splash's faint style is style.Tagline; MutedText is the
+	// FQDN's grey, one step brighter.
+	faint, muted := style.Tagline.Render(maintenanceNote), style.MutedText.Render(maintenanceNote)
+	if faint == muted {
+		t.Fatalf("setup: Tagline and MutedText render alike (%q), so the pin cannot tell them apart", faint)
+	}
 	row := rawRow(t, m, maintenanceNote)
-	if want := style.MutedText.Render(maintenanceNote); !strings.Contains(row, want) {
-		t.Errorf("the line is not faint (muted): want %q in %q", want, row)
+	if !strings.Contains(row, faint) {
+		t.Errorf("the line is not in the faint style (style.Tagline): want %q in %q", faint, row)
+	}
+	if strings.Contains(row, muted) {
+		t.Errorf("the line is in the muted style, not the faint one: %q", row)
 	}
 	if n := strings.Count(screen(m), maintenanceNote); n != 1 {
 		t.Errorf("%q appears %d times, want once:\n%s", maintenanceNote, n, screen(m))

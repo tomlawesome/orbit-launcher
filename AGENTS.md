@@ -56,7 +56,10 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   hand-started pipeline. An MR into `dev` that moves the `UBUNTU_IMAGE`,
   `FEDORA_IMAGE`, `GO_VERSION` or `GO_SHA256` pin, or edits `.gitlab-ci.yml`,
   `scripts/ci/fetch-verified.sh`, `scripts/ci/run-unprivileged.sh` or
-  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193).
+  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193): first
+  `live-prepare`, which holds the Orbit read token and the legs need, then the
+  legs (#304). A hotfix MR into `preview`/`main` that edits those files waits
+  the same way.
 
 - Two legs, `live` (Ubuntu) and `live-fedora` (#183), from one `.live_leg`
   template; both must pass.
@@ -71,9 +74,11 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 - Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
   `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
   a hand-started pipeline overrides the pin: files from that branch's tip.
-- A contract change goes: Orbit side on Orbit `dev` → bump `orbit/pin.json`
-  here (live green against a fixed partner) → launcher release → Orbit bumps
-  `launcher/pin.json`.
+- A contract change goes: Orbit side promoted to Orbit `preview` (or a
+  `hotfix/*` branch; only those produce the signed release manifest live
+  reads) → bump `orbit/pin.json` here (live green with Orbit's install files
+  fixed at the pin; its image still follows that branch's latest build) →
+  launcher release → Orbit bumps `launcher/pin.json`.
 - Every GitLab live run is a preview run (the pin's branch and `ORBIT_CHANNEL`
   are preview). It fails only if the job falls back to the GitHub mirror,
   which has no release manifest (#194): `live-prepare`, which reads Orbit's

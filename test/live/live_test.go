@@ -1094,8 +1094,17 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
-		assertMemoryDefaultsMatchLauncher(t, dir)
 		installed = !t.Failed()
+	})
+
+	// Drift in Orbit's shipped memory defaults is its own result: failing
+	// inside Install would clear installed and make Remove skip as if
+	// Install had failed, leaving the stack behind.
+	t.Run("MemoryDefaults", func(t *testing.T) {
+		if !installed {
+			t.Skip("Install did not run or failed; no installed files to read")
+		}
+		assertMemoryDefaultsMatchLauncher(t, dir)
 	})
 
 	t.Run("Remove", func(t *testing.T) {
@@ -1135,26 +1144,6 @@ func memoryLimitDefaults(dir string) (map[string][]string, error) {
 	return found, nil
 }
 
-// memoryBytes reads a Compose size such as "2g" or "512m".
-func memoryBytes(v string) (uint64, bool) {
-	if len(v) < 2 {
-		return 0, false
-	}
-	n, err := strconv.ParseUint(v[:len(v)-1], 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	switch v[len(v)-1] {
-	case 'k', 'K':
-		return n << 10, true
-	case 'm', 'M':
-		return n << 20, true
-	case 'g', 'G':
-		return n << 30, true
-	}
-	return 0, false
-}
-
 // assertMemoryDefaultsMatchLauncher is the drift guard for the launcher's
 // memory table (#260): the Orbit this run installed must ship the same
 // ORBIT_MEMORY_LIMIT, CLAMAV_MEMORY_LIMIT and TIKA_MEMORY_LIMIT defaults
@@ -1166,17 +1155,8 @@ func assertMemoryDefaultsMatchLauncher(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("read the installed memory defaults: %v", err)
 	}
-	for name, want := range deploy.MemoryDefaults {
-		values := found[name]
-		if len(values) == 0 {
-			t.Errorf("the installed docker-compose.yml and .env-orbit.example name no default for %s; the launcher's table assumes %d bytes", name, want)
-			continue
-		}
-		for _, v := range values {
-			if got, ok := memoryBytes(v); !ok || got != want {
-				t.Errorf("%s defaults to %q in the installed Orbit; the launcher's table (deploy.MemoryDefaults) has %d bytes", name, v, want)
-			}
-		}
+	for _, problem := range memoryDefaultProblems(found, deploy.MemoryDefaults) {
+		t.Error(problem)
 	}
 }
 
