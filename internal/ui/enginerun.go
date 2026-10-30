@@ -114,6 +114,8 @@ type flowOutcome struct {
 	Elapsed     time.Duration
 	// ExitNote is printed by main after the screen closes.
 	ExitNote string
+	// SignalStop is the signal that quit an Update past its commit.
+	SignalStop os.Signal
 }
 
 // backToMenu is leaving a flow for the main menu before anything has
@@ -126,7 +128,7 @@ func outcomeOf(r engineRun) flowOutcome {
 	if r.signalQuit {
 		// The launcher is quitting: a finished run has no screen to go
 		// to, and the app must not replace the quit with one.
-		return flowOutcome{ExitNote: r.exitNote}
+		return flowOutcome{ExitNote: r.exitNote, SignalStop: r.signalStop}
 	}
 	return flowOutcome{
 		Done:        r.Done,
@@ -136,6 +138,7 @@ func outcomeOf(r engineRun) flowOutcome {
 		URL:         r.URL,
 		Elapsed:     r.Elapsed,
 		ExitNote:    r.exitNote,
+		SignalStop:  r.signalStop,
 	}
 }
 
@@ -337,6 +340,9 @@ type engineRun struct {
 	// was still undoing its work; main prints it after the screen closes
 	// and exits 1. Empty means a clean stop, or no stop.
 	exitNote string
+
+	// signalStop is the signal that quit an Update past its commit.
+	signalStop os.Signal
 
 	// menu is the cursor on whichever post-run screen is showing; each
 	// screen names its own rows (stoppedRows).
@@ -665,6 +671,7 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 		// Quitting closes the installer's stdout pipe: it survives that
 		// only because Orbit's install.sh ignores SIGPIPE (trap '' PIPE).
 		if r.state == runStreaming && r.action == deploy.ActionUpdate && r.committed {
+			r.signalStop = msg.Signal
 			return r.quitNow(false)
 		}
 		// A hangup or terminate that repeats while the stop it asked for
