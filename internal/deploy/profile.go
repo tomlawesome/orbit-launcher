@@ -78,8 +78,9 @@ func WithScanner(cmd *exec.Cmd, scanner string) {
 // CurrentProfile is the profile an installed deployment runs, read from
 // the COMPOSE_PROFILES list Detect has cleaned and split: no profiles is
 // Standard, exactly "processing" is Documents. ok is false for anything
-// else (a local model, a mix, a duplicate, another case, an empty or
-// unknown entry), which the launcher cannot change.
+// else (a local model, a mix, a duplicate, another case or an unknown
+// entry), which the launcher cannot change. Detect drops empty entries,
+// so "processing," reads as Documents and "," as Standard.
 func CurrentProfile(d *Deployment) (profile string, ok bool) {
 	if d == nil {
 		return "", false
