@@ -42,11 +42,17 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 
 ## Live job
 
-- Runs on the MR label `run-live-matrix` or `RUN_LIVE=true` on a hand-started
-  pipeline. An MR that moves the `UBUNTU_IMAGE`, `FEDORA_IMAGE`, `GO_VERSION`
-  or `GO_SHA256` pin, or edits `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh`,
-  `scripts/ci/run-unprivileged.sh` or `orbit/pin.json`, needs it started by
-  hand (#192, #216, #292, #193).
+- Stages (#306): live runs by itself, blocking, on every MR into `preview`,
+  and on an MR into `main` from any branch but `preview`, and nowhere else by
+  default. On an MR into either from another branch (a hotfix) a person
+  starts it if the MR also edits the CI files (#313). Pushes to `dev`, `preview`, `main` and to a branch with no MR run
+  nothing (`main` only offers the release buttons); `preview` into `main`
+  runs a no-op. An MR into `dev` runs the checks, and live
+  only on the MR label `run-live-matrix`, or `RUN_LIVE=true` on a
+  hand-started pipeline. An MR into `dev` that moves the `UBUNTU_IMAGE`,
+  `FEDORA_IMAGE`, `GO_VERSION` or `GO_SHA256` pin, or edits `.gitlab-ci.yml`,
+  `scripts/ci/fetch-verified.sh`, `scripts/ci/run-unprivileged.sh` or
+  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193).
 
 - Two legs, `live` (Ubuntu) and `live-fedora` (#183), from one `.live_leg`
   template; both must pass.
@@ -56,7 +62,8 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `ORBIT_FIRST_SIGN_EVIDENCE_JOB` on a hand-started pipeline override it: the
   job IDs of an earlier signed ai/orbit preview pipeline. Never give them a
   default. Its first install runs that release's own launcher, which
-  `live-prepare` fetches and checks against the signed manifest (#307).
+  `live-prepare` fetches (from `previous/`, then from `build_launcher`) and
+  checks against the signed manifest (#307, #313).
 - Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
   `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
   a hand-started pipeline overrides the pin: files from that branch's tip.
@@ -69,3 +76,6 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   files for both legs, got 401/403 because `ORBIT_READ_TOKEN` is missing or
   expired (#303), or `ORBIT_FILES_SOURCE=github` is set.
   `orbit_branch` is an input of the GitHub workflow only, which is stable-only (#196).
+- `test/live/screens.go` is a compatibility contract with the launcher the
+  earlier Orbit release ships: a renamed screen is added beside the old
+  wording, removed only when that release's launcher draws the new one (#307).

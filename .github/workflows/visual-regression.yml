@@ -2,13 +2,12 @@ name: Visual regression
 
 # Both triggers, as ci.yml has them: GitLab merges and pushes the merged
 # branches to this mirror, so a pull_request event never happens here and
-# the push is the run that counts (#224).
+# the push is the run that counts (#224). Since #306 GitLab runs the visual
+# check on a merge request into dev and not after the merge, so the push of
+# dev, preview and main does not run it here; hotfix branches keep theirs.
 on:
   push:
     branches:
-      - main
-      - dev
-      - preview
       - "hotfix/**"
     paths:
       - "internal/ui/**"

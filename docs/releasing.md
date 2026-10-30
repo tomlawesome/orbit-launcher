@@ -7,7 +7,21 @@ here so the two versions match.
 ## What stays here
 
 - **Source, tags and CI.** Changes reach `dev` by merge request on GitLab.
-  The checks that must pass before a merge are:
+  Each pipeline runs only what an earlier one could not (#306): test once,
+  then promote what passed.
+
+  | Pipeline | Runs |
+  |---|---|
+  | merge request into `dev` | the checks below |
+  | push that lands it | nothing |
+  | merge request `dev` into `preview` | the live installs, automatic and blocking |
+  | merge request `preview` into `main` | nothing new (one no-op job, so "pipelines must succeed" has a pipeline) |
+  | merge request into `preview` or `main` from any other branch (a hotfix) | the checks and the live installs; a person starts the installs if it also edits the CI files |
+  | push to `main` | only the release buttons |
+  | push to a branch with no merge request | nothing |
+
+  Renovate's schedule and pipelines started by hand (`RUN_LIVE=true`) still
+  run as before. The checks on a merge request into `dev` are:
   - `classify`, which spots changes that touch only documentation and lets
     the heavy checks skip themselves;
   - `fast`: `gofmt`, `go vet`, `go build`, `shellcheck` and `bats` on the
@@ -16,10 +30,17 @@ here so the two versions match.
     read through Charm's `x/vt` terminal emulator);
   - `deps`, the dependency and licence policy;
   - `gitleaks`, the secret scan;
-  - `visual`, screenshot checks, run when the screens, the visual tests or `.gitlab-ci.yml` change;
-  - `live`, a real install. It runs when asked for (a merge-request label
-    or a hand-started pipeline) and when a change moves the pins it
-    installs with.
+  - `private-details`, the shared check that no real names or addresses are added;
+  - `flake-check`, which fails when a flake in `docs/flakes.md` reaches three
+    sightings without an issue and a line in `scripts/quarantine.txt`;
+  - `visual`, screenshot checks, run when the screens, the visual tests,
+    `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh` or
+    `scripts/ci/run-unprivileged.sh` change;
+  - `live`, a real install. Here it runs only when asked for (a
+    merge-request label or a hand-started pipeline) and waits for a person
+    when a change moves the pins it installs with. The promotion into
+    `preview`, and any merge request into `preview` or `main` from another
+    branch, runs it without being asked.
 
   CodeQL runs only on the GitHub mirror.
 - **Version tags.** [`tools/calculateversion`](../tools/calculateversion)
@@ -34,8 +55,10 @@ here so the two versions match.
 
 Tags are made by a CI button, never by hand.
 
-1. Promote what the release needs (`dev` into `preview` into `main`, each
-   passing `live`) and wait for the `main` pipeline to go green.
+1. Promote what the release needs: merge `dev` into `preview` (its merge
+   request runs `live` by itself), then `preview` into `main`, which runs
+   nothing new. Merging into `main` starts the `main` pipeline, which
+   offers only the release buttons.
 2. Open the newest `main` pipeline on GitLab (the buttons only appear on
    `main` pipelines) and press **release:patch** (a fix on the current
    minor, e.g. 0.4.1 to 0.4.2) or **release:minor** (e.g. 0.4.1 to

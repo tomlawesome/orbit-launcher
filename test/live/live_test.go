@@ -163,11 +163,6 @@ func (s *liveSession) expectWithin(what string, match vtscreen.Match) string {
 	return out
 }
 
-// removedConfigScreenText is what the screen the engine's configuration
-// stop used to land on showed (#251): the stop goes straight into guided
-// configuration now. Every wait fails if one of these comes up.
-var removedConfigScreenText = []string{"The engine stopped before touching anything", "Continue — guided configuration"}
-
 func showsRemovedConfigScreen(screen string) (string, bool) {
 	for _, gone := range removedConfigScreenText {
 		if strings.Contains(screen, gone) {
@@ -228,19 +223,31 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, matc
 	return screen, nil
 }
 
-// must waits for str, and on failure diagnoses the hang before failing —
-// this is the one chance to learn anything about a freeze that has never
-// reproduced locally.
-func (s *liveSession) must(str string) {
+// must waits for any of strs (one screen's accepted wordings, screens.go),
+// and on failure diagnoses the hang before failing — this is the one
+// chance to learn anything about a freeze that has never reproduced
+// locally.
+func (s *liveSession) must(strs ...string) {
 	s.t.Helper()
-	s.expectWithin(fmt.Sprintf("expected %q", str), vtscreen.ContainsAny(str))
+	s.expectWithin(expectedWhat(strs), vtscreen.ContainsAny(strs...))
 }
 
 // mustSoon is must for the launcher's own screens: the same diagnosis on
 // failure, but under screenBudget instead of expectBudget (#166).
-func (s *liveSession) mustSoon(str string) {
+func (s *liveSession) mustSoon(strs ...string) {
 	s.t.Helper()
-	s.mustSoonScreen(str)
+	what := expectedWhat(strs)
+	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(strs...)); err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
+}
+
+// expectedWhat names a wait: one wording as before, several as a list.
+func expectedWhat(strs []string) string {
+	if len(strs) == 1 {
+		return fmt.Sprintf("expected %q", strs[0])
+	}
+	return fmt.Sprintf("expected %q", strs)
 }
 
 // mustSoonScreen is mustSoon for one screen showing every one of texts.
@@ -278,10 +285,19 @@ const noticeWait = 22 * time.Second
 // on its own goroutine for as long as the session lives.
 func (s *liveSession) passNotice() {
 	s.t.Helper()
-	s.mustSoon("A note before you install")
+	s.mustSoon(screenNotice...)
 	s.send("\x1b[F") // End
 	time.Sleep(noticeWait)
-	s.send("I've read this and I understand\r")
+	// The notice shows the phrase it wants; type that wording.
+	phrase := noticeAcknowledgement[0]
+	screen := vtscreen.Screen(s.term)
+	for _, w := range noticeAcknowledgement {
+		if strings.Contains(screen, w) {
+			phrase = w
+			break
+		}
+	}
+	s.send(phrase + "\r")
 }
 
 // runStarted waits, under screenBudget, for the mission console to say the
@@ -299,7 +315,7 @@ func (s *liveSession) runStarted() {
 	s.t.Helper()
 	const what = "expected the mission console"
 	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
-		"Contacting the engine", "ORBIT · Install", "How will people sign in?", "Install stopped")); err != nil {
+		screens(screenRunStarted, screenSignInQuestion, screenInstallStop)...)); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
@@ -310,8 +326,8 @@ func (s *liveSession) runStarted() {
 // way test/pty's full-OIDC journey does: Local accounts is the default.
 func (s *liveSession) chooseSSO() {
 	s.t.Helper()
-	s.mustSoon("How will people sign in?")
-	s.mustSoon("Local accounts")
+	s.mustSoon(screenSignInQuestion...)
+	s.mustSoon(screenLocalAccounts...)
 	s.send("\x1b[B") // Down to Single sign-on (SSO)
 	s.send("\r")
 	s.signIn = "oidc"
@@ -323,8 +339,8 @@ func (s *liveSession) chooseSSO() {
 // asks for APP_URL only (#246).
 func (s *liveSession) chooseLocalAccounts() {
 	s.t.Helper()
-	s.mustSoon("How will people sign in?")
-	s.mustSoon("Local accounts")
+	s.mustSoon(screenSignInQuestion...)
+	s.mustSoon(screenLocalAccounts...)
 	s.send("\r")
 	s.signIn = "local"
 }
@@ -797,15 +813,16 @@ const signInModeMarker = "[local/oidc]"
 
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	// An update's failure screen says "Update stopped" (flowStoppedTitle);
-	// the update leg (#198) waits here too, and must not sit out the budget
-	// on a failure screen it does not recognise.
-	stopScreens := []string{"Install stopped", "Update stopped"}
+	// The update leg (#198) waits here too, and must not sit out the
+	// budget on a failure screen it does not recognise.
+	stopScreens := screenStopped
 	// Each look is at one 120x40 screen, so it costs the same however
 	// much the install has printed. The stream matcher that once fell so
 	// far behind the launcher's repaints that a finished install looked
 	// frozen (#159, #165) has nothing left to fall behind.
-	markers := append([]string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, target}, stopScreens...)
+	// install.sh's own prose stays literal: it is Orbit's, not the launcher's.
+	markers := screens([]string{"Greetings, what can we do for you today?"}, screenProfile,
+		[]string{"Review:", "Final review:", "Optional services", signInModeMarker, target}, stopScreens, screenSuccess)
 	// acted is the screen the last Enter was sent on. The stream gave
 	// each marker once, as it was drawn; a screen goes on showing it
 	// until the launcher moves on. A screen identical to that one is the
@@ -853,19 +870,6 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		session.send("\r")
 	}
 }
-
-// inConsolePromptMarker is the guidance line the launcher prints under
-// its own APP_URL prompt (internal/ui/configcollect.go, promptWords).
-//
-// It has to be this rather than the field's label: the labels are
-// deliberately the same words install.sh's own TTY prompts use, so
-// "Public Orbit origin" matches whichever path ran and proves neither.
-// This sentence is written in this repository and rendered only by
-// viewConfigCollect, i.e. only while the launcher itself is drawing the
-// prompt. On the handoff path the launcher draws nothing at all —
-// install.sh owns the terminal — and the string appears nowhere in the
-// orbit repository, checked.
-const inConsolePromptMarker = "the https:// address Orbit will live at"
 
 // liveProjectName is the Compose project a run of this suite owns. The
 // test hands it to the launcher through the environment (see startLive),
@@ -1081,17 +1085,22 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	// the launcher through a Remove anyway only waits for a screen that
 	// never comes: on GitLab pipeline 214 a 31s Install failure was
 	// followed by 602s of Remove before the hang diagnosis fired (#145).
-	installed := t.Run("Install", func(t *testing.T) {
+	// Install records its own success: go test -skip/-run makes a
+	// filtered-out subtest's t.Run return true, so that result cannot say
+	// Install ran (#310).
+	var installed bool
+	t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
 		assertMemoryDefaultsMatchLauncher(t, dir)
+		installed = !t.Failed()
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
-			t.Skip("Install failed; nothing to remove")
+			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
@@ -1217,17 +1226,19 @@ func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
 
 	appURL := fmt.Sprintf("https://orbit-live-local-%d.internal", time.Now().UnixNano())
 
-	installed := t.Run("Install", func(t *testing.T) {
+	var installed bool // set by Install itself, as in the SSO journey (#310)
+	t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 		installLocalThroughConsole(t, session, appURL, "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
 		assertLocalAccountsDeployment(t, dir)
+		installed = !t.Failed()
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
-			t.Skip("Install failed; nothing to remove")
+			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
@@ -1275,13 +1286,13 @@ func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID,
 	// ran. A fallback would have stopped the run above instead.
 	acceptMenusUntil(t, session, inConsolePromptMarker)
 	sendLine(appURL)
-	session.must("OIDC issuer URL")
+	session.must(screenOIDCIssuer...)
 	sendLine(testOIDCIssuer)
-	session.must("OIDC client ID")
+	session.must(screenOIDCClientID...)
 	sendLine(clientID)
 	// The in-console prompt puts the label and "input hidden" on
 	// separate lines; the label alone is what is matched, as above.
-	session.must("OIDC client secret")
+	session.must(screenOIDCSecret...)
 	sendLine(secret)
 
 	// Wait for the launcher's own success screen, never for the
@@ -1322,9 +1333,9 @@ func openGuidedConfiguration(session *liveSession) {
 	session.t.Helper()
 	sendLine := func(s string) { session.send(s + "\r") }
 
-	session.mustSoon("Install")
+	session.mustSoon(screenMenuInstall...)
 	session.choose("Install") // by digit, not by trusting the preselection
-	session.mustSoon("Choose a deployment profile")
+	session.mustSoon(screenProfile...)
 	sendLine("")         // Standard selected by default
 	session.passNotice() // Standard opens the development notice (#175, #248)
 	session.runStarted() // the mission console's piped engine run starts
@@ -1338,8 +1349,8 @@ func openGuidedConfiguration(session *liveSession) {
 	// nothing and lands on the failure screen, whose default option
 	// leads to the guided configuration.
 	screen := session.expectWithin("expected the sign-in question or failure screen after the piped attempt",
-		vtscreen.ContainsAny("How will people sign in?", "Install stopped"))
-	if !strings.Contains(screen, "How will people sign in?") {
+		vtscreen.ContainsAny(screens(screenSignInQuestion, screenInstallStop)...))
+	if !vtscreen.ContainsAny(screenSignInQuestion...)(screen) {
 		sendLine("") // Open the guided installer
 	}
 }

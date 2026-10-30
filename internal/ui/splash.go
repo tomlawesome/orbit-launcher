@@ -57,6 +57,8 @@ type MenuItem struct {
 }
 
 // MainMenu is the fixed set of top-level choices, in display order.
+// Install stays the first row while the live update leg drives an earlier
+// release's launcher by digit (#307).
 var MainMenu = []MenuItem{
 	{Label: "Install"},
 	{Label: "Update"},

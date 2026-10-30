@@ -3,7 +3,12 @@
 A check that failed and passed again on unchanged code. One heading per flake,
 one line per sighting: date · commit · pipeline/job · symptom. The third
 sighting files an issue, linked from the heading; fixing the cause deletes the
-heading.
+heading. A heading names the test as `go test -run` matches it: the third
+sighting leaves the gate by that name. A failure no test can be named for yet
+is logged under a plain heading; at its third sighting, reproduce it with the
+output kept (`go test -count=20 -v` on the package) and rename the heading to
+the test, or, if it will not reproduce, move its sightings into the issue and
+delete the heading.
 
 ## TestDiagnose_FindsASessionDetachedDescendant (test/live)
 
@@ -18,11 +23,6 @@ heading.
 
 - 2026-10-22 · c4432e7 · pipeline 2896 / fast (`-race`) · the launcher exited 1.1 s after the terminal closed with exit status 1; the installer's EXIT trap left no marker and staged files stayed in TMPDIR. Passed 5 of 5 local `-race` runs on the same commit and 5 of 5 on `dev` aad8058
 - 2026-10-28 · bf0bc57 (Go code as 4f4f0b5; only .gitlab-ci.yml changed) · local, full `go test ./... -count=1` (no `-race`) · same symptom: exited 1.0 s after the terminal closed with exit status 1, no rollback marker, staged files left in TMPDIR. Passed alone on rerun
-
-## TestConsole_RealPTY_QuittingDuringTheConfigurationImportLeavesNothingInTMPDIR (test/pty), #305
-
-- 2026-10-28 · 7e47960 · pipeline 3115 / fast job 40994 (`-race`) · SIGTERM round 3: the import reached 3572 of 3901 secrets inside the 30 s setup wait (subtest took 51.5 s); the quits themselves exited in 17–287 ms and left nothing in TMPDIR. Passed 3 of 3 local `-race` runs on the same commit (subtest about 4 s)
-- 2026-10-28 · 7e47960 · pipeline 3115 / fast job 41018 (retry, `-race`) · same symptom at round 5: 6284 of 7801 secrets within 30 s; quits exited in 4–214 ms and left nothing. Filed as #305: it blocks !240, so it is not left for a third sighting
 
 ## TestLive_InstallHealthyEndpointThenRemove/Install (test/live)
 

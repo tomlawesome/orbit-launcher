@@ -171,3 +171,32 @@ func TestManifestImageDigest(t *testing.T) {
 		}
 	}
 }
+
+func TestManifestLauncher_ReadsTheTagAndCommit(t *testing.T) {
+	const commit = "0123456789abcdef0123456789abcdef01234567"
+	data := []byte(`{"channel":"preview","launcher":{"tag":"v0.4.2","commit":"` + commit + `"},"image":{"repository":"registry.example.test/ai/orbit","digest":"` + newDigest + `"}}`)
+	tag, got, err := manifestLauncher(data)
+	if err != nil || tag != "v0.4.2" || got != commit {
+		t.Fatalf("manifestLauncher = %q, %q, %v; want v0.4.2, %q, nil", tag, got, err, commit)
+	}
+}
+
+func TestManifestLauncher_RefusesAManifestWithNoLauncherTag(t *testing.T) {
+	for _, bad := range []string{
+		`{"image":{"digest":"` + newDigest + `"}}`,
+		`{"launcher":{},"image":{"digest":"` + newDigest + `"}}`,
+		`{"launcher":{"tag":"","commit":"0123456789abcdef0123456789abcdef01234567"}}`,
+	} {
+		_, _, err := manifestLauncher([]byte(bad))
+		if err == nil {
+			t.Errorf("manifestLauncher(%s): expected an error", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "launcher.tag") {
+			t.Errorf("manifestLauncher(%s) error = %q, want it to name launcher.tag", bad, err)
+		}
+	}
+	if _, _, err := manifestLauncher([]byte(`not json`)); err == nil {
+		t.Errorf("manifestLauncher(not json): expected an error")
+	}
+}
