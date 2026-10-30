@@ -205,9 +205,9 @@ func cfg286Start(t *testing.T, m AppModel, queue *sink, to string) AppModel {
 // cfg286DeadEnd checks a dead end: the words, and Menu as the one row.
 func cfg286DeadEnd(t *testing.T, s string, want ...string) {
 	t.Helper()
-	one := oneLine(s)
+	one := flat(s)
 	for _, w := range want {
-		if !strings.Contains(one, w) {
+		if !strings.Contains(one, flat(w)) {
 			t.Errorf("the dead end does not say %q:\n%s", w, s)
 		}
 	}
@@ -244,7 +244,7 @@ func TestConfigure286_MenuRowsAreInTheSpecifiedOrderAndNeverHide(t *testing.T) {
 				}
 				prev = i
 			}
-			if strings.Contains(oneLine(s), "Change which optional services") {
+			if strings.Contains(flat(s), "Change which optional services") {
 				t.Errorf("the menu shows labels only, not descriptions:\n%s", s)
 			}
 		})
@@ -304,7 +304,7 @@ func TestConfigure286_NothingHereIsADeadEnd(t *testing.T) {
 	m2, _ := cfg286App(t, cfg286Folder(t, shortTempDir(t), "-", true))
 	m2 = cfg286Open(t, m2)
 	cfg286OnTable(t, m2)
-	if strings.Contains(oneLine(screen(m2)), "nothing to configure") {
+	if strings.Contains(flat(screen(m2)), "nothing to configure") {
 		t.Errorf("an installed deployment got the nothing-here dead end:\n%s", screen(m2))
 	}
 }
@@ -578,6 +578,65 @@ func TestConfigure286_ProfileScreenFitsAtEveryWidth(t *testing.T) {
 	}
 }
 
+// Fault: Agent and Full on the Configure table acting differently from
+// Install's table (starting a run, reaching the confirm screen, or
+// nothing at all). Enter opens Install's "isn't available yet" dead end
+// with its Back row; Back (and Esc) returns to the Configure table with
+// the caret on the row it left, and no run starts. Paired with
+// Documents, which with enough memory still reaches the confirm screen.
+func TestConfigure286_AgentAndFullOpenInstallsNotYetDeadEndAndBackReturnsToTheirRow(t *testing.T) {
+	for _, row := range []string{"Agent", "Full"} {
+		for _, back := range []string{"Back row", "Esc"} {
+			t.Run(row+"/"+back, func(t *testing.T) {
+				target, out := docs260Recorder(t)
+				cfg286Folder(t, target, "-", true)
+				m, queue := cfg286App(t, target)
+				m = cfg286Open(t, m)
+				m = cfg286TableMoveTo(t, m, row)
+				m, cmd := updateAs(t, m, key(tea.KeyEnter))
+				m = driveQuiet(t, m, cmd, settleQuiet, queue)
+				s := screen(m)
+				for _, want := range []string{
+					"This profile isn't available yet",
+					"Agent and Full need a local model, which Orbit doesn't use yet.",
+				} {
+					if !strings.Contains(flat(s), want) {
+						t.Errorf("Enter on %s: the dead end does not say %q:\n%s", row, want, s)
+					}
+				}
+				if !strings.Contains(s, "▸ Back") {
+					t.Errorf("Enter on %s: no Back row on the dead end:\n%s", row, s)
+				}
+				if strings.Contains(s, cfg286Header) || strings.Contains(s, "Choose a deployment profile") {
+					t.Errorf("Enter on %s did not leave the table for the dead end:\n%s", row, s)
+				}
+				k := key(tea.KeyEnter)
+				if back == "Esc" {
+					k = key(tea.KeyEsc)
+				}
+				m, cmd = updateAs(t, m, k)
+				if isQuit(cmd) {
+					t.Fatalf("%s quit", back)
+				}
+				m = driveQuiet(t, m, cmd, settleQuiet, queue)
+				cfg286OnTable(t, m)
+				if _, caret := cfg286TableStatus(t, screen(m)); caret != row {
+					t.Errorf("after %s the caret is on %q, want the row it left, %q:\n%s", back, caret, row, screen(m))
+				}
+				if got := docs260Lines(t, out, "profile"); len(got) != 0 {
+					t.Errorf("an installer ran: %q", got)
+				}
+			})
+		}
+	}
+
+	m, _ := cfg286App(t, cfg286Folder(t, shortTempDir(t), "-", true))
+	m = cfg286ToConfirm(t, m, "Documents")
+	if strings.Contains(flat(screen(m)), "This profile isn't available yet") {
+		t.Errorf("Documents with enough memory reached the not-yet dead end:\n%s", screen(m))
+	}
+}
+
 // --- The confirm screen -------------------------------------------------------
 
 // Fault: wrong words on the Standard → Documents confirm screen, or the
@@ -586,14 +645,14 @@ func TestConfigure286_ConfirmForDocumentsSaysWhatWillHappen(t *testing.T) {
 	m, _ := cfg286App(t, cfg286Folder(t, shortTempDir(t), "-", true))
 	m = cfg286ToConfirm(t, m, "Documents")
 	s := screen(m)
-	one := oneLine(s)
+	one := flat(s)
 	for _, want := range []string{
 		cfg286Identity,
 		"Standard → Documents",
 		"This starts the attachment reader (orbit-tika), using about 1 GB more memory.",
 		"It runs as an update inside the mission console, right here: Orbit restarts briefly on the latest Orbit release. Your settings and data are kept.",
 	} {
-		if !strings.Contains(one, want) {
+		if !strings.Contains(one, flat(want)) {
 			t.Errorf("the confirm screen does not say %q:\n%s", want, s)
 		}
 	}
@@ -611,13 +670,13 @@ func TestConfigure286_ConfirmForStandardSaysWhatWillHappen(t *testing.T) {
 	m, _ := cfg286App(t, cfg286Folder(t, shortTempDir(t), "processing", true))
 	m = cfg286ToConfirm(t, m, "Standard")
 	s := screen(m)
-	one := oneLine(s)
+	one := flat(s)
 	for _, want := range []string{
 		cfg286Identity,
 		"Documents → Standard",
 		"This stops the attachment reader (orbit-tika), freeing about 1 GB. Attachments are no longer read for text; nothing stored is deleted.",
 	} {
-		if !strings.Contains(one, want) {
+		if !strings.Contains(one, flat(want)) {
 			t.Errorf("the confirm screen does not say %q:\n%s", want, s)
 		}
 	}
@@ -855,7 +914,7 @@ func TestConfigure286_ProfileThatDidNotChangeIsSaidSo(t *testing.T) {
 			if m.state == appStateSuccess {
 				t.Errorf("an unchanged profile reached the success screen:\n%s", s)
 			}
-			one := oneLine(s)
+			one := flat(s)
 			for _, want := range []string{"The profile didn't change", strings.Replace(cfg286Unchanged, "%s", c.kept, 1)} {
 				if !strings.Contains(one, want) {
 					t.Errorf("the screen does not say %q:\n%s", want, s)
