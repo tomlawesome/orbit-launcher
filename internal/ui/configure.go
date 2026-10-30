@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -26,6 +25,8 @@ const (
 	configureStateUnsupported
 	configureStateProfile
 	configureStateConfirm
+	// configureStateUnavailable: Agent or Full, Install's own dead end.
+	configureStateUnavailable
 	configureStateRunning
 	// configureStateUnchanged: the run succeeded but the profile did not
 	// change (an Orbit release that predates profile changes on update).
@@ -49,7 +50,7 @@ type ConfigureModel struct {
 	profileChoice // the table; current is the deployment's own profile
 
 	// note is the one line under the table after Enter on the current
-	// row (or on a row that is not available yet); a move clears it.
+	// row; a move clears it.
 	note string
 
 	// requested is the profile the confirm screen is about and the run
@@ -196,6 +197,11 @@ func (m ConfigureModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.left = true
 		}
 		return m, nil
+	case configureStateUnavailable:
+		if _, chosen, back := newMenu(installUnavailableRows...).onScreen(msg); back || chosen == "Back" {
+			m.state = configureStateProfile
+		}
+		return m, nil
 	case configureStateProfile:
 		return m.handleProfileKey(msg)
 	case configureStateConfirm:
@@ -220,7 +226,8 @@ func (m ConfigureModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		case m.isCurrent(p):
 			m.note = fmt.Sprintf("Orbit already runs the %s profile here — choose another to change it.", p.name)
 		case p.profile == "":
-			m.note = "Agent and Full need a local model, which Orbit doesn't use yet."
+			// Install's dead end, with its Back row: back is this table.
+			m.state = configureStateUnavailable
 		case m.shortOfMemory(p):
 			// "not enough": the caret rests here but Enter does nothing,
 			// and the line under the table says why.
@@ -287,6 +294,8 @@ func (m ConfigureModel) view() string {
 		return m.viewProfile()
 	case configureStateConfirm:
 		return m.viewConfirm()
+	case configureStateUnavailable:
+		return viewUnavailableProfile(m.star, m.width, m.height)
 	case configureStateRunning:
 		return m.run.view(m.width, m.height)
 	case configureStateUnchanged:
@@ -303,43 +312,14 @@ func (m ConfigureModel) viewNotFound() string {
 	if m.detectErr != nil {
 		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.detectErr)
 	}
-	// viewNoDeployment's title and row, with the prose kept as one block
-	// (proseBlock) because it wraps.
-	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		wrapHard("No Orbit deployment found in "+m.targetDir, measure(m.width, proseWidth), m.width-4, folderRows)...)
-	m.writeProse(&b, style.MutedText, "There's nothing to configure here yet — Install chooses the profile as it goes in.")
-	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
-}
-
-// proseBlock wraps text to the prose measure and pads every row to the
-// widest, so the sky's per-line centring keeps a wrapped paragraph one
-// unit: no star falls between its rows (as the profile table's rows are).
-func proseBlock(text string, limit, edge int) []string {
-	rows := wrapWordsIn(text, limit, edge)
-	w := 0
-	for _, r := range rows {
-		w = max(w, lipgloss.Width(r))
-	}
-	for i, r := range rows {
-		rows[i] = r + strings.Repeat(" ", w-lipgloss.Width(r))
-	}
-	return rows
-}
-
-// writeProse writes a paragraph as proseBlock does, one ink for it all.
-func (m ConfigureModel) writeProse(b *strings.Builder, ink lipgloss.Style, text string) {
-	for _, row := range proseBlock(text, measure(m.width, m.width), textArea(m.width)) {
-		fmt.Fprintln(b, ink.Render(row))
-	}
+	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+		"There's nothing to configure here yet — Install chooses the profile as it goes in.")
 }
 
 func (m ConfigureModel) viewPrepared() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
-		proseBlock("Orbit isn't installed here yet, only prepared — Install is the way in.", measure(m.width, proseWidth), textArea(m.width))...)
+		wrapWordsIn("Orbit isn't installed here yet, only prepared — Install is the way in.", measure(m.width, proseWidth), textArea(m.width))...)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
@@ -347,8 +327,9 @@ func (m ConfigureModel) viewPrepared() string {
 func (m ConfigureModel) viewUnsupported() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark),
-		proseBlock("This deployment's profile can't be changed from the launcher yet", measure(m.width, proseWidth), textArea(m.width))...)
-	m.writeProse(&b, style.MutedText, "It uses a local model, or a mix the launcher doesn't recognise. Orbit's own installer at a terminal can change it.")
+		wrapWordsIn("This deployment's profile can't be changed from the launcher yet", measure(m.width, proseWidth), textArea(m.width))...)
+	writeWrappedIn(&b, style.MutedText, "It uses a local model, or a mix the launcher doesn't recognise. Orbit's own installer at a terminal can change it.",
+		measure(m.width, proseWidth), textArea(m.width))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -357,8 +338,9 @@ func (m ConfigureModel) viewUnsupported() string {
 func (m ConfigureModel) viewUnchanged() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "The profile didn't change")
-	m.writeProse(&b, style.MutedText,
-		fmt.Sprintf("Orbit updated but kept the %s profile: this Orbit release predates profile changes from the launcher. Try again after Orbit's next release.", rowOf(m.kept).name))
+	writeWrappedIn(&b, style.MutedText,
+		fmt.Sprintf("Orbit updated but kept the %s profile: this Orbit release predates profile changes from the launcher. Try again after Orbit's next release.", rowOf(m.kept).name),
+		measure(m.width, proseWidth), textArea(m.width))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -395,13 +377,15 @@ func (m ConfigureModel) viewConfirm() string {
 	if m.requested == deploy.ProfileStandard {
 		effect = "This stops the attachment reader (orbit-tika), freeing about 1 GB. Attachments are no longer read for text; nothing stored is deleted."
 	}
-	m.writeProse(&b, style.MutedText, effect)
-	m.writeProse(&b, style.MutedText, "It runs as an update inside the mission console, right here: Orbit restarts briefly on the latest Orbit release. Your settings and data are kept.")
+	// Each line wraps on its own, as Update's do, at the screen's edge.
+	edge := measure(m.width, m.width)
+	writeWrappedIn(&b, style.MutedText, effect, edge, textArea(m.width))
+	writeWrappedIn(&b, style.MutedText, "It runs as an update inside the mission console, right here: Orbit restarts briefly on the latest Orbit release. Your settings and data are kept.", edge, textArea(m.width))
 	fmt.Fprintln(&b)
 	// Its own line (owner, 5a): a profile change is an update run, so it
 	// also moves Orbit to its newest release. No version: the launcher
 	// does not know the newest release before the run.
-	m.writeProse(&b, style.Ink, "This also updates Orbit to its newest release.")
+	writeWrappedIn(&b, style.Ink, "This also updates Orbit to its newest release.", edge, textArea(m.width))
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
