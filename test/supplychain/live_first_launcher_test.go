@@ -74,25 +74,89 @@ func TestLivePrepareFindsTheEarlierLauncherInOrbitsBuildLauncherJob(t *testing.T
 	}
 }
 
+// buildLauncherRoute finds, in live-prepare, the lines of the build_launcher
+// route that decide whether a downloaded archive is kept. Each is found by
+// its own content, not by a word that other lines also contain, and each
+// problem names the line that is missing:
+//   - the manifest entry read into first_launcher_sha, and the hex taken from it;
+//   - the loop over build_launcher jobs;
+//   - inside it, the comparison of the candidate's sha256 with that hex, as an
+//     `if` whose first line moves the candidate into place, so a mismatch is
+//     skipped and the loop goes on;
+//   - after the loop, the `[ -s ... ]` guard on the kept archive, with the
+//     failure message on the next line.
+//
+// guardMessage is that failure message.
+func buildLauncherRoute(job []string) (guardMessage string, problems []string) {
+	index := func(from int, match func(string) bool) int {
+		for i := from; i < len(job); i++ {
+			if match(job[i]) {
+				return i
+			}
+		}
+		return -1
+	}
+	entry := index(0, func(l string) bool {
+		return strings.HasPrefix(l, "first_launcher_sha=") && strings.Contains(l, `.files["`+earlierLauncherArchive+`"]`)
+	})
+	if entry < 0 {
+		problems = append(problems, "no `first_launcher_sha=` line reading "+`.files["`+earlierLauncherArchive+`"]`+" from the verified earlier manifest")
+	}
+	hex := index(entry+1, func(l string) bool { return l == `first_launcher_hex="${first_launcher_sha#sha256:}"` })
+	if entry >= 0 && hex < 0 {
+		problems = append(problems, "no `first_launcher_hex=\"${first_launcher_sha#sha256:}\"` line after the manifest entry is read")
+	}
+	loop := index(0, func(l string) bool { return strings.Contains(l, `select(.name == "build_launcher")`) })
+	if loop < 0 {
+		problems = append(problems, "no loop over ai/orbit's `build_launcher` jobs (`select(.name == \"build_launcher\")`)")
+		return "", problems
+	}
+	cmp := index(loop+1, func(l string) bool {
+		return strings.HasPrefix(l, "if ") && strings.Contains(l, "sha256sum") &&
+			strings.Contains(l, "candidate.tar.gz") && strings.HasSuffix(l, `)" = "$first_launcher_hex" ]; then`)
+	})
+	switch {
+	case cmp < 0:
+		problems = append(problems, "no `if` in the build_launcher loop comparing the candidate's sha256sum with $first_launcher_hex")
+	case cmp+1 >= len(job) || !strings.HasPrefix(job[cmp+1], "mv ") || !strings.Contains(job[cmp+1], "candidate.tar.gz") || !strings.Contains(job[cmp+1], `"$first_dir/$first_archive"`):
+		problems = append(problems, "the sha256 comparison in the build_launcher loop must be followed by the `mv` of the candidate into $first_dir/$first_archive, so only a match is kept")
+	}
+	for i := loop + 1; cmp >= 0 && i < cmp; i++ {
+		if strings.HasPrefix(job[i], "mv ") && strings.Contains(job[i], `"$first_dir/$first_archive"`) {
+			problems = append(problems, "the build_launcher loop moves a candidate into $first_dir/$first_archive before comparing its sha256 (line: "+job[i]+")")
+		}
+	}
+	guard := index(max(cmp, loop)+1, func(l string) bool { return l == `[ -s "$first_dir/$first_archive" ] \` })
+	switch {
+	case guard < 0:
+		problems = append(problems, "no `[ -s \"$first_dir/$first_archive\" ]` guard after the build_launcher loop")
+	case guard+1 >= len(job) || !strings.HasPrefix(job[guard+1], "|| {") || !strings.Contains(job[guard+1], "exit 1"):
+		problems = append(problems, "the `[ -s ... ]` guard after the build_launcher loop must be followed by `|| { ...; exit 1; }`")
+	default:
+		guardMessage = job[guard+1]
+	}
+	return guardMessage, problems
+}
+
 func TestLivePrepareKeepsAnEarlierLauncherOnlyIfItsSha256MatchesTheSignedManifest(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
-	text := strings.Join(liveJob(t, ci, "live-prepare"), "\n")
-	manifestEntry := `.files["` + earlierLauncherArchive + `"]`
-	if !strings.Contains(text, manifestEntry) {
-		t.Errorf("the `live-prepare` job must read %s from the verified earlier manifest: the archive is kept only if its sha256 equals it (#307)", manifestEntry)
-	}
-	if !strings.Contains(text, "sha256sum") {
-		t.Error("the `live-prepare` job must compute the archive's sha256 to compare it with the manifest's (#307)")
+	_, problems := buildLauncherRoute(liveJob(t, ci, "live-prepare"))
+	for _, p := range problems {
+		t.Errorf("the `live-prepare` job keeps the archive only if its sha256 equals the manifest's (#307): %s", p)
 	}
 }
 
 func TestLivePrepareFailsWhenNoEarlierLauncherMatches(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
-	job := liveJob(t, ci, "live-prepare")
-	if !failsAfter(job, "build_launcher", "launcher") {
-		t.Error("the `live-prepare` job must exit 1 with a message about the launcher when no archive from build_launcher matches the manifest's sha256 (#307)")
+	message, _ := buildLauncherRoute(liveJob(t, ci, "live-prepare"))
+	if message == "" {
+		t.Fatal("the `live-prepare` job must exit 1 on the `[ -s ... ]` guard after the build_launcher loop when no archive matches the manifest's sha256 (#307)")
 	}
-	if !failsAfter(job, "build_launcher", "launcher", "commit") {
+	low := strings.ToLower(message)
+	if !strings.Contains(low, "launcher") {
+		t.Error("the `live-prepare` job's no-earlier-launcher failure must be about the launcher (#307)")
+	}
+	if !strings.Contains(low, "commit") {
 		t.Error("the `live-prepare` job's no-earlier-launcher failure must name the commit it looked for (#307)")
 	}
 }
