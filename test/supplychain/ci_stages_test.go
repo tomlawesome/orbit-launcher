@@ -306,7 +306,7 @@ func jobNames(jobs map[string]pipelineJob) []string {
 var (
 	liveFamily     = []string{"live-prepare", "live", "live-fedora"}
 	releaseJobs    = []string{"release:patch", "release:minor", "release:gitlab:patch", "release:gitlab:minor"}
-	checkJobsToDev = []string{"classify", "fast", "deps", "gitleaks", "private-details", "visual"}
+	checkJobsToDev = []string{"classify", "fast", "deps", "gitleaks", "private-details", "visual", "flake-check"}
 )
 
 func mrVars(source, target string) ciVars {
@@ -369,7 +369,7 @@ func TestCIStages_AMergeRequestIntoDevRunsTheChecks(t *testing.T) {
 	// No changed file matches: the checks without a `changes:` rule still
 	// run, and the live jobs are not created at all.
 	jobs = pipelineFor(t, doc, mrVars("feat/x", "dev"), false)
-	assertPresent(t, jobs, "classify", "fast", "deps", "gitleaks", "private-details")
+	assertPresent(t, jobs, "classify", "fast", "deps", "gitleaks", "private-details", "flake-check")
 	assertAbsent(t, jobs, "visual")
 	assertAbsent(t, jobs, liveFamily...)
 	assertAbsent(t, jobs, releaseJobs...)
@@ -388,6 +388,7 @@ func TestCIStages_TheLiveLabelOnAMergeRequestIntoDevStartsTheLiveInstalls(t *tes
 			}
 		}
 		assertPresent(t, jobs, checkJobsToDev[:5]...)
+		assertPresent(t, jobs, checkJobsToDev[6:]...) // flake-check; visual (index 5) has a path rule
 	}
 }
 
