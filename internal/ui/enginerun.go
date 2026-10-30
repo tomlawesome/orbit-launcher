@@ -662,6 +662,8 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 		// after the commit", #1518), and nobody may be left to wait for
 		// it. The installer leads its own session, so the hangup did not
 		// reach it either; the launcher sends it nothing and quits.
+		// Quitting closes the installer's stdout pipe: it survives that
+		// only because Orbit's install.sh ignores SIGPIPE (trap '' PIPE).
 		if r.state == runStreaming && r.action == deploy.ActionUpdate && r.committed {
 			return r.quitNow(false)
 		}
