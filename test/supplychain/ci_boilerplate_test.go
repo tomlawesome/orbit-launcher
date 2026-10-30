@@ -2022,7 +2022,7 @@ var changedBy306 = []struct {
 	{ // the .checks_rules anchor: added keys, none of these jobs had rules
 		jobs: []string{"classify", "fast", "deps", "gitleaks"},
 		key:  "rules",
-		new:  `[{"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\""}, {"if": "$CI_PIPELINE_SOURCE == \"web\" || $CI_PIPELINE_SOURCE == \"api\""}]`,
+		new:  `[{"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))"}, {"if": "$CI_PIPELINE_SOURCE == \"web\" || $CI_PIPELINE_SOURCE == \"api\""}]`,
 	},
 	{ // classify only ever sees a merge request into dev now, so the
 		// "not main" exception is dead
@@ -2035,19 +2035,20 @@ var changedBy306 = []struct {
 		jobs: []string{"visual"},
 		key:  "rules",
 		old:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\""}]`,
-		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\""}]`,
+		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))"}]`,
 	},
-	{ // the promotion into preview: automatic and blocking
+	{ // the promotion from dev into preview: automatic and blocking
 		jobs: []string{"live"},
 		key:  "rules",
 		old:  `run-live-matrix(,|$)/"}, {"allow_failure"`,
-		new:  `run-live-matrix(,|$)/"}, {"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\""}, {"allow_failure"`,
+		new:  `run-live-matrix(,|$)/"}, {"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == \"dev\""}, {"allow_failure"`,
 	},
-	{ // the pin-change route belongs to merge requests into dev
+	{ // the pin-change route belongs to merge requests into dev, and to
+		// any other branch into preview or main (review of !241)
 		jobs: []string{"live"},
 		key:  "rules",
 		old:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\"", "when": "manual"}`,
-		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\"", "when": "manual"}`,
+		new:  `"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))", "when": "manual"}`,
 	},
 }
 

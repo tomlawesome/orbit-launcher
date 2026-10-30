@@ -521,8 +521,10 @@ func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheSameChe
 						where, n, jobNames(want))
 				}
 			}
-			// The live legs are never automatic here.
-			for _, n := range liveFamily {
+			// The privileged live legs are never automatic here. live-prepare
+			// is left to the comparison with dev above: on a pin change it
+			// starts by itself there too, as the unprivileged fetch step.
+			for _, n := range []string{"live", "live-fedora"} {
 				if j, ok := got[n]; ok && !j.manual {
 					t.Errorf("%s: `%s` must be absent or manual (when: manual) without the run-live-matrix label", where, n)
 				}

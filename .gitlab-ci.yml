@@ -273,12 +273,14 @@ variables:
 
 # --- fast --------------------------------------------------------------------
 
-# ci.yml `fast`, step for step.
 # The merge-request stage (#306): the checks that run on a merge request into
-# `dev`, and on a pipeline started by hand. Not on `preview` or `main`
-# merge requests, which carry exactly the code `dev` passed.
+# `dev`, and on a pipeline started by hand. Not on the promotions (`dev` into
+# `preview`, `preview` into `main`), which carry exactly the code `dev`
+# passed. A merge request into `preview` or `main` from any other branch has
+# passed no earlier stage, so it is treated as one into `dev`: the checks
+# here, and live only by label or a pin change (review of !241).
 .checks_rules: &checks_rules
-  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
 
 # --- classify ----------------------------------------------------------------
@@ -566,7 +568,7 @@ visual:
     # a change to it alone is a change to what this job runs on (#216).
     # The suite runs through scripts/ci/run-unprivileged.sh (#292), so a
     # change to it alone starts this job too.
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
       changes:
         - internal/ui/**/*
         - test/visual/**/*
@@ -681,8 +683,8 @@ live-prepare:
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview"
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "dev"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
@@ -1083,9 +1085,10 @@ live-prepare:
     # run for every change, because it carries exactly the code `dev` passed
     # and nothing else installs anything. Automatic and blocking, not
     # label-dependent; the skip gate below lets it through because no
-    # classify runs there, and an unset verdict means run. The change route
-    # below is for merge requests into `dev` only.
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview"
+    # classify runs there, and an unset verdict means run. Only from `dev`:
+    # any other branch into `preview` has not been through `dev`'s checks,
+    # so it takes the change route below, like a merge request into `dev`.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "dev"
     # The third route in (#164). !157 bumped UBUNTU_IMAGE, and its pipeline was
     # green because nothing that ran installs anything into that image -- the
     # live job, the only one that does, was never created. `changes:` is
@@ -1108,7 +1111,7 @@ live-prepare:
     # launcher runs through scripts/ci/run-unprivileged.sh (#292), so a change
     # to it alone does too. So does orbit/pin.json: a bump of the Orbit pin is
     # exactly the change this job exists to test (#193).
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
       changes:
         - .gitlab-ci.yml
         - scripts/ci/fetch-verified.sh
@@ -1294,7 +1297,7 @@ promoted:
     name: $UBUNTU_IMAGE
   timeout: 2m
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "preview"
   script:
     - echo "nothing to run here (#306); the checks ran on dev's merge request and the live installs on the merge request into preview"
 
