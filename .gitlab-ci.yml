@@ -665,10 +665,17 @@ visual:
 # privileged job that runs untrusted code holds no credential worth taking
 # (GitLab's runner docs: privileged mode disables the container's security
 # mechanisms). It runs on the shared light runner, never the privileged one,
-# so it starts by itself whenever the legs are created -- the manual gate on
-# the legs' change route is for the privileged runner (#192) -- and stops at
-# the same skip gate they do. Its artifacts last seven days: a leg started later
-# than that needs this job retried first.
+# and stops at the same skip gate the legs do. It starts by itself on every
+# route a person asked for or a promotion carries, but NOT on the change
+# route: there it holds ORBIT_READ_TOKEN and runs the pipeline's own
+# UBUNTU_IMAGE before anyone has looked at a bumped image or edited CI file,
+# so it waits for a person like the legs (#304). Its rule is `when: manual`
+# with `allow_failure: false` there: the legs `needs:` it, and a job that
+# needs a manual job stays unstarted until that one has run, so starting
+# live-prepare is the review and the legs become startable after it. The same
+# rule covers a hotfix into `preview` or `main` that edits those files (#313).
+# Its artifacts last seven days: a leg started later than that needs this job
+# retried first.
 #
 # ORBIT_READ_TOKEN is a CI/CD variable the owner creates on ai/orbit-launcher
 # (Settings > CI/CD > Variables):
@@ -696,7 +703,7 @@ live-prepare:
     - job: classify
       artifacts: true
       optional: true
-  # The legs' five routes, with the change route automatic.
+  # The legs' five routes, the change route manual and blocking as theirs (#304).
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
@@ -707,6 +714,8 @@ live-prepare:
         - scripts/ci/fetch-verified.sh
         - scripts/ci/run-unprivileged.sh
         - orbit/pin.json
+      when: manual
+      allow_failure: false
     # The legs' fifth route (#313).
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   before_script:

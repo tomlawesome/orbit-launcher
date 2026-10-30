@@ -359,7 +359,7 @@ func TestCIStages_AMergeRequestIntoDevRunsTheChecks(t *testing.T) {
 	assertPresent(t, jobs, checkJobsToDev...)
 	assertAbsent(t, jobs, releaseJobs...)
 	assertAbsent(t, jobs, "renovate")
-	for _, n := range []string{"live", "live-fedora"} {
+	for _, n := range []string{"live-prepare", "live", "live-fedora"} {
 		if j, ok := jobs[n]; ok && !j.manual {
 			t.Errorf("`%s` must not start by itself on a merge request into dev without the label: "+
 				"the pin-change route is manual (as today)", n)
@@ -395,7 +395,9 @@ func TestCIStages_TheLiveLabelOnAMergeRequestIntoDevStartsTheLiveInstalls(t *tes
 func TestCIStages_APinChangeOnAMergeRequestIntoDevWaitsForAPersonAndBlocksTheMerge(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
 	jobs := pipelineFor(t, doc, mrVars("feat/x", "dev"), true)
-	for _, n := range []string{"live", "live-fedora"} {
+	// live-prepare too (#304): it holds ORBIT_READ_TOKEN, and the legs need it,
+	// so a bumped image must not run with the token before a person starts it.
+	for _, n := range []string{"live-prepare", "live", "live-fedora"} {
 		j, ok := jobs[n]
 		if !ok {
 			t.Errorf("`%s` must exist (as a manual job) on a merge request into dev whose files match the pin-change rule", n)
@@ -546,8 +548,8 @@ func isLiveFamily(name string) bool {
 // Test once, then promote what passed -- but a merge request into preview or
 // main from any branch other than the stage before has not been through dev,
 // so the live installs run on it whatever files it changes (#313). With the CI
-// files changed the manual gate (#192) still wins and the privileged legs wait
-// for a person; with the run-live-matrix label they start by themselves. An
+// files changed the manual gate (#192) still wins and live-prepare and the
+// legs wait for a person (#304); with the run-live-matrix label they start by themselves. An
 // ordinary merge request into dev is unchanged: no live job unless the files
 // changed or the label is set.
 func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheLiveInstallsAsItsOnlyStage(t *testing.T) {
@@ -587,8 +589,9 @@ func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheLiveIns
 					where, n, j.manual, j.blocking)
 			}
 		}
-		if j, ok := jobs["live-prepare"]; ok && j.manual {
-			t.Errorf("%s (changes=true): `live-prepare` must not be manual: it is the unprivileged fetch step", where)
+		if j, ok := jobs["live-prepare"]; ok && (!j.manual || !j.blocking) {
+			t.Errorf("%s (changes=true): `live-prepare` must be manual and blocking too: it holds ORBIT_READ_TOKEN and the legs need it, so nothing may run before a person starts it (#304); got manual=%v blocking=%v",
+				where, j.manual, j.blocking)
 		}
 
 		// The label is a person's own request: automatic and blocking.
