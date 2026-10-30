@@ -445,18 +445,88 @@ func TestCIStages_APromotionToPreviewRunsOnlyTheLiveInstalls(t *testing.T) {
 	}
 }
 
-// The preview -> main promotion reuses preview's results. At most one cheap
-// job exists so "pipelines must succeed" has a pipeline to pass.
+// The preview -> main promotion reuses preview's results. Exactly one cheap
+// job, `promoted`, exists so "pipelines must succeed" has a pipeline to pass.
 func TestCIStages_APromotionToMainAddsNothingNew(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
 	for _, changes := range []bool{false, true} {
 		jobs := pipelineFor(t, doc, mrVars("preview", "main"), changes)
-		assertAbsent(t, jobs, "fast", "deps", "visual", "gitleaks", "private-details")
+		assertPresent(t, jobs, "promoted")
+		assertAbsent(t, jobs, "classify", "fast", "deps", "visual", "gitleaks", "private-details", "flake-check")
 		assertAbsent(t, jobs, liveFamily...)
 		assertAbsent(t, jobs, releaseJobs...)
 		assertAbsent(t, jobs, "renovate")
-		if len(jobs) > 1 {
-			t.Errorf("a preview -> main merge request may create at most one cheap job (changes=%v); it creates %v", changes, jobNames(jobs))
+		if len(jobs) != 1 {
+			t.Errorf("a preview -> main merge request must create exactly one job, `promoted` (changes=%v); it creates %v", changes, jobNames(jobs))
+		}
+	}
+}
+
+// A promotion is the move from the stage before: only dev -> preview gets the
+// live installs and no checks; only preview -> main gets `promoted`.
+func TestCIStages_AMergeRequestFromDevIntoPreviewRunsTheLiveInstallsAndNoChecks(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	for _, changes := range []bool{false, true} {
+		jobs := pipelineFor(t, doc, mrVars("dev", "preview"), changes)
+		assertPresent(t, jobs, liveFamily...)
+		for _, n := range liveFamily {
+			if j, ok := jobs[n]; ok && j.manual {
+				t.Errorf("`%s` must run automatically on dev -> preview (changes=%v), not wait for a person", n, changes)
+			}
+		}
+		assertAbsent(t, jobs, "classify", "fast", "deps", "gitleaks", "private-details", "visual", "flake-check", "promoted")
+	}
+}
+
+// Any source other than the stage before is not a promotion: it is an
+// ordinary change aimed at a later branch, and it runs the same checks as the
+// same branch aimed at dev. The comparison is against the simulated dev
+// pipeline, so the test does not hard-code the list of checks.
+func TestCIStages_AMergeRequestIntoPreviewOrMainFromAnyOtherBranchRunsTheSameChecksAsIntoDev(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	cases := []struct{ source, target string }{
+		{"feature/x", "preview"},
+		{"hotfix/y", "preview"},
+		{"feature/x", "main"},
+		{"hotfix/y", "main"},
+		{"dev", "main"},
+	}
+	for _, c := range cases {
+		for _, changes := range []bool{false, true} {
+			where := fmt.Sprintf("%s -> %s (changes=%v)", c.source, c.target, changes)
+			want := pipelineFor(t, doc, mrVars(c.source, "dev"), changes)
+			got := pipelineFor(t, doc, mrVars(c.source, c.target), changes)
+
+			// The dev pipeline is the yardstick; make sure it is the checks.
+			assertPresent(t, want, "classify", "fast", "deps", "gitleaks", "private-details")
+
+			assertAbsent(t, got, "promoted")
+			assertAbsent(t, got, releaseJobs...)
+			assertAbsent(t, got, "renovate")
+			for _, n := range jobNames(want) {
+				w := want[n]
+				g, ok := got[n]
+				if !ok {
+					t.Errorf("%s: the pipeline must create `%s`, as a merge request into dev does; it creates %v", where, n, jobNames(got))
+					continue
+				}
+				if g != w {
+					t.Errorf("%s: `%s` must behave as on a merge request into dev (manual=%v blocking=%v); got manual=%v blocking=%v",
+						where, n, w.manual, w.blocking, g.manual, g.blocking)
+				}
+			}
+			for _, n := range jobNames(got) {
+				if _, ok := want[n]; !ok {
+					t.Errorf("%s: the pipeline must not create `%s`, which a merge request into dev does not; dev creates %v",
+						where, n, jobNames(want))
+				}
+			}
+			// The live legs are never automatic here.
+			for _, n := range liveFamily {
+				if j, ok := got[n]; ok && !j.manual {
+					t.Errorf("%s: `%s` must be absent or manual (when: manual) without the run-live-matrix label", where, n)
+				}
+			}
 		}
 	}
 }
