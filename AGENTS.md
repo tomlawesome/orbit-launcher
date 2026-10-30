@@ -35,6 +35,10 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   yourself (`glab api -X PUT …/merge_requests/<iid>/merge`, reading `sha`
   from the MR in the same command). Handoffs from 2026-10-23 that say to hand
   the merge over were wrong (owner, 2026-10-24).
+- Merges are semi-linear (since 2026-10-29): an MR merges only if its source
+  holds the target's tip, and GitLab's automatic rebase must never touch
+  `dev` or `preview`. After each release, merge `main` into a `chore/` branch
+  off `dev` and land it before the next promotion.
 - Only the owner presses `release:patch` or `release:minor` (on `main`
   pipelines), which cut the release tag (`docs/releasing.md`).
 - A green `go test` without running the TUI is not verified. Say plainly what
