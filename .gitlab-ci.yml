@@ -664,7 +664,7 @@ visual:
 # mechanisms). It runs on the shared light runner, never the privileged one,
 # so it starts by itself whenever the legs are created -- the manual gate on
 # the legs' change route is for the privileged runner (#192) -- and stops at
-# the same skip gate they do. Its artifacts last a day: a leg started later
+# the same skip gate they do. Its artifacts last seven days: a leg started later
 # than that needs this job retried first.
 #
 # ORBIT_READ_TOKEN is a CI/CD variable the owner creates on ai/orbit-launcher
@@ -1065,7 +1065,7 @@ live-prepare:
       - .live/orbit/release/
     reports:
       dotenv: .live/prepare.env
-    expire_in: 1 day
+    expire_in: 7 days
 
 .live_leg:
   stage: acceptance
