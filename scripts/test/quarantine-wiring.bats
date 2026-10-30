@@ -98,7 +98,7 @@ arg_after() {
   run bash "$tree/scripts/coverage.sh"
   [ "$status" -eq 0 ]
   grep -qx -- '-cover' "$log"
-  ! grep -qx -- '-skip' "$log"
+  [ -z "$(grep -x -- '-skip' "$log" || true)" ]
 }
 
 @test "nonroot-tests.sh runs each test binary with -test.skip and the quarantined names" {
@@ -117,5 +117,5 @@ arg_after() {
   [ "$status" -eq 0 ]
   grep -qx -- '-- test binary' "$log"
   grep -qx -- '-test.count=1' "$log"
-  ! grep -qx -- '-test.skip' "$log"
+  [ -z "$(grep -x -- '-test.skip' "$log" || true)" ]
 }
