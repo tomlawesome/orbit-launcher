@@ -8,6 +8,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -419,6 +420,71 @@ func TestIssuerCheck_HostileValueIsNeverDrawn(t *testing.T) {
 		}
 		if got := inputRowText(s); got != issuerAnswer || stdin.String() != "" {
 			t.Fatalf("input %q, engine %q; want the answer reopened and nothing sent", got, stdin.String())
+		}
+	})
+}
+
+// squeezed is s with every space and line break removed, so a value the
+// screen wrapped across rows is still found.
+func squeezed(s string) string { return strings.Join(strings.Fields(s), "") }
+
+// Fault: a published issuer too long for three rows of the text area at
+// 80x26 drawn (whole, cut short or wrapped), or offered as "Use the
+// published address". The owner decided this on 2026-10-30: it is
+// withheld and the person is asked again, never shown a part of it.
+// Paired: a published value that fits is drawn and offered.
+func TestIssuerCheck_PublishedValueTooLongForThreeRowsIsWithheld(t *testing.T) {
+	// A well-shaped printable-ASCII https issuer of 400 bytes whose
+	// every 6-byte piece is different, so any part of it is recognisable.
+	base := "https://login.example.test/realms/"
+	var b strings.Builder
+	b.WriteString(base)
+	for i := 0; b.Len() < 400; i++ {
+		fmt.Fprintf(&b, "p%03d-", i)
+	}
+	tooLong := b.String()[:400]
+	if len(tooLong) != 400 || !deploy.WellShapedIssuer(tooLong) || !deploy.EchoableIssuer(tooLong) {
+		t.Fatalf("setup: %d bytes, well-shaped %v, echoable %v", len(tooLong), deploy.WellShapedIssuer(tooLong), deploy.EchoableIssuer(tooLong))
+	}
+
+	t.Run("400 bytes is withheld", func(t *testing.T) {
+		r, stdin := issuerRun(t, answering(deploy.IssuerCheck{Verdict: deploy.IssuerSlashDiffers, Published: tooLong}).check)
+		r = checkedWith(t, r, issuerAnswer)
+		s := runScreen(r)
+		for name, view := range map[string]string{"screen": squeezed(s), "raw view": squeezed(r.view(80, 26))} {
+			for _, at := range []int{0, 180, 360} {
+				if piece := tooLong[at : at+40]; strings.Contains(view, piece) {
+					t.Fatalf("the %s draws part of the published value (bytes %d-%d):\n%s", name, at, at+40, s)
+				}
+			}
+		}
+		if strings.Contains(s, usePublished) {
+			t.Fatalf("a value too long to show is offered as %q:\n%s", usePublished, s)
+		}
+		if !strings.Contains(s, slashWith) || strings.Contains(s, slashWith+":") {
+			t.Fatalf("the reason row should read %q without a colon:\n%s", slashWith, s)
+		}
+		if got := inputRowText(s); got != issuerAnswer {
+			t.Fatalf("the prompt reopened with %q, want %q kept:\n%s", got, issuerAnswer, s)
+		}
+		r, _ = r.update(key(tea.KeyEnter))
+		if stdin.String() != "" {
+			t.Fatalf("Enter sent %q; nothing was offered to send", stdin.String())
+		}
+	})
+	t.Run("60 bytes is drawn and offered", func(t *testing.T) {
+		fits := tooLong[:60]
+		r, stdin := issuerRun(t, answering(deploy.IssuerCheck{Verdict: deploy.IssuerSlashDiffers, Published: fits}).check)
+		r = checkedWith(t, r, issuerAnswer)
+		s := runScreen(r)
+		for _, want := range []string{slashWith + ":", fits, usePublished, correctAnswer} {
+			if !strings.Contains(s, want) {
+				t.Fatalf("a value that fits should be drawn and offered; the screen lacks %q:\n%s", want, s)
+			}
+		}
+		r, _ = r.update(key(tea.KeyEnter))
+		if stdin.String() != fits+"\n" {
+			t.Fatalf("Use sent %q, want the published %q", stdin.String(), fits+"\n")
 		}
 	})
 }

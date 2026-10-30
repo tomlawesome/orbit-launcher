@@ -277,6 +277,23 @@ func TestCheckOidcIssuer_NotJSONIsUnchecked(t *testing.T) {
 	requireUnchecked(t, checkWithin(t, p.client(), testIssuer, 5*time.Second), "the answer is not a JSON document")
 }
 
+// Fault: a non-2xx answer read as a document (here it carries a body
+// naming the issuer, so ignoring the status would report a match), or
+// reported as something other than "cannot check" with the code. The
+// owner decided this on 2026-10-30: the person may keep the answer.
+func TestCheckOidcIssuer_NonSuccessStatusIsUnchecked(t *testing.T) {
+	for _, code := range []int{http.StatusNotFound, http.StatusForbidden} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			p := newFakeProvider(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(code)
+				_ = json.NewEncoder(w).Encode(map[string]string{"issuer": testIssuer})
+			})
+			requireUnchecked(t, checkWithin(t, p.client(), testIssuer, 5*time.Second), "answered with status "+strconv.Itoa(code))
+		})
+	}
+}
+
 // Fault: a document without a string issuer compared as if it had an
 // empty one (a "different issuer"), or a number taken for a string.
 func TestCheckOidcIssuer_NoIssuerIsUnchecked(t *testing.T) {
@@ -443,6 +460,39 @@ func TestEchoableIssuer(t *testing.T) {
 	} {
 		if EchoableIssuer(s) {
 			t.Errorf("EchoableIssuer(%s) = true, want false", name)
+		}
+	}
+}
+
+// Fault: an issuer drawn on the screen that is not printable ASCII
+// (0x21-0x7E) or is over 2,048 bytes (owner, 2026-10-30). Each hostile
+// value is a well-shaped https issuer plus one bad byte, so only the
+// character rule can refuse it. Paired: an ordinary issuer, one of
+// exactly 2,048 bytes and the ends of the printable range are accepted.
+func TestEchoableIssuer_PrintableASCIIOnly(t *testing.T) {
+	longest := "https://" + testIssuerHost + "/" + strings.Repeat("a", 2048-len("https://"+testIssuerHost+"/"))
+	if len(longest) != 2048 {
+		t.Fatalf("setup: %d bytes", len(longest))
+	}
+	for name, s := range map[string]string{
+		"an ordinary issuer":       testIssuer,
+		"exactly 2,048 bytes":      longest,
+		"0x21 and 0x7E at the end": testIssuer + "!~",
+	} {
+		if !EchoableIssuer(s) {
+			t.Errorf("EchoableIssuer(%s: %.40q) = false, want true", name, s)
+		}
+	}
+	for name, s := range map[string]string{
+		"2,049 bytes":                      longest + "a",
+		"a space (0x20)":                   testIssuer + "/a b",
+		"DEL (0x7F)":                       testIssuer + "\x7f",
+		"ESC (0x1B)":                       testIssuer + "\x1b",
+		"a byte over 0x7F (UTF-8 e-acute)": testIssuer + "/caf\u00e9",
+		"right-to-left override U+202E":    testIssuer + "/\u202e",
+	} {
+		if EchoableIssuer(s) {
+			t.Errorf("EchoableIssuer(%s: %.60q) = true, want false", name, s)
 		}
 	}
 }
