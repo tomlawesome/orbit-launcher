@@ -22,7 +22,7 @@ var hiddenEnds = []struct{ name, s string }{
 	{"ESC", "\x1b"},
 	{"DEL", "\x7f"},
 	{"invalid byte", "\xff"},
-	{"RLO", "‮"},
+	{"RLO", "\u202e"},
 }
 
 func TestWrapHiddenEnds_WrappedPathReadsBackAsThePath(t *testing.T) {

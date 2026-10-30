@@ -166,7 +166,7 @@ func TestIssuerCheck_MatchSendsTheAnswerOn(t *testing.T) {
 	if seam.ctxs[0] == nil || seam.ctxs[0].Err() != nil {
 		t.Fatal("the check was given no live context")
 	}
-	r, _ = r.update(msg)
+	_, _ = r.update(msg)
 	if stdin.String() != issuerAnswer+"\n" {
 		t.Fatalf("engine received %q, want the matched answer", stdin.String())
 	}
@@ -220,7 +220,7 @@ func TestIssuerCheck_WhileCheckingTheScreenSaysSoAndKeysWait(t *testing.T) {
 	if !strings.Contains(runScreen(r), checkingLine) {
 		t.Fatalf("the checking screen went away on a key:\n%s", runScreen(r))
 	}
-	r, _ = r.update(msg)
+	_, _ = r.update(msg)
 	if stdin.String() != issuerAnswer+"\n" {
 		t.Fatalf("engine received %q, want the answer as it was when checked", stdin.String())
 	}
@@ -250,7 +250,7 @@ func TestIssuerCheck_SlashMismatchOffersThePublishedValue(t *testing.T) {
 			if stdin.String() != "" {
 				t.Fatalf("engine received %q before a choice", stdin.String())
 			}
-			r, cmd := r.update(key(tea.KeyEnter))
+			_, cmd := r.update(key(tea.KeyEnter))
 			if stdin.String() != c.published+"\n" {
 				t.Fatalf("Use sent %q, want the published %q", stdin.String(), c.published+"\n")
 			}
@@ -293,7 +293,7 @@ func TestIssuerCheck_SlashMismatchCorrectReopensTheAnswer(t *testing.T) {
 	if got := seam.calls(); len(got) != 2 || got[1] != issuerAnswer {
 		t.Fatalf("checks %q, want the answer checked again", got)
 	}
-	r, _ = r.update(msg)
+	_, _ = r.update(msg)
 	if stdin.String() != issuerAnswer+"\n" {
 		t.Fatalf("engine received %q after the re-check matched", stdin.String())
 	}
@@ -349,7 +349,7 @@ func TestIssuerCheck_UncheckedOffersKeepOrCorrect(t *testing.T) {
 	t.Run("keep", func(t *testing.T) {
 		r, stdin := setup(t)
 		r, _ = r.update(key(tea.KeyDown))
-		r, _ = r.update(key(tea.KeyEnter))
+		_, _ = r.update(key(tea.KeyEnter))
 		if stdin.String() != issuerAnswer+"\n" {
 			t.Fatalf("Keep sent %q, want the typed answer", stdin.String())
 		}
@@ -467,7 +467,7 @@ func TestIssuerCheck_PublishedValueTooLongForThreeRowsIsWithheld(t *testing.T) {
 		if got := inputRowText(s); got != issuerAnswer {
 			t.Fatalf("the prompt reopened with %q, want %q kept:\n%s", got, issuerAnswer, s)
 		}
-		r, _ = r.update(key(tea.KeyEnter))
+		_, _ = r.update(key(tea.KeyEnter))
 		if stdin.String() != "" {
 			t.Fatalf("Enter sent %q; nothing was offered to send", stdin.String())
 		}
@@ -482,7 +482,7 @@ func TestIssuerCheck_PublishedValueTooLongForThreeRowsIsWithheld(t *testing.T) {
 				t.Fatalf("a value that fits should be drawn and offered; the screen lacks %q:\n%s", want, s)
 			}
 		}
-		r, _ = r.update(key(tea.KeyEnter))
+		_, _ = r.update(key(tea.KeyEnter))
 		if stdin.String() != fits+"\n" {
 			t.Fatalf("Use sent %q, want the published %q", stdin.String(), fits+"\n")
 		}
@@ -518,7 +518,7 @@ func TestIssuerCheck_StaleResultIsDropped(t *testing.T) {
 	if msg.answer != changed {
 		t.Fatalf("the check was for %q, want %q", msg.answer, changed)
 	}
-	r, _ = r.update(msg)
+	_, _ = r.update(msg)
 	if stdin.String() != changed+"\n" {
 		t.Fatalf("engine received %q, want the corrected answer", stdin.String())
 	}
