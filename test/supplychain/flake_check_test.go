@@ -524,3 +524,117 @@ func TestEveryQuarantinedNameIsATestThatExists(t *testing.T) {
 		t.Errorf("%s names %q, which is no test in the module (go test -list finds nothing): it skips nothing, and the flake check trusts a gate that is not there (#310)", quarantineFile, n)
 	}
 }
+
+// --- every quarantined subtest is named in its parent ----------------------
+
+func TestQuarantinedSubtestsSplitsAtUnbracketedSlashes(t *testing.T) {
+	got := quarantinedSubtests("TestA\nTestB/x\nTestC/one/two\nParent[a/b]/Sub\n# c\n\n")
+	want := map[string][]string{
+		"TestA":       nil,
+		"TestB":       {"x"},
+		"TestC":       {"one", "two"},
+		"Parent[a/b]": {"Sub"},
+	}
+	if len(got) != len(want) {
+		t.Errorf("each non-comment line gives one parent, so want %d parents, got %d: %q", len(want), len(got), got)
+	}
+	for parent, segs := range want {
+		g, ok := got[parent]
+		if !ok {
+			t.Errorf("parent %q is missing: the cut at the first unbracketed `/` must match quarantinedTests, or the sub check looks up the wrong function", parent)
+			continue
+		}
+		if strings.Join(g, "\x00") != strings.Join(segs, "\x00") || len(g) != len(segs) {
+			t.Errorf("parent %q: want segments %q, got %q; a wrong split checks the wrong half of the name", parent, segs, g)
+		}
+	}
+}
+
+func TestGoTestNameRewriteTurnsSpacesIntoUnderscores(t *testing.T) {
+	for in, want := range map[string]string{
+		"a far deadline leaves the budget alone": "a_far_deadline_leaves_the_budget_alone",
+		"tab\there":                              "tab_here",
+		"nb space":                               "nb_space",
+		"Install":                                "Install",
+	} {
+		if got := goTestNameRewrite(in); got != want {
+			t.Errorf("goTestNameRewrite(%q) = %q, want %q: go test prints every space rune as `_`, so a name written with spaces matches nothing", in, got, want)
+		}
+	}
+}
+
+func TestSubtestsWithoutLiteralReportsASubNamedNowhereInTheParent(t *testing.T) {
+	realBody := "{\n\tt.Run(\"Install\", func(t *testing.T) {})\n\tfor _, c := range []struct{ name string }{{\"a near deadline caps it\"}} {\n\t\tt.Run(c.name, nil)\n\t}\n}"
+	var asked []string
+	body := func(parent string) (string, bool) {
+		asked = append(asked, parent)
+		if parent == "TestReal" {
+			return realBody, true
+		}
+		return "", false
+	}
+	run := func(list string) []string {
+		asked = nil
+		return subtestsWithoutLiteral(list, body)
+	}
+
+	for _, ok := range []string{
+		"TestReal/Install",
+		"TestReal/a_near_deadline_caps_it",
+	} {
+		if got := run(ok + "\n"); len(got) != 0 {
+			t.Errorf("%q is spelled by a literal in the parent's body, so nothing should be reported, got %q", ok, got)
+		}
+	}
+	for _, bad := range []string{
+		"TestReal/a near deadline caps it",
+		"TestReal/typo",
+		"TestReal/Install/typo",
+	} {
+		got := run(bad + "\n")
+		if len(got) != 1 || got[0] != bad {
+			t.Errorf("%q must be reported as the full original line, got %q: -skip would match nothing", bad, got)
+		}
+	}
+	if got := run("TestReal\n"); len(got) != 0 || len(asked) != 0 {
+		t.Errorf("a line with no subtest needs no body: reported %q, body asked for %q", got, asked)
+	}
+	if got := run("TestGone/x\n"); len(got) != 0 {
+		t.Errorf("a parent with no function is the top-level check's job, not this one's; reported %q", got)
+	}
+	run("Parent[a/b]/Sub\n")
+	if len(asked) != 1 || asked[0] != "Parent[a/b]" {
+		t.Errorf("body must be asked for the parent exactly as written (a -run pattern), got %q", asked)
+	}
+}
+
+func TestTestFuncBodyFindsTheParentInTheModule(t *testing.T) {
+	b, ok := testFuncBody(root, "TestEveryQuarantinedNameIsATestThatExists")
+	if !ok || !strings.Contains(b, "quarantinedWithoutTests") {
+		t.Errorf("testFuncBody must find this package's own test and its body; found %v, body %q", ok, b)
+	}
+	b, ok = testFuncBody(root, "TestLive_InstallHealthyEndpointThenRemove")
+	if !ok || !strings.Contains(b, `"Install"`) {
+		t.Errorf("testFuncBody must find the test in test/live (a _test.go file with or without the live tag); found %v, body has no \"Install\" literal", ok)
+	}
+	if _, ok := testFuncBody(root, "TestNoSuchThing"); ok {
+		t.Errorf("a name no test has must report false, or a typo in the parent passes this check")
+	}
+}
+
+func TestEveryQuarantinedSubtestIsNamedInItsParent(t *testing.T) {
+	list := readRepoFile(t, quarantineFile)
+	for _, l := range subtestsWithoutLiteral(list, func(p string) (string, bool) { return testFuncBody(root, p) }) {
+		parent := quarantinedTests(l)[0]
+		t.Errorf("%s names %q, but no string literal in %s's body spells that subtest (Go prints spaces as underscores): -skip would match nothing while the flake check trusts the quarantine (#310); fix the name, or quarantine the parent", quarantineFile, l, parent)
+	}
+}
+
+func TestQuarantineHeaderStatesWhatTheSubtestCheckCanSee(t *testing.T) {
+	header := leadingComment(readRepoFile(t, quarantineFile))
+	for _, phrase := range []string{"spaces as underscores", "quarantine the parent"} {
+		if !strings.Contains(header, phrase) {
+			t.Errorf("%s's header must say %q: the sub half of a name is checked only against literals in the parent's body, and the writer needs to know how Go spells it and what to do when it is named elsewhere (#310)", quarantineFile, phrase)
+		}
+	}
+}
