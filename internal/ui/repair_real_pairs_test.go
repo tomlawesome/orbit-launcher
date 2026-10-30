@@ -44,7 +44,9 @@ var realPlanPairs = []realPlanPair{
 	{"not-orbit-directory", "manual"},
 	{"managed-file-missing", "manual"},
 	{"managed-file-symlink", "manual"},
+	{"compose-file-restorable", "restore-compose-file"},
 	{"compose-interpolation-failed", "manual"},
+	{"compose-file-drift", "manual"},
 	{"container-foreign-owner", "manual"},
 	{"docker-unavailable", "manual"},
 	{"unrelated-resource-present", "manual"},
@@ -52,7 +54,7 @@ var realPlanPairs = []realPlanPair{
 	{"database-credential-unverifiable", "manual"},
 }
 
-// orbitClassOrder is Orbit's repair.sh class_order at dev 7264f015, in
+// orbitClassOrder is Orbit's repair.sh class_order at dev e697be42, in
 // its order, with each class's plan action from the same file's
 // action_for_class map (manual where the map has no entry).
 // secret-missing has no entry: resolve_secret_missing_action picks
@@ -60,6 +62,7 @@ var realPlanPairs = []realPlanPair{
 var orbitClassOrder = []realPlanPair{
 	{"not-orbit-directory", "manual"},
 	{"managed-file-missing", "manual"},
+	{"compose-file-restorable", "restore-compose-file"},
 	{"managed-file-symlink", "manual"},
 	{"managed-file-permissions", "fix-permissions"},
 	{"secrets-directory-invalid", "fix-permissions"},
@@ -71,6 +74,7 @@ var orbitClassOrder = []realPlanPair{
 	{"deployment-version-unsupported", "manual"},
 	{"staging-evidence-present", "restore-transaction"},
 	{"compose-interpolation-failed", "manual"},
+	{"compose-file-drift", "manual"},
 	{"docker-unavailable", "manual"},
 	{"container-foreign-owner", "manual"},
 	{"volume-retained-without-credentials", "rotate-database-credential"},
