@@ -612,7 +612,7 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 	case folderReadMsg:
 		return r.gotFolder(msg), nil
 
-	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
+	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg, issuerCheckedMsg:
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
@@ -684,8 +684,9 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r.handleKey(ctrlCPress)
 
 	case tea.PasteMsg:
-		// Only the configuration prompt takes a paste (#222).
-		if r.state == runConfigCollect {
+		// Only the configuration prompt takes a paste (#222), and not
+		// while an OIDC issuer answer is held for its check (#314).
+		if r.state == runConfigCollect && !r.cfg.issuer.busy() {
 			r.cfg.session = r.cfg.session.paste(msg.Content)
 		}
 		return r, nil

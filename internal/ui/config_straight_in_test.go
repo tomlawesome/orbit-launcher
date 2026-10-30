@@ -889,6 +889,7 @@ func TestStraightIn_TheGiveUpReasonNamesOnlyAFieldStillBeingAsked(t *testing.T) 
 				f := startStraightFlow(t, name, engineRunSeams{
 					prepareConfig: planned(true, false),
 					startConfig:   scriptedConfig(c.script, machineSecretScript),
+					checkIssuer:   issuerMatches,
 				})
 				f.driveToFailure(c.sso, c.answers)
 
