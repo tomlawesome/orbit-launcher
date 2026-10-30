@@ -3,7 +3,8 @@
 A check that failed and passed again on unchanged code. One heading per flake,
 one line per sighting: date · commit · pipeline/job · symptom. The third
 sighting files an issue, linked from the heading; fixing the cause deletes the
-heading.
+heading. A heading names the test as `go test -run` matches it: the third
+sighting leaves the gate by that name.
 
 ## TestDiagnose_FindsASessionDetachedDescendant (test/live)
 

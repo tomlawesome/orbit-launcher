@@ -14,7 +14,7 @@
 // the job-token review's changedByTokenReview; and #183's changedBy183,
 // which also adds the live-fedora job (addedBy183) and FEDORA_IMAGE; and
 // #306's changedBy306 and workflowChangedBy306, which also add the promoted
-// job (addedBy306).
+// job (addedBy306); and the second audit round's changedByAuditE.
 package supplychain
 
 import (
@@ -2052,11 +2052,32 @@ var changedBy306 = []struct {
 	},
 }
 
+// The fixes from the v0.4.3 audit's second round. Applies after #306.
+//
+// The live leg skips the tests scripts/quarantine.txt names, as the gate
+// does, so a quarantined live test cannot block a promotion (#310).
+var changedByAuditE = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"live"},
+		old: `bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
+		new: `quarantined="$(bash scripts/ci/quarantine-skip.sh)"
+bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307, then #306 do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307, then #306, then the second audit round do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -2084,6 +2105,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy303...)
 	all = append(all, changedBy307...)
 	all = append(all, changedBy306...)
+	all = append(all, changedByAuditE...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

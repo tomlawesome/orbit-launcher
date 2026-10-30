@@ -1229,10 +1229,15 @@ live-prepare:
     # job token are dropped first: nothing the install runs needs them, and
     # the image pulls read the login above. That keeps them out of the
     # tests' environment, not out of their reach (see .live_leg, #303).
+    # scripts/quarantine.txt reaches the live tests too; without this a
+    # quarantined live test would still run here and block the promotion
+    # while flake-check says it left the gate. The flag is added only for a
+    # non-empty pattern: an empty -skip skips every test.
     - |
+      quarantined="$(bash scripts/ci/quarantine-skip.sh)"
       bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
         env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
-        go test -tags live -count=1 -v -timeout 30m ./test/live/...
+        go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...
   after_script:
     # The registry login (the deploy token) goes first, pass or fail.
     - rm -f /home/orbit-ci/.docker/config.json
