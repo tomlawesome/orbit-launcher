@@ -4,7 +4,9 @@
 // cheapest stage, on the light lane, runs it on every pipeline that runs the
 // checks (#306; owner, answer 3a) with the list
 // of quarantined tests. These checks pin that adoption (agent-infra
-// scripts/flake-check/README.md, "Adopt it in a project").
+// scripts/flake-check/README.md, "Adopt it in a project"). The sub half of a
+// quarantined `TestX/sub` is checked statically against literals in TestX's
+// own body; scripts/quarantine.txt's header states what that cannot see.
 package supplychain
 
 import (
@@ -14,9 +16,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"io/fs"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 const (
@@ -445,6 +450,139 @@ func quarantinedTests(list string) []string {
 		out = append(out, l[:cut])
 	}
 	return out
+}
+
+// splitQuarantineLine splits one quarantine line at every `/` outside
+// brackets: the parent test name first, then each subtest segment.
+func splitQuarantineLine(l string) []string {
+	var out []string
+	depth, from := 0, 0
+	for i, r := range l {
+		if r == '[' {
+			depth++
+		} else if r == ']' && depth > 0 {
+			depth--
+		} else if r == '/' && depth == 0 {
+			out = append(out, l[from:i])
+			from = i + 1
+		}
+	}
+	return append(out, l[from:])
+}
+
+// quarantineLines returns the non-comment, non-blank lines of a list.
+func quarantineLines(list string) []string {
+	var out []string
+	for _, l := range strings.Split(list, "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// quarantinedSubtests maps each quarantined parent test (cut as in
+// quarantinedTests) to the subtest segments after it, nil for a bare `TestX`.
+func quarantinedSubtests(list string) map[string][]string {
+	out := map[string][]string{}
+	for _, l := range quarantineLines(list) {
+		parts := splitQuarantineLine(l)
+		out[parts[0]] = parts[1:]
+	}
+	return out
+}
+
+// goTestNameRewrite spells a subtest name the way go test prints and matches
+// it: every space rune becomes `_` (testing/match.go's rewrite, spaces only).
+func goTestNameRewrite(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return '_'
+		}
+		return r
+	}, s)
+}
+
+var goStringLiteral = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+
+// subtestsWithoutLiteral returns the quarantine lines with a subtest segment
+// that no double-quoted literal in the parent's body spells after Go's
+// rewrite. Subtests are named only at run time and `go test -list` prints
+// top-level tests only, so this is a source check: a parent body cannot find
+// is the top-level check's job and is skipped here.
+func subtestsWithoutLiteral(list string, body func(string) (string, bool)) []string {
+	known := map[string]map[string]bool{}
+	var out []string
+	for _, l := range quarantineLines(list) {
+		parts := splitQuarantineLine(l)
+		parent, segs := parts[0], parts[1:]
+		if len(segs) == 0 {
+			continue
+		}
+		set, seen := known[parent]
+		if !seen {
+			if b, ok := body(parent); ok {
+				set = map[string]bool{}
+				for _, m := range goStringLiteral.FindAllStringSubmatch(b, -1) {
+					lit, err := strconv.Unquote(m[0])
+					if err != nil {
+						lit = m[1]
+					}
+					set[goTestNameRewrite(lit)] = true
+				}
+			}
+			known[parent] = set
+		}
+		if set == nil {
+			continue
+		}
+		for _, s := range segs {
+			if !set[s] {
+				out = append(out, l)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// testFuncBody returns the source of the test function name in any _test.go
+// file under root, from `func name(` to the first line that is just `}`.
+func testFuncBody(root, name string) (string, bool) {
+	re := regexp.MustCompile(`(?m)^func ` + regexp.QuoteMeta(name) + `\(`)
+	var body string
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "vendor", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		loc := re.FindIndex(src)
+		if loc == nil {
+			return nil
+		}
+		rest := string(src[loc[0]:])
+		if end := strings.Index(rest, "\n}\n"); end >= 0 {
+			rest = rest[:end+3]
+		}
+		body, found = rest, true
+		return fs.SkipAll
+	})
+	return body, found
 }
 
 // goTestLister prints the names `go test -list` finds for a pattern, one

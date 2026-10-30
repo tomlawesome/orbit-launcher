@@ -14,8 +14,12 @@
 # live legs skip only there.
 #
 # Each name is a test name as `go test -run` matches it, `TestX` or
-# `TestX/sub`: a line matching no test skips nothing, and test/supplychain
-# rejects it.
+# `TestX/sub`. test/supplychain rejects a `TestX` that `go test -list` does
+# not find, and a `/sub` that no string literal in TestX's own function body
+# spells, after Go prints spaces as underscores (subtests are only named at
+# run time, so this is a source check, not a run). A subtest named in a
+# helper or a package-level table cannot be seen that way:
+# quarantine the parent `TestX` instead.
 #
 # Adding a name takes the test out of the merge gate, so also add a
 # non-blocking job that runs the quarantined tests with
