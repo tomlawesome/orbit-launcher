@@ -30,7 +30,12 @@ here so the two versions match.
     read through Charm's `x/vt` terminal emulator);
   - `deps`, the dependency and licence policy;
   - `gitleaks`, the secret scan;
-  - `visual`, screenshot checks, run when the screens, the visual tests or `.gitlab-ci.yml` change;
+  - `private-details`, the shared check that no real names or addresses are added;
+  - `flake-check`, which fails when a flake in `docs/flakes.md` reaches three
+    sightings without an issue and a line in `scripts/quarantine.txt`;
+  - `visual`, screenshot checks, run when the screens, the visual tests,
+    `.gitlab-ci.yml`, `scripts/ci/fetch-verified.sh` or
+    `scripts/ci/run-unprivileged.sh` change;
   - `live`, a real install. Here it runs only when asked for (a
     merge-request label or a hand-started pipeline) and waits for a person
     when a change moves the pins it installs with. The promotion into
