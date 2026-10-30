@@ -84,6 +84,7 @@ type MenuItem struct {
 var MainMenu = []MenuItem{
 	{Label: "Install"},
 	{Label: "Update"},
+	{Label: "Configure"},
 	{Label: "Repair"},
 	{Label: "Remove", Gap: true},
 	{Label: "Exit"},
@@ -100,10 +101,11 @@ func mainMenu() menu {
 
 // Menu indices used by the state-based preselection.
 const (
-	menuInstall = 0
-	menuUpdate  = 1
-	menuRepair  = 2
-	menuExit    = 4
+	menuInstall   = 0
+	menuUpdate    = 1
+	menuConfigure = 2
+	menuRepair    = 3
+	menuExit      = 5
 )
 
 // tickInterval is the UI tick, the starfield's own interval.

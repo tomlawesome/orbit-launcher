@@ -36,7 +36,7 @@ func TestSplashModel_ArrowNavigationWraps(t *testing.T) {
 
 func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
 	m := settled(NewSplashModel())
-	m.menu.sel = 2 // Repair
+	m.menu.sel = menuRepair
 
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(SplashModel)

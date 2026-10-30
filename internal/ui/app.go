@@ -20,6 +20,7 @@ const (
 	appStateRepair
 	appStateInstall
 	appStateUpdate
+	appStateConfigure
 	appStateSuccess
 )
 
@@ -42,6 +43,7 @@ type AppModel struct {
 	// never kept between sessions.
 	collected *collectedConfig
 	update    UpdateModel
+	configure ConfigureModel
 	success   SuccessModel
 
 	// Configuration remembered so a refreshed splash (after a flow
@@ -418,6 +420,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.update.Update(msg)
 		m.update = updated.(UpdateModel)
 		return m.watchOutcome(m.update.Outcome(), cmd)
+	case appStateConfigure:
+		updated, cmd := m.configure.Update(msg)
+		m.configure = updated.(ConfigureModel)
+		return m.watchOutcome(m.configure.Outcome(), cmd)
 	case appStateSuccess:
 		updated, cmd := m.success.Update(msg)
 		m.success = updated.(SuccessModel)
@@ -594,6 +600,16 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = appStateUpdate
 		return m, tea.Batch(sizeCmd, m.update.Init())
+	case "Configure":
+		dir := m.resolvedTargetDir()
+		deployment, err := deploy.Detect(dir)
+		m.configure = NewConfigureModel(deployment, dir, m.version)
+		m.configure.detectErr = err
+		m.configure.seams = m.flowSeams
+		m.configure.send = m.flowSend
+		m.configure.lookupInstalledAt = m.flowInstalledAt
+		m.state = appStateConfigure
+		return m, tea.Batch(sizeCmd, m.configure.Init())
 	default:
 		return m, tea.Quit
 	}
@@ -622,6 +638,8 @@ func (m AppModel) screen() tea.View {
 		return m.install.View()
 	case appStateUpdate:
 		return m.update.View()
+	case appStateConfigure:
+		return m.configure.View()
 	case appStateSuccess:
 		return m.success.View()
 	}
