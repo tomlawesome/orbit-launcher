@@ -119,8 +119,22 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 
 	var oldRef string
 	installed := t.Run("InstallEarlier", func(t *testing.T) {
-		// The earlier release's own launcher drives the first install (#307);
-		// the screens it draws are those of the launcher it shipped with.
+		// The earlier release's own launcher draws these screens, so every
+		// wait goes through test/live/screens.go (#307).
+		firstData, err := os.ReadFile(firstManifest)
+		if err != nil {
+			t.Fatalf("read release manifest: %v", err)
+		}
+		tag, commit, err := manifestLauncher(firstData)
+		if err != nil {
+			t.Fatalf("%s: %v", firstManifest, err)
+		}
+		t.Logf("InstallEarlier drives the earlier release's launcher %s (%s); the screens are that launcher's", tag, commit)
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("a wait that timed out here most likely names a screen the launcher under test has renamed since %s; add that wording beside the old one in test/live/screens.go, never in its place", tag)
+			}
+		})
 		session := startLiveEnv(t, firstLauncher, dir,
 			"ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH="+firstScript,
 			"ORBIT_RELEASE_MANIFEST="+firstManifest)

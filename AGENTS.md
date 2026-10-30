@@ -75,3 +75,6 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   files for both legs, got 401/403 because `ORBIT_READ_TOKEN` is missing or
   expired (#303), or `ORBIT_FILES_SOURCE=github` is set.
   `orbit_branch` is an input of the GitHub workflow only, which is stable-only (#196).
+- `test/live/screens.go` is a compatibility contract with the launcher the
+  earlier Orbit release ships: a renamed screen is added beside the old
+  wording, removed only when that release's launcher draws the new one (#307).

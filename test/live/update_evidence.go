@@ -175,3 +175,22 @@ func manifestImageDigest(data []byte) (string, error) {
 	}
 	return m.Image.Digest, nil
 }
+
+// manifestLauncher returns the launcher tag and commit an Orbit release
+// manifest records (.launcher), so the update leg can name the launcher whose
+// screens its first install drives (#307).
+func manifestLauncher(data []byte) (tag, commit string, err error) {
+	var m struct {
+		Launcher struct {
+			Tag    string `json:"tag"`
+			Commit string `json:"commit"`
+		} `json:"launcher"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return "", "", fmt.Errorf("release manifest is not JSON: %w", err)
+	}
+	if m.Launcher.Tag == "" {
+		return "", "", fmt.Errorf("release manifest records no launcher.tag")
+	}
+	return m.Launcher.Tag, m.Launcher.Commit, nil
+}
