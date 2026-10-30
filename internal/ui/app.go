@@ -96,6 +96,9 @@ type AppModel struct {
 	// exitNote is a Ctrl-C stop's last word, kept for main to print
 	// once the screen has closed (ExitNote).
 	exitNote string
+	// signalStop is the signal that quit an Update past its commit
+	// (SignalStop).
+	signalStop os.Signal
 
 	// flowSend is how a flow's engine stream reader gets its output
 	// back into the event loop (#159). cmd/orbit-launcher supplies the
@@ -339,12 +342,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // it finished undoing its work; empty otherwise.
 func (m AppModel) ExitNote() string { return m.exitNote }
 
+// SignalStop is the signal that quit an Update past its commit, nil if
+// none did. main turns SIGTERM and SIGHUP into a stderr line and exit 128
+// plus the signal number (#304).
+func (m AppModel) SignalStop() os.Signal { return m.signalStop }
+
 // watchOutcome moves the app forward when a flow's engine run
 // concludes: the shared success screen, or back to the menu.
 func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	// Before the Done check: a stop quits without ever setting Done.
 	if o.ExitNote != "" {
 		m.exitNote = o.ExitNote
+	}
+	if o.SignalStop != nil {
+		m.signalStop = o.SignalStop
 	}
 	if !o.Done {
 		return m, cmd
