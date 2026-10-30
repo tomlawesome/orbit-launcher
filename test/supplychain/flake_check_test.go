@@ -9,6 +9,8 @@ package supplychain
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +23,11 @@ const (
 	flakeScript     = "scripts/ci/flake-check.sh"
 	flakeSourcePath = "scripts/flake-check/flake-check.sh"
 	flakeLog        = "docs/flakes.md"
+
+	// SHA-256 of the source body (after the header) at the commit the header
+	// names; refreshed with the copy, so a pipeline with no agent-infra
+	// checkout still catches an edit.
+	flakeSourceBodySHA256 = "6ea37ab97d38c151b3b5d3be611791219c0b1b553bb6c71852f965a26fffc77f"
 )
 
 // flakeCheckJob returns the name and effective form of the pipeline job that
@@ -78,6 +85,14 @@ func leadingComment(src string) string {
 // afterHeader returns the script from its first line of code on.
 func afterHeader(src string) string {
 	return strings.TrimPrefix(src, leadingComment(src))
+}
+
+// bodyHash is the hex SHA-256 of the script from its first line of code to
+// the end, trailing newline included; the same bytes as
+// `awk 'f||!/^#|^[[:space:]]*$/{f=1;print}' | sha256sum`.
+func bodyHash(src string) string {
+	sum := sha256.Sum256([]byte(strings.TrimPrefix(afterHeader(src), "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 // agentInfraDir is the agent-infra checkout the copy is compared with:
@@ -141,7 +156,7 @@ func TestFlakeCheckBodyIsAgentInfrasApartFromTheHeader(t *testing.T) {
 	}
 	repo := agentInfraDir()
 	if _, err := os.Stat(filepath.Join(repo, ".git")); repo == "" || err != nil {
-		t.Skip("no agent-infra checkout (set AGENT_INFRA_DIR); the copy cannot be compared with its source")
+		t.Skip("no agent-infra checkout (set AGENT_INFRA_DIR); the pinned-hash test still checks the body, this one proves the pin is agent-infra's")
 	}
 	var out, stderr bytes.Buffer
 	cmd := exec.Command("/usr/bin/git", "-C", repo, "show", commit+":"+flakeSourcePath)
@@ -151,6 +166,17 @@ func TestFlakeCheckBodyIsAgentInfrasApartFromTheHeader(t *testing.T) {
 	}
 	if got, want := afterHeader(copyBody), afterHeader(out.String()); got != want {
 		t.Errorf("%s differs from agent-infra's %s at %s after the header; a change is a new copy with a new commit, not an edit (#310)", flakeScript, flakeSourcePath, commit)
+	}
+	if got := bodyHash(out.String()); got != flakeSourceBodySHA256 {
+		t.Errorf("flakeSourceBodySHA256 is stale: agent-infra's %s at %s hashes to %s after the header; refresh the pin from agent-infra together with the copy and its header commit (#310)", flakeSourcePath, commit, got)
+	}
+}
+
+// Runners have no agent-infra checkout, so the comparison above skips there;
+// this pin is what catches an edit to the copy on every pipeline.
+func TestFlakeCheckBodyHashMatchesThePin(t *testing.T) {
+	if got := bodyHash(readRepoFile(t, flakeScript)); got != flakeSourceBodySHA256 {
+		t.Errorf("%s after the header hashes to %s, not the pinned flakeSourceBodySHA256 %s; the copy must stay agent-infra's verbatim, so a change is a new copy: update the header commit and the pin, both taken from agent-infra's %s (#310)", flakeScript, got, flakeSourceBodySHA256, flakeSourcePath)
 	}
 }
 
