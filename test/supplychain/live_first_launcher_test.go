@@ -235,7 +235,7 @@ func TestLivePrepareLooksForTheEarlierLauncherInPreviousBeforeOrbitsPipelines(t 
 	}
 	for i, l := range job {
 		if strings.Contains(l, "pipelines?sha=") {
-			if i < curl {
+			if i > curl {
 				return
 			}
 			t.Errorf("the `live-prepare` job must try the previous/ archive (line %d) before the `pipelines?sha=` lookup (line %d) (#313)", curl, i)
