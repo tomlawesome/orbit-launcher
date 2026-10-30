@@ -937,13 +937,19 @@ func (m InstallModel) viewProfile() string {
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
+	return viewUnavailableProfile(m.star, m.width, m.height)
+}
+
+// viewUnavailableProfile is the dead end for Agent and Full, shared with
+// Configure (#286): it explains why nothing can happen, with one Back row.
+func viewUnavailableProfile(star starfield.Model, width, height int) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
 	fmt.Fprintln(&b, style.MutedText.Render("Agent and Full need a local model, which Orbit"))
 	fmt.Fprintln(&b, style.MutedText.Render("doesn't use yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return skyBlock(star, width, height, b.String())
 }
 
 // viewNotice is the development notice (#175, notice.go) over the sky.
