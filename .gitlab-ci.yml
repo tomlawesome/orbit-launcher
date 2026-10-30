@@ -863,12 +863,12 @@ live-prepare:
           --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json \
           "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image" \
-          || { echo "no signed release manifest on ${orbit_branch}: pin preview or a hotfix/* branch"; exit 1; }
+          || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
         curl --fail --silent --show-error --location --max-redirs 0 \
           --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
           --output .live/orbit/release/orbit-release-manifest.json.sig \
           "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence" \
-          || { echo "no signed release manifest on ${orbit_branch}: pin preview or a hotfix/* branch"; exit 1; }
+          || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
