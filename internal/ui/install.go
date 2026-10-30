@@ -133,6 +133,9 @@ type engineRunSeams struct {
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
 	prepareRotate  prepareRotateFunc
+	// checkIssuer checks an OIDC_ISSUER answer against the provider's
+	// discovery document (#314); nil is deploy.CheckOidcIssuer.
+	checkIssuer func(ctx context.Context, answer string) deploy.IssuerCheck
 	// listFolder reads the folder for the stopped screen's listing;
 	// nil is os.ReadDir. folderLimit is how long the screen waits for
 	// it; zero is folderReadLimit.
