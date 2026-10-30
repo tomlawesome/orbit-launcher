@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 )
 
 // memoryBytes reads a Compose size such as "2g" or "512m".
@@ -40,7 +42,7 @@ func memoryDefaultProblems(found map[string][]string, want map[string]uint64) []
 		bytes := want[name]
 		values := found[name]
 		if len(values) == 0 {
-			problems = append(problems, fmt.Sprintf("the installed docker-compose.yml and .env-orbit.example name no default for %s; the launcher's table assumes %d bytes", name, bytes))
+			problems = append(problems, fmt.Sprintf("the installed %s and %s.example name no default for %s; the launcher's table assumes %d bytes", deploy.ComposeFile, deploy.EnvFile, name, bytes))
 			continue
 		}
 		for _, v := range values {
