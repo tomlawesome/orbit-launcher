@@ -71,9 +71,11 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 - Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
   `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
   a hand-started pipeline overrides the pin: files from that branch's tip.
-- A contract change goes: Orbit side on Orbit `dev` → bump `orbit/pin.json`
-  here (live green against a fixed partner) → launcher release → Orbit bumps
-  `launcher/pin.json`.
+- A contract change goes: Orbit side promoted to Orbit `preview` (or a
+  `hotfix/*` branch; only those produce the signed release manifest live
+  reads) → bump `orbit/pin.json` here (live green with Orbit's install files
+  fixed at the pin; its image still follows that branch's latest build) →
+  launcher release → Orbit bumps `launcher/pin.json`.
 - Every GitLab live run is a preview run (the pin's branch and `ORBIT_CHANNEL`
   are preview). It fails only if the job falls back to the GitHub mirror,
   which has no release manifest (#194): `live-prepare`, which reads Orbit's
