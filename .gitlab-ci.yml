@@ -278,7 +278,7 @@ variables:
 # `preview`, `preview` into `main`), which carry exactly the code `dev`
 # passed. A merge request into `preview` or `main` from any other branch has
 # passed no earlier stage, so it is treated as one into `dev`: the checks
-# here, and live only by label or a pin change (review of !241).
+# here, and the live installs, which nothing later would run (#313).
 .checks_rules: &checks_rules
   - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -633,10 +633,15 @@ visual:
 # before the package install, the Go tarball and the Docker daemon, which is
 # where the minutes are. An unset verdict means run. Each leg, and
 # live-prepare (#303), runs it first.
+#
+# The pin verdict only ever excuses a merge request into `dev`: an install
+# into `preview` or `main` is the last one before a release, so it runs
+# whatever moved (#313). Anything with no target branch runs too.
 .live_gate: &live_gate |
   if [ "${RUN_LIVE:-}" != "true" ] \
     && ! printf '%s' "${CI_MERGE_REQUEST_LABELS:-}" \
       | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+    && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" = "dev" ] \
     && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then
     echo "skipped: this file changed, but no pin the live install runs on moved (#164)"
     exit 0
@@ -679,7 +684,7 @@ live-prepare:
     - job: classify
       artifacts: true
       optional: true
-  # The legs' four routes, with the change route automatic.
+  # The legs' five routes, with the change route automatic.
   rules:
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
@@ -690,6 +695,8 @@ live-prepare:
         - scripts/ci/fetch-verified.sh
         - scripts/ci/run-unprivileged.sh
         - orbit/pin.json
+    # The legs' fifth route (#313).
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   before_script:
     - *live_gate
     - *apt_prologue
@@ -1087,7 +1094,7 @@ live-prepare:
     # label-dependent; the skip gate below lets it through because no
     # classify runs there, and an unset verdict means run. Only from `dev`:
     # any other branch into `preview` has not been through `dev`'s checks,
-    # so it takes the change route below, like a merge request into `dev`.
+    # so it runs the checks too, and the live installs by the route below.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "dev"
     # The third route in (#164). !157 bumped UBUNTU_IMAGE, and its pipeline was
     # green because nothing that ran installs anything into that image -- the
@@ -1118,6 +1125,14 @@ live-prepare:
         - scripts/ci/run-unprivileged.sh
         - orbit/pin.json
       when: manual
+      allow_failure: false
+    # Not a promotion, and nothing comes after it: a merge request into
+    # `preview` from any branch but `dev`, or into `main` from any branch but
+    # `preview` (a hotfix), has no later stage that installs it, so the legs
+    # run here by themselves and block, as on dev -> preview (#313). When it
+    # also changes what the privileged runner runs, the change route above
+    # matches first and waits for a person (#192).
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
       allow_failure: false
   variables:
     ORBIT_LAUNCHER_LIVE_RAW_LOG: $CI_PROJECT_DIR/.live/live-raw.log

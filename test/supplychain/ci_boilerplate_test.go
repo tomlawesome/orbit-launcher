@@ -2055,7 +2055,10 @@ var changedBy306 = []struct {
 // The fixes from the v0.4.3 audit's second round. Applies after #306.
 //
 // The live leg skips the tests scripts/quarantine.txt names, as the gate
-// does, so a quarantined live test cannot block a promotion (#310).
+// does, so a quarantined live test cannot block a promotion (#310). A merge
+// request into preview or main from any branch but the stage before runs the
+// live installs whatever changed, and the skip gate excuses only a merge
+// request into dev (#313).
 var changedByAuditE = []struct {
 	jobs     []string
 	key      string
@@ -2070,6 +2073,21 @@ var changedByAuditE = []struct {
 bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
   env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
   go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
+	},
+	{ // a merge request into preview or main from any branch but the stage
+		// before runs the live installs whatever changed (#313)
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `"when": "manual"}]`,
+		new:  `"when": "manual"}, {"allow_failure": "false", "if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"preview\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"dev\") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"main\" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != \"preview\"))"}]`,
+	},
+	{ // and the skip gate lets only a merge request into dev skip (#313)
+		jobs: []string{"live"},
+		old: `    | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+  && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then`,
+		new: `    | grep -q '\(^\|,\)run-live-matrix\(,\|$\)' \
+  && [ "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" = "dev" ] \
+  && [ "${LIVE_PINS_CHANGED:-true}" != "true" ]; then`,
 	},
 }
 

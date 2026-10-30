@@ -16,6 +16,7 @@ here so the two versions match.
   | push that lands it | nothing |
   | merge request `dev` into `preview` | the live installs, automatic and blocking |
   | merge request `preview` into `main` | nothing new (one no-op job, so "pipelines must succeed" has a pipeline) |
+  | merge request into `preview` or `main` from any other branch (a hotfix) | the checks and the live installs; a person starts the installs if it also edits the CI files |
   | push to `main` | only the release buttons |
   | push to a branch with no merge request | nothing |
 
@@ -33,7 +34,8 @@ here so the two versions match.
   - `live`, a real install. Here it runs only when asked for (a
     merge-request label or a hand-started pipeline) and waits for a person
     when a change moves the pins it installs with. The promotion into
-    `preview` runs it without being asked.
+    `preview`, and any merge request into `preview` or `main` from another
+    branch, runs it without being asked.
 
   CodeQL runs only on the GitHub mirror.
 - **Version tags.** [`tools/calculateversion`](../tools/calculateversion)
