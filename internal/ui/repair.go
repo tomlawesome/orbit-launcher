@@ -647,7 +647,7 @@ func (m RepairModel) planMenu() []string {
 func (m RepairModel) planHasSafe() bool {
 	for _, p := range m.planActions {
 		switch p.Action {
-		case "fix-permissions", "restore-transaction", "restart-services":
+		case "fix-permissions", "restore-transaction", "restart-services", "restore-compose-file":
 			return true
 		}
 	}
@@ -1322,6 +1322,8 @@ func planReasonWords(action, class string) string {
 		noun, lead = "container", "a container is"
 	case "secret-missing":
 		noun, lead = "secret", "a secret is"
+	case "compose-file-restorable", "compose-file-drift":
+		noun, lead = "docker-compose.yml", "docker-compose.yml"
 	case "managed-file-missing", "managed-file-symlink":
 		noun, lead = "managed file", "a managed file"
 		if class == "managed-file-missing" {
@@ -1351,6 +1353,8 @@ func actionWords(action string) string {
 		return "regenerate the secret"
 	case "restart-services":
 		return "restart Orbit's services"
+	case "restore-compose-file":
+		return "put back docker-compose.yml from this version's image"
 	case "manual":
 		return "needs your hands"
 	default:
@@ -1460,6 +1464,10 @@ func classWords(class string) string {
 		return "no recognisable Orbit installation"
 	case "managed-file-missing":
 		return "missing"
+	case "compose-file-restorable":
+		return "missing, and this version's image can put it back"
+	case "compose-file-drift":
+		return "differs from this version's copy (left as it is; a deliberate edit is fine)"
 	case "managed-file-symlink":
 		return "is a symlink, refusing to trust it"
 	case "managed-file-permissions":
