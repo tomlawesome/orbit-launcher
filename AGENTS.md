@@ -56,7 +56,10 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   hand-started pipeline. An MR into `dev` that moves the `UBUNTU_IMAGE`,
   `FEDORA_IMAGE`, `GO_VERSION` or `GO_SHA256` pin, or edits `.gitlab-ci.yml`,
   `scripts/ci/fetch-verified.sh`, `scripts/ci/run-unprivileged.sh` or
-  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193).
+  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193): first
+  `live-prepare`, which holds the Orbit read token and the legs need, then the
+  legs (#304). A hotfix MR into `preview`/`main` that edits those files waits
+  the same way.
 
 - Two legs, `live` (Ubuntu) and `live-fedora` (#183), from one `.live_leg`
   template; both must pass.

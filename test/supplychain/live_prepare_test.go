@@ -138,9 +138,11 @@ func TestLivePrepareIsUnprivilegedAndScopedToOrbitReads(t *testing.T) {
 }
 
 // live-prepare must exist whenever a leg does, or the leg's `needs:` breaks
-// the pipeline, and it must not wait for a person: the manual gate is for
-// the privileged runner, which live-prepare is not on (#192, #303).
-func TestLivePrepareRunsWheneverALegDoesAndNeverWaits(t *testing.T) {
+// the pipeline. It starts by itself on every route but the change route,
+// where it holds ORBIT_READ_TOKEN and would run a bumped image before anyone
+// reviewed it: there it is manual and blocking like the legs, so the legs'
+// `needs:` waits for a person to start it (#192, #303, #304).
+func TestLivePrepareRunsWheneverALegDoesAndWaitsOnTheChangeRoute(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
 	doc := loadCI(t, ci)
 	prep, err := doc.effectiveJob("live-prepare")
@@ -167,8 +169,17 @@ func TestLivePrepareRunsWheneverALegDoesAndNeverWaits(t *testing.T) {
 			want.keys = append(want.keys, k)
 			want.vals[k] = lr.items[i].vals[k]
 		}
-		if got := pr.items[i].dump(); got != want.dump() {
-			t.Errorf("live-prepare's rule %d is %s, want live's route without its manual gate, %s (#303)", i+1, got, want.dump())
+		// Compared without the gates; the checks below pin those (#304).
+		got := &yamlNode{kind: 'm', vals: map[string]*yamlNode{}}
+		for _, k := range pr.items[i].keys {
+			if k == "when" || k == "allow_failure" {
+				continue
+			}
+			got.keys = append(got.keys, k)
+			got.vals[k] = pr.items[i].vals[k]
+		}
+		if got.dump() != want.dump() {
+			t.Errorf("live-prepare's rule %d is %s, want live's route without its manual gate, %s (#303)", i+1, got.dump(), want.dump())
 		}
 	}
 	routes := pr.dump()
@@ -177,8 +188,27 @@ func TestLivePrepareRunsWheneverALegDoesAndNeverWaits(t *testing.T) {
 			t.Errorf("live-prepare's rules must carry the %s route (#303)", w)
 		}
 	}
-	if strings.Contains(routes, `"when"`) {
-		t.Errorf("live-prepare's rules must all be automatic: %s (#303)", routes)
+	// Only the change route (the rule with `changes:`, which also covers a
+	// hotfix into preview or main that edits the CI files, #313) waits for a
+	// person, and it must block so the legs, which need live-prepare, cannot
+	// start without it (#304). Every other route stays automatic: the label,
+	// RUN_LIVE and the dev -> preview promotion are a person's request or a
+	// reviewed promotion.
+	for i, r := range pr.items {
+		_, changes := r.vals["changes"]
+		when, hasWhen := scalarOf(r, "when")
+		af, hasAF := scalarOf(r, "allow_failure")
+		switch {
+		case changes:
+			if !hasWhen || when != "manual" {
+				t.Errorf("live-prepare's change route (rule %d) must be `when: manual`: it holds ORBIT_READ_TOKEN and runs the pipeline's image before anyone has reviewed it (#304); rule: %s", i+1, r.dump())
+			}
+			if !hasAF || af != "false" {
+				t.Errorf("live-prepare's change route (rule %d) must carry `allow_failure: false`, or the legs may start without it (#304); rule: %s", i+1, r.dump())
+			}
+		case hasWhen:
+			t.Errorf("live-prepare's rule %d must stay automatic, only the change route waits (#304); rule: %s", i+1, r.dump())
+		}
 	}
 
 	// It stops where the legs would: the same skip gate first.
