@@ -187,7 +187,9 @@ func TestDocs260_EnterOnDocumentsWithTooLittleMemoryStaysOnTheTable(t *testing.T
 	if m.state != installStateProfile {
 		t.Errorf("state = %v, want the table (installStateProfile):\n%s", m.state, screen(m))
 	}
-	m = drive(t, m, cmd, s)
+	// The test asserts nothing starts, so there is no event to wait for:
+	// a short quiet window is the check.
+	m = driveQuiet(t, m, cmd, settleQuiet, s)
 	if m.state != installStateProfile {
 		t.Errorf("after settling, state = %v, want the table:\n%s", m.state, screen(m))
 	}

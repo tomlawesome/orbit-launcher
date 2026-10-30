@@ -32,6 +32,10 @@ var (
 	// red, which means stopped/failed (design/mockups-v5.html).
 	Degraded = lipgloss.Color("#fb923c")
 
+	// Maintenance is yellow: the deployment is closed to users on
+	// purpose, so it is neither healthy nor wrong (#302).
+	Maintenance = lipgloss.Color("#facc15")
+
 	// Planet palette for the splash's free planetary systems: the
 	// binary pair leads gold with an approach-blue partner (starchart);
 	// the pale planet and its ember moon are unchanged from v5. The
@@ -116,12 +120,13 @@ var StarField = lipgloss.NewStyle().Foreground(TextFaint)
 // SuccessText, ErrorText and WarmText style status glyphs and messages —
 // success/error/in-progress, matching the mockup's symbol glossary.
 var (
-	SuccessText  = lipgloss.NewStyle().Foreground(Success)
-	ErrorText    = lipgloss.NewStyle().Foreground(Error)
-	WarmText     = lipgloss.NewStyle().Foreground(Warm)
-	AccentText   = lipgloss.NewStyle().Foreground(Accent)
-	DegradedText = lipgloss.NewStyle().Foreground(Degraded)
-	MutedText    = lipgloss.NewStyle().Foreground(TextMuted)
+	SuccessText     = lipgloss.NewStyle().Foreground(Success)
+	ErrorText       = lipgloss.NewStyle().Foreground(Error)
+	WarmText        = lipgloss.NewStyle().Foreground(Warm)
+	AccentText      = lipgloss.NewStyle().Foreground(Accent)
+	DegradedText    = lipgloss.NewStyle().Foreground(Degraded)
+	MaintenanceText = lipgloss.NewStyle().Foreground(Maintenance)
+	MutedText       = lipgloss.NewStyle().Foreground(TextMuted)
 )
 
 // Planet styles, one per starfield planet kind, plus the faint trail

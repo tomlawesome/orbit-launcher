@@ -77,6 +77,7 @@ func longAnswerSurfaces(t *testing.T, promptLine string, body func(t *testing.T,
 	for _, width := range []int{80, 60} {
 		for _, name := range []string{"rotation", "configuration"} {
 			t.Run(fmt.Sprintf("%s at %d columns", name, width), func(t *testing.T) {
+				t.Parallel() // each case builds its own rig and shares nothing
 				body(t, longRigs(t, promptLine, width)[name])
 			})
 		}

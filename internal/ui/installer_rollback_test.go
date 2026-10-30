@@ -122,6 +122,14 @@ func caretToRow[M tea.Model](t *testing.T, m M, label string) M {
 // the queue, so a test can press on from where the run stopped.
 func installApp(t *testing.T, script string, width, height int) (AppModel, *sink) {
 	t.Helper()
+	return installAppUntil(t, script, width, height, nil)
+}
+
+// installAppUntil is installApp for a script whose run does not end:
+// the drive returns once done holds, and a nil done ends it with the
+// engine stream, as installApp's does.
+func installAppUntil(t *testing.T, script string, width, height int, done func(tea.Model) bool) (AppModel, *sink) {
+	t.Helper()
 	installScriptAt(t, script)
 	queue := newSink()
 	m := NewAppModelNoAnimation().WithSender(queue.Send).WithoutVolumeCheck().WithVersion("v9.9.9")
@@ -131,6 +139,7 @@ func installApp(t *testing.T, script string, width, height int) (AppModel, *sink
 	}}
 	m.flowReadClaim = func(context.Context, string, string, time.Time) (string, error) { return "", nil }
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: width, Height: height})
 
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install
@@ -141,7 +150,7 @@ func installApp(t *testing.T, script string, width, height int) (AppModel, *sink
 		t.Fatalf("not on Install's notice:\n%s", s)
 	}
 	m, cmd = updateAs(t, m, key(tea.KeyEnd), tea.KeyPressMsg{Text: noticePhrase}, key(tea.KeyEnter))
-	m = drive(t, m, cmd, queue)
+	m = driveUntil(t, m, cmd, done, queue)
 	return m, queue
 }
 

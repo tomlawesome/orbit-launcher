@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -423,19 +424,22 @@ func TestNotice_ExtremeSizesDoNotPanic(t *testing.T) {
 // whatever the width, height or scroll offset.
 func TestNotice_NarrowTerminalsNeverPanicAtAnyOffset(t *testing.T) {
 	for w := 10; w < 80; w++ {
-		for _, h := range []int{3, 10, 24, 26} {
-			n := newNotice(time.Now(), w, h)
-			for off := 0; off <= n.maxOffset(); off++ {
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							t.Fatalf("view panicked at width %d, height %d, offset %d: %v", w, h, off, r)
-						}
+		t.Run(fmt.Sprintf("width %d", w), func(t *testing.T) {
+			t.Parallel() // each width builds its own notices and shares nothing
+			for _, h := range []int{3, 10, 24, 26} {
+				n := newNotice(time.Now(), w, h)
+				for off := 0; off <= n.maxOffset(); off++ {
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								t.Fatalf("view panicked at width %d, height %d, offset %d: %v", w, h, off, r)
+							}
+						}()
+						_ = n.scrollTo(off).view(time.Now(), noticeDefaultDuration)
 					}()
-					_ = n.scrollTo(off).view(time.Now(), noticeDefaultDuration)
-				}()
+				}
 			}
-		}
+		})
 	}
 }
 
@@ -443,6 +447,7 @@ func TestNotice_TeaTest_PassesTheNoticeAt80x26(t *testing.T) {
 	m := NewInstallModel("/opt/orbit", "v9.9.9")
 	m.checkVolumes = noStaleVolumes
 	m.noticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	m.seams = engineRunSeams{prepareEngine: fakeEngineStreaming(t, ev("host", "host", "completed", "host-tools", "check"))}
 	sender := &deferredSender{}
 	m.send = sender.Send

@@ -141,6 +141,7 @@ func startConfigJourney(t *testing.T, seams engineRunSeams) *teatest.TestModel {
 	m.flowCheckVolumes = noStaleVolumes
 	m.flowSeams = seams
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 26))

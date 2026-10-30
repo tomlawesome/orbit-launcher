@@ -285,9 +285,9 @@ func TestGitHubVisualJobRunsInThePinnedPlaywrightImage(t *testing.T) {
 
 func TestGitHubTimeoutsMatchGitLab(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
-	for _, c := range []struct{ job, file string }{
-		{"fast", "ci.yml"},
-		{"visual", "visual-regression.yml"},
+	for _, c := range []struct{ job, file, minutes string }{
+		{"fast", "ci.yml", "25"}, // #300: 15m timed out on a busy host
+		{"visual", "visual-regression.yml", "15"},
 	} {
 		block := regexp.MustCompile(`(?ms)^` + c.job + `:\n(.*?)^\S`).FindStringSubmatch(ci)
 		if block == nil {
@@ -298,9 +298,9 @@ func TestGitHubTimeoutsMatchGitLab(t *testing.T) {
 		if gl == nil || gh == nil {
 			t.Fatalf("cannot read the %s job's timeout on both hosts (gitlab %v, github %v)", c.job, gl, gh)
 		}
-		if gl[1] != gh[1] || gl[1] != "15" {
-			t.Errorf("the %s job times out after %sm on GitLab and %sm on GitHub; #199 SU-3 aligns both at 15m",
-				c.job, gl[1], gh[1])
+		if gl[1] != gh[1] || gl[1] != c.minutes {
+			t.Errorf("the %s job times out after %sm on GitLab and %sm on GitHub; both should be %sm (#199 SU-3, #300)",
+				c.job, gl[1], gh[1], c.minutes)
 		}
 	}
 }
@@ -590,6 +590,8 @@ func TestLivePinKeysMatchAgentsMd(t *testing.T) {
 // GO_SHA256 is (#216). Three places must agree that it starts live: the
 // classifier's LIVE_PIN_PATHS (the in-job gate), the live job's manual
 // change route (which creates the job), and AGENTS.md's live paragraph.
+// The same holds for every path LIVE_PIN_PATHS lists, run-unprivileged.sh
+// (#292) and orbit/pin.json (#193) among them.
 func TestCheckedDownloadScriptStartsTheLiveJob(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
 	live, err := loadCI(t, ci).effectiveJob("live")
@@ -613,6 +615,13 @@ func TestCheckedDownloadScriptStartsTheLiveJob(t *testing.T) {
 	}
 	if !watched {
 		t.Errorf("LIVE_PIN_PATHS %v does not name %s (#216)", paths, fetchVerified)
+	}
+	pinWatched := false
+	for _, p := range paths {
+		pinWatched = pinWatched || p == "orbit/pin.json"
+	}
+	if !pinWatched {
+		t.Errorf("LIVE_PIN_PATHS %v does not name orbit/pin.json: a bump of the Orbit pin alone would skip the live install (#193)", paths)
 	}
 
 	var changeRule string

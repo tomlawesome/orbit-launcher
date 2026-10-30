@@ -153,7 +153,7 @@ func stoppedInstallIn(t *testing.T, dir string, w, h int, prepare prepareEngineF
 	m.send = s.Send
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd, s)
+	m = driveUntil(t, m, cmd, runEnded, s)
 	if m.run.state != runFailed {
 		t.Fatalf("the run did not stop (state %v):\n%s", m.run.state, screen(m))
 	}
@@ -178,7 +178,7 @@ func stoppedUpdateIn(t *testing.T, dir string, prepare prepareEngineFunc) (Updat
 	m.send = s.Send
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26})
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Update Orbit is preselected
-	m = drive(t, m, cmd, s)
+	m = driveUntil(t, m, cmd, runEnded, s)
 	if m.run.state != runFailed {
 		t.Fatalf("the update did not stop (state %v):\n%s", m.run.state, screen(m))
 	}
@@ -609,7 +609,7 @@ func installAgainRestarts[M interface {
 	if isQuit(cmd) {
 		t.Fatalf("%s quit the launcher", row)
 	}
-	m = drive(t, m, cmd, s)
+	m = driveUntil(t, m, cmd, anyOf(runIn(runStreaming), runEnded), s)
 	if *calls != 2 {
 		t.Errorf("the engine was prepared %d times, want twice (%s starts it again)", *calls, row)
 	}
@@ -855,7 +855,7 @@ func TestStoppedScreen_OpenRepairLandsTheAppInRepairOnTheSameFolder(t *testing.T
 	if isQuit(cmd) {
 		t.Fatal("Open Repair quit the launcher")
 	}
-	m = drive(t, m, cmd, queue)
+	m = driveUntil(t, m, cmd, shows("Diagnosis clear"), queue)
 	if m.state != appStateRepair {
 		t.Fatalf("the app is in state %v, want Repair:\n%s", m.state, screen(m))
 	}

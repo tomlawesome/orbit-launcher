@@ -77,14 +77,15 @@ func stopRetried(t *testing.T, r engineRun, events ...any) string {
 }
 
 // wantUndoing fails unless the screen is the install's stopping screen
-// with the undoing line and without the disarmed line.
-func wantUndoing(t *testing.T, screen string) {
+// with the given rollback line and without the disarmed line: undoingLine
+// before the run's commit, afterCommitInstallLine past it.
+func wantUndoing(t *testing.T, screen, line string) {
 	t.Helper()
 	if !strings.Contains(screen, "stopping the install") {
 		t.Errorf("the stopping screen lacks its title %q:\n%s", "stopping the install", screen)
 	}
-	if !strings.Contains(screen, undoingLine) {
-		t.Errorf("the retried run's stopping screen lacks %q before its own optional phase:\n%s", undoingLine, screen)
+	if !strings.Contains(screen, line) {
+		t.Errorf("the retried run's stopping screen lacks %q before its own optional phase:\n%s", line, screen)
 	}
 	if strings.Contains(screen, finishingWithoutOptional) {
 		t.Errorf("the retried run's stopping screen claims Orbit is installed while its rollback is armed:\n%s", screen)
@@ -98,17 +99,17 @@ var (
 
 // T1: run 1 died by a failing exit; run 2 stopped after an early event.
 func TestEngineRun_RetriedInstallStoppedBeforeItsOptionalPhaseSaysItIsUndoing(t *testing.T) {
-	wantUndoing(t, stopRetried(t, retriedInstall(t, diedExit137), databaseHealth))
+	wantUndoing(t, stopRetried(t, retriedInstall(t, diedExit137), databaseHealth), afterCommitInstallLine)
 }
 
 // T2: as T1, but run 1's stream closed early.
 func TestEngineRun_RetriedInstallAfterAStreamEndSaysItIsUndoing(t *testing.T) {
-	wantUndoing(t, stopRetried(t, retriedInstall(t, engineStreamEndedMsg{}), databaseHealth))
+	wantUndoing(t, stopRetried(t, retriedInstall(t, engineStreamEndedMsg{}), databaseHealth), afterCommitInstallLine)
 }
 
 // T3: as T1, but run 2 had no event at all before the Ctrl-C.
 func TestEngineRun_RetriedInstallStoppedBeforeAnyEventSaysItIsUndoing(t *testing.T) {
-	wantUndoing(t, stopRetried(t, retriedInstall(t, diedExit137)))
+	wantUndoing(t, stopRetried(t, retriedInstall(t, diedExit137)), undoingLine)
 }
 
 // T4 (guard): run 2's own phase=optional event still switches the line.

@@ -253,6 +253,7 @@ func TestStarGap_ScreensLeaveAClearCellBesideText(t *testing.T) {
 	for _, s := range sgScreens() {
 		for _, w := range sgWidths {
 			t.Run(fmt.Sprintf("%s/%d", s.name, w), func(t *testing.T) {
+				t.Parallel() // each case builds its own models and shares nothing
 				var touches []string
 				starsSeen, contentSeen := 0, 0
 				for _, h := range sgHeights {
@@ -299,6 +300,7 @@ func TestStarGap_SkyBlockKeepsAClearCellAnySeedAnyTick(t *testing.T) {
 	}, "\n")
 	for _, w := range sgWidths {
 		t.Run(fmt.Sprintf("%d", w), func(t *testing.T) {
+			t.Parallel() // each width draws its own skies and shares nothing
 			var touches []string
 			for seed := int64(1); seed <= 20; seed++ {
 				star := starfield.New(w, 30, seed)

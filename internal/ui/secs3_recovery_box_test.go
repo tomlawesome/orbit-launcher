@@ -402,6 +402,7 @@ func secS3OctalCases(t *testing.T) []secS3BoxCase {
 // head, N=59 "My Orbit" at width 80 ends a row in My\\ and bash runs
 // "Orbit/..." as a second command.
 func TestSecS3_RecoveryBoxReadsBackPrintfQBareEscapes(t *testing.T) {
+	t.Parallel() // uses only the cached fixtures and its own bash processes
 	secS3CheckReadBacks(t, "C.UTF-8", secS3Cache(t, "bare", secS3BareCases))
 }
 
@@ -409,6 +410,7 @@ func TestSecS3_RecoveryBoxReadsBackPrintfQBareEscapes(t *testing.T) {
 // back as the command, and the marker's command substitution must never
 // run: "INJECTED" never stands on a line of its own in the read-back.
 func TestSecS3_RecoveryBoxReadsBackAnsiCOctalEscapes(t *testing.T) {
+	t.Parallel() // uses only the cached fixtures and its own bash processes
 	cases := secS3Cache(t, "octal", secS3OctalCases)
 	boxes := secS3CheckReadBacks(t, "C", cases)
 	ran := 0
@@ -433,6 +435,7 @@ func TestSecS3_RecoveryBoxReadsBackAnsiCOctalEscapes(t *testing.T) {
 
 // Case 3: the shape every box from cases 1 and 2 keeps.
 func TestSecS3_BoxRowsKeepTheirShape(t *testing.T) {
+	t.Parallel() // uses only the cached fixtures and its own bash processes
 	secS3CheckShape(t, secS3Cache(t, "bare", secS3BareCases))
 	secS3CheckShape(t, secS3Cache(t, "octal", secS3OctalCases))
 }

@@ -21,17 +21,18 @@ import (
 // noticeModel is a value type with pure methods. InstallModel owns one,
 // supplies the clock and the duration, and only wires keys and ticks.
 
+// noticeTickInterval redraws the countdown. The sky's own tick chain
+// stops under ORBIT_LAUNCHER_NO_ANIMATION and the countdown is not a
+// motion beat, so it keeps its own. A var only so the tests that shorten
+// the countdown can shorten its tick too; nothing in production sets it.
+var noticeTickInterval = time.Second
+
 const (
 	// noticeDefaultDuration is the reading countdown: a flat 20 s the
 	// owner chose (2026-10-17, #250), not a reading-speed estimate, so it
 	// stays 20 s when the notice's words change. The other gate, the
 	// whole notice on screen, is unchanged.
 	noticeDefaultDuration = 20 * time.Second
-
-	// noticeTickInterval redraws the countdown. The sky's own tick chain
-	// stops under ORBIT_LAUNCHER_NO_ANIMATION and the countdown is not a
-	// motion beat, so it keeps its own.
-	noticeTickInterval = time.Second
 
 	noticeMeasure    = proseWidth // prose wrap width, in cells
 	noticeGutter     = 2          // cells either side of the measure

@@ -169,6 +169,7 @@ func TestInstallModel_EscapeFromTheNoticeReturnsToProfile(t *testing.T) {
 }
 
 func TestInstallModel_StandardNeverStartsTheEngineAutomatically(t *testing.T) {
+	shortNoticeTick(t) // the test runs the tick command, which waits one interval
 	engineCalled := false
 	seams := engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -227,7 +228,7 @@ func TestInstallModel_ConsoleShowsEventsWhileStreaming(t *testing.T) {
 		),
 	})
 	m, cmd := startInstallRun(t, m)
-	m = drive(t, m, cmd, s)
+	m = driveUntil(t, m, cmd, shows("running", "Resolving image identity"), s)
 
 	view := m.View().Content
 	if !strings.Contains(view, "image") || !strings.Contains(view, "running") {

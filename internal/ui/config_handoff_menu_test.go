@@ -41,21 +41,24 @@ func (f *handoffFixture) handoffApp(seams engineRunSeams) (AppModel, *sink) {
 	m.targetDir = f.dir
 	m.flowSeams = seams
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(f.t)
 	m.flowReadClaim = func(context.Context, string, string, time.Time) (string, error) { return "", nil }
 	m, _ = updateAs(f.t, m, tea.WindowSizeMsg{Width: 80, Height: 40})
 	return m, queue
 }
 
 // appSettled drives the app, taking pushed stream messages first, until
-// quiet; it fails the test if a screen showing one of never comes up.
-func appSettled(t *testing.T, m AppModel, cmd tea.Cmd, s *sink, never []string) AppModel {
+// done holds; it fails the test if a screen showing one of never comes
+// up, or if done has not held after driveDeadline.
+func appSettled(t *testing.T, m AppModel, cmd tea.Cmd, s *sink, never []string, done func(tea.Model) bool) AppModel {
 	t.Helper()
-	return driveWatching(t, m, cmd, never, &sink{msgs: s.msgs, first: true})
+	return driveWatchingUntil(t, m, cmd, never, done, &sink{msgs: s.msgs, first: true})
 }
 
 // appStartInstall chooses Install on the menu row the caret is on, then
-// Standard, then accepts the notice if it is shown, and drives the run.
-func appStartInstall(t *testing.T, m AppModel, s *sink, never []string) AppModel {
+// Standard, then accepts the notice if it is shown, and drives the run
+// until done holds.
+func appStartInstall(t *testing.T, m AppModel, s *sink, never []string, done func(tea.Model) bool) AppModel {
 	t.Helper()
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install
 	m = drive(t, m, cmd)
@@ -67,7 +70,7 @@ func appStartInstall(t *testing.T, m AppModel, s *sink, never []string) AppModel
 		m = drive(t, m, cmd)
 		m, cmd = updateAs(t, m, key(tea.KeyEnd), tea.KeyPressMsg{Text: noticePhrase}, key(tea.KeyEnter))
 	}
-	return appSettled(t, m, cmd, s, never)
+	return appSettled(t, m, cmd, s, never, done)
 }
 
 // appAnswerGuided answers guided configuration as a person would: local
@@ -78,7 +81,7 @@ func appAnswerGuided(t *testing.T, m AppModel, s *sink) AppModel {
 		t.Fatalf("setup: guided configuration did not open:\n%s", sc)
 	}
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Local accounts
-	m = appSettled(t, m, cmd, s, nil)
+	m = appSettled(t, m, cmd, s, nil, anyOf(shows("Public Orbit origin"), appAtRest))
 	if sc := screen(m); !strings.Contains(sc, "Public Orbit origin") {
 		t.Fatalf("setup: the origin was not asked:\n%s", sc)
 	}
@@ -87,7 +90,7 @@ func appAnswerGuided(t *testing.T, m AppModel, s *sink) AppModel {
 		m = drive(t, m, cmd)
 	}
 	m, cmd = updateAs(t, m, key(tea.KeyEnter))
-	return appSettled(t, m, cmd, s, nil)
+	return appSettled(t, m, cmd, s, nil, appAtRest)
 }
 
 // A. Install from the main menu, after guided configuration in the same
@@ -104,7 +107,7 @@ func TestConfigHandoff_InstallFromTheMainMenuReseedsWithoutAsking(t *testing.T) 
 	f := newHandoffFixture(t, 1, tailSucceeds)
 	m, s := f.handoffApp(f.seams(true, nil))
 
-	m = appStartInstall(t, m, s, nil)
+	m = appStartInstall(t, m, s, nil, appAtRest)
 	m = appAnswerGuided(t, m, s)
 	if got := f.runs(); got != "2" {
 		t.Fatalf("setup: the installer ran %q times, want 2 (the refusal, then the retry); screen:\n%s", got, screen(m))
@@ -126,7 +129,7 @@ func TestConfigHandoff_InstallFromTheMainMenuReseedsWithoutAsking(t *testing.T) 
 	m = caretToRow(t, m, "Install")
 
 	never := []string{"How will people sign in?", "Public Orbit origin"}
-	m = appStartInstall(t, m, s, never)
+	m = appStartInstall(t, m, s, never, appAtRest)
 	if sc := screen(m); strings.Contains(sc, "How will people sign in?") || strings.Contains(sc, "Public Orbit origin") {
 		t.Errorf("Install from the main menu asked for configuration again in the same launcher session:\n%s", sc)
 	}
@@ -194,7 +197,7 @@ func TestConfigHandoff_FolderWithItsOwnEnvFileIsAdoptedInto(t *testing.T) {
 
 	m, s := f.model(f.seams(false, nil)) // nothing owed: the answers are collected at once
 	m, cmd := startInstallRun(t, m)
-	m = handoffSettled(t, m, cmd, s)
+	m = handoffSettled(t, m, cmd, s, runAtRest)
 
 	if got := f.runs(); got != "2" {
 		t.Fatalf("the installer ran %q times, want 2 (the refusal, then the retry); screen:\n%s", got, screen(m))

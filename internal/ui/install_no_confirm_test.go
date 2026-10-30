@@ -165,6 +165,7 @@ func TestNoConfirm_NoPlaceholderDirectoryAndNoReadyScreenInUISource(t *testing.T
 }
 
 func TestNoConfirm_EnterOnStandardOpensTheNoticeAtItsStartWithoutTouchingTheEngine(t *testing.T) {
+	shortNoticeTick(t) // the test runs the tick command, which waits one interval
 	engineCalled := false
 	m, _ := noConfirmModel(t, noConfirmDir, 80, 26, engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -234,6 +235,7 @@ func TestNoConfirm_ReadyToInstallAppearsOnNoScreen(t *testing.T) {
 }
 
 func TestNoConfirm_EscAndBackOnTheNoticeLandOnTheProfileScreenAndReentryIsFresh(t *testing.T) {
+	shortNoticeTick(t) // the test runs the tick command, which waits one interval
 	for _, tc := range []struct {
 		name string
 		back func(*testing.T, InstallModel) InstallModel
