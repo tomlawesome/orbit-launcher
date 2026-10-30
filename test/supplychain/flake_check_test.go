@@ -1,7 +1,8 @@
 // The shared flake check, adopted from ai/agent-infra (#310). The flake rule
 // is only a rule while something reads docs/flakes.md: a copy of agent-infra's
 // flake-check.sh sits at scripts/ci/flake-check.sh, and a blocking job in the
-// cheapest stage, on the light lane, runs it on every pipeline with the list
+// cheapest stage, on the light lane, runs it on every pipeline that runs the
+// checks (#306; owner, answer 3a) with the list
 // of quarantined tests. These checks pin that adoption (agent-infra
 // scripts/flake-check/README.md, "Adopt it in a project").
 package supplychain
@@ -181,7 +182,7 @@ func TestFlakeCheckJobRunsOnMergeRequests(t *testing.T) {
 	job, e := flakeCheckJob(t, doc)
 	for _, k := range []string{"only", "except"} {
 		if e.Keys[k] != nil {
-			t.Errorf("%s must not use %s: it has to run on every pipeline (#310)", job, k)
+			t.Errorf("%s must not use %s: it has to run on every pipeline that runs the checks (#310)", job, k)
 		}
 	}
 	if w := e.Keys["when"]; w != nil && w.str != "on_success" {
@@ -210,7 +211,7 @@ func TestFlakeCheckJobRunsOnMergeRequests(t *testing.T) {
 		}
 	}
 	if !runs {
-		t.Errorf("%s has rules but none runs it on a merge request pipeline; the check must run on every pipeline (#310): %s", job, rules.dump())
+		t.Errorf("%s has rules but none runs it on a merge request pipeline; the check must run on every pipeline that runs the checks (#310): %s", job, rules.dump())
 	}
 }
 

@@ -341,9 +341,12 @@ classify:
 # changes, because docs/flakes.md is a documentation file. It runs the
 # branch's copy of the script, so the credentials are dropped first (#303);
 # git comes from apt for that, as in classify. The script needs only sh and
-# awk.
+# awk. It runs where the other checks run (owner, answer 3a on #310): the log
+# changes only through a merge request into dev, and promotions carry the
+# same file (#306).
 flake-check:
   stage: classify
+  rules: *checks_rules
   needs: []
   tags: [light]
   image:
