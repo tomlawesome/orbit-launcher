@@ -62,7 +62,8 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   `ORBIT_FIRST_SIGN_EVIDENCE_JOB` on a hand-started pipeline override it: the
   job IDs of an earlier signed ai/orbit preview pipeline. Never give them a
   default. Its first install runs that release's own launcher, which
-  `live-prepare` fetches and checks against the signed manifest (#307).
+  `live-prepare` fetches (from `previous/`, then from `build_launcher`) and
+  checks against the signed manifest (#307, #313).
 - Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
   `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
   a hand-started pipeline overrides the pin: files from that branch's tip.

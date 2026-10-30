@@ -955,16 +955,15 @@ live-prepare:
           || { echo "install.sh at ${first_commit} does not match the sha256 the earlier release manifest records for it (#198)"; exit 1; }
         first_version="$(jq -r .version "$first_dir/orbit-release-manifest.json")"
         # The update leg's first install runs the launcher that shipped with
-        # the earlier release, not the one under test (#307): a deployment on
-        # that release was installed with it, and its install.sh predates
-        # what the current launcher seeds. Orbit's build_launcher job keeps
-        # that launcher's archive as an artifact for 90 days. The job ID is
-        # only a lookup, so nothing about it is trusted: the successful
-        # ai/orbit pipelines at the manifest's commit are listed, each one's
-        # successful build_launcher job is tried, and the first archive whose
-        # sha256 equals the one the signed manifest records is kept. When
-        # none does, the job stops and says why; the current launcher is
-        # never used in its place and the leg is never left out.
+        # the earlier release, not the one under test (#307). ai/orbit's
+        # record_image keeps that launcher's archive in previous/ beside the
+        # earlier manifest, with the latest build's artifacts, which GitLab
+        # never expires (#313); build_launcher's own copy, kept 90 days, is
+        # the second place looked, for the job-ID route and for Orbit builds
+        # from before previous/ carried it. Nothing about either lookup is
+        # trusted, only the sha256 the signed manifest records: when no
+        # archive matches, the job stops and says why, and never uses the
+        # current launcher in its place.
         first_archive=orbit-launcher_linux_amd64.tar.gz
         first_launcher_sha="$(jq -r '.files["orbit-launcher_linux_amd64.tar.gz"]' "$first_dir/orbit-release-manifest.json")"
         first_launcher_hex="${first_launcher_sha#sha256:}"
@@ -978,41 +977,58 @@ live-prepare:
         first_launcher_fail() { echo "the update leg needs release ${first_version}'s own launcher (ai/orbit ${first_commit}) and has none: $1; it never uses the current launcher in its place (#307)"; exit 1; }
         [ "${#first_launcher_hex}" -eq 64 ] || first_launcher_fail "the signed manifest records no sha256 for ${first_archive}"
         mkdir -p .live/first-launcher
+        # By branch, as the previous/ manifest above; a missing or mismatching
+        # archive (a newer build finishing between the two reads) leaves only
+        # the build_launcher lookup below.
+        rm -f .live/first-launcher/candidate.tar.gz
         curl --fail --silent --show-error --location --max-redirs 0 \
           --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
-          --output .live/first-launcher/pipelines.json \
-          "${CI_API_V4_URL}/projects/${project}/pipelines?sha=${first_commit}&status=success&per_page=100" \
-          || first_launcher_fail "ai/orbit's successful pipelines at that commit cannot be listed"
+          --output .live/first-launcher/candidate.tar.gz \
+          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/previous/orbit-launcher_linux_amd64.tar.gz?job=record_image" \
+          || :
+        if [ -s .live/first-launcher/candidate.tar.gz ] \
+          && [ "$(sha256sum .live/first-launcher/candidate.tar.gz | cut -d' ' -f1)" = "$first_launcher_hex" ]; then
+          mv .live/first-launcher/candidate.tar.gz "$first_dir/$first_archive"
+          first_launcher_job="record_image previous/"
+        fi
+        rm -f .live/first-launcher/candidate.tar.gz
         first_launcher_tried=0
-        for first_pipeline in $(jq -r '.[].id' .live/first-launcher/pipelines.json); do
-          case "$first_pipeline" in
-            ''|*[!0-9]*) continue ;;
-          esac
+        if [ ! -s "$first_dir/$first_archive" ]; then
           curl --fail --silent --show-error --location --max-redirs 0 \
             --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
-            --output .live/first-launcher/jobs.json \
-            "${CI_API_V4_URL}/projects/${project}/pipelines/${first_pipeline}/jobs?scope=success&per_page=100" \
-            || continue
-          for first_job in $(jq -r '.[] | select(.name == "build_launcher") | .id' .live/first-launcher/jobs.json); do
-            case "$first_job" in
+            --output .live/first-launcher/pipelines.json \
+            "${CI_API_V4_URL}/projects/${project}/pipelines?sha=${first_commit}&status=success&per_page=100" \
+            || first_launcher_fail "ai/orbit's successful pipelines at that commit cannot be listed"
+          for first_pipeline in $(jq -r '.[].id' .live/first-launcher/pipelines.json); do
+            case "$first_pipeline" in
               ''|*[!0-9]*) continue ;;
             esac
-            rm -f .live/first-launcher/candidate.tar.gz
             curl --fail --silent --show-error --location --max-redirs 0 \
               --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
-              --output .live/first-launcher/candidate.tar.gz \
-              "${CI_API_V4_URL}/projects/${project}/jobs/${first_job}/artifacts/.orbit-launcher-artifacts/${first_archive}" \
+              --output .live/first-launcher/jobs.json \
+              "${CI_API_V4_URL}/projects/${project}/pipelines/${first_pipeline}/jobs?scope=success&per_page=100" \
               || continue
-            first_launcher_tried=$((first_launcher_tried + 1))
-            if [ "$(sha256sum .live/first-launcher/candidate.tar.gz | cut -d' ' -f1)" = "$first_launcher_hex" ]; then
-              mv .live/first-launcher/candidate.tar.gz "$first_dir/$first_archive"
-              first_launcher_job="$first_job"
-              break 2
-            fi
+            for first_job in $(jq -r '.[] | select(.name == "build_launcher") | .id' .live/first-launcher/jobs.json); do
+              case "$first_job" in
+                ''|*[!0-9]*) continue ;;
+              esac
+              rm -f .live/first-launcher/candidate.tar.gz
+              curl --fail --silent --show-error --location --max-redirs 0 \
+                --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+                --output .live/first-launcher/candidate.tar.gz \
+                "${CI_API_V4_URL}/projects/${project}/jobs/${first_job}/artifacts/.orbit-launcher-artifacts/${first_archive}" \
+                || continue
+              first_launcher_tried=$((first_launcher_tried + 1))
+              if [ "$(sha256sum .live/first-launcher/candidate.tar.gz | cut -d' ' -f1)" = "$first_launcher_hex" ]; then
+                mv .live/first-launcher/candidate.tar.gz "$first_dir/$first_archive"
+                first_launcher_job="$first_job"
+                break 2
+              fi
+            done
           done
-        done
+        fi
         [ -s "$first_dir/$first_archive" ] \
-          || { echo "the update leg needs release ${first_version}'s own launcher (ai/orbit ${first_commit}) and has none: none of the ${first_launcher_tried} ${first_archive} archive(s) kept by the successful build_launcher jobs of ai/orbit's pipelines at that commit matches the ${first_launcher_sha} the signed manifest records (the archives expire after 90 days, or no such job succeeded); it never uses the current launcher in its place (#307)"; exit 1; }
+          || { echo "the update leg needs release ${first_version}'s own launcher (ai/orbit ${first_commit}) and has none: ai/orbit's latest ${orbit_branch} build carries no previous/${first_archive}, and none of the ${first_launcher_tried} archive(s) kept by build_launcher at that commit matches ${first_launcher_sha} (those expire after 90 days); it never uses the current launcher in its place. Way out: ai/orbit's next preview build carries the archive in previous/; or start this pipeline by hand with ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB naming a build under 90 days old (#307, #313)"; exit 1; }
         echo "update leg: earlier launcher archive ${first_archive} from ai/orbit job ${first_launcher_job}, ${first_launcher_sha}"
         if [ -n "$first_record" ]; then
           echo "update leg: previous build from job IDs ${first_record}/${first_sign}"
