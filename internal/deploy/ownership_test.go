@@ -218,7 +218,9 @@ func TestForeignOwned_ReadsOnly(t *testing.T) {
 	}
 }
 
-// fowRoot skips unless the test can give files to other accounts.
+// fowRoot skips unless the test can give files to other accounts. Root
+// is only that tool here: each test sets the launcher to the operator it
+// means (the folder's owner), since the launcher never runs as root (#291).
 func fowRoot(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() != 0 {
@@ -237,7 +239,7 @@ func fowChown(t *testing.T, path string, uid int) {
 // owner's name; files the folder's owner holds are not.
 func TestForeignOwned_ListsForeignFilesRelativeAndSorted(t *testing.T) {
 	fowRoot(t)
-	dir := t.TempDir() // owned by root
+	dir := t.TempDir()
 	root := filepath.Join(dir, ".orbit-secrets")
 	for _, f := range []string{
 		".env-orbit",
@@ -249,6 +251,7 @@ func TestForeignOwned_ListsForeignFilesRelativeAndSorted(t *testing.T) {
 	} {
 		fowWrite(t, filepath.Join(dir, f), "x\n")
 	}
+	asOperatorOf(t, dir, operatorUID)
 	fowChown(t, filepath.Join(dir, ".env-orbit"), 54321)
 	fowChown(t, filepath.Join(root, "zeta"), 54322)
 	fowChown(t, filepath.Join(root, "alpha"), 54323)
@@ -275,8 +278,13 @@ func TestForeignOwned_ListsForeignFilesRelativeAndSorted(t *testing.T) {
 			t.Errorf("path %q is not relative to the folder", f.Path)
 		}
 	}
-	if want := fowName(0); own.Account != want {
-		t.Errorf("Account = %q, want %q (the folder's owner)", own.Account, want)
+	// Account is the chown form: the name, or the bare uid if unnamed.
+	account := strconv.Itoa(operatorUID)
+	if u, err := user.LookupId(account); err == nil {
+		account = u.Username
+	}
+	if own.Account != account {
+		t.Errorf("Account = %q, want %q (the folder's owner)", own.Account, account)
 	}
 }
 
@@ -299,6 +307,7 @@ func TestForeignOwned_UnknownAccountIsTheBareUIDForChownAndUidNForDisplay(t *tes
 	if err := os.Lchown(dir, folderUID, folderGID); err != nil {
 		t.Skipf("cannot give %s to uid %d gid %d here: %v", dir, folderUID, folderGID, err)
 	}
+	asLauncherUser(t, folderUID)
 	fowChown(t, filepath.Join(dir, ".env-orbit"), fileUID)
 
 	own, err := ForeignOwned(dir)
@@ -329,6 +338,7 @@ func TestForeignOwned_ForeignSymlinkIsListedNotFollowed(t *testing.T) {
 	if err := os.MkdirAll(secrets, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	asOperatorOf(t, dir, operatorUID)
 	target := t.TempDir()
 	fowWrite(t, filepath.Join(target, "inside"), "x\n")
 	fowChown(t, filepath.Join(target, "inside"), 54330)
@@ -469,6 +479,7 @@ func TestChownCommandWords_SpecIsAcceptedByChown(t *testing.T) {
 		if err := os.Lchown(dir, folderUID, folderGID); err != nil {
 			t.Skipf("cannot give %s to uid %d gid %d here: %v", dir, folderUID, folderGID, err)
 		}
+		asOperatorOf(t, dir, folderUID)
 		fowChown(t, env, fileUID)
 		fowChown(t, key, fileUID)
 
@@ -487,26 +498,51 @@ func TestChownCommandWords_SpecIsAcceptedByChown(t *testing.T) {
 		}
 	})
 	t.Run("named owner", func(t *testing.T) {
-		dir := t.TempDir() // owned by root
+		// A named operator other than root: the launcher never runs as
+		// root (#291), so a root-owned folder is not one it may use.
+		u := fowNamedAccount(t)
+		uid, err := strconv.Atoi(u.Uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gid, err := strconv.Atoi(u.Gid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
 		env := filepath.Join(dir, ".env-orbit")
 		fowWrite(t, env, "A=b\n")
+		asOperatorOf(t, dir, uid)
 		fowChown(t, env, 54398)
 
 		own, err := ForeignOwned(dir)
 		if err != nil {
 			t.Fatalf("ForeignOwned: %v", err)
 		}
-		if own.Account != "root" {
-			t.Skipf("Account = %q, want root for this case", own.Account)
+		if own.Account != u.Username {
+			t.Skipf("Account = %q, want %q for this case", own.Account, u.Username)
 		}
 		fowRunChown(t, dir, own)
-		if got := fowUID(t, env); got != 0 {
-			t.Errorf("uid = %d, want 0", got)
+		if got := fowUID(t, env); got != uint32(uid) {
+			t.Errorf("uid = %d, want %d", got, uid)
 		}
-		if got := fowGID(t, env); got != 0 {
-			t.Errorf("gid = %d, want 0 (root's login group)", got)
+		if got := fowGID(t, env); got != uint32(gid) {
+			t.Errorf("gid = %d, want %d (%s's login group)", got, gid, u.Username)
 		}
 	})
+}
+
+// fowNamedAccount is an account other than root that has a name, for
+// the chown "<name>:" form; the test skips where there is none.
+func fowNamedAccount(t *testing.T) *user.User {
+	t.Helper()
+	for _, name := range []string{"nobody", "daemon", "bin"} {
+		if u, err := user.Lookup(name); err == nil && u.Uid != "0" {
+			return u
+		}
+	}
+	t.Skip("no named account other than root here")
+	return nil
 }
 
 // fowRefusal checks err is the trust refusal for path, containing reason,
@@ -540,10 +576,10 @@ func TestForeignOwned_AnotherAccountsFolderIsRefusedNotAdvised(t *testing.T) {
 	}
 }
 
-// The rule refuses only what the trust check refuses: the owner and root
-// still get the advice.
-func TestForeignOwned_TheOwnerAndRootStillGetTheAdvice(t *testing.T) {
-	for name, uid := range map[string]int{"the folder's owner": os.Geteuid(), "root": 0} {
+// The rule refuses only what the trust check refuses: the owner still
+// gets the advice.
+func TestForeignOwned_TheOwnerStillGetsTheAdvice(t *testing.T) {
+	for name, uid := range map[string]int{"the folder's owner": os.Geteuid()} {
 		t.Run(name, func(t *testing.T) {
 			dir := fowOwnDeployment(t)
 			asLauncherUser(t, uid)
@@ -582,8 +618,8 @@ func TestForeignOwned_RefusesWhatTrustedRootRefuses(t *testing.T) {
 }
 
 // Files an operator owns inside another account's folder are not handed
-// over as a chown command for that operator; the folder's owner (and root)
-// are still told.
+// over as a chown command for that operator; the folder's owner is still
+// told.
 func TestForeignOwned_AnOperatorsFilesInAnothersFolderAreNotHandedOver(t *testing.T) {
 	fowRoot(t)
 	const folderUID, fileUID = 54399, 54398
@@ -620,7 +656,8 @@ func TestForeignOwned_AnOperatorsFilesInAnothersFolderAreNotHandedOver(t *testin
 			}
 		}
 	})
-	for name, uid := range map[string]int{"the folder's owner": folderUID, "root": 0} {
+	// No "root" case: the launcher refuses to run as root (#291).
+	for name, uid := range map[string]int{"the folder's owner": folderUID} {
 		t.Run(name, func(t *testing.T) {
 			asLauncherUser(t, uid)
 			own, err := ForeignOwned(dir)

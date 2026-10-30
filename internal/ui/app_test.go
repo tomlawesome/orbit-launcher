@@ -185,6 +185,7 @@ func TestAppModel_InstallSuccessReachesSuccessScreenAndMenuReturnsToSplash(t *te
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
@@ -234,6 +235,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 		detect:        fakeDetect("https://mail.example.com"),
 	}
 	m.flowNoticeDuration = time.Millisecond
+	shortNoticeTick(t)
 
 	sender := &deferredSender{}
 	m.flowSend = sender.Send
@@ -261,6 +263,7 @@ func TestAppModel_SuccessScreenTerminalQuitsTheProgram(t *testing.T) {
 func TestAppModel_WithDeploymentStatusPreselectsUpdateAndSetsFQDN(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile))
+	testutil.WriteComposeFile(t, filepath.Join(dir, deploy.ComposeFile))
 
 	m := NewAppModel()
 	m.targetDir = dir

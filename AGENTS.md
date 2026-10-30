@@ -31,6 +31,14 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   checksum line (#216).
 - GitHub workflow failures are advisory; they never block a GitLab merge. Change
   a check on both hosts together.
+- Merges: ask the owner first; once they say merge, run the merge call
+  yourself (`glab api -X PUT …/merge_requests/<iid>/merge`, reading `sha`
+  from the MR in the same command). Handoffs from 2026-10-23 that say to hand
+  the merge over were wrong (owner, 2026-10-24).
+- Merges are semi-linear (since 2026-10-29): an MR merges only if its source
+  holds the target's tip, and GitLab's automatic rebase must never touch
+  `dev` or `preview`. After each release, merge `main` into a `chore/` branch
+  off `dev` and land it before the next promotion.
 - Only the owner presses `release:patch` or `release:minor` (on `main`
   pipelines), which cut the release tag (`docs/releasing.md`).
 - A green `go test` without running the TUI is not verified. Say plainly what
@@ -38,17 +46,40 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 
 ## Live job
 
-- Runs on the MR label `run-live-matrix` or `RUN_LIVE=true` on a hand-started
-  pipeline. An MR that moves the `UBUNTU_IMAGE`, `GO_VERSION` or `GO_SHA256`
-  pin, or edits `.gitlab-ci.yml` or `scripts/ci/fetch-verified.sh`, needs it
-  started by hand (#192, #216).
+- Stages (#306): live runs by itself, blocking, on every MR into `preview`,
+  and on an MR into `main` from any branch but `preview`, and nowhere else by
+  default. On an MR into either from another branch (a hotfix) a person
+  starts it if the MR also edits the CI files (#313). Pushes to `dev`, `preview`, `main` and to a branch with no MR run
+  nothing (`main` only offers the release buttons); `preview` into `main`
+  runs a no-op. An MR into `dev` runs the checks, and live
+  only on the MR label `run-live-matrix`, or `RUN_LIVE=true` on a
+  hand-started pipeline. An MR into `dev` that moves the `UBUNTU_IMAGE`,
+  `FEDORA_IMAGE`, `GO_VERSION` or `GO_SHA256` pin, or edits `.gitlab-ci.yml`,
+  `scripts/ci/fetch-verified.sh`, `scripts/ci/run-unprivileged.sh` or
+  `orbit/pin.json`, needs it started by hand (#192, #216, #292, #193).
 
-- The update leg (#198) skips unless the pipeline is started with
-  `ORBIT_FIRST_RECORD_IMAGE_JOB` and `ORBIT_FIRST_SIGN_EVIDENCE_JOB`: the
-  `record_image` and `sign_evidence` job IDs of an earlier signed ai/orbit
-  preview pipeline. The job token can't list pipelines to find them itself.
-- Every GitLab live run is a preview run (`ORBIT_BRANCH` and `ORBIT_CHANNEL`
-  default to preview). It fails only if the job falls back to the GitHub mirror,
-  which has no release manifest (#194): the job token got 401/403 reading
-  ai/orbit (as on Renovate's MRs), or `ORBIT_FILES_SOURCE=github` is set.
-  `orbit_channel`/`orbit_branch` are inputs of the GitHub workflow only.
+- Two legs, `live` (Ubuntu) and `live-fedora` (#183), from one `.live_leg`
+  template; both must pass.
+- The update leg (#198) runs by default from the previous build ai/orbit's
+  latest `record_image` keeps in `.orbit-supply-chain/previous/` (#263), and
+  fails if there is none. `ORBIT_FIRST_RECORD_IMAGE_JOB` and
+  `ORBIT_FIRST_SIGN_EVIDENCE_JOB` on a hand-started pipeline override it: the
+  job IDs of an earlier signed ai/orbit preview pipeline. Never give them a
+  default. Its first install runs that release's own launcher, which
+  `live-prepare` fetches (from `previous/`, then from `build_launcher`) and
+  checks against the signed manifest (#307, #313).
+- Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
+  `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
+  a hand-started pipeline overrides the pin: files from that branch's tip.
+- A contract change goes: Orbit side on Orbit `dev` → bump `orbit/pin.json`
+  here (live green against a fixed partner) → launcher release → Orbit bumps
+  `launcher/pin.json`.
+- Every GitLab live run is a preview run (the pin's branch and `ORBIT_CHANNEL`
+  are preview). It fails only if the job falls back to the GitHub mirror,
+  which has no release manifest (#194): `live-prepare`, which reads Orbit's
+  files for both legs, got 401/403 because `ORBIT_READ_TOKEN` is missing or
+  expired (#303), or `ORBIT_FILES_SOURCE=github` is set.
+  `orbit_branch` is an input of the GitHub workflow only, which is stable-only (#196).
+- `test/live/screens.go` is a compatibility contract with the launcher the
+  earlier Orbit release ships: a renamed screen is added beside the old
+  wording, removed only when that release's launcher draws the new one (#307).

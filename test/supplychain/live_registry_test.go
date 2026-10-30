@@ -26,7 +26,7 @@ import (
 func previewBlockAfterManifestExport(t *testing.T, ciYAML string) []string {
 	t.Helper()
 	var lines []string
-	for _, l := range liveJobLines(t, ciYAML) {
+	for _, l := range liveJobLines(t, ciYAML, "live") {
 		trimmed := strings.TrimSpace(l)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -120,7 +120,7 @@ func TestLivePreviewInstallLogsInToTheManifestsRegistryViaStdin(t *testing.T) {
 func TestLiveRegistryOverrideStaysInThePreviewBlock(t *testing.T) {
 	ci := readRepoFile(t, ".gitlab-ci.yml")
 	block := previewBlockAfterManifestExport(t, ci)
-	job := liveJob(t, ci)
+	job := liveJob(t, ci, "live")
 
 	count := func(lines []string, prefix string) int {
 		n := 0

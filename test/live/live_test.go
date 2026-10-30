@@ -163,11 +163,6 @@ func (s *liveSession) expectWithin(what string, match vtscreen.Match) string {
 	return out
 }
 
-// removedConfigScreenText is what the screen the engine's configuration
-// stop used to land on showed (#251): the stop goes straight into guided
-// configuration now. Every wait fails if one of these comes up.
-var removedConfigScreenText = []string{"The engine stopped before touching anything", "Continue — guided configuration"}
-
 func showsRemovedConfigScreen(screen string) (string, bool) {
 	for _, gone := range removedConfigScreenText {
 		if strings.Contains(screen, gone) {
@@ -228,19 +223,31 @@ func (s *liveSession) expectWithinBudget(what string, budget time.Duration, matc
 	return screen, nil
 }
 
-// must waits for str, and on failure diagnoses the hang before failing —
-// this is the one chance to learn anything about a freeze that has never
-// reproduced locally.
-func (s *liveSession) must(str string) {
+// must waits for any of strs (one screen's accepted wordings, screens.go),
+// and on failure diagnoses the hang before failing — this is the one
+// chance to learn anything about a freeze that has never reproduced
+// locally.
+func (s *liveSession) must(strs ...string) {
 	s.t.Helper()
-	s.expectWithin(fmt.Sprintf("expected %q", str), vtscreen.ContainsAny(str))
+	s.expectWithin(expectedWhat(strs), vtscreen.ContainsAny(strs...))
 }
 
 // mustSoon is must for the launcher's own screens: the same diagnosis on
 // failure, but under screenBudget instead of expectBudget (#166).
-func (s *liveSession) mustSoon(str string) {
+func (s *liveSession) mustSoon(strs ...string) {
 	s.t.Helper()
-	s.mustSoonScreen(str)
+	what := expectedWhat(strs)
+	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(strs...)); err != nil {
+		s.t.Fatalf("%s: %v", what, err)
+	}
+}
+
+// expectedWhat names a wait: one wording as before, several as a list.
+func expectedWhat(strs []string) string {
+	if len(strs) == 1 {
+		return fmt.Sprintf("expected %q", strs[0])
+	}
+	return fmt.Sprintf("expected %q", strs)
 }
 
 // mustSoonScreen is mustSoon for one screen showing every one of texts.
@@ -278,10 +285,19 @@ const noticeWait = 22 * time.Second
 // on its own goroutine for as long as the session lives.
 func (s *liveSession) passNotice() {
 	s.t.Helper()
-	s.mustSoon("A note before you install")
+	s.mustSoon(screenNotice...)
 	s.send("\x1b[F") // End
 	time.Sleep(noticeWait)
-	s.send("I've read this and I understand\r")
+	// The notice shows the phrase it wants; type that wording.
+	phrase := noticeAcknowledgement[0]
+	screen := vtscreen.Screen(s.term)
+	for _, w := range noticeAcknowledgement {
+		if strings.Contains(screen, w) {
+			phrase = w
+			break
+		}
+	}
+	s.send(phrase + "\r")
 }
 
 // runStarted waits, under screenBudget, for the mission console to say the
@@ -299,7 +315,7 @@ func (s *liveSession) runStarted() {
 	s.t.Helper()
 	const what = "expected the mission console"
 	if _, err := s.expectWithinBudget(what, s.screenBudget, vtscreen.ContainsAny(
-		"Contacting the engine", "ORBIT · Install", "How will people sign in?", "Install stopped")); err != nil {
+		screens(screenRunStarted, screenSignInQuestion, screenInstallStop)...)); err != nil {
 		s.t.Fatalf("%s: %v", what, err)
 	}
 }
@@ -310,8 +326,8 @@ func (s *liveSession) runStarted() {
 // way test/pty's full-OIDC journey does: Local accounts is the default.
 func (s *liveSession) chooseSSO() {
 	s.t.Helper()
-	s.mustSoon("How will people sign in?")
-	s.mustSoon("Local accounts")
+	s.mustSoon(screenSignInQuestion...)
+	s.mustSoon(screenLocalAccounts...)
 	s.send("\x1b[B") // Down to Single sign-on (SSO)
 	s.send("\r")
 	s.signIn = "oidc"
@@ -323,8 +339,8 @@ func (s *liveSession) chooseSSO() {
 // asks for APP_URL only (#246).
 func (s *liveSession) chooseLocalAccounts() {
 	s.t.Helper()
-	s.mustSoon("How will people sign in?")
-	s.mustSoon("Local accounts")
+	s.mustSoon(screenSignInQuestion...)
+	s.mustSoon(screenLocalAccounts...)
 	s.send("\r")
 	s.signIn = "local"
 }
@@ -797,15 +813,16 @@ const signInModeMarker = "[local/oidc]"
 
 func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 	t.Helper()
-	// An update's failure screen says "Update stopped" (flowStoppedTitle);
-	// the update leg (#198) waits here too, and must not sit out the budget
-	// on a failure screen it does not recognise.
-	stopScreens := []string{"Install stopped", "Update stopped"}
+	// The update leg (#198) waits here too, and must not sit out the
+	// budget on a failure screen it does not recognise.
+	stopScreens := screenStopped
 	// Each look is at one 120x40 screen, so it costs the same however
 	// much the install has printed. The stream matcher that once fell so
 	// far behind the launcher's repaints that a finished install looked
 	// frozen (#159, #165) has nothing left to fall behind.
-	markers := append([]string{"Greetings, what can we do for you today?", "Choose a deployment profile", "Review:", "Final review:", "Optional services", signInModeMarker, target}, stopScreens...)
+	// install.sh's own prose stays literal: it is Orbit's, not the launcher's.
+	markers := screens([]string{"Greetings, what can we do for you today?"}, screenProfile,
+		[]string{"Review:", "Final review:", "Optional services", signInModeMarker, target}, stopScreens, screenSuccess)
 	// acted is the screen the last Enter was sent on. The stream gave
 	// each marker once, as it was drawn; a screen goes on showing it
 	// until the launcher moves on. A screen identical to that one is the
@@ -853,19 +870,6 @@ func acceptMenusUntil(t *testing.T, session *liveSession, target string) {
 		session.send("\r")
 	}
 }
-
-// inConsolePromptMarker is the guidance line the launcher prints under
-// its own APP_URL prompt (internal/ui/configcollect.go, promptWords).
-//
-// It has to be this rather than the field's label: the labels are
-// deliberately the same words install.sh's own TTY prompts use, so
-// "Public Orbit origin" matches whichever path ran and proves neither.
-// This sentence is written in this repository and rendered only by
-// viewConfigCollect, i.e. only while the launcher itself is drawing the
-// prompt. On the handoff path the launcher draws nothing at all —
-// install.sh owns the terminal — and the string appears nowhere in the
-// orbit repository, checked.
-const inConsolePromptMarker = "the https:// address Orbit will live at"
 
 // liveProjectName is the Compose project a run of this suite owns. The
 // test hands it to the launcher through the environment (see startLive),
@@ -1081,19 +1085,124 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 	// the launcher through a Remove anyway only waits for a screen that
 	// never comes: on GitLab pipeline 214 a 31s Install failure was
 	// followed by 602s of Remove before the hang diagnosis fired (#145).
-	installed := t.Run("Install", func(t *testing.T) {
+	// Install records its own success: go test -skip/-run makes a
+	// filtered-out subtest's t.Run return true, so that result cannot say
+	// Install ran (#310).
+	var installed bool
+	t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 		installThroughConsole(t, session, appURL, "orbit-launcher-live-ci-test", "ci-live-test-fake-secret-value", "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
+		assertMemoryDefaultsMatchLauncher(t, dir)
+		installed = !t.Failed()
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
-			t.Skip("Install failed; nothing to remove")
+			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
+}
+
+// memoryLimitDefaults returns, for each name in deploy.MemoryDefaults, the
+// default the installed Orbit ships: the `${NAME:-default}` in
+// docker-compose.yml and the `NAME=default` line (commented or not) in
+// .env-orbit.example. A name missing from both files is absent.
+func memoryLimitDefaults(dir string) (map[string][]string, error) {
+	found := map[string][]string{}
+	for _, file := range []struct {
+		name string
+		re   func(name string) *regexp.Regexp
+	}{
+		{"docker-compose.yml", func(n string) *regexp.Regexp { return regexp.MustCompile(`\$\{` + n + `:-([^}]*)\}`) }},
+		{".env-orbit.example", func(n string) *regexp.Regexp { return regexp.MustCompile(`(?m)^#?\s*` + n + `=(\S*)`) }},
+	} {
+		data, err := os.ReadFile(filepath.Join(dir, file.name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for name := range deploy.MemoryDefaults {
+			for _, m := range file.re(name).FindAllStringSubmatch(string(data), -1) {
+				found[name] = append(found[name], m[1])
+			}
+		}
+	}
+	return found, nil
+}
+
+// memoryBytes reads a Compose size such as "2g" or "512m".
+func memoryBytes(v string) (uint64, bool) {
+	if len(v) < 2 {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(v[:len(v)-1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	switch v[len(v)-1] {
+	case 'k', 'K':
+		return n << 10, true
+	case 'm', 'M':
+		return n << 20, true
+	case 'g', 'G':
+		return n << 30, true
+	}
+	return 0, false
+}
+
+// assertMemoryDefaultsMatchLauncher is the drift guard for the launcher's
+// memory table (#260): the Orbit this run installed must ship the same
+// ORBIT_MEMORY_LIMIT, CLAMAV_MEMORY_LIMIT and TIKA_MEMORY_LIMIT defaults
+// as deploy.MemoryDefaults, because the install table's "+1 GB" and
+// "not enough" are worked out from them.
+func assertMemoryDefaultsMatchLauncher(t *testing.T, dir string) {
+	t.Helper()
+	found, err := memoryLimitDefaults(dir)
+	if err != nil {
+		t.Fatalf("read the installed memory defaults: %v", err)
+	}
+	for name, want := range deploy.MemoryDefaults {
+		values := found[name]
+		if len(values) == 0 {
+			t.Errorf("the installed docker-compose.yml and .env-orbit.example name no default for %s; the launcher's table assumes %d bytes", name, want)
+			continue
+		}
+		for _, v := range values {
+			if got, ok := memoryBytes(v); !ok || got != want {
+				t.Errorf("%s defaults to %q in the installed Orbit; the launcher's table (deploy.MemoryDefaults) has %d bytes", name, v, want)
+			}
+		}
+	}
+}
+
+func TestMemoryLimitDefaults_ReadsComposeAndExample(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("    mem_limit: ${TIKA_MEMORY_LIMIT:-1g}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env-orbit.example"), []byte("# CLAMAV_MEMORY_LIMIT=4g\nORBIT_MEMORY_LIMIT=2g\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, err := memoryLimitDefaults(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"TIKA_MEMORY_LIMIT": "1g", "CLAMAV_MEMORY_LIMIT": "4g", "ORBIT_MEMORY_LIMIT": "2g"} {
+		if len(found[name]) != 1 || found[name][0] != want {
+			t.Errorf("%s = %q, want [%s]", name, found[name], want)
+		}
+	}
+	if got, ok := memoryBytes("2g"); !ok || got != 2<<30 {
+		t.Errorf(`memoryBytes("2g") = %d, %v`, got, ok)
+	}
+	if _, ok := memoryBytes("lots"); ok {
+		t.Error(`memoryBytes("lots") read`)
+	}
 }
 
 // TestLive_InstallLocalAccountsThenRemove is #246: the same Install and
@@ -1117,17 +1226,19 @@ func TestLive_InstallLocalAccountsThenRemove(t *testing.T) {
 
 	appURL := fmt.Sprintf("https://orbit-live-local-%d.internal", time.Now().UnixNano())
 
-	installed := t.Run("Install", func(t *testing.T) {
+	var installed bool // set by Install itself, as in the SSO journey (#310)
+	t.Run("Install", func(t *testing.T) {
 		session := startLive(t, binPath, dir)
 		installLocalThroughConsole(t, session, appURL, "Get into Orbit")
 		waitHealthy(t, session)
 		quitFromSuccess(session)
 		assertLocalAccountsDeployment(t, dir)
+		installed = !t.Failed()
 	})
 
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
-			t.Skip("Install failed; nothing to remove")
+			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
 	})
@@ -1175,13 +1286,13 @@ func installThroughConsole(t *testing.T, session *liveSession, appURL, clientID,
 	// ran. A fallback would have stopped the run above instead.
 	acceptMenusUntil(t, session, inConsolePromptMarker)
 	sendLine(appURL)
-	session.must("OIDC issuer URL")
+	session.must(screenOIDCIssuer...)
 	sendLine(testOIDCIssuer)
-	session.must("OIDC client ID")
+	session.must(screenOIDCClientID...)
 	sendLine(clientID)
 	// The in-console prompt puts the label and "input hidden" on
 	// separate lines; the label alone is what is matched, as above.
-	session.must("OIDC client secret")
+	session.must(screenOIDCSecret...)
 	sendLine(secret)
 
 	// Wait for the launcher's own success screen, never for the
@@ -1222,9 +1333,9 @@ func openGuidedConfiguration(session *liveSession) {
 	session.t.Helper()
 	sendLine := func(s string) { session.send(s + "\r") }
 
-	session.mustSoon("Install")
+	session.mustSoon(screenMenuInstall...)
 	session.choose("Install") // by digit, not by trusting the preselection
-	session.mustSoon("Choose a deployment profile")
+	session.mustSoon(screenProfile...)
 	sendLine("")         // Standard selected by default
 	session.passNotice() // Standard opens the development notice (#175, #248)
 	session.runStarted() // the mission console's piped engine run starts
@@ -1238,8 +1349,8 @@ func openGuidedConfiguration(session *liveSession) {
 	// nothing and lands on the failure screen, whose default option
 	// leads to the guided configuration.
 	screen := session.expectWithin("expected the sign-in question or failure screen after the piped attempt",
-		vtscreen.ContainsAny("How will people sign in?", "Install stopped"))
-	if !strings.Contains(screen, "How will people sign in?") {
+		vtscreen.ContainsAny(screens(screenSignInQuestion, screenInstallStop)...))
+	if !vtscreen.ContainsAny(screenSignInQuestion...)(screen) {
 		sendLine("") // Open the guided installer
 	}
 }
@@ -1426,7 +1537,20 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 		t.Logf("this install.sh prints no Docker words; the compose-up reason alone shows the failure path")
 	}
 
-	// Exit via the failure menu (guided installer, Menu, Exit).
+	// The installer rolled the attempt back, and the stopped screen says
+	// so and offers to install again (#257); the guided installer would
+	// only run the same install.sh into the same port.
+	if _, err := session.expectWithinBudget("the rolled-back sentence and Install again", session.screenBudget, func(screen string) bool {
+		words := screenWords(screen)
+		return strings.Contains(words, "was undone") && strings.Contains(words, "Install again")
+	}); err != nil {
+		t.Fatalf("the stopped screen does not say the install was undone and offer Install again: %v", err)
+	}
+	if words := screenWords(session.expectWithin("the stopped screen", vtscreen.ContainsAny("Install stopped"))); strings.Contains(words, "Open the guided installer") || strings.Contains(words, "next:") {
+		t.Errorf("the stopped screen offers the guided installer or shows next:\n%s", words)
+	}
+
+	// Exit via the stopped screen's rows (Install again, Menu, Exit).
 	session.send("\x1b[B")
 	session.send("\x1b[B")
 	session.send("\r")
@@ -1449,6 +1573,60 @@ func TestLive_InstallPortConflictFailsCleanly(t *testing.T) {
 	if len(psOut) != 0 {
 		t.Errorf("expected no running containers after the failed install, got:\n%s", psOut)
 	}
+}
+
+// TestLive_InstallNotEmptyFolderNamesItAndInstallsAgain is #257's leg: a
+// stray file in the folder makes install.sh refuse before it writes
+// anything. The stopped screen names the file and offers Install again;
+// once the file is moved out, Install again runs the install on to the
+// sign-in question, with no profile or notice in between.
+func TestLive_InstallNotEmptyFolderNamesItAndInstallsAgain(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	sweepLeftoverLiveStacks(t)
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	binPath := binaryPath(t)
+	dir := t.TempDir()
+	t.Cleanup(func() { dockerComposeDown(t, dir) })
+	stray := filepath.Join(dir, "stray-notes.txt")
+	if err := os.WriteFile(stray, []byte("left here by hand\n"), 0o600); err != nil {
+		t.Fatalf("write the stray file: %v", err)
+	}
+
+	session := startLive(t, binPath, dir)
+	session.mustSoon("Install")
+	session.choose("Install")
+	session.mustSoon("Choose a deployment profile")
+	session.send("\r") // Standard
+	session.passNotice()
+	session.runStarted()
+
+	screen, err := session.expectWithinBudget("the not-empty stopped screen", session.screenBudget, func(screen string) bool {
+		words := screenWords(screen)
+		return strings.Contains(words, "Install stopped") &&
+			strings.Contains(words, "in the folder: stray-notes.txt") &&
+			strings.Contains(words, "Install again")
+	})
+	if err != nil {
+		t.Fatalf("the stopped screen does not name the stray file and offer Install again: %v", err)
+	}
+	words := screenWords(screen)
+	if !strings.Contains(words, "Nothing was changed in") {
+		t.Errorf("the stopped screen does not say nothing was changed:\n%s", screen)
+	}
+	if strings.Contains(words, "next:") || strings.Contains(words, "docker-host") {
+		t.Errorf("the stopped screen shows the engine's vocabulary:\n%s", screen)
+	}
+
+	if err := os.Remove(stray); err != nil {
+		t.Fatalf("move the stray file out: %v", err)
+	}
+	session.send("\r") // Install again, preselected
+	session.mustSoon("How will people sign in?")
 }
 
 // composeUpFailedReason is the reason install.sh gives when
@@ -1581,7 +1759,9 @@ func TestExpectWithin_TimeoutProducesTheHangDiagnosis(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = term.Close() })
 
-	cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+	// yes, not a shell loop: Fedora's sh (bash) ran it with SIGQUIT
+	// ignored, so the diagnosis never ended it there (#311).
+	cmd := exec.Command("yes", "tick")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := term.Start(cmd); err != nil {
 		t.Fatalf("start noisy child: %v", err)
@@ -1685,7 +1865,7 @@ func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
 	}{
 		{
 			// capBudget leaves nothing, so the wait fails at once; the only
-			// time spent is diagnose's dump wait, which the sh child never
+			// time spent is diagnose's dump wait, which the child never
 			// answers, and its SIGQUIT is the proof the diagnosis ran.
 			name: "reserve already spent", deadline: cleanupReserve - time.Second, stderr: true,
 			wantSubs: []string{"test deadline is within"}, wantSIGQUIT: true,
@@ -1704,7 +1884,9 @@ func TestExpectWithin_FailsBeforeTheTestDeadline(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = term.Close() })
 
-			cmd := exec.Command("sh", "-c", "while :; do echo tick; done")
+			// yes, not a shell loop: Fedora's sh (bash) ran it with SIGQUIT
+			// ignored, so the diagnosis never ended it there (#311).
+			cmd := exec.Command("yes", "tick")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 			if err := term.Start(cmd); err != nil {
 				t.Fatalf("start noisy child: %v", err)

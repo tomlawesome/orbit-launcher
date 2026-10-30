@@ -140,9 +140,12 @@ func TestRemoveBox_B_CRAndESCShowAsTextInsideWholeBoxRows(t *testing.T) {
 	}
 }
 
-func TestRemoveBox_C_BoxTextJoinedIsVisibleTextOfTheCommand(t *testing.T) {
+// The box shows the command itself, byte for byte (#277 W2): an odd
+// folder's word is already in printable $'...' form, so there is no
+// second escaping pass.
+func TestRemoveBox_C_BoxTextJoinedIsTheCommand(t *testing.T) {
 	for _, folder := range []string{"/opt/x\nsudo rm -rf /", "/opt/a\rb c", "/opt/\x1b[2Jx", "/opt/orbit"} {
-		want := visibleText(removalLine(t, folder))
+		want := removalLine(t, folder)
 
 		// Wide enough that the command is one line: exact.
 		s := screen(removeDoneModel(t, folder, 300, &bytes.Buffer{}))

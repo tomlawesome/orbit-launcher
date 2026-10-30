@@ -36,15 +36,17 @@ is_safe_path() {
   return 1
 }
 
-# The variables the live install actually runs on: the image it installs
-# inside, and the Go tarball it fetches. A change to any of these cannot be
-# proven by any other job, because nothing else installs anything (#164).
-LIVE_PIN_KEYS='UBUNTU_IMAGE|GO_VERSION|GO_SHA256'
+# The variables the live install actually runs on: the images its two legs
+# install inside (#183), and the Go tarball it fetches. A change to any of
+# these cannot be proven by any other job, because nothing else installs
+# anything (#164).
+LIVE_PIN_KEYS='UBUNTU_IMAGE|FEDORA_IMAGE|GO_VERSION|GO_SHA256'
 
 # The files those pins pass through on their way in: the live job fetches the
 # Go tarball through the checked-download script, so a change to it alone is
-# a change to what the install runs on (#216). Whole paths, `|`-separated.
-LIVE_PIN_PATHS='scripts/ci/fetch-verified.sh'
+# a change to what the install runs on (#216). orbit/pin.json names the Orbit
+# commit it installs (#193). Whole paths, `|`-separated.
+LIVE_PIN_PATHS='scripts/ci/fetch-verified.sh|scripts/ci/run-unprivileged.sh|orbit/pin.json'
 
 docs_only=false
 live_pins=true
@@ -104,7 +106,7 @@ done <<EOF
 $changed
 EOF
 if [ -n "$pin_path" ]; then
-  echo "classify: $pin_path changed, and the live install's downloads go through it, so it runs" >&2
+  echo "classify: $pin_path changed, and the live install runs on it, so it runs" >&2
   live_pins=true
 elif ! pin_diff="$(git diff -U0 "$base" "$head" -- .gitlab-ci.yml 2>/dev/null)"; then
   echo "classify: could not read the pipeline diff, so the live install runs" >&2

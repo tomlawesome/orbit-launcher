@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -27,9 +28,9 @@ const (
 // InstallModel is the Install flow: profile choice, the development
 // notice, then the mission console — the engine's event stream rendered natively
 // inside the TUI (see internal/ui/enginerun.go and design/mockups-v5.html
-// section 02). Only the Standard profile is wired; AI/Full are visible
-// but honestly say they aren't available yet rather than silently doing
-// the wrong thing.
+// section 02). Standard and Documents are wired; Agent and Full are
+// visible but honestly say they aren't available yet rather than
+// silently doing the wrong thing.
 //
 // orbit-launcher still never invents Orbit configuration itself
 // (issue #51): the engine run cannot prompt by construction, and when
@@ -47,6 +48,16 @@ type InstallModel struct {
 
 	profile menu // installProfiles
 	volume  menu // installVolumeRows
+
+	// memory is the machine's total memory as read when the flow
+	// began; memoryKnown is false when it could not be read, and then no
+	// row is ever "not enough" (#260).
+	memory      uint64
+	memoryKnown bool
+
+	// requested is the profile the run asks for, set when the person
+	// chooses a row and carried by the run and its retry.
+	requested string
 
 	// left is Esc or Cancel on the flow's first screen: back to the main
 	// menu with nothing started (#210).
@@ -90,6 +101,14 @@ type InstallModel struct {
 
 	run engineRun
 
+	// collected is the guided configuration handed to every run this
+	// flow starts (collectedConfig). The app shares one across its
+	// Install flows, so Install again and Install from the menu ask
+	// nothing; a flow built on its own, or a new launcher session, asks
+	// again. It is removed when a Remove stand-down completes and on
+	// exit, not when an Install flow ends.
+	collected *collectedConfig
+
 	// startedAt is when the engine run began: the success screen reads
 	// the claim link from the app's logs since then (#259).
 	startedAt time.Time
@@ -114,11 +133,22 @@ type engineRunSeams struct {
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
 	prepareRotate  prepareRotateFunc
+	// listFolder reads the folder for the stopped screen's listing;
+	// nil is os.ReadDir. folderLimit is how long the screen waits for
+	// it; zero is folderReadLimit.
+	listFolder  func(dir string) ([]os.DirEntry, error)
+	folderLimit time.Duration
 }
 
 // withSend gives the run its way back into the event loop.
 func (r engineRun) withSend(send func(tea.Msg)) engineRun {
 	r.send = send
+	return r
+}
+
+// withProfile makes the run request a deployment profile.
+func (r engineRun) withProfile(profile string) engineRun {
+	r.profile = profile
 	return r
 }
 
@@ -129,26 +159,91 @@ func (r engineRun) withSeams(s engineRunSeams) engineRun {
 
 // NewInstallModel constructs the Install flow for targetDir.
 func NewInstallModel(targetDir, version string) InstallModel {
+	memory, known := deploy.HostMemory()
 	return InstallModel{
-		targetDir: targetDir,
-		version:   version,
-		profile:   newMenu(installProfiles...),
-		volume:    newMenu(installVolumeRows...),
+		targetDir:   targetDir,
+		version:     version,
+		profile:     newMenu(installProfiles...),
+		volume:      newMenu(installVolumeRows...),
+		memory:      memory,
+		memoryKnown: known,
+		collected:   &collectedConfig{},
 	}
 }
 
-// The profile screen's rows (#247). Only Standard is wired; Documents
-// (Orbit's "processing" profile, until #260), Agent and Full lead to the
-// honest dead end. The menu holds the names; the table draws the rest.
-const installStandard = "Standard"
+// The profile screen's rows (#247). Standard and Documents (Orbit's
+// "processing" profile, #260) start a run; Agent and Full, which have
+// no profile name (they need a local model Orbit doesn't use yet), lead
+// to the honest dead end. The menu holds the names; the table draws the
+// rest, and the status column is worked out from the machine's memory
+// (installProfile.status).
+const (
+	installStandard  = "Standard"
+	installDocuments = "Documents"
+)
 
-type installProfile struct{ name, adds, avail string }
+// installProfile is a row. profile is the name the engine is asked for
+// (deploy.ProfileEnv); empty means the row is not yet available.
+type installProfile struct{ name, adds, profile string }
 
 var installProfileTable = []installProfile{
-	{installStandard, "mail, documents, calendar", "available"},
-	{"Documents", "adds text extraction from attachments", "not yet"},
-	{"Agent", "adds a local model for search & suggestions", "not yet"},
-	{"Full", "documents extraction and the local model", "not yet"},
+	{installStandard, "mail, documents, calendar", deploy.ProfileStandard},
+	{installDocuments, "adds text extraction from attachments", deploy.ProfileDocuments},
+	{"Agent", "adds a local model for search & suggestions", ""},
+	{"Full", "documents extraction and the local model", ""},
+}
+
+// The status column's words.
+const (
+	installAvailable = "available"
+	installNotYet    = "not yet"
+	installNotEnough = "not enough"
+)
+
+// shortOfMemory is whether the machine is known to have less memory than
+// the row needs. Standard is never short (the launcher doesn't block the
+// baseline, as Orbit's installer doesn't), and a machine whose memory
+// could not be read is never short.
+func (m InstallModel) shortOfMemory(p installProfile) bool {
+	if p.profile == "" || p.profile == deploy.ProfileStandard {
+		return false
+	}
+	return m.memoryKnown && m.memory < deploy.ProfileNeed(p.profile)
+}
+
+// status is the row's status column: "available" for Standard, the
+// memory a profile adds over Standard ("+1 GB"), "not enough" when the
+// machine is short of what the profile needs in all, and "not yet" for
+// a row with no profile behind it.
+func (m InstallModel) status(p installProfile) string {
+	switch {
+	case p.profile == "":
+		return installNotYet
+	case p.profile == deploy.ProfileStandard:
+		return installAvailable
+	case m.shortOfMemory(p):
+		return installNotEnough
+	}
+	extra := deploy.ProfileNeed(p.profile) - deploy.ProfileNeed(deploy.ProfileStandard)
+	return fmt.Sprintf("+%d GB", extra>>30)
+}
+
+// canChoose is whether Enter on the row does anything: the baseline
+// always, a profile row unless the machine is short of memory.
+func (m InstallModel) canChoose(p installProfile) bool {
+	return p.profile != "" && !m.shortOfMemory(p)
+}
+
+// memoryReason is the one line under the table when a row is "not
+// enough"; empty when no row is. It names the first such row.
+func (m InstallModel) memoryReason() string {
+	for _, p := range installProfileTable {
+		if m.shortOfMemory(p) {
+			return fmt.Sprintf("%s needs %d GB of memory in all and this machine has %d GB.",
+				p.name, deploy.ProfileNeed(p.profile)>>30, m.memory>>30)
+		}
+	}
+	return ""
 }
 
 var installProfiles = func() []string {
@@ -164,8 +259,8 @@ var installProfiles = func() []string {
 // column.
 const (
 	installNameCol  = 10
-	installAddsCol  = 44
-	installAvailCol = 9
+	installAddsCol  = 43
+	installAvailCol = 10
 	installTableW   = 2 + installNameCol + 1 + installAddsCol + 1 + installAvailCol
 	installTableMin = installTableW + 1
 )
@@ -343,6 +438,10 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		// A move drops a waiting Enter: the row it chose is no longer
 		// the one under the cursor.
 		m.awaiting = ""
+	case m.shortOfMemory(m.rowNamed(chosen)):
+		// "not enough": the caret rests here but Enter does nothing, and
+		// the line under the table says why.
+		m.awaiting = ""
 	case m.checkVolumes != nil && !m.volumesAnswered && !m.noVolumeCheck:
 		// The pre-flight has not answered: wait for it rather than
 		// moving on past a finding it is about to report.
@@ -353,12 +452,34 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
+// rowNamed is the table row called name; the zero row if none is.
+func (m InstallModel) rowNamed(name string) installProfile {
+	for _, p := range installProfileTable {
+		if p.name == name {
+			return p
+		}
+	}
+	return installProfile{}
+}
+
+// requestedRow is the name of the row whose profile the run asks for,
+// for the console's title; Standard when none was chosen.
+func (m InstallModel) requestedRow() string {
+	for _, p := range installProfileTable {
+		if p.profile != "" && p.profile == m.requested {
+			return p.name
+		}
+	}
+	return installStandard
+}
+
 // chooseProfile acts on the row Enter chose on the profile screen.
 func (m InstallModel) chooseProfile(chosen string) (tea.Model, tea.Cmd) {
-	if chosen == installStandard {
-		// Standard opens the development notice (#175) directly (#248),
-		// fresh every time: going back and coming again restarts the
-		// countdown and closes the scroll gate.
+	if p := m.rowNamed(chosen); m.canChoose(p) {
+		// A profile row opens the development notice (#175) directly
+		// (#248), fresh every time: going back and coming again restarts
+		// the countdown and closes the scroll gate.
+		m.requested = p.profile
 		m.state = installStateNotice
 		m.notice = newNotice(m.now(), m.width, m.height)
 		return m, noticeTick(m.notice.start)
@@ -385,7 +506,8 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
-	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — Standard", m.version).withSeams(m.seams).withSend(m.send)
+	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+	m.run.collected = m.collected
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
 	// The console's own start, so the clock is read once (a later
@@ -498,6 +620,18 @@ func (m InstallModel) viewProfile() string {
 	}
 	fmt.Fprintln(&b)
 	m.writeProfileTable(&b)
+	if reason := m.memoryReason(); reason != "" {
+		fmt.Fprintln(&b)
+		// Padded to the table's width, so the sky centres it with the
+		// table rather than on its own.
+		w := installTableW
+		if m.width < installTableMin {
+			w = measure(m.width, proseWidth)
+		}
+		for _, row := range wrapWordsIn(reason, w-2, textArea(m.width)-2) {
+			fmt.Fprintln(&b, "  "+style.Tagline.Render(row)+strings.Repeat(" ", max(0, w-2-len([]rune(row)))))
+		}
+	}
 	if m.awaiting != "" {
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, workingLine(m.frame, "Checking for an old Orbit database…", ""))
@@ -508,8 +642,8 @@ func (m InstallModel) viewProfile() string {
 func (m InstallModel) viewUnavailableProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
-	fmt.Fprintln(&b, style.MutedText.Render("Documents, Agent and Full aren't wired into this"))
-	fmt.Fprintln(&b, style.MutedText.Render("installer yet."))
+	fmt.Fprintln(&b, style.MutedText.Render("Agent and Full need a local model, which Orbit"))
+	fmt.Fprintln(&b, style.MutedText.Render("doesn't use yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
 	return skyBlock(m.star, m.width, m.height, b.String())
@@ -537,7 +671,7 @@ func (m InstallModel) writeProfileTable(b *strings.Builder) {
 		switch {
 		case i == m.profile.sel:
 			return style.Ink
-		case p.avail == "available":
+		case m.canChoose(p):
 			return style.MutedText
 		}
 		return style.Tagline
@@ -545,10 +679,11 @@ func (m InstallModel) writeProfileTable(b *strings.Builder) {
 	if m.width >= installTableMin {
 		for i, p := range installProfileTable {
 			st := rowStyle(i, p)
+			status := m.status(p)
 			line := caret(i == m.profile.sel) +
 				pad(st.Render(p.name), len(p.name), installNameCol) + " " +
 				pad(st.Render(p.adds), len([]rune(p.adds)), installAddsCol) + " " +
-				pad(st.Render(p.avail), len(p.avail), installAvailCol)
+				pad(st.Render(status), len(status), installAvailCol)
 			fmt.Fprintln(b, line)
 		}
 		return
@@ -559,9 +694,9 @@ func (m InstallModel) writeProfileTable(b *strings.Builder) {
 			fmt.Fprintln(b, pad("", 0, w))
 		}
 		st := rowStyle(i, p)
-		head := p.name + style.Separator + p.avail
+		head := p.name + style.Separator + m.status(p)
 		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
-		for _, r := range wrapWords(p.adds, w-2) {
+		for _, r := range wrapWordsIn(p.adds, w-2, textArea(m.width)-2) {
 			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
 		}
 	}

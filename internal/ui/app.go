@@ -33,8 +33,14 @@ type AppModel struct {
 	remove        RemoveModel
 	repair        RepairModel
 	install       InstallModel
-	update        UpdateModel
-	success       SuccessModel
+	// collected is the guided configuration this launcher session has
+	// collected (collectedConfig): it outlives one Install flow, so
+	// Install from the menu re-seeds without asking again. Removed when
+	// a Remove stand-down completes and on exit (FinishDeferredCleanup),
+	// never kept between sessions.
+	collected *collectedConfig
+	update    UpdateModel
+	success   SuccessModel
 
 	// Configuration remembered so a refreshed splash (after a flow
 	// returns to the menu) is built exactly like the first one.
@@ -70,8 +76,15 @@ type AppModel struct {
 	// (deploy.ReadClaimLink).
 	flowReadClaim func(ctx context.Context, dir, appURL string, since time.Time) (string, error)
 
+	// servicesReader reads the deployment's containers for Repair's
+	// services block and the splash's degraded count (#255). Until
+	// WithServicesReader sets it (servicesReaderSet), the real `docker
+	// compose ps` is used; once set, nil means no reading anywhere (#277).
+	servicesReader    func(dir string) ([]deploy.ServiceState, error)
+	servicesReaderSet bool
+
 	// flowNoticeDuration shortens Install's development-notice countdown
-	// (#175) in tests; zero in production (the 70 s default).
+	// (#175) in tests; zero in production (the 20 s default).
 	flowNoticeDuration time.Duration
 
 	// altScreen puts the program in the terminal's alternate screen
@@ -140,6 +153,29 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 	return m
 }
 
+// WithServicesReader supplies how the services are read, for Repair's
+// services block and the splash's count, in place of the real `docker
+// compose ps` (#277): tests pass a fake, so no app-level test depends on
+// the machine's Docker. Nil reads nothing: the splash does not count and
+// Repair shows no services block, whichever order this and
+// WithDeploymentStatus are given in.
+func (m AppModel) WithServicesReader(read func(dir string) ([]deploy.ServiceState, error)) AppModel {
+	m.servicesReader, m.servicesReaderSet = read, true
+	if m.splash.targetDir != "" { // a deployment was applied already
+		m.splash.serviceStates = read
+	}
+	return m
+}
+
+// readServices is the services reader the app hands its screens: the
+// one WithServicesReader set, nil included, else the real one.
+func (m AppModel) readServices() func(dir string) ([]deploy.ServiceState, error) {
+	if m.servicesReaderSet {
+		return m.servicesReader
+	}
+	return realServiceStates
+}
+
 // WithSender gives the flows a way to push messages into the event
 // loop from outside it, which the engine stream reader needs (#159).
 // Without it a run cannot read the engine and says so plainly rather
@@ -192,9 +228,19 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
-	s.healthProbe = m.healthProbe
-	s.serviceStates = realServiceStates
 	s.targetDir = m.resolvedTargetDir()
+	s.serviceStates = m.readServices()
+	if !deploy.Installed(s.targetDir) {
+		// Only the pre-provisioned configuration, as a rolled-back
+		// install leaves it: Install is what the engine will accept,
+		// and there is nothing to probe. An address nothing of ours
+		// serves can only answer "not responding" (painting the folder
+		// degraded and moving the caret to a Repair the engine refuses)
+		// or be answered by a stranger. The state stays unknown.
+		s.menu.sel = menuInstall
+		return s
+	}
+	s.healthProbe = m.healthProbe
 	return s
 }
 
@@ -260,6 +306,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appStateRemove:
 		updated, cmd := m.remove.Update(msg)
 		m.remove = updated.(RemoveModel)
+		// A completed stand-down retires the deployment the held answers
+		// were collected for: drop them, so a later Install into a wiped
+		// folder asks again instead of reusing configuration the person
+		// was told is gone.
+		if m.remove.state == removeStateDone && m.collected != nil {
+			m.collected.release()
+			m.collected = nil
+		}
 		return m.watchOutcome(m.remove.Outcome(), cmd)
 	case appStateRepair:
 		updated, cmd := m.repair.Update(msg)
@@ -300,6 +354,9 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 		m.success.noAnimation = m.splash.noAnimation
 		if m.state == appStateInstall {
 			m.success.readClaim = m.claimReader(o.URL)
+			// Only a fresh install ends with optional services still
+			// starting; an update fails on them instead.
+			m.success.serviceNotes = m.install.run.ServiceNotes
 		}
 		m.state = appStateSuccess
 		sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
@@ -310,10 +367,27 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 		}
 		return m, sizeCmd
 	}
+	if o.WantsRepair {
+		// The stopped screen's Open Repair: Repair on the same folder.
+		return m.startRepair()
+	}
 	if o.WantsMenu {
 		return m.refreshSplash()
 	}
 	return m, cmd
+}
+
+// startRepair opens Repair on the launcher's folder, from the splash or
+// from a stopped Install or Update that left its services in place.
+func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
+	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
+	m.repair.engineRunSeams = m.flowSeams
+	m.repair.serviceStates = m.readServices()
+	m.repair.foreignOwned = deploy.ForeignOwned
+	m.repair.send = m.flowSend
+	m.state = appStateRepair
+	return m, tea.Batch(sizeCmd, m.repair.Init())
 }
 
 // claimReader is the success screen's claim-link read after a finished
@@ -361,15 +435,13 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// pre-flight it starts with the flow.
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
-		m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
-		m.repair.engineRunSeams = m.flowSeams
-		m.repair.serviceStates = realServiceStates
-		m.repair.foreignOwned = deploy.ForeignOwned
-		m.repair.send = m.flowSend
-		m.state = appStateRepair
-		return m, tea.Batch(sizeCmd, m.repair.Init())
+		return m.startRepair()
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
+		if m.collected == nil {
+			m.collected = &collectedConfig{}
+		}
+		m.install.collected = m.collected
 		m.install.seams = m.flowSeams
 		m.install.checkVolumes = m.flowCheckVolumes
 		if m.install.checkVolumes == nil {

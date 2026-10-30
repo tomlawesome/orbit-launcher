@@ -28,6 +28,7 @@ variables:
   GO_VERSION: "1.26.8"
   GO_SHA256: aaa
   UBUNTU_IMAGE: ubuntu:24.04@sha256:aaa
+  FEDORA_IMAGE: fedora:44@sha256:aaa
   STATICCHECK_VERSION: v0.7.0
 YML
   git add -A
@@ -132,6 +133,12 @@ live_pins() { printf '%s' "${lines[1]}"; }
   [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
 }
 
+@test "a moved fedora image runs the live install" {
+  sed -i 's|fedora:44@sha256:aaa|fedora:44@sha256:bbb|' .gitlab-ci.yml
+  classify
+  [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
+}
+
 @test "a moved Go tarball version runs the live install" {
   sed -i 's|GO_VERSION: "1.26.8"|GO_VERSION: "1.27.1"|' .gitlab-ci.yml
   classify
@@ -146,6 +153,14 @@ live_pins() { printf '%s' "${lines[1]}"; }
 
 @test "a changed checked-download script runs the live install" {
   echo "# change" > scripts/ci/fetch-verified.sh
+  classify
+  [ "$(docs_only)" = "DOCS_ONLY=false" ]
+  [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]
+}
+
+@test "a bumped Orbit pin alone runs the live install" {
+  mkdir -p orbit
+  printf '{ "branch": "preview", "commit": "%s" }\n' 2222222222222222222222222222222222222222 > orbit/pin.json
   classify
   [ "$(docs_only)" = "DOCS_ONLY=false" ]
   [ "$(live_pins)" = "LIVE_PINS_CHANGED=true" ]

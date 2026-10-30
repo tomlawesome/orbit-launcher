@@ -13,9 +13,9 @@ import (
 )
 
 // stderrTailLines bounds how much stderr is kept for the failure
-// screen: the engine's guidance messages are short and the useful part
-// is always the end.
-const stderrTailLines = 12
+// screen: the useful part is always the end, and a stop message can be
+// a whole instruction block (#261), which the screen fits to its rows.
+const stderrTailLines = 40
 
 // maxLineBytes bounds how much of a single line is kept — a legacy
 // engine's progress output (docker pull bars) can be long, but nothing
@@ -28,8 +28,12 @@ type EventMsg struct{ Event Event }
 
 // RawLineMsg is a non-event stdout line — legacy-engine prose or the
 // engine's human summary. Display-only by contract: never a machine
-// signal.
-type RawLineMsg struct{ Text string }
+// signal. Truncated says the reader cut the line to maxLineBytes, so
+// Text is only the start of it (#277).
+type RawLineMsg struct {
+	Text      string
+	Truncated bool
+}
 
 // DoneMsg reports the engine process's end. Err is nil for exit 0;
 // otherwise the *exec.ExitError (or start/wait failure). StderrTail is
@@ -143,7 +147,7 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 	tailCh := make(chan []string, 1)
 	go func() {
 		var tail []string
-		readLines(stderr, func(line string) {
+		readLines(stderr, func(line string, _ bool) {
 			tail = append(tail, line)
 			if len(tail) > stderrTailLines {
 				tail = tail[1:]
@@ -154,11 +158,11 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 	}()
 
 	go func() {
-		readLines(stdout, func(line string) {
+		readLines(stdout, func(line string, truncated bool) {
 			if event, ok := ParseEvent(line); ok {
 				s.C <- EventMsg{Event: event}
 			} else {
-				s.C <- RawLineMsg{Text: line}
+				s.C <- RawLineMsg{Text: line, Truncated: truncated}
 			}
 		})
 		stdout.Close()
@@ -183,7 +187,9 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 // readLines calls emit once per newline-terminated line, skipping blank
 // ones, and returns when the reader ends. A line longer than
 // maxLineBytes is truncated to it and the remainder discarded — but the
-// line is still delivered and reading carries on.
+// line is still delivered, with truncated set, and reading carries on.
+// A line of exactly maxLineBytes loses only its terminator, so it is not
+// truncated.
 //
 // bufio.Scanner cannot be used here. To Scanner an over-long line is a
 // permanent error: Scan returns false and the loop ends. That loop is
@@ -194,17 +200,22 @@ func start(cmd *exec.Cmd, withStdin bool) (*Stream, io.WriteCloser, error) {
 // real engine reaches an over-long line whenever a phase reports
 // progress with carriage returns and no newline for long enough, which
 // is what install.sh's database wait does.
-func readLines(r io.Reader, emit func(string)) {
+func readLines(r io.Reader, emit func(line string, truncated bool)) {
 	br := bufio.NewReaderSize(r, 4096)
 	var line []byte
+	truncated := false
 	for {
 		chunk, err := br.ReadSlice('\n')
-		if room := maxLineBytes - len(line); room > 0 {
-			if len(chunk) > room {
-				chunk = chunk[:room]
+		room := max(maxLineBytes-len(line), 0)
+		if len(chunk) > room {
+			// Only what is left of the line after the cut counts: its
+			// terminator is not part of the line.
+			if len(trimLineEnd(chunk[room:])) > 0 {
+				truncated = true
 			}
-			line = append(line, chunk...)
+			chunk = chunk[:room]
 		}
+		line = append(line, chunk...)
 		if err == bufio.ErrBufferFull {
 			// The line is longer than the read buffer — keep pulling it
 			// in (and keep draining the pipe) until its newline arrives.
@@ -212,14 +223,14 @@ func readLines(r io.Reader, emit func(string)) {
 		}
 		if err != nil {
 			if text := trimLineEnd(line); text != "" {
-				emit(text)
+				emit(text, truncated)
 			}
 			return
 		}
 		if text := trimLineEnd(line); text != "" {
-			emit(text)
+			emit(text, truncated)
 		}
-		line = line[:0]
+		line, truncated = line[:0], false
 	}
 }
 

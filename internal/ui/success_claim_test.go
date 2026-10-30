@@ -163,11 +163,15 @@ func TestSuccessClaim_InitThenDriveShowsTheClaimScreen(t *testing.T) {
 	}
 }
 
-// --- No link: today's screen ------------------------------------------------
+// --- No link: the screen the read was waiting on -----------------------------
 
+// A read that finds no link leaves the screen as it was while the read
+// was out, blank row included, so the menu does not jump (#277 H); it
+// used to drop the row and match a screen that reads nothing.
 func TestSuccessClaim_NoLinkIsExactlyTodaysScreen(t *testing.T) {
 	today := NewSuccessModel(claimApp, 3*time.Minute, "v9.9.9")
 	today.noAnimation = true
+	today.readClaim = func() (string, error) { return "", nil }
 	today, _ = updateAs(t, today, tea.WindowSizeMsg{Width: 80, Height: 40})
 	want := today.View().Content
 

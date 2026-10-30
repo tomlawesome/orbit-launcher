@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -61,6 +65,33 @@ const (
 // A variable so tests can shorten it.
 var stopGrace = 15 * time.Second
 
+// stopGraceAfterCommit is the default wait for a run stopped after the
+// installer's commit. From there compose up runs under a 300 s bound of
+// its own that no signal reaches, and only then does an Update roll
+// forward or a fresh Install roll back, so the launcher allows that
+// bound plus a margin before killing it (orbit docs/engine-events.md,
+// "install.sh after the commit", #1518, #297). A second Ctrl-C still
+// kills at once.
+var stopGraceAfterCommit = 300*time.Second + 30*time.Second
+
+// composeUpBoundEnv moves Orbit's compose-up bound (1-900 s); the
+// installer inherits the launcher's environment, so the launcher reads
+// the same value (orbit docs/engine-events.md, #297).
+const composeUpBoundEnv = "ORBIT_INSTALLER_COMPOSE_UP_TIMEOUT_SECONDS"
+
+// afterCommitStopGrace is the wait for an Install or Update stopped
+// after the commit: Orbit's compose-up bound, from composeUpBoundEnv
+// when it holds 1 to 900, plus the same 30 s margin; otherwise
+// stopGraceAfterCommit. A value install.sh would refuse falls back to
+// the default rather than guessing.
+func afterCommitStopGrace(getenv func(string) string) time.Duration {
+	n, err := strconv.Atoi(getenv(composeUpBoundEnv))
+	if err != nil || n < 1 || n > 900 {
+		return stopGraceAfterCommit
+	}
+	return time.Duration(n)*time.Second + 30*time.Second
+}
+
 // Seam types: the overridable dependencies an engine run needs, so
 // flow tests never touch the network or a real terminal.
 type (
@@ -76,8 +107,11 @@ type flowOutcome struct {
 	Done      bool
 	Succeeded bool
 	WantsMenu bool
-	URL       string
-	Elapsed   time.Duration
+	// WantsRepair is the stopped screen's Open Repair: the app opens
+	// Repair on the same folder.
+	WantsRepair bool
+	URL         string
+	Elapsed     time.Duration
 	// ExitNote is printed by main after the screen closes.
 	ExitNote string
 }
@@ -89,14 +123,36 @@ type flowOutcome struct {
 var backToMenu = flowOutcome{Done: true, WantsMenu: true}
 
 func outcomeOf(r engineRun) flowOutcome {
-	return flowOutcome{
-		Done:      r.Done,
-		Succeeded: r.Succeeded,
-		WantsMenu: r.WantsMenu,
-		URL:       r.URL,
-		Elapsed:   r.Elapsed,
-		ExitNote:  r.exitNote,
+	if r.signalQuit {
+		// The launcher is quitting: a finished run has no screen to go
+		// to, and the app must not replace the quit with one.
+		return flowOutcome{ExitNote: r.exitNote}
 	}
+	return flowOutcome{
+		Done:        r.Done,
+		Succeeded:   r.Succeeded,
+		WantsMenu:   r.WantsMenu,
+		WantsRepair: r.WantsRepair,
+		URL:         r.URL,
+		Elapsed:     r.Elapsed,
+		ExitNote:    r.exitNote,
+	}
+}
+
+// serviceLabels are the names install.sh's completion lines give the
+// optional services (its optional_service_not_ready labels), by the
+// component their events carry. The lines are prose, so they are only
+// ever shown, and only for a service whose events say it ended waiting.
+var serviceLabels = map[string]string{
+	"clamav": "Scanner: ",
+	"tika":   "Document processing: ",
+	"ollama": "Local model service: ",
+}
+
+// optionalStillWaiting reports whether e is an optional service's
+// ending that did not fail the install: still starting, or stopped.
+func optionalStillWaiting(e engine.Event) bool {
+	return e.State == engine.StateWaiting && e.Reason == "optional-status" && e.Action == engine.ActionContinue
 }
 
 // engineReadyMsg carries the started engine stream (or the error that
@@ -123,7 +179,12 @@ type engineStreamMsg struct{ msg any }
 // engineStreamEndedMsg reports the engine stream closing. Arriving
 // while the run is still streaming, it means the engine stopped without
 // ever saying how the run went.
-type engineStreamEndedMsg struct{ reason error }
+type engineStreamEndedMsg struct {
+	reason error
+	// stream is the stream that ended: a retry's run ignores the
+	// previous run's late ending (#296). Nil means the current one.
+	stream *engine.Stream
+}
 
 // errNoEngineSender is what a run reports when it was built without a
 // way to deliver engine output. It names the launcher, not the engine:
@@ -153,7 +214,7 @@ type streamWrap struct {
 // engineRunStream is the install/update run's wrapping.
 var engineRunStream = streamWrap{
 	msg:   func(msg any) tea.Msg { return engineStreamMsg{msg: msg} },
-	ended: func(_ *engine.Stream, reason error) tea.Msg { return engineStreamEndedMsg{reason: reason} },
+	ended: func(s *engine.Stream, reason error) tea.Msg { return engineStreamEndedMsg{reason: reason, stream: s} },
 }
 
 type engineRun struct {
@@ -161,6 +222,10 @@ type engineRun struct {
 	targetDir string
 	title     string
 	version   string
+	// profile is the deployment profile an install requests
+	// (deploy.ProfileEnv), sent on every start and retry; empty sends
+	// none, as an update does.
+	profile string
 
 	state   engineRunState
 	console ConsoleModel
@@ -204,11 +269,63 @@ type engineRun struct {
 	// session for ever; a fresh start from the menu is a new run.
 	retriedAfterConfig bool
 
+	// collected is the guided configuration kept for the launcher
+	// session (collectedConfig, owned by the InstallModel): every start,
+	// the retry and Install again included, seeds the run's fresh
+	// configuration tree from it. Nil until something is collected.
+	collected *collectedConfig
+
 	// Outcome evidence, gathered from events and the exit code.
+	// waiting holds the optional services whose last event was
+	// optionalStillWaiting; completed is the success event seen, after
+	// which completion holds the stdout lines that may name them (a few:
+	// one per service is what the installer prints).
+	waiting       map[string]bool
+	completed     bool
+	completion    []string
 	configRefused bool
 	lastFailed    *engine.Event
 	stderrTail    []string
 	runErr        error
+
+	// pendingCommand is the command of a recovery-command line that was
+	// the last stdout line; recoveryCommand is it adopted by the terminal
+	// failure that followed with recovery=command (orbit
+	// docs/engine-events.md, "Recovery command (v0)"). copiedCommand is
+	// the failure screen's Copy command row having copied it.
+	pendingCommand  string
+	recoveryCommand string
+	copiedCommand   bool
+
+	// signalQuit is a SignalQuitMsg that has reached the run: the
+	// launcher quits when the run ends, in outcomeOf's place.
+	signalQuit bool
+
+	// How the run stopped, as far as the launcher can tell (stopKind):
+	// sawEvent is any event having arrived; rollbackSeen a rollback-phase
+	// one; optionalSeen an optional-phase one; committed one from after
+	// the installer's commit (engine.Event.AfterCommit), past which a
+	// stopped Update rolls forward instead of undoing anything; startFailed the launcher's own failure to fetch or start the
+	// installer; exited the installer's failing exit ending the run, and
+	// streamCut its stream closing before it said how the run went.
+	// handoffRefused is the strict mode's refusal of the terminal
+	// handoff. folderEntries is the folder's listing, read once by a
+	// command on entering the screen when nothing was written to it:
+	// folderRead is that read (nil when none was started), folderPending
+	// it not having answered yet, folderFailed its error or no answer in
+	// time (readFolderCmd).
+	sawEvent       bool
+	rollbackSeen   bool
+	optionalSeen   bool
+	committed      bool
+	startFailed    bool
+	exited         bool
+	streamCut      bool
+	handoffRefused bool
+	folderEntries  []string
+	folderRead     *folderRead
+	folderPending  bool
+	folderFailed   bool
 
 	// handoffByHand is the terminal handoff chosen from the failure
 	// screen rather than reached as a fallback; handoffErr is why its
@@ -222,16 +339,19 @@ type engineRun struct {
 	exitNote string
 
 	// menu is the cursor on whichever post-run screen is showing; each
-	// screen names its own rows (failedMenu).
+	// screen names its own rows (stoppedRows).
 	menu menu
 
-	// Done/Succeeded/WantsMenu are read by the owning flow model and
-	// AppModel. URL and Elapsed feed the success screen.
-	Done      bool
-	Succeeded bool
-	WantsMenu bool
-	URL       string
-	Elapsed   time.Duration
+	// Done/Succeeded/WantsMenu/WantsRepair are read by the owning flow
+	// model and AppModel. URL, Elapsed and ServiceNotes feed the success
+	// screen.
+	Done         bool
+	Succeeded    bool
+	WantsMenu    bool
+	WantsRepair  bool
+	URL          string
+	Elapsed      time.Duration
+	ServiceNotes []string
 
 	// send pushes a message into the event loop from outside it, for
 	// the engine stream reader. Production wires this from the program;
@@ -259,15 +379,16 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	targetDir, action, script := r.targetDir, string(r.action), r.script
+	targetDir, action, script, profile := r.targetDir, string(r.action), r.script, r.profile
+	seed := r.collected.seed()
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
 		if prepare == nil {
 			if script != nil {
-				return startEngine(ctx, script, targetDir, action)
+				return startEngine(ctx, script, targetDir, action, profile, seed)
 			}
-			return defaultPrepareEngine(ctx, targetDir, action)
+			return prepareEngineAs(ctx, targetDir, action, profile, seed)
 		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
@@ -278,24 +399,34 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 // detached, piped, plain-mode engine run, reporting the configuration tree
 // directory the engine was handed.
 func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineReadyMsg {
+	return prepareEngineAs(ctx, targetDir, action, "", "")
+}
+
+// prepareEngineAs is defaultPrepareEngine for a run that requests a
+// deployment profile (deploy.ProfileEnv; empty requests none) and hands
+// in the configuration collected at seed (empty hands in none).
+func prepareEngineAs(ctx context.Context, targetDir, action, profile, seed string) engineReadyMsg {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
-	return startEngine(ctx, script, targetDir, action)
+	return startEngine(ctx, script, targetDir, action, profile, seed)
 }
 
-// startEngine stages script and starts it as the engine run.
-func startEngine(ctx context.Context, script []byte, targetDir, action string) engineReadyMsg {
+// startEngine stages script and starts it as the engine run, carrying
+// profile in the environment when there is one, and seeding the run's
+// configuration tree from seed when it is set.
+func startEngine(ctx context.Context, script []byte, targetDir, action, profile, seed string) engineReadyMsg {
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
 		return engineReadyMsg{err: err}
 	}
-	cmd, cleanup, err := deploy.BuildEngineCommand(script, targetDir, deploy.Action(action))
+	cmd, cleanup, err := deploy.BuildEngineCommandWithConfig(script, targetDir, deploy.Action(action), seed)
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
+	deploy.WithProfile(cmd, profile)
 	stream, err := engine.Start(cmd)
 	if err != nil {
 		cleanup()
@@ -308,11 +439,17 @@ func startEngine(ctx context.Context, script []byte, targetDir, action string) e
 // its configuration tree — once nothing needs them any more. A
 // configuration refusal holds them past the run's end, for the
 // configuration session; every way out of that (a retry, the terminal
-// handoff, leaving, quitting, a failure) comes through here.
+// handoff, leaving, quitting, a failure) comes through here. While the
+// configuration session's preparation is still writing into the tree,
+// the removal waits for it to finish (configLate).
 func (r *engineRun) releaseRunFiles() {
 	if r.cleanup != nil {
-		_ = r.cleanup()
+		cleanup := r.cleanup
 		r.cleanup = nil
+		release := func() { _ = cleanup() }
+		if r.cfg.late == nil || !r.cfg.late.releaseRunFilesAfter(release) {
+			release()
+		}
 	}
 	r.configTree = ""
 }
@@ -365,8 +502,25 @@ func readEngineStream(send func(tea.Msg), s *engine.Stream, wrap streamWrap) tea
 	}
 }
 
-// update handles every message while an engine run owns the screen.
+// update handles every message while an engine run owns the screen. A
+// SignalQuitMsg is remembered (signalQuit): nobody may be left to see how
+// the run ended, so the launcher quits as soon as it has, as Remove's and
+// Repair's flows do, whether it finished (a stop that came after the
+// installer disarmed its rollback ends in success) or stopped.
 func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
+	if _, ok := msg.(SignalQuitMsg); ok {
+		// Handled as the Ctrl-C key is, which decides this message.
+		r.signalQuit = true
+		return r.handle(msg)
+	}
+	r, cmd := r.handle(msg)
+	if r.signalQuit && (r.Done || r.state == runFailed) {
+		return r.quitNow(false)
+	}
+	return r, cmd
+}
+
+func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		r.width, r.height = msg.Width, msg.Height
@@ -393,8 +547,8 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		if msg.err != nil {
 			r.runErr = msg.err
-			r.state = runFailed
-			return r, nil
+			r.startFailed = true
+			return r.enterStopped()
 		}
 		r.stream = msg.stream
 		r.cleanup = msg.cleanup
@@ -406,7 +560,27 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r, readEngineStream(r.send, r.stream, engineRunStream)
 
 	case engineStreamMsg:
-		if _, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+		if d, done := msg.msg.(engine.DoneMsg); done && r.state == runStopping {
+			// A stop that reaches the installer after it disarmed its
+			// rollback (database and application ready — orbit
+			// docs/engine-events.md) only ends the optional waits: the
+			// run finishes with its completion event and exit 0 and
+			// nothing is undone, so it is the success it is, keyed as
+			// every outcome is off the event plus the exit code.
+			if d.Err == nil && r.completed {
+				return r.handleStream(msg.msg)
+			}
+			// An Update stopped after its commit undoes nothing: the
+			// installer finishes the step it was in and ends with one
+			// terminal failure naming it, action retry before any
+			// container was started and repair from compose up on
+			// (orbit docs/engine-events.md, "install.sh after the
+			// commit", #1518). That is where the deployment was left,
+			// so the person sees it on the stopped screen rather than
+			// a quit that hides it.
+			if r.action == deploy.ActionUpdate && d.Err != nil && r.lastFailed != nil {
+				return r.handleStream(msg.msg)
+			}
 			// The installer finished its own stop. Whatever it exited
 			// with, the operator asked for this: not a failure.
 			return r.quitNow(false)
@@ -417,10 +591,20 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		if r.state != runStopping {
 			return r, nil
 		}
-		return r.quitNow(msg.forced)
+		if !msg.forced {
+			// The installer's exit is not the end of its stream: its
+			// last lines and its DoneMsg are still on the way (bounded
+			// by the command's WaitDelay), and that DoneMsg says
+			// whether the stop undid the run or finished it.
+			return r, nil
+		}
+		return r.quitNow(true)
 
 	case engineStreamEndedMsg:
 		return r.handleStreamEnded(msg)
+
+	case folderReadMsg:
+		return r.gotFolder(msg), nil
 
 	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
 		return r.handleConfigMsg(msg)
@@ -443,8 +627,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		if msg.err != nil {
 			// The preparation's own error, not an earlier refusal the
 			// handoff was meant to answer.
-			r.lastFailed = nil
-			r.stderrTail = nil
+			r.forgetStop()
 			r.runErr = msg.err
 			r.state = runFailed
 			return r, nil
@@ -463,8 +646,7 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		}
 		if msg.err != nil {
 			// The handoff's own result, not the failure it answered.
-			r.lastFailed = nil
-			r.stderrTail = nil
+			r.forgetStop()
 			r.runErr = msg.err
 			r.state = runFailed
 			return r, nil
@@ -475,6 +657,14 @@ func (r engineRun) update(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r.handleKey(msg)
 
 	case SignalQuitMsg:
+		// An Update past its commit is left to finish: an interrupt
+		// would undo nothing (orbit docs/engine-events.md, "install.sh
+		// after the commit", #1518), and nobody may be left to wait for
+		// it. The installer leads its own session, so the hangup did not
+		// reach it either; the launcher sends it nothing and quits.
+		if r.state == runStreaming && r.action == deploy.ActionUpdate && r.committed {
+			return r.quitNow(false)
+		}
 		// A hangup or terminate that repeats while the stop it asked for
 		// is running is the same request again, not the force a second
 		// Ctrl-C is: the installer keeps its grace to roll back, and the
@@ -498,6 +688,31 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 	switch m := msg.(type) {
 	case engine.EventMsg:
 		r.console = r.console.observeEvent(m.Event)
+		r.sawEvent = true
+		if m.Event.Phase == engine.PhaseRollback {
+			r.rollbackSeen = true
+		}
+		if m.Event.Phase == engine.PhaseOptional {
+			r.optionalSeen = true
+		}
+		if m.Event.AfterCommit() {
+			r.committed = true
+		}
+		// The command counts only when its line came just before the
+		// terminal failure that says it was printed.
+		if m.Event.IsTerminalFailure() && m.Event.Recovery == engine.RecoveryHasCommand {
+			r.recoveryCommand = r.pendingCommand
+		}
+		r.pendingCommand = ""
+		if _, optional := serviceLabels[m.Event.Component]; optional {
+			if r.waiting == nil {
+				r.waiting = map[string]bool{}
+			}
+			r.waiting[m.Event.Component] = optionalStillWaiting(m.Event)
+		}
+		if m.Event.IsSuccess() {
+			r.completed = true
+		}
 		if m.Event.NeedsConfiguration() {
 			r.configRefused = true
 		}
@@ -509,6 +724,15 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 
 	case engine.RawLineMsg:
 		r.console = r.console.observeRaw(m.Text)
+		// Only a whole recovery-command line is a command: any other
+		// line, or a line the reader cut, clears one that came before.
+		r.pendingCommand = ""
+		if command, ok := engine.RecoveryCommand(m.Text); ok && !m.Truncated {
+			r.pendingCommand = command
+		}
+		if r.completed && len(r.completion) < 2*len(serviceLabels) && serviceLine(m.Text) {
+			r.completion = append(r.completion, m.Text)
+		}
 		return r, nil
 
 	case engine.DoneMsg:
@@ -539,9 +763,8 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 			// why the run's files are kept until that is over.
 			return r.beginConfigCollect()
 		}
-		r.state = runFailed
-		r.menu = menu{}
-		return r, nil
+		r.exited = true
+		return r.enterStopped()
 	}
 	return r, nil
 }
@@ -550,11 +773,21 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 //
 // Arriving after the run resolved, it is the ordinary case: DoneMsg was
 // handled and the channel closed behind it, so there is nothing to do.
-// Arriving while the run is still streaming, the engine stopped without
-// reporting an outcome, and the honest thing is to say so — a run that
-// cannot be reported on has failed, whatever it managed to do first.
+// Arriving while the run is still streaming, or stopping (the installer
+// exited by itself and its stream closed before its DoneMsg came), the
+// engine stopped without reporting an outcome, and the honest thing is
+// to say so — a run that cannot be reported on has failed, whatever it
+// managed to do first. The stopping screen has nothing left to wait for.
 func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.Cmd) {
-	if r.state != runStreaming {
+	if r.state != runStreaming && r.state != runStopping {
+		return r, nil
+	}
+	if msg.stream != nil && msg.stream != r.stream {
+		return r, nil // the previous run's stream, ending after the retry started (#296)
+	}
+	if r.state == runStopping && errors.Is(msg.reason, errNoEngineSender) {
+		// Nobody was reading the stream, so it has not been seen to
+		// close; the stop's own messages end the run.
 		return r, nil
 	}
 	logDiag("engine stream: closed before the run finished")
@@ -566,9 +799,8 @@ func (r engineRun) handleStreamEnded(msg engineStreamEndedMsg) (engineRun, tea.C
 	if r.runErr == nil {
 		r.runErr = errEngineStoppedEarly
 	}
-	r.state = runFailed
-	r.menu = menu{}
-	return r, nil
+	r.streamCut = true
+	return r.enterStopped()
 }
 
 // succeed resolves the deployment's URL and finishes the run.
@@ -580,11 +812,36 @@ func (r engineRun) succeed() (engineRun, tea.Cmd) {
 	if d, err := detect(r.targetDir); err == nil && d != nil {
 		r.URL = d.AppURL
 	}
+	r.ServiceNotes = r.serviceNotes()
 	r.Elapsed = r.console.elapsed()
 	r.state = runSucceeded
 	r.Done = true
 	r.Succeeded = true
 	return r, nil
+}
+
+// serviceLine reports whether line starts with an optional service's label.
+func serviceLine(line string) bool {
+	for _, label := range serviceLabels {
+		if strings.HasPrefix(line, label) {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceNotes are the completion lines naming an optional service its
+// events say is still starting or stopped, in the installer's order.
+func (r engineRun) serviceNotes() []string {
+	var notes []string
+	for _, line := range r.completion {
+		for component, label := range serviceLabels {
+			if r.waiting[component] && strings.HasPrefix(line, label) {
+				notes = append(notes, line)
+			}
+		}
+	}
+	return notes
 }
 
 // beginHandoff hands the real terminal to the interactive installer —
@@ -608,10 +865,9 @@ func (r engineRun) beginHandoff() (engineRun, tea.Cmd) {
 	if requireInConsoleConfig() {
 		logDiag("refusing the terminal handoff: " + requireInConsoleEnv + " is set")
 		// The strict refusal is now the reason this run stopped, so
-		// the earlier evidence must not render in its place —
-		// viewFailed prefers lastFailed over runErr.
-		r.lastFailed = nil
-		r.stderrTail = nil
+		// the earlier evidence must not render in its place.
+		r.forgetStop()
+		r.handoffRefused = true
 		// The variable's name is in the diagnostic line above.
 		r.runErr = errors.New("in-console configuration required — terminal handoff refused")
 		r.state = runFailed
@@ -657,9 +913,25 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 		return r.handleConfigKey(msg)
 
 	case runFailed:
-		return r.handleMenuKey(msg, failedMenu, func(label string) (engineRun, tea.Cmd) {
+		return r.handleMenuKey(msg, r.stoppedRows(), func(label string) (engineRun, tea.Cmd) {
 			switch label {
-			case "Open the guided installer":
+			case removeCopy:
+				// Stays on the screen and copies again on every Enter,
+				// as Remove's does.
+				r.copiedCommand = true
+				return r, copyToClipboard(os.Stdout, strings.Join(visibleWords(r.recoveryCommand), " "))
+			case installAgain, updateAgain:
+				// The same run again, in-flow: the profile and the
+				// notice stand. After an unfinished rollback the
+				// installer finishes putting the folder back first.
+				return r.retryEngine()
+			case openRepair:
+				// The services are in place: Repair, on this folder.
+				r.releaseRunFiles()
+				r.Done = true
+				r.WantsRepair = true
+				return r, nil
+			case guidedInstaller:
 				r, cmd := r.beginHandoff()
 				r.handoffByHand = true
 				return r, cmd
@@ -677,12 +949,18 @@ func (r engineRun) handleKey(msg tea.KeyPressMsg) (engineRun, tea.Cmd) {
 
 // beginStop is Ctrl-C mid-run: SIGTERM so install.sh's EXIT trap can
 // roll the run back, then a wait on the engine's exit bounded by
-// stopGrace (the pattern of docker stop and systemd's TimeoutStopSec).
+// stopGrace (the pattern of docker stop and systemd's TimeoutStopSec),
+// or by afterCommitStopGrace past the commit, where compose up runs to
+// its own bound first: an Update then rolls forward, a fresh Install
+// rolls back (#297).
 // Nothing here cancels a context the engine was built on: its
 // detachedCommand cancel would SIGKILL the group before the trap ran,
 // and BuildEngineCommand builds it on context.Background().
 func (r engineRun) beginStop() (engineRun, tea.Cmd) {
 	stream, grace := r.stream, stopGrace
+	if r.committed {
+		grace = afterCommitStopGrace(os.Getenv)
+	}
 	stream.Terminate()
 	r.state = runStopping
 	return r, func() tea.Msg {
@@ -710,23 +988,34 @@ func (r engineRun) quitNow(force bool) (engineRun, tea.Cmd) {
 	// the killed installer's own DoneMsg can still be handled before the
 	// quit.
 	if killed && r.state == runStopping && r.exitNote == "" {
-		r.exitNote = forcedStopNote(r.action)
+		r.exitNote = forcedStopNote(r.action, r.committed)
 	}
 	r.cfg.close()
+	// A removal this defers to a configuration preparation still
+	// running is finished before the process exits
+	// (FinishDeferredCleanup, from cmd/orbit-launcher).
 	r.releaseRunFiles()
 	return r, tea.Quit
 }
 
 // forcedStopNote is the owner's wording for a stop whose installer was
 // still undoing its work when the launcher ended it. A stopped update
-// says "before updating again" (decision 21a).
-func forcedStopNote(action deploy.Action) string {
-	again := "installing"
+// says "before updating again" (decision 21a). An update is never
+// rolled back, so nothing of it is "half restored": its note names
+// Orbit's services instead, and once past its commit (committed) the
+// installer was rolling forward, not undoing anything (orbit
+// docs/engine-events.md, "install.sh after the commit", #1518).
+func forcedStopNote(action deploy.Action, committed bool) string {
 	if action == deploy.ActionUpdate {
-		again = "updating"
+		doing := "still undoing its work"
+		if committed {
+			doing = "still working"
+		}
+		return "the update was stopped, but Orbit's installer was " + doing + " when the launcher stopped waiting and ended it. " +
+			"Orbit's services may not all be running — open Repair to check them before updating again."
 	}
 	return "the " + string(action) + " was stopped, but Orbit's installer was still undoing its work when the launcher stopped waiting and ended it. " +
-		"The folder and the Docker containers and volumes it created may be half restored — check them before " + again + " again."
+		"The folder and the Docker containers and volumes it created may be half restored — check them before installing again."
 }
 
 // handleMenuKey drives a post-run screen's menu over items: Esc is back
@@ -747,12 +1036,345 @@ func (r engineRun) handleMenuKey(msg tea.KeyPressMsg, items []string, choose fun
 	return choose(chosen)
 }
 
-// The failure screen offers three exits, in this order: forward into
-// the real interactive installer, back to the menu, or out. The forward
-// option matters most for a legacy engine (orbit main today), which
-// reports no telemetry — its non-interactive refusal is indistinguishable
-// from any other exit 1, and the honest remedy is the guided installer.
-var failedMenu = []string{"Open the guided installer", "Menu", "Exit"}
+// The stopped screen's rows (#257). Each way a run can stop offers only
+// the rows that can move the person on, then Menu and Exit.
+const (
+	// installAgain and updateAgain run the same step again, in-flow.
+	installAgain = "Install again"
+	updateAgain  = "Update again"
+	// openRepair is offered when the services were left in place.
+	openRepair = "Open Repair"
+	// guidedInstaller hands the terminal to install.sh's own prompts:
+	// the honest remedy only for an installer that reports nothing, or
+	// for configuration still refused, since anywhere else it runs the
+	// same install.sh into the same refusal.
+	guidedInstaller = "Open the guided installer"
+)
+
+// stopKind is how a run stopped, as far as the launcher can tell from
+// the facts it has: the terminal failure's action, a rollback seen, a
+// recovery command, any event at all, its own failure to start the
+// installer. Never the installer's prose, which the contract says is
+// unstable.
+type stopKind int
+
+const (
+	// stoppedOther is a failure of the configuration session or of the
+	// guided installer: its own words, as before.
+	stoppedOther stopKind = iota
+	// stoppedBeforeWriting is a retry with no rollback: the installer arms
+	// its rollback only once it may write, so nothing was written.
+	stoppedBeforeWriting
+	// stoppedUndone is a retry after a rollback: the folder and Docker are
+	// as they were.
+	stoppedUndone
+	// stoppedUndoneButDocker is a retry whose rollback left one command to
+	// run (#261).
+	stoppedUndoneButDocker
+	// stoppedNotFullyUndone is an abort after a rollback, or with a
+	// recovery command: the folder could not be put back.
+	stoppedNotFullyUndone
+	// stoppedCannotGoAhead is an abort before anything was written, or an
+	// action the launcher does not know.
+	stoppedCannotGoAhead
+	// stoppedNotReady is a repair: the services were left in place.
+	stoppedNotReady
+	// stoppedDied is events, then the installer ending without a terminal
+	// event.
+	stoppedDied
+	// stoppedSaidNothing is a failing exit with no event at all: an older
+	// install.sh.
+	stoppedSaidNothing
+	// stoppedCouldNotStart is the launcher's own failure to fetch or start
+	// the installer.
+	stoppedCouldNotStart
+	// stoppedHandoffRefused is the strict mode's refusal of the terminal
+	// handoff.
+	stoppedHandoffRefused
+)
+
+// stopKind reads how the run stopped.
+func (r engineRun) stopKind() stopKind {
+	switch {
+	case r.handoffRefused:
+		return stoppedHandoffRefused
+	case r.startFailed:
+		return stoppedCouldNotStart
+	case r.lastFailed != nil:
+		return r.failedKind(*r.lastFailed)
+	case r.sawEvent && (r.exited || r.streamCut):
+		return stoppedDied
+	case r.exited:
+		return stoppedSaidNothing
+	}
+	return stoppedOther
+}
+
+// failedKind reads a terminal failure by its action. An action the
+// launcher does not know is read as abort: never a rerun it cannot
+// vouch for.
+//
+// recovery=command alone counts as a command left to run, even when its
+// recovery-command line never arrived: the folder or Docker is not as it
+// was, so the screen must not say it is.
+func (r engineRun) failedKind(e engine.Event) stopKind {
+	command := r.recoveryCommand != "" || e.Recovery == engine.RecoveryHasCommand
+	switch e.Action {
+	case engine.ActionRetry:
+		switch {
+		case command:
+			return stoppedUndoneButDocker
+		case r.rollbackSeen:
+			return stoppedUndone
+		}
+		return stoppedBeforeWriting
+	case engine.ActionRepair:
+		return stoppedNotReady
+	}
+	if command || r.rollbackSeen {
+		return stoppedNotFullyUndone
+	}
+	return stoppedCannotGoAhead
+}
+
+// forgetStop drops what a stop left behind, for a failure that is the
+// launcher's or the guided installer's own, or a fresh run.
+func (r *engineRun) forgetStop() {
+	r.lastFailed = nil
+	r.stderrTail = nil
+	// optionalSeen too: it is what lets the stopping line say nothing is
+	// being undone, and a retried install has its rollback armed again
+	// until its own phase=optional event arrives.
+	r.sawEvent, r.rollbackSeen, r.optionalSeen, r.committed, r.startFailed = false, false, false, false, false
+	r.exited, r.streamCut, r.handoffRefused = false, false, false
+	r.pendingCommand, r.recoveryCommand, r.copiedCommand = "", "", false
+	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
+}
+
+// enterStopped puts the run on the stopped screen, the caret on its
+// first row. An Install that stopped before writing reads the folder
+// once, by the command it returns, so the screen can say what is in it
+// (#277 L3): never on the screen's own thread.
+func (r engineRun) enterStopped() (engineRun, tea.Cmd) {
+	r.state = runFailed
+	r.menu = menu{}
+	r.folderEntries, r.folderRead, r.folderPending, r.folderFailed = nil, nil, false, false
+	if r.action == deploy.ActionInstall && r.stopKind() == stoppedBeforeWriting {
+		r.folderRead = &folderRead{dir: r.targetDir}
+		r.folderPending = true
+		return r, r.readFolderCmd()
+	}
+	return r, nil
+}
+
+// folderReadLimit is how long the stopped screen waits for the folder's
+// listing, as long as Repair waits for the services (A4).
+const folderReadLimit = 4 * time.Second
+
+// folderRead names one read of the folder: its answer is kept only while
+// the run still holds the same read, so one landing after Install again
+// or Menu is dropped. It is never zero-sized, so two reads never share
+// an address.
+type folderRead struct{ dir string }
+
+// folderReadMsg is a folder read's answer: the names the screen lists,
+// or failed for an error or no answer within the limit.
+type folderReadMsg struct {
+	read   *folderRead
+	names  []string
+	failed bool
+}
+
+// readFolderCmd lists the folder off the screen's thread, waiting at most
+// folderLimit, as readServices does: the reader runs on a goroutine of
+// its own with a buffered slot for its answer, so one that is late (or
+// never returns) costs only that goroutine, and its answer is dropped.
+func (r engineRun) readFolderCmd() tea.Cmd {
+	list, read := r.listFolder, r.folderRead
+	if list == nil {
+		list = os.ReadDir
+	}
+	limit := r.folderLimit
+	if limit <= 0 {
+		limit = folderReadLimit
+	}
+	return func() tea.Msg {
+		type answer struct {
+			entries []os.DirEntry
+			err     error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			entries, err := list(read.dir)
+			answered <- answer{entries, err}
+		}()
+		select {
+		case a := <-answered:
+			if a.err != nil {
+				return folderReadMsg{read: read, failed: true}
+			}
+			return folderReadMsg{read: read, names: folderNames(a.entries)}
+		case <-time.After(limit):
+			return folderReadMsg{read: read, failed: true}
+		}
+	}
+}
+
+// gotFolder keeps a folder read's answer if the run still holds that
+// read and is still on its stopped screen.
+func (r engineRun) gotFolder(msg folderReadMsg) engineRun {
+	if msg.read == nil || msg.read != r.folderRead || !r.folderPending || r.state != runFailed || r.Done {
+		return r
+	}
+	r.folderPending = false
+	r.folderEntries, r.folderFailed = msg.names, msg.failed
+	return r
+}
+
+// folderNames lists the folder's entries as the stopped screen names
+// them: sorted, directories ending "/", without the installer's own
+// files (.env-orbit, .orbit-secrets, and orbit-install-backups when it
+// is a real directory; a file or link of that name the installer
+// refuses, so it is listed).
+func folderNames(entries []os.DirEntry) []string {
+	var names []string
+	for _, e := range entries {
+		name := e.Name()
+		if name == deploy.EnvFile || name == deploy.SecretsDir || (name == deploy.BackupsDir && e.IsDir()) {
+			continue
+		}
+		if e.IsDir() {
+			name += "/"
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// folderListing is the stopped screen's line about the folder: a few
+// names, then how many more (owner, 15a), never a long list, ending in
+// the fact that holds whichever check refused (#277 W5). It names as
+// many entries, up to three, as keep the whole line within limit, so it
+// takes the one row "reading the folder" held for it (#277 L3). When
+// even one name does not fit, it keeps one name and the line wraps
+// between words.
+func folderListing(names []string, limit int) string {
+	const most, tail = 3, " — the installer needs it empty"
+	line := func(shown int) string {
+		if shown >= len(names) {
+			return "in the folder: " + strings.Join(names, ", ") + tail
+		}
+		return fmt.Sprintf("in the folder: %s and %d more", strings.Join(names[:shown], ", "), len(names)-shown) + tail
+	}
+	for shown := min(most, len(names)); shown > 1; shown-- {
+		if l := line(shown); lipgloss.Width(visibleText(l)) <= limit {
+			return l
+		}
+	}
+	return line(1)
+}
+
+// stoppedRows are the stopped screen's rows for how the run stopped.
+func (r engineRun) stoppedRows() []string {
+	var rows []string
+	if r.recoveryCommand != "" {
+		rows = append(rows, removeCopy)
+	}
+	switch r.stopKind() {
+	case stoppedCouldNotStart:
+		if errors.Is(r.runErr, deploy.ErrFolderNameControl) {
+			// A rerun from the same folder fails the same way (#277 W3).
+			break
+		}
+		fallthrough
+	case stoppedBeforeWriting, stoppedUndone, stoppedUndoneButDocker, stoppedDied:
+		again := installAgain
+		if r.action == deploy.ActionUpdate {
+			again = updateAgain
+		}
+		rows = append(rows, again)
+	case stoppedNotReady:
+		rows = append(rows, openRepair)
+	case stoppedSaidNothing, stoppedOther:
+		rows = append(rows, guidedInstaller)
+	}
+	return append(rows, "Menu", "Exit")
+}
+
+// stopSentence is the one sentence saying what happened to the folder
+// and Docker; "" where the failure's own words stand instead. An update
+// is never rolled back, so its sentences key off the action alone and
+// never say "undone".
+func (r engineRun) stopSentence(kind stopKind) string {
+	switch kind {
+	case stoppedDied:
+		return "The installer stopped without saying how it ended."
+	case stoppedSaidNothing:
+		return "The installer stopped without saying what went wrong."
+	case stoppedCouldNotStart:
+		return "The launcher couldn't start the installer."
+	}
+	if r.action == deploy.ActionUpdate {
+		switch kind {
+		case stoppedBeforeWriting, stoppedUndone, stoppedUndoneButDocker:
+			return "The update did not finish. Orbit's services were not changed."
+		case stoppedNotReady:
+			return "The update did not finish. Orbit's services were changed and may not all be running."
+		case stoppedNotFullyUndone, stoppedCannotGoAhead:
+			return "The update can't go ahead; nothing was changed."
+		}
+		return ""
+	}
+	switch kind {
+	case stoppedBeforeWriting:
+		return "Nothing was changed in " + r.targetDir + "."
+	case stoppedUndone:
+		return "The install was undone: " + r.targetDir + " and Docker are as they were."
+	case stoppedUndoneButDocker:
+		return "The install was undone in the folder, but something it started in Docker is still there."
+	case stoppedNotFullyUndone:
+		return "The install couldn't be fully undone; the lines below say what is left."
+	case stoppedCannotGoAhead:
+		return "The install can't go ahead here; nothing was changed."
+	case stoppedNotReady:
+		return "Orbit is installed but not ready; its services are still running."
+	}
+	return ""
+}
+
+// nextSteps are the muted lines saying what to do next, one per line;
+// an Update's screen has none. After a recovery command the first is
+// the line under its box.
+func (r engineRun) nextSteps(kind stopKind) []string {
+	if r.action == deploy.ActionUpdate {
+		return nil
+	}
+	const fixNamed = "fix what the installer names above, then install again"
+	switch kind {
+	case stoppedBeforeWriting:
+		// Never "move them out" as the cause: the launcher can't tell a
+		// Docker refusal from a not-empty one, so the listing carries the
+		// folder's fact and this line stays the general one (#277 W5).
+		return []string{fixNamed, "to use another folder, exit and run the launcher from there"}
+	case stoppedUndone:
+		return []string{fixNamed}
+	case stoppedUndoneButDocker:
+		return []string{"Run this in a terminal, then choose Install again"}
+	case stoppedNotFullyUndone:
+		if r.recoveryCommand != "" {
+			return []string{"Run this in a terminal, then choose Install from the menu"}
+		}
+		return []string{"do what the lines above say in a terminal, then choose Install from the menu"}
+	case stoppedCannotGoAhead:
+		return []string{"do what the installer says above, then choose Install from the menu"}
+	case stoppedNotReady:
+		return []string{"Repair can look at it"}
+	case stoppedDied:
+		return []string{"installing again is safe: the installer checks the folder first"}
+	}
+	return nil
+}
 
 // view renders whichever screen the run is on.
 func (r engineRun) view(width, height int) string {
@@ -763,59 +1385,302 @@ func (r engineRun) view(width, height int) string {
 	case runPreparing, runStreaming:
 		return r.console.view(width, height)
 	case runStopping:
+		detail := strings.Join(wrapWordsIn("the installer is undoing what it started — a few seconds",
+			measure(width, proseWidth), textArea(width)), "\n")
+		// phase=optional is only emitted after the installer has disarmed
+		// its rollback, so a stop then undoes nothing (orbit
+		// docs/engine-events.md).
+		// An Update past its commit undoes nothing (orbit
+		// docs/engine-events.md, "install.sh after the commit", #1518):
+		// the working line stands alone.
+		if r.action == deploy.ActionUpdate && r.committed {
+			detail = ""
+		}
+		if r.action == deploy.ActionInstall && r.committed && !r.optionalSeen {
+			// Past the commit the installer lets compose up run to its
+			// end (its own 300 s bound, no signal reaches it) and only
+			// then rolls back, and beginStop waits that out
+			// (afterCommitStopGrace): a promise of seconds here reads as
+			// a hang and invites the second Ctrl-C that kills the
+			// rollback (orbit docs/engine-events.md, "install.sh after
+			// the commit"; #297).
+			detail = strings.Join(wrapWordsIn("the installer has to finish the step it is on first, then it will undo what it started — this can take a few minutes",
+				measure(width, proseWidth), textArea(width)), "\n")
+		}
+		if r.action == deploy.ActionInstall && r.optionalSeen {
+			// Too long for one row on a narrow screen: it wraps inside
+			// the padding, never past the screen (#288).
+			detail = strings.Join(wrapWordsIn("Orbit is already installed; the installer is finishing without waiting for the optional services",
+				measure(width, proseWidth), textArea(width)), "\n")
+		}
 		return skyBlock(r.console.sky, width, height,
-			workingLine(r.console.spinner, "stopping the "+string(r.action), "the installer is undoing what it started — a few seconds"))
+			workingLine(r.console.spinner, "stopping the "+string(r.action), detail))
 	case runConfigSignInMode:
 		return r.viewConfigSignInMode(width, height)
 	case runConfigCollect:
 		return r.viewConfigCollect(width, height)
 	case runHandoffRunning:
-		return lipgloss.NewStyle().Padding(1, 2).Render(style.Tagline.Render("in the installer — you'll return here when it finishes"))
+		// The line wraps inside the padding, never past the screen (#288).
+		lines := wrapWordsIn("in the installer — you'll return here when it finishes", measure(width, proseWidth), textArea(width))
+		return lipgloss.NewStyle().Padding(1, 2).Render(style.Tagline.Render(strings.Join(lines, "\n")))
 	case runFailed:
 		return r.viewFailed(width, height)
 	}
 	return ""
 }
 
+// viewFailed is the stopped screen (#257): the title, one sentence
+// saying what happened to the folder and Docker, the stage the run
+// stopped in, the installer's own lines, the folder's listing, the next
+// step, then the rows. Never the engine's reason, action or phase
+// tokens.
 func (r engineRun) viewFailed(width, height int) string {
-	var b strings.Builder
+	// b is the rows above the installer's message; after is every row
+	// below it, laid out first so the message knows its room.
+	var b, after strings.Builder
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), flowStoppedTitle(r.action))
 	// Docker's words, at Docker's length: wrapped, never cut at the edge.
 	limit := measure(width, errorWidth)
-	if r.lastFailed != nil {
-		word := r.lastFailed.Phase
-		if idx := phaseIndex(word); idx >= 0 {
-			word = consolePhases[idx].word
+	kind := r.stopKind()
+	if sentence := r.stopSentence(kind); sentence != "" {
+		// Plain ink: the ✗ carries the red (owner, 17a). The sentence can
+		// hold the folder, so it is laid out as a folder's sentence is.
+		for _, row := range wrapHard(sentence, limit, width-4, folderRows) {
+			fmt.Fprintln(&b, style.Ink.Render(row))
 		}
-		// The phase word leads in the error colour; the rest wraps.
-		lines := wrapWords(word+" — "+r.lastFailed.Reason+style.Separator+"next: "+r.lastFailed.Action, limit)
-		for i, line := range lines {
-			if rest, ok := strings.CutPrefix(line, word); i == 0 && ok {
-				line = style.ErrorText.Render(word) + style.Tagline.Render(rest)
-			} else {
-				line = style.Tagline.Render(line)
-			}
-			fmt.Fprintln(&b, line)
-		}
-	} else if r.runErr != nil {
-		text := r.runErr.Error()
-		// visibleText is not idempotent (a backslash is shown doubled), so
-		// text that was escaped as it was built is not escaped again.
-		var shown shownText
-		if !errors.As(r.runErr, &shown) {
-			text = visibleLines(text)
-		}
-		writeWrapped(&b, style.Tagline, text, limit)
 	}
-	for _, line := range tailLines(r.stderrTail, 6) {
-		writeWrapped(&b, style.Tagline, line, limit)
+	switch kind {
+	case stoppedCouldNotStart, stoppedOther, stoppedHandoffRefused:
+		if r.runErr != nil {
+			writeWrappedIn(&b, style.Tagline, errorWords(r.runErr), limit, textArea(width))
+		}
+	default:
+		if r.sawEvent {
+			// The step that failed, not "Rolling back" (#257, owner 2a).
+			writeWrappedIn(&b, style.MutedText, "stage: "+r.console.progressWord(), limit, textArea(width))
+		}
 	}
 	if r.handoffErr != nil {
-		writeWrapped(&b, style.Tagline, visibleLines(r.handoffErr.Error()), limit)
+		writeWrappedIn(&after, style.Tagline, visibleLines(r.handoffErr.Error()), limit, textArea(width))
 	}
-	fmt.Fprintln(&b)
-	r.menu.over(failedMenu).write(&b)
+	// The listing's slot: one muted row while the read is out, so the
+	// menu sits where a one-row listing leaves it (#277 L3); a read that
+	// finds nothing to list leaves the row blank, so the menu stays put.
+	switch {
+	case r.folderPending:
+		writeWrappedIn(&after, style.MutedText, "reading the folder", limit, textArea(width))
+	case r.folderFailed:
+		writeWrappedIn(&after, style.MutedText, "the folder could not be read", limit, textArea(width))
+	case len(r.folderEntries) > 0:
+		for _, row := range wrapHard(folderListing(r.folderEntries, limit), limit, width-4, folderRows) {
+			fmt.Fprintln(&after, style.MutedText.Render(row))
+		}
+	case r.folderRead != nil:
+		fmt.Fprintln(&after)
+	}
+	if r.recoveryCommand != "" {
+		// Verbatim, as the contract asks: framed like Remove's box and
+		// broken between its words only, so it reads whole; Copy command
+		// copies the raw line.
+		fmt.Fprintln(&after)
+		for _, line := range commandBox(r.recoveryCommand, width) {
+			fmt.Fprintln(&after, line)
+		}
+	}
+	for _, step := range r.nextSteps(kind) {
+		writeWrappedIn(&after, style.MutedText, step, limit, textArea(width))
+	}
+	fmt.Fprintln(&after)
+	// The copy row says so once it has copied; the label Enter answers
+	// with stays the same.
+	rows := r.stoppedRows()
+	if r.copiedCommand {
+		rows = append([]string{removeCopy + style.Separator + "copied"}, rows[1:]...)
+	}
+	r.menu.over(rows).write(&after)
+
+	// The installer's message gets the rows the screen has left once
+	// every other row has its place, as Remove's box does: newest lines
+	// kept, one "…" row standing for those dropped (#261 ruling 1). A
+	// line that is the recovery command is not repeated: the box shows it.
+	var stderr []string
+	for _, line := range r.stderrTail {
+		if r.recoveryCommand != "" && strings.TrimSpace(line) == strings.TrimSpace(r.recoveryCommand) {
+			continue
+		}
+		stderr = append(stderr, line)
+	}
+	room := max(height-strings.Count(b.String(), "\n")-strings.Count(after.String(), "\n")-2, 1)
+	// The installer's lines carry the backup folder's path: a word that
+	// fits the text area stays whole, a wider one is cut at the measure,
+	// every character kept (#277 L4).
+	for _, line := range fitTail(stderr, limit, textArea(width), room) {
+		fmt.Fprintln(&b, style.Tagline.Render(line))
+	}
+	b.WriteString(after.String())
 	return skyBlock(r.console.sky, width, height, b.String())
+}
+
+// errorWords is an error's text as a screen shows it: visibleLines,
+// except for text escaped as it was built, since visibleText is not
+// idempotent (a backslash is shown doubled). That is a shownText, and
+// deploy's refusal of a folder whose name holds a control character,
+// which names the character as its escape and holds no raw one.
+func errorWords(err error) string {
+	var shown shownText
+	if errors.As(err, &shown) || errors.Is(err, deploy.ErrFolderNameControl) {
+		return err.Error()
+	}
+	return visibleLines(err.Error())
+}
+
+// fitTail lays out stderr lines, wrapped at limit within a text area edge
+// cells wide (wrapWordsIn), in at most room rows.
+// When they need more, the newest whole lines are kept behind one "…"
+// row; a newest line that alone needs more keeps its last rows.
+func fitTail(lines []string, limit, edge, room int) []string {
+	wrapped := make([][]string, len(lines))
+	total := 0
+	for i, line := range lines {
+		wrapped[i] = wrapWordsIn(line, limit, edge)
+		if len(wrapped[i]) == 0 {
+			wrapped[i] = []string{""}
+		}
+		total += len(wrapped[i])
+	}
+	if total <= room {
+		var out []string
+		for _, w := range wrapped {
+			out = append(out, w...)
+		}
+		return out
+	}
+	keep := room - 1 // the "…" row takes one
+	var kept []string
+	for i := len(wrapped) - 1; i >= 0; i-- {
+		if len(kept)+len(wrapped[i]) > keep {
+			if len(kept) == 0 {
+				kept = wrapped[i][len(wrapped[i])-keep:]
+			}
+			break
+		}
+		kept = append(slices.Clone(wrapped[i]), kept...)
+	}
+	return append([]string{"…"}, kept...)
+}
+
+// commandBox frames a shell command the way printf %q quotes it, like
+// Remove's box: the text gets width-8, and rows break only between
+// words (shellWords), each continued row ending " \", "&&" starting its
+// own row, continuation rows indented two cells and an option kept with
+// its value where it fits. Words are shown escaped for the terminal,
+// backslashes as written. It always boxes (#277 L4): a command holding a
+// word too wide for a row is laid out by wrapShellCommand, which cuts
+// that word with the shell's own continuation, so the box still reads
+// back as the command.
+func commandBox(command string, width int) []string {
+	limit := width - 8
+	const indent, cont = "  ", " \\"
+	words := visibleWords(command)
+	var lines []string
+	if one := strings.Join(words, " "); lipgloss.Width(one) <= limit {
+		lines = []string{one}
+	} else {
+		fits := func(u string) bool { return lipgloss.Width(indent+u)+len(cont) <= limit }
+		var units []string
+		for i := 0; i < len(words); i++ {
+			u := words[i]
+			if strings.HasPrefix(u, "-") && i+1 < len(words) && !strings.HasPrefix(words[i+1], "-") && words[i+1] != "&&" && fits(u+" "+words[i+1]) {
+				u += " " + words[i+1]
+				i++
+			}
+			if !fits(u) {
+				units = nil
+				break
+			}
+			units = append(units, u)
+		}
+		if units == nil {
+			lines = wrapShellCommand(words, limit)
+		} else {
+			line := ""
+			for _, u := range units {
+				if line != "" && line != indent && (u == "&&" || lipgloss.Width(line)+1+lipgloss.Width(u)+len(cont) > limit) {
+					lines = append(lines, line+cont)
+					line = indent
+				}
+				if line != "" && line != indent {
+					line += " "
+				}
+				line += u
+			}
+			lines = append(lines, line)
+		}
+	}
+	boxW := 0
+	for i, l := range lines {
+		boxW = max(boxW, lipgloss.Width(l))
+		lines[i] = style.Ink.Render(l)
+	}
+	return drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines)
+}
+
+// shellWords splits a shell command at its word breaks: the spaces that
+// are not escaped by a backslash (a space after an odd run of
+// backslashes is part of the word) and not inside quotes ('…', "…" or
+// $'…'), so a quoted folder with spaces in it is one word, as the shell
+// reads it. Runs of spaces are one break; an unclosed quote runs to the
+// end.
+func shellWords(command string) []string {
+	var words []string
+	start := -1
+	for i := 0; i < len(command); {
+		c := command[i]
+		if c == ' ' {
+			if start >= 0 {
+				words = append(words, command[start:i])
+				start = -1
+			}
+			i++
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+		switch {
+		case c == '\\':
+			i += 2
+		case c == '\'':
+			i = quoteEnd(command, i+1, '\'', false)
+		case c == '"':
+			i = quoteEnd(command, i+1, '"', true)
+		case c == '$' && i+1 < len(command) && command[i+1] == '\'':
+			i = quoteEnd(command, i+2, '\'', true)
+		default:
+			i++
+		}
+	}
+	if start >= 0 && start < len(command) {
+		words = append(words, command[start:])
+	}
+	return words
+}
+
+// quoteEnd is the index just past the quote closing at or after i, a
+// backslash escaping the next byte when escapes is set; len(s) when the
+// quote never closes.
+func quoteEnd(s string, i int, quote byte, escapes bool) int {
+	for i < len(s) {
+		switch {
+		case escapes && s[i] == '\\':
+			i += 2
+		case s[i] == quote:
+			return i + 1
+		default:
+			i++
+		}
+	}
+	return len(s)
 }
 
 // writeStackedMenu writes menu rows in the centred grammar: each label
@@ -825,6 +1690,96 @@ func writeStackedMenu(b *strings.Builder, items []string, selected int) {
 	for i, label := range items {
 		fmt.Fprintln(b, menuRow(label, i == selected))
 	}
+}
+
+// visibleWords is the command as the recovery box shows it and Copy
+// command copies it: its shell words (shellWords), each escaped by
+// visibleCommand, joined by single spaces.
+func visibleWords(command string) []string {
+	words := shellWords(command)
+	for i, w := range words {
+		words[i] = visibleCommand(w)
+	}
+	return words
+}
+
+// visibleCommand shows one shell word of a command nobody vetted so the
+// terminal draws it safely and a shell still reads it as the same word:
+// a character the screen would have to escape (a control character, a
+// bidi override, an invalid byte) becomes bash's $'\xHH' form, written
+// as its UTF-8 bytes (bash reads \xHH the same in every locale, \u not
+// in the C locale; owner answer 15a on #277). What stands in a quoted
+// part closes that quote for the escape and opens it again, so the word
+// still reads as one. Backslashes and printable text stay as written:
+// they are the quoting printf %q wrote, and doubling them would show a
+// different command from the one copied.
+func visibleCommand(command string) string {
+	var b strings.Builder
+	// quote is the quote the scan is inside: 0 for none, ' or " for a
+	// quoted part, $ for a $'...' part.
+	var quote byte
+	hidden := func(r rune, n int) bool { return r == utf8.RuneError && n == 1 || !strconv.IsPrint(r) }
+	for i := 0; i < len(command); {
+		r, n := utf8.DecodeRuneInString(command[i:])
+		switch {
+		case hidden(r, n):
+			b.WriteString(escapeInQuote(command[i:i+n], r, quote))
+			i += n
+			continue
+		case quote == 0 && command[i] == '$' && i+1 < len(command) && command[i+1] == '\'':
+			quote = '$'
+			b.WriteString("$'")
+			i += 2
+			continue
+		case command[i] == '\\' && quote != '\'' && i+1 < len(command):
+			// A backslash keeps the rune it quotes, unless that rune is
+			// itself hidden: then the escape takes its place, or follows
+			// a literal backslash where a quote part reads one.
+			next, m := utf8.DecodeRuneInString(command[i+1:])
+			if hidden(next, m) {
+				if quote == '$' || quote == '"' {
+					b.WriteString(`\\`)
+				}
+				b.WriteString(escapeInQuote(command[i+1:i+1+m], next, quote))
+			} else {
+				b.WriteString(command[i : i+1+m])
+			}
+			i += 1 + m
+			continue
+		case command[i] == '\'' && quote == 0:
+			quote = '\''
+		case command[i] == '"' && quote == 0:
+			quote = '"'
+		case quote == '$' && command[i] == '\'', quote == '"' && command[i] == '"', quote == '\'' && command[i] == '\'':
+			quote = 0
+		}
+		b.WriteString(command[i : i+n])
+		i += n
+	}
+	return b.String()
+}
+
+// escapeInQuote is a hidden character (raw, an invalid byte or a rune)
+// as $'...' text, for a place inside quote (see visibleCommand): bare
+// after an open $'...', and otherwise a $'...' word of its own, the
+// open quote closed around it.
+func escapeInQuote(raw string, r rune, quote byte) string {
+	var esc strings.Builder
+	if r < utf8.RuneSelf && r != utf8.RuneError {
+		q := strconv.QuoteRune(r)
+		esc.WriteString(q[1 : len(q)-1])
+	} else {
+		for _, c := range []byte(raw) {
+			fmt.Fprintf(&esc, `\x%02x`, c)
+		}
+	}
+	switch quote {
+	case '$':
+		return esc.String()
+	case '\'', '"':
+		return string(quote) + "$'" + esc.String() + "'" + string(quote)
+	}
+	return "$'" + esc.String() + "'"
 }
 
 func flowStoppedTitle(action deploy.Action) string {

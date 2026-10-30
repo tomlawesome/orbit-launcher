@@ -42,6 +42,9 @@ const (
 	stateAlive
 	stateDegraded
 	stateUnreadable
+	// stateMaintenance is a deployment Orbit reports as closed to users
+	// (#302): up on purpose, so neither alive nor degraded.
+	stateMaintenance
 )
 
 // MenuItem is one row of the splash screen's main menu. Gap requests a
@@ -54,6 +57,8 @@ type MenuItem struct {
 }
 
 // MainMenu is the fixed set of top-level choices, in display order.
+// Install stays the first row while the live update leg drives an earlier
+// release's launcher by digit (#307).
 var MainMenu = []MenuItem{
 	{Label: "Install"},
 	{Label: "Update"},
@@ -275,7 +280,10 @@ func (m SplashModel) probeHealthCmd() tea.Cmd {
 	states, dir := m.serviceStates, m.targetDir
 	return func() tea.Msg {
 		msg := healthResultMsg{reason: probe(context.Background(), appURL)}
-		if states == nil {
+		// The count is only for the degraded drawer: a healthy answer
+		// never waits on `docker compose ps` (#277).
+		// Nor does a deployment closed for maintenance (#302).
+		if states == nil || msg.reason == deploy.HealthResponding || msg.reason == deploy.HealthMaintenance {
 			return msg
 		}
 		rows, err := states(dir)
@@ -329,14 +337,21 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case healthResultMsg:
 		m.health = msg
-		if msg.reason == deploy.HealthResponding {
+		switch msg.reason {
+		case deploy.HealthResponding:
 			m.state = stateAlive
-		} else {
+		case deploy.HealthMaintenance:
+			// Closed to users on purpose (#302): preselects Update like
+			// alive, and moves no caret the person already placed.
+			m.state = stateMaintenance
+		default:
 			m.state = stateDegraded
 			// A degraded deployment preselects Repair — the mark says
 			// what's wrong, the caret already points at the fix — but
-			// only while the user hasn't taken over.
-			if !m.userNavigated {
+			// only while the user hasn't taken over. A check that could
+			// not run says nothing is wrong, so the caret stays put
+			// (#277, owner answer 4a).
+			if !m.userNavigated && msg.reason != deploy.HealthUnchecked {
 				m.menu.sel = menuRepair
 			}
 		}
@@ -478,6 +493,8 @@ func (m SplashModel) markStyle() lipgloss.Style {
 	switch m.state {
 	case stateAlive:
 		return style.SuccessText
+	case stateMaintenance:
+		return style.MaintenanceText
 	case stateDegraded, stateUnreadable:
 		return style.DegradedText
 	default:
@@ -542,6 +559,10 @@ func (m SplashModel) centreBlockLines() []string {
 	case stateAlive:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, style.SuccessText.Render("alive"))
+	case stateMaintenance:
+		lines = append(lines, style.MutedText.Render(m.fqdn))
+		lines = append(lines, style.MaintenanceText.Render("maintenance"))
+		lines = append(lines, style.MutedText.Render(string(deploy.HealthMaintenance)))
 	case stateDegraded:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, m.statusRow())

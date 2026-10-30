@@ -31,8 +31,7 @@ func (e *UntrustedPathError) Error() string {
 //   - rel is a regular file, not a symlink;
 //   - none of them is world-writable;
 //   - all of them have dir's owner, and that owner is the user running
-//     the launcher — or the launcher runs as root, which may use any
-//     consistently owned deployment, as install.sh itself does.
+//     the launcher (which never runs as root, #291).
 //
 // Group-writable is accepted: install.sh writes with the operator's
 // umask, and Debian and Ubuntu default to 0002 with user-private groups,
@@ -75,13 +74,11 @@ func RequireTrustedPath(dir, rel string) error {
 }
 
 // launcherEUID is the user the launcher runs as, for the owner rule. A
-// variable so tests can check that rule as root and as a normal user
-// alike.
+// variable so tests can check that rule whoever runs the suite.
 var launcherEUID = os.Geteuid
 
 // trustedRoot checks dir itself — a real directory, not a symlink, not
-// world-writable, owned by the launcher's user (or any owner under
-// root) — and returns its owner. dir must already be Cleaned: Lstat
+// world-writable, owned by the launcher's user — and returns its owner. dir must already be Cleaned: Lstat
 // follows a symlink named as "link/" or "link/.".
 func trustedRoot(dir string) (int, error) {
 	info, err := os.Lstat(dir)
@@ -92,10 +89,34 @@ func trustedRoot(dir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if euid := launcherEUID(); euid != 0 && owner != euid {
-		return 0, &UntrustedPathError{Path: dir, Reason: fmt.Sprintf("it is owned by uid %d, not by the user running the launcher (uid %d)", owner, euid)}
+	if err := launcherOwns(dir, owner); err != nil {
+		return 0, err
 	}
 	return owner, nil
+}
+
+// launcherOwns is the owner rule alone: dir, owned by owner, belongs to
+// the user running the launcher. There is no root exception: the
+// launcher refuses to run as root (#291).
+func launcherOwns(dir string, owner int) error {
+	if euid := launcherEUID(); owner != euid {
+		return &UntrustedPathError{Path: dir, Reason: fmt.Sprintf("it is owned by uid %d, not by the user running the launcher (uid %d)", owner, euid)}
+	}
+	return nil
+}
+
+// requireLauncherOwnsIfDir applies the owner rule to dir before anything
+// in it is read, so another account's folder is refused as such rather
+// than failing on a file the launcher cannot open (#277). A dir that is
+// missing, a symlink or not a directory is left to the full check
+// (trustedRoot) that follows wherever something is run from it.
+func requireLauncherOwnsIfDir(dir string) error {
+	dir = filepath.Clean(dir)
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	return launcherOwns(dir, ownerOf(info))
 }
 
 // requireTrustedConfigDirs checks a deployment directory before its

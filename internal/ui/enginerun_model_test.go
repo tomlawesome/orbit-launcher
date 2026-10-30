@@ -94,7 +94,10 @@ func TestEngineRun_UpdateFailureIsTitledUpdateStopped(t *testing.T) {
 	}
 }
 
-func TestEngineRun_FailedScreenShowsOnlyTheLastSixStderrLines(t *testing.T) {
+// The stderr block gets every row the screen has left, not a fixed six
+// (#261 ruling 1): nine lines fit at 80x26 and all of them show, with no
+// "…" row; the overflow case is in installer_rollback_screen_test.go.
+func TestEngineRun_FailedScreenShowsEveryStderrLineThatFits(t *testing.T) {
 	r := startedRun(t, "install", engineRunSeams{})
 	r.state = runStreaming
 	var tail []string
@@ -103,15 +106,13 @@ func TestEngineRun_FailedScreenShowsOnlyTheLastSixStderrLines(t *testing.T) {
 	}
 	r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"), StderrTail: tail}})
 	s := runScreen(r)
-	for i := 1; i <= 3; i++ {
-		if strings.Contains(s, fmt.Sprintf("stderr line %d", i)) {
-			t.Errorf("line %d should have scrolled off the six-line tail:\n%s", i, s)
+	for i := 1; i <= 9; i++ {
+		if !strings.Contains(s, fmt.Sprintf("stderr line %d", i)) {
+			t.Errorf("line %d missing though the screen has room:\n%s", i, s)
 		}
 	}
-	for i := 4; i <= 9; i++ {
-		if !strings.Contains(s, fmt.Sprintf("stderr line %d", i)) {
-			t.Errorf("line %d missing from the tail:\n%s", i, s)
-		}
+	if strings.Contains(s, "…") {
+		t.Errorf("a … row though every line fits:\n%s", s)
 	}
 }
 
@@ -127,13 +128,22 @@ func TestEngineRun_HandoffThatCannotBePreparedReachesFailed(t *testing.T) {
 	}
 }
 
+// Narrowed by #257 to the one failure the guided installer is offered
+// for: an installer that reported no event at all and exited 1 (an older
+// install.sh). A launcher that could not start the installer now offers
+// Install again instead.
 func TestEngineRun_FailedScreenOpensTheRealInstallerByDefault(t *testing.T) {
 	t.Setenv(requireInConsoleEnv, "")
 	installScriptAt(t, "#!/bin/bash\nexit 0\n")
 	dir := t.TempDir()
 	r := newEngineRun("install", dir, "Install", "v")
 	r, _ = r.start(80, 26)
-	r, _ = runUpdate(t, r, engineReadyMsg{err: errors.New("boom")})
+	r.state = runStreaming
+	r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1"),
+		StderrTail: []string{"Orbit installer: something went wrong."}}})
+	if r.state != runFailed {
+		t.Fatalf("state = %v, want runFailed", r.state)
+	}
 
 	// "Open the guided installer" is preselected; no seam means the
 	// real install.sh is fetched and staged for the terminal handoff.
@@ -259,7 +269,9 @@ func TestEngineRun_CtrlCWhilePreparingCancelsAndQuitsOnceThePrepareReportsBack(t
 }
 
 func TestEngineRun_CtrlCWhilePreparingKillsAnEngineThatStartedAnyway(t *testing.T) {
-	s := sleepingStream(t)
+	// A stoppableStream, so settleStop can feed the run the stream's
+	// DoneMsg: the installer exiting is not the end of the run.
+	s := stoppableStream(t, "echo started; exec sleep 60")
 	cleaned := false
 	r := newEngineRun("install", t.TempDir(), "Install — Standard", "v9.9.9").withSeams(engineRunSeams{
 		prepareEngine: func(context.Context, string, string) (*engine.Stream, func() error, error) {
@@ -280,8 +292,8 @@ func TestEngineRun_CtrlCWhilePreparingKillsAnEngineThatStartedAnyway(t *testing.
 	if !cleaned {
 		t.Fatal("the staged script was not cleaned up")
 	}
-	if d := awaitEnd(t, s); d.ExitCode == 0 {
-		t.Fatalf("an engine that started after Ctrl+C was left running: %+v", d)
+	if !closed(s.Done(), 3*time.Second) {
+		t.Fatal("an engine that started after Ctrl+C was left running")
 	}
 }
 

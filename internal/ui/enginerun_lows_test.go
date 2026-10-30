@@ -74,7 +74,10 @@ func TestLows_CtrlCWhileTheHandoffIsBeingPreparedStillRemovesTheStagedFiles(t *t
 			return func() tea.Msg { return installFinishedMsg{} }
 		},
 	})
-	r, _ = runUpdate(t, r, engineReadyMsg{err: errors.New("boom")})
+	// An installer that reported nothing and exited 1: the one failure
+	// that still offers the guided installer (#257).
+	r.state = runStreaming
+	r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{ExitCode: 1, Err: errors.New("exit status 1")}})
 	r, prepare := runUpdate(t, r, key(tea.KeyEnter)) // "Open the guided installer"
 	if r.state != runHandoffRunning {
 		t.Fatalf("setup: state = %v, want runHandoffRunning", r.state)
@@ -390,7 +393,7 @@ func TestLows_AnInstallThatLeavesAChildHoldingStdoutStillEnds(t *testing.T) {
 
 // The operator chooses "Open the guided installer" on an engine failure,
 // and preparing the handoff fails. The stopped screen must keep the first
-// failure's reason (the engine's event and its stderr tail) and add the
+// failure's reason (its sentence and stderr tail) and add the
 // preparation error, not replace the one with the other. (The automatic
 // fallback from the configuration session replaces the stale refusal on
 // purpose; TestConfigCollect_HandoffPreparationFailureReplacesTheStaleRefusal
@@ -401,8 +404,9 @@ func TestLows_AManualHandoffThatCannotBePreparedStillShowsTheFirstFailure(t *tes
 		t.Run(action, func(t *testing.T) {
 			t.Setenv(requireInConsoleEnv, "")
 			r := startedRun(t, action, engineRunSeams{})
+			// No event, exit 1: the failure that offers the guided
+			// installer (#257); a retry event now offers Install again.
 			r.state = runStreaming
-			r, _ = runUpdate(t, r, engineStreamMsg{msg: ev("identity", "image", "failed", "image-registry", "retry")})
 			r, _ = runUpdate(t, r, engineStreamMsg{msg: engine.DoneMsg{
 				ExitCode: 1, Err: errors.New("exit status 1"),
 				StderrTail: []string{"Orbit installer: Could not pull ghcr.io/example/orbit:latest."},
@@ -420,7 +424,7 @@ func TestLows_AManualHandoffThatCannotBePreparedStillShowsTheFirstFailure(t *tes
 			if r.state != runFailed || !strings.Contains(s, prepareErr) {
 				t.Fatalf("state = %v; the preparation error is not shown:\n%s", r.state, s)
 			}
-			for _, first := range []string{"image-registry", "Could not pull"} {
+			for _, first := range []string{"The installer stopped without saying what went wrong.", "Could not pull"} {
 				if !strings.Contains(s, first) {
 					t.Errorf("the first failure's %q was dropped when the handoff could not be prepared:\n%s", first, s)
 				}

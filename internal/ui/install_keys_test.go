@@ -58,9 +58,9 @@ func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
 	for _, back := range []tea.KeyPressMsg{key(tea.KeyEnter), key(tea.KeyEsc)} {
 		m, _ := newTestInstallModel(engineRunSeams{})
-		m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyEnter)) // Documents
+		m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyEnter)) // Agent
 		s := screen(m)
-		for _, want := range []string{"This profile isn't available yet", "wired into this", "▸ Back"} {
+		for _, want := range []string{"This profile isn't available yet", "need a local model", "▸ Back"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("unavailable screen lacks %q:\n%s", want, s)
 			}

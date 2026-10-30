@@ -52,10 +52,17 @@ func removalWords(t *testing.T, dir string) []string {
 
 // shortTempDir is a fresh directory whose path is short enough that the
 // removal command's words fit the box whole, so a test reading the box
-// back never trips over a word too wide for the screen.
+// back never trips over a word too wide for the screen. It is made under
+// /tmp, not under $TMPDIR, which can be any length and would wrap the
+// path across rows (#279); it falls back to $TMPDIR where /tmp is not a
+// directory.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "orb")
+	base := "/tmp"
+	if fi, err := os.Stat(base); err != nil || !fi.IsDir() {
+		base = ""
+	}
+	dir, err := os.MkdirTemp(base, "orb")
 	if err != nil {
 		t.Fatal(err)
 	}

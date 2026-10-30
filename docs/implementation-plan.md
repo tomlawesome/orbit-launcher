@@ -63,6 +63,17 @@ already defers discovery — see `install.sh`'s
 `Provider discovery` step). The splash screen itself is instant: no network
 call is on the path to the first frame.
 
+The binary refuses to run as root (#291), on the least-privilege
+principle (NIST SP 800-53 AC-6). Nothing it or Orbit's installer does
+needs root: the installer needs only working Docker (the `docker` group
+or rootless Docker), and the deployment's files belong to whoever runs
+it, so running as root would only leave root-owned files. When its
+effective user is root it prints one line to stderr (under `sudo`: run
+it again without sudo; otherwise: run it again as your own user) and
+exits non-zero before drawing a screen or reading anything; only
+`--version` still answers. Remove's offered `sudo rm -rf …` command is
+unaffected: the person runs it, not the launcher.
+
 ### 1.2 Why Go + Bubble Tea + Lipgloss
 
 Confirmed via the design-mockup phase already agreed with you. Concretely:
@@ -546,7 +557,8 @@ keep working. Two things follow from that:
   `install.sh` placed from the image. Neither runs unless
   `deploy.RequireTrustedPath` accepts it (#191): real directories and a
   regular file, no symlinks, nothing world-writable, one owner who is the
-  launcher's user (or any, under root); group-writable is accepted.
+  launcher's user (there is no root exception: the launcher refuses
+  root, section 1.1); group-writable is accepted.
 - **No config collection, and no field knowledge at all.** Earlier
   drafts of Install had orbit-launcher collect `APP_URL`/OIDC fields
   itself via Go text inputs and write `.env-orbit` directly, running
@@ -598,7 +610,15 @@ in-console configuration is unavailable. No
 config field enters Go, ever. Outcomes are keyed off events plus exit
 codes, never scraped prose; a legacy engine (orbit main today) that
 emits no events has its output displayed verbatim and is judged by exit
-code alone, with the guided installer offered from the failure screen.
+code alone. The guided installer is offered from the stopped screen only
+for an installer that reports nothing, or for a failure of the
+configuration session or of the guided installer itself (for example a
+configuration tree on a path the launcher does not trust); anywhere else
+it would run the same `install.sh` into the same refusal (#257). The
+configuration-session failure states nothing about the folder, since the
+failure's own words stand. Every other stop says what happened to the
+folder and offers only what can work: Install again (or Update again),
+Open Repair, or Menu and Exit.
 Success concludes on `internal/ui/success.go`: the splash's scene with
 the wordmark in alive-green, the deployment URL in the identity slot,
 "Orbit achieved in Nm NNs" from the console's real clock, and

@@ -63,7 +63,7 @@ func TestDockerQuery_UnownedVolumesListsByNameWithTheProjectLabel(t *testing.T) 
 	want := []string{
 		"volume", "ls",
 		"--filter", "name=" + orbitDatabaseVolumePattern,
-		"--format", "{{.Name}}\t{{.Label \"com.docker.compose.project\"}}",
+		"--format", "{{.Name}}\t{{json (.Label \"com.docker.compose.project\")}}",
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("docker args = %q, want %q", got, want)

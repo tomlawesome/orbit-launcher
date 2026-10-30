@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -70,9 +71,12 @@ type RepairModel struct {
 	// serviceStates reads the deployment's containers for the services
 	// block (#255). Nil shows no block: the c9 harness leaves it unset,
 	// which keeps its goldens as they were. services holds the one
-	// reading; see loadServices.
+	// reading; see readServices. servicesLimit is how long the read
+	// may take before the block says it could not check (#277); zero is
+	// deploy.ServiceStatesTimeout, the production reader's own limit.
 	serviceStates func(dir string) ([]deploy.ServiceState, error)
 	services      *serviceReading
+	servicesLimit time.Duration
 	// foreignOwned says which of the deployment's configuration files
 	// another account owns (#265); asked at every run start (see
 	// startDiagnosis). Nil checks nothing: the c9 harness leaves it
@@ -389,6 +393,9 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repairStreamMsg:
 		return m.handleStream(msg.msg)
 
+	case repairServicesMsg:
+		return m.gotServices(msg), nil
+
 	case repairStreamEndedMsg:
 		return m.handleStreamEnded(msg)
 
@@ -504,6 +511,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	var readCmd tea.Cmd
 	switch s.ExitCode {
 	case engine.ExitNotInstalled:
 		// "This isn't an Orbit installation", in every mode: the one
@@ -513,7 +521,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 	case engine.ExitHealthy, engine.ExitAttention, engine.ExitFailed:
 		// The contract's outcomes, shared by --check and --plan.
 		m.state = repairDiagnosis
-		m.loadServices()
+		readCmd = m.readServices()
 		if m.mode == deploy.RepairPlan {
 			// The manual guidance lines ride stderr, value-free by
 			// the script's contract.
@@ -535,7 +543,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 		m.fail(s.Err)
 	}
 	m.menu = menu{}
-	return m, nil
+	return m, readCmd
 }
 
 // fail ends the run on the error screen, which is titled by the state
@@ -692,11 +700,7 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	return m.handleMenu(msg, executedMenu, func(label string) (tea.Model, tea.Cmd) {
 		switch label {
 		case "Diagnose again":
-			m.startExecution()
-			m.planActions, m.planSummary = nil, nil
-			m.state = repairPreparing
-			m.mode = deploy.RepairPlan
-			return m, m.startDiagnosis(deploy.RepairPlan)
+			return m.diagnoseAgain()
 		case "Menu":
 			m.Done = true
 			m.WantsMenu = true
@@ -705,6 +709,16 @@ func (m RepairModel) handleExecutedMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, tea.Quit
 		}
 	})
+}
+
+// diagnoseAgain starts a fresh diagnosis, owner check first, from the
+// after-picture, a stopped mutation or the foreign-files stop.
+func (m RepairModel) diagnoseAgain() (tea.Model, tea.Cmd) {
+	m.startExecution()
+	m.planActions, m.planSummary = nil, nil
+	m.state = repairPreparing
+	m.mode = deploy.RepairPlan
+	return m, m.startDiagnosis(deploy.RepairPlan)
 }
 
 // stoppedMutation says the error screen is showing a safe repair or
@@ -845,6 +859,8 @@ func (m RepairModel) viewExecuted() string {
 		glyph, title = style.DegradedText.Render(style.SymbolMark), "Repair run ended"
 	}
 	writeInlineHeader(&b, glyph, title)
+	// The refusal lines wrap at the screen's width, never past it (#287).
+	limit := measure(m.width, errorWidth)
 
 	for _, e := range m.executeResults {
 		fmt.Fprintln(&b, executeLine(e))
@@ -860,14 +876,16 @@ func (m RepairModel) viewExecuted() string {
 		// enum says why, and the exit code alone cannot.
 		switch m.execSummary.Reason {
 		case "deployment-version-unsupported":
-			fmt.Fprintln(&b, style.DegradedText.Render("nothing was changed — this deployment's Orbit release is too old to repair here"))
-			fmt.Fprintln(&b, style.DegradedText.Render("upgrade or reinstall it with a supported release, then diagnose again"))
+			writeWrappedIn(&b, style.DegradedText, "nothing was changed — this deployment's Orbit release is too old to repair here", limit, textArea(m.width))
+			writeWrappedIn(&b, style.DegradedText, "upgrade or reinstall it with a supported release, then diagnose again", limit, textArea(m.width))
 		default:
 			refusal := "nothing was changed — the engine refused to run"
 			if m.execSummary.Reason != "" {
-				refusal += " (" + m.execSummary.Reason + ")"
+				// The engine's word, escaped like any other foreign
+				// text before it reaches the terminal (#277).
+				refusal += " (" + visibleText(m.execSummary.Reason) + ")"
 			}
-			fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+			writeWrappedIn(&b, style.DegradedText, refusal, limit, textArea(m.width))
 		}
 	}
 	if m.dangerous != nil && m.dangerous.Result == engine.ResultRefused {
@@ -879,7 +897,7 @@ func (m RepairModel) viewExecuted() string {
 		if m.dangerous.Reason == "non-interactive" {
 			refusal += " (no terminal was available to approve it)"
 		}
-		fmt.Fprintln(&b, style.DegradedText.Render(refusal))
+		writeWrappedIn(&b, style.DegradedText, refusal, limit, textArea(m.width))
 	}
 
 	// The after-picture: the executor's own honest re-diagnosis.
@@ -938,11 +956,11 @@ func (m RepairModel) viewError() string {
 	writeInlineHeader(&b, style.ErrorText.Render(style.SymbolFailure), title)
 	if m.runErr != nil {
 		// Docker's words, at Docker's length.
-		writeWrapped(&b, style.Tagline, visibleLines(m.runErr.Error()), measure(m.width, errorWidth))
+		writeWrappedIn(&b, style.Tagline, errorWords(m.runErr), measure(m.width, errorWidth), textArea(m.width))
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
-		writeWrapped(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth))
+		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
 		rows = executedMenu
 	}
 	if m.runErr != nil || m.stoppedMutation() {
@@ -996,40 +1014,37 @@ func (m RepairModel) viewDiagnosis() string {
 	fmt.Fprintln(&tail)
 	m.menu.over(m.planMenu()).write(&tail)
 
-	// The findings take the rows the header, the summary, the whole
-	// plan and the menu leave, as the steps do, so an older repair.sh
-	// with many findings never pushes the menu off the screen.
+	// The services block gives way first (#290): it takes the rows the
+	// rest leaves with the findings and the whole plan at full length,
+	// and shrinks in steps (servicesBlock) before anything else. Only
+	// then do the findings shorten, taking the rows the header, the
+	// block, the summary, the whole plan and the menu leave, so an older
+	// repair.sh with many findings never pushes the menu off the screen.
+	// The last row is left to the sky, as on every scene screen.
 	stepRows := 0
 	for _, step := range steps {
 		stepRows += len(step)
-	}
-	findRoom := math.MaxInt
-	if m.height > 0 {
-		findRoom = m.height - 1 - strings.Count(head, "\n") - strings.Count(summary.String(), "\n") - strings.Count(tail.String(), "\n") - stepRows
 	}
 	var found [][]string
 	for _, f := range sortedFindings(m.findings) {
 		found = append(found, []string{findingLine(f)})
 	}
-	m.writeSteps(&b, found, findRoom)
-	b.WriteString(summary.String())
-
-	// The services block sits above the findings and takes the rows the
-	// rest leaves (the whole plan counted, since the steps can shorten
-	// themselves but the block should not squeeze them): the full list
-	// when it fits, else the running rows folded. The last row is left
-	// to the sky, as on every scene screen.
-	m.loadServices()
-	rest := head + b.String()
+	fixed := 1 + strings.Count(head, "\n") + strings.Count(summary.String(), "\n") + strings.Count(tail.String(), "\n") + stepRows
 	svcRoom := math.MaxInt
 	if m.height > 0 {
-		svcRoom = m.height - 1 - strings.Count(rest, "\n") - strings.Count(tail.String(), "\n") - stepRows
+		svcRoom = m.height - fixed - len(found)
 	}
-	if block := m.servicesBlock(svcRoom); block != nil {
-		rest = head + strings.Join(block, "\n") + "\n" + b.String()
+	block := m.servicesBlock(svcRoom)
+	findRoom := math.MaxInt
+	if m.height > 0 {
+		findRoom = m.height - fixed - len(block)
 	}
-	b.Reset()
-	b.WriteString(rest)
+	b.WriteString(head)
+	for _, row := range block {
+		fmt.Fprintln(&b, row)
+	}
+	m.writeSteps(&b, found, findRoom)
+	b.WriteString(summary.String())
 
 	// The steps take whatever rows remain, so a short terminal
 	// never pushes the summary and menu off the bottom.
@@ -1063,7 +1078,7 @@ func (m RepairModel) writeSteps(b *strings.Builder, steps [][]string, room int) 
 	shown := len(steps)
 	var more []string
 	for {
-		more = wrapWords(fmt.Sprintf("and %d more — make the terminal taller to see them", len(steps)-shown), measure(m.width, proseWidth))
+		more = wrapWordsIn(fmt.Sprintf("and %d more — make the terminal taller to see them", len(steps)-shown), measure(m.width, proseWidth), textArea(m.width))
 		used := len(more)
 		for _, step := range steps[:shown] {
 			used += len(step)
@@ -1092,7 +1107,7 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 		// No plan lines: healthy, a --check fallback run, or nothing
 		// plannable. Keep the honest note whenever something's wrong.
 		if result != engine.ResultHealthy {
-			after = append(after, style.Tagline.Render("repair actions arrive with a later Orbit release"))
+			after = append(after, m.taglineRows("repair actions arrive with a later Orbit release")...)
 		}
 		return nil, after
 	}
@@ -1100,15 +1115,18 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 	// The plan rows' text wraps at the same measure as the manual
 	// steps below, so the two never break at different widths.
 	for _, p := range m.planActions {
-		steps = append(steps, planRows(p, measure(m.width, proseWidth)))
+		steps = append(steps, planRowsIn(p, measure(m.width, proseWidth), textArea(m.width)))
 	}
 	for _, note := range m.manualNotes {
 		if step, ok := strings.CutPrefix(note, "manual step: "); ok {
 			// The engine's guidance is unsized prose with a machine tag
 			// on the end: drop the tag (the plan line above already
 			// names the problem) and wrap the rest, so it is never cut
-			// at the screen's edge (#253).
-			lines := wrapWords(manualStepWords(step), measure(m.width, proseWidth))
+			// at the screen's edge (#253). A step can name a path or a
+			// command to run: a word that fits the text area stays whole,
+			// a wider one is cut at the measure, every character kept
+			// (#277 L4).
+			lines := wrapWordsIn(manualStepWords(step), measure(m.width, proseWidth), textArea(m.width))
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
@@ -1119,7 +1137,19 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 			steps = append(steps, rows)
 		}
 	}
-	return steps, []string{"", style.Tagline.Render(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))}
+	return steps, append([]string{""}, m.taglineRows(planSummaryWords(m.planSummary, m.planHasSafe() || m.planHasDangerous()))...)
+}
+
+// taglineRows is a line under the plan, one row where it fits the text
+// area and wrapped to it where it does not, so no row is wider than the
+// text area (#277 L4: the 48-cell lines wrap at 50 columns).
+func (m RepairModel) taglineRows(text string) []string {
+	lines := wrapWordsIn(text, textArea(m.width), textArea(m.width))
+	rows := make([]string, len(lines))
+	for i, line := range lines {
+		rows[i] = style.Tagline.Render(line)
+	}
+	return rows
 }
 
 // planRows renders one proposed action: the action in plain words and
@@ -1132,13 +1162,19 @@ func (m *RepairModel) planParts(result string) (steps [][]string, after []string
 // too long for the row wraps as wrapWords does, its continuation rows
 // indented under the text after the glyph, so it is never cut at the
 // edge and "backup first" stays on screen. The action words keep their
-// ink on whichever rows they land.
+// ink on whichever rows they land. A screen draws through planRowsIn.
 func planRows(p engine.PlanAction, limit int) []string {
+	return planRowsIn(p, limit, limit)
+}
+
+// planRowsIn is planRows wrapped as wrapWordsIn wraps, for a screen whose
+// text area is edge cells wide.
+func planRowsIn(p engine.PlanAction, limit, edge int) []string {
 	glyph := style.AccentText.Render(style.SymbolQueued)
 	if p.Action == "manual" {
 		glyph = style.DegradedText.Render(style.SymbolQueued)
 	}
-	lines := wrapWords(planText(p), limit)
+	lines := wrapWordsIn(planText(p), limit, edge)
 	// The action words lead the text; wrapWords drops only the space at
 	// each break, so each row's ink is what it shares with the action
 	// words not yet drawn (matched, not counted, as an unknown action
@@ -1272,7 +1308,7 @@ func planSummaryWords(s *engine.PlanSummary, runnable bool) string {
 	case engine.ResultEmpty:
 		return "nothing to plan"
 	default:
-		return s.Result + " — nothing has run yet"
+		return visibleText(s.Result) + " — nothing has run yet"
 	}
 }
 

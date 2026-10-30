@@ -28,6 +28,13 @@ if [ "${#pkgs[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# Tests in scripts/quarantine.txt stay out of the gate here too (#310).
+skip=()
+quarantined="$(bash scripts/ci/quarantine-skip.sh)"
+if [ -n "$quarantined" ]; then
+  skip=(-test.skip "$quarantined")
+fi
+
 modcache="$(go env GOMODCACHE)"
 work="$(mktemp -d)"
 trap 'chmod -R u+w "$work" 2> /dev/null; rm -rf "$work"' EXIT
@@ -63,6 +70,6 @@ for pkg in "${pkgs[@]}"; do
   echo "nonroot-tests: running ./$pkg as uid $("${run_as[@]}" id -u)"
   (cd "$work/src/$pkg" && "${run_as[@]}" env HOME="$work/home" GOCACHE="$work/gocache" \
     GOMODCACHE="$modcache" GOPROXY=off GOFLAGS=-mod=readonly \
-    "$work/bin/$name.test" -test.count=1 -test.timeout=10m) || status=1
+    "$work/bin/$name.test" "${skip[@]}" -test.count=1 -test.timeout=10m) || status=1
 done
 exit "$status"
