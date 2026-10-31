@@ -27,8 +27,9 @@ type healthResultMsg struct {
 	counted           bool
 }
 
-// runningResultMsg carries the running check's verdict for dir.
-// stub for #316's tests; the build replaces it
+// runningResultMsg carries the running check's verdict for dir, the
+// folder it was made for (#316): a screen for another folder drops it.
+// A check that could not run answers with no mismatch.
 type runningResultMsg struct {
 	dir      string
 	mismatch deploy.Mismatch
@@ -88,6 +89,7 @@ const (
 	menuInstall = 0
 	menuUpdate  = 1
 	menuRepair  = 2
+	menuExit    = 4
 )
 
 // tickInterval is the UI tick, the starfield's own interval.
@@ -225,6 +227,17 @@ type SplashModel struct {
 	health      healthResultMsg
 	onStatusRow bool
 	drawerOpen  bool
+
+	// folder is the folder the launcher was started in, the row beneath
+	// the status word in every state (#316). The running check compares
+	// the app container with deployment, the record read from it, and
+	// answers mismatch; runningRead is nil unless the real entry point
+	// (or a test) opts in, and the check is made only for an installed
+	// deployment.
+	folder      string
+	deployment  *deploy.Deployment
+	runningRead func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)
+	mismatch    deploy.Mismatch
 }
 
 // NewSplashModel constructs the splash/main-menu screen.
@@ -253,6 +266,9 @@ func (m SplashModel) Init() tea.Cmd {
 	}
 	if m.healthProbe != nil && m.appURL != "" {
 		cmds = append(cmds, m.probeHealthCmd())
+	}
+	if cmd := m.checkRunningCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
 }
@@ -312,6 +328,46 @@ func (m SplashModel) probeHealthCmd() tea.Cmd {
 	}
 }
 
+// checkRunningCmd asks Docker whether the deployment's app container
+// contradicts the record (#316), or returns nil when there is nothing to
+// ask: no reader, or no installed deployment here. Like the health probe
+// it runs in the background and never surfaces an error: a check that
+// could not run answers "no mismatch", and nothing is shown.
+//
+// The command waits at most deploy.RunningAppTimeout, the limit the read
+// puts on itself. The reader runs on a goroutine of its own, as the
+// services reader does (Repair's readServices): when it is late the
+// command answers and returns, cancelling the reader's context, and the
+// reader's answer, which has a buffered slot, is dropped.
+func (m SplashModel) checkRunningCmd() tea.Cmd {
+	read, d, dir := m.runningRead, m.deployment, m.targetDir
+	if read == nil || d == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		type answer struct {
+			app deploy.RunningApp
+			err error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			app, err := read(ctx, d)
+			answered <- answer{app, err}
+		}()
+		select {
+		case a := <-answered:
+			if a.err != nil {
+				return runningResultMsg{dir: dir}
+			}
+			return runningResultMsg{dir: dir, mismatch: deploy.CompareRunning(d, dir, a.app)}
+		case <-time.After(deploy.RunningAppTimeout):
+			return runningResultMsg{dir: dir}
+		}
+	}
+}
+
 // introSeconds converts the intro's tick counter to seconds.
 func (m SplashModel) introSeconds() float64 {
 	return float64(m.introTick) * tickInterval.Seconds()
@@ -358,9 +414,24 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// only while the user hasn't taken over. A check that could
 			// not run says nothing is wrong, so the caret stays put
 			// (#277, owner answer 4a).
-			if !m.userNavigated && msg.reason != deploy.HealthUnchecked {
+			// A container started from another folder keeps the caret on
+			// Exit: Repair there would act on that folder's Orbit (#316).
+			if !m.userNavigated && msg.reason != deploy.HealthUnchecked && m.mismatch.Kind != deploy.MismatchFolder {
 				m.menu.sel = menuRepair
 			}
+		}
+		return m, nil
+
+	case runningResultMsg:
+		if msg.dir != m.targetDir {
+			return m, nil
+		}
+		m.mismatch = msg.mismatch
+		// Started from another folder: every flow here would act on that
+		// folder's Orbit, so the caret rests on Exit, unless the person
+		// has taken over (#316, owner answer 4a).
+		if m.mismatch.Kind == deploy.MismatchFolder && !m.userNavigated {
+			m.menu.sel = menuExit
 		}
 		return m, nil
 
@@ -579,6 +650,9 @@ func (m SplashModel) centreBlockLines() []string {
 	case stateUnreadable:
 		lines = append(lines, style.Tagline.Render("can't read "+deploy.EnvFile))
 	}
+	// The folder this launcher acts on, in every state, then what the
+	// running check found, if anything (#316).
+	lines = append(lines, m.folderLines()...)
 	if m.updateNotice != "" {
 		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
 		lines = append(lines, style.MutedText.Render("re-run Orbit's installer: curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash"))
@@ -590,6 +664,39 @@ func (m SplashModel) centreBlockLines() []string {
 			lines = append(lines, "")
 		}
 		lines = append(lines, menuRow(item.Label, i == m.menu.sel && !m.onStatusRow))
+	}
+	return lines
+}
+
+// folderLines are the rows that end the identity block (#316): the folder
+// the launcher was started in, faint and on one row (cut from the start,
+// so the last components, which tell two deployment folders apart, always
+// read), then up to three rows when the app container contradicts the
+// record: the fact in amber, the detail in muted text, the next step in
+// faint text. The folder and the other folder are untrusted text, and
+// are shown escaped.
+func (m SplashModel) folderLines() []string {
+	var lines []string
+	if m.folder != "" {
+		lines = append(lines, style.Tagline.Render(startCut(visibleText(m.folder), m.width-2)))
+	}
+	switch m.mismatch.Kind {
+	case deploy.MismatchFolder:
+		lines = append(lines,
+			style.DegradedText.Render("started from another folder"),
+			style.MutedText.Render(startCut(visibleText(m.mismatch.Folder), m.width-2)),
+			style.Tagline.Render("start the launcher from that folder instead"))
+	case deploy.MismatchBuild:
+		detail := "started " + visibleText(m.mismatch.Started)
+		if m.mismatch.Recorded != "" {
+			detail += style.Separator + "recorded " + visibleText(m.mismatch.Recorded)
+		}
+		lines = append(lines,
+			style.DegradedText.Render("started from a different build"),
+			style.MutedText.Render(endCut(detail, m.width-2)))
+		for _, row := range wrapWords("correct "+deploy.EnvFile+" here, or restart Orbit from this folder, then update", max(1, m.width-2)) {
+			lines = append(lines, style.Tagline.Render(row))
+		}
 	}
 	return lines
 }

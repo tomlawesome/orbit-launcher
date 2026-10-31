@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -82,6 +83,12 @@ type AppModel struct {
 	// compose ps` is used; once set, nil means no reading anywhere (#277).
 	servicesReader    func(dir string) ([]deploy.ServiceState, error)
 	servicesReaderSet bool
+
+	// runningReader reads the deployment's app container for the
+	// splash's running check (#316). Nil, the default, checks nothing, so
+	// no constructor asks Docker; only the real entry point opts in
+	// (WithRunningReader), and WithoutRunningCheck switches it off again.
+	runningReader func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)
 
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 20 s default).
@@ -202,15 +209,28 @@ func (m AppModel) WithoutVolumeCheck() AppModel {
 	return m
 }
 
-// WithRunningReader supplies how the app container is read.
-// stub for #316's tests; the build replaces it
+// WithRunningReader turns the running check on (#316): the splash asks
+// read which app container the deployment runs and says so when it
+// contradicts the record, and Update, Repair and Remove refuse a
+// container started from another folder. In production read is
+// deploy.RunningAppOf; tests pass a fake, so none depends on the
+// machine's Docker. Whichever order this and WithDeploymentStatus are
+// given in, the check is made for an installed deployment only.
 func (m AppModel) WithRunningReader(read func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)) AppModel {
+	m.runningReader = read
+	if m.splash.deployment != nil { // an installed deployment was applied already
+		m.splash.runningRead = read
+	}
 	return m
 }
 
-// WithoutRunningCheck turns the running check off.
-// stub for #316's tests; the build replaces it
-func (m AppModel) WithoutRunningCheck() AppModel { return m }
+// WithoutRunningCheck turns the running check off: no question, no rows
+// and no refusals. Its answer comes from the local Docker daemon, which a
+// hermetic test suite does not control. See ORBIT_LAUNCHER_NO_RUNNING_CHECK
+// in cmd/orbit-launcher.
+func (m AppModel) WithoutRunningCheck() AppModel {
+	return m.WithRunningReader(nil)
+}
 
 // WithAltScreen renders in the terminal's alternate screen buffer, so the
 // launcher owns the whole window and hands the user's scrollback back
@@ -223,6 +243,7 @@ func (m AppModel) WithAltScreen() AppModel {
 
 // applyDeployment populates s's identity block from a fresh detection.
 func (m AppModel) applyDeployment(s SplashModel) SplashModel {
+	s.folder = filepath.Clean(m.resolvedTargetDir())
 	d, err := deploy.Detect(m.resolvedTargetDir())
 	if err != nil {
 		// The file is there but unreadable: no identity and nothing to
@@ -254,6 +275,8 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 		return s
 	}
 	s.healthProbe = m.healthProbe
+	s.deployment = d
+	s.runningRead = m.runningReader
 	return s
 }
 
@@ -286,6 +309,9 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 	if s.healthProbe != nil && s.appURL != "" {
 		cmds = append(cmds, s.probeHealthCmd())
 	}
+	if cmd := s.checkRunningCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -311,6 +337,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the Ctrl-C key there; every flow tells the two apart itself.
 	if _, ok := msg.(SignalQuitMsg); ok && (m.state == appStateSplash || m.state == appStateSuccess) {
 		msg = ctrlCPress
+	}
+
+	// The running check may answer after a flow has opened: the splash
+	// keeps the answer, and the flow decides whether it still matters.
+	// Install and the success screen are not concerned (#316).
+	if result, ok := msg.(runningResultMsg); ok && m.state != appStateSplash {
+		updated, _ := m.splash.Update(result)
+		m.splash = updated.(SplashModel)
 	}
 
 	switch m.state {
@@ -401,12 +435,22 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 // startRepair opens Repair on the launcher's folder, from the splash or
 // from a stopped Install or Update that left its services in place.
 func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
+	return m.startRepairFor("")
+}
+
+// startRepairFor is startRepair that opens on the other-folder refusal
+// when otherFolder names the folder the app container was started from
+// (#316): no diagnosis starts then.
+func (m AppModel) startRepairFor(otherFolder string) (tea.Model, tea.Cmd) {
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 	m.repair.engineRunSeams = m.flowSeams
 	m.repair.serviceStates = m.readServices()
 	m.repair.foreignOwned = deploy.ForeignOwned
 	m.repair.send = m.flowSend
+	if otherFolder != "" {
+		m.repair = m.repair.refuseOtherFolder(otherFolder)
+	}
 	m.state = appStateRepair
 	return m, tea.Batch(sizeCmd, m.repair.Init())
 }
@@ -438,6 +482,14 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 
+	// A running check that has answered "started from another folder"
+	// turns Update, Repair and Remove into a refusal naming that folder.
+	// One that has not answered yet is handed to the open flow later.
+	otherFolder := ""
+	if m.splash.mismatch.Kind == deploy.MismatchFolder {
+		otherFolder = m.splash.mismatch.Folder
+	}
+
 	switch m.splash.Chosen {
 	case "Remove":
 		// deploy.Detect's error return only ever reflects a real I/O
@@ -451,12 +503,15 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.remove.targetDir = dir
 		m.remove.detectErr = err
 		m.remove.lookupInstalledAt = m.flowInstalledAt
+		if otherFolder != "" && deployment != nil {
+			m.remove = m.remove.refuseOtherFolder(otherFolder)
+		}
 		m.state = appStateRemove
 		// Init looks up the install date — read-only, so like Install's
 		// pre-flight it starts with the flow.
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
-		return m.startRepair()
+		return m.startRepairFor(otherFolder)
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		if m.collected == nil {
@@ -484,6 +539,9 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
 		m.update.lookupInstalledAt = m.flowInstalledAt
+		if otherFolder != "" && deployment != nil {
+			m.update = m.update.refuseOtherFolder(otherFolder)
+		}
 		m.state = appStateUpdate
 		return m, tea.Batch(sizeCmd, m.update.Init())
 	default:

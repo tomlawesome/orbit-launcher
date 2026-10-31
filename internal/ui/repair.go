@@ -83,6 +83,9 @@ type RepairModel struct {
 	// unset. foreign is the answer that stopped the run.
 	foreignOwned func(dir string) (deploy.Ownership, error)
 	foreign      deploy.Ownership
+	// otherFolder is the folder the app container was started from, in
+	// repairOtherFolder (#316).
+	otherFolder string
 	// clipboard is where the stop screen's Copy command writes its OSC 52
 	// sequence: nil in production, which means os.Stdout. copied is that
 	// row having copied.
@@ -137,6 +140,10 @@ const (
 	// repairForeign is the stop screen for files another account owns
 	// (#265): no engine ran.
 	repairForeign
+	// repairOtherFolder is the dead end for a deployment whose app
+	// container was started from another folder (#316): no engine ran,
+	// or the one that was starting has been stopped.
+	repairOtherFolder
 )
 
 type (
@@ -200,10 +207,24 @@ func (m RepairModel) Outcome() flowOutcome {
 	return flowOutcome{Done: m.Done, WantsMenu: m.WantsMenu}
 }
 
+// repairOtherFolderBody is the refusal's first body line.
+const repairOtherFolderBody = "Repair here would read and change that folder's Orbit using this folder's files."
+
+// refuseOtherFolder turns the flow into the dead end that names folder,
+// where the container was started from (#316).
+func (m RepairModel) refuseOtherFolder(folder string) RepairModel {
+	m.state, m.otherFolder = repairOtherFolder, folder
+	return m
+}
+
 // Init implements tea.Model: the diagnosis starts immediately — it is
 // read-only by the script's own contract, so there is nothing to
-// confirm first.
+// confirm first. Not in the other-folder refusal: it would read that
+// folder's Orbit as if it were this one's (#316).
 func (m RepairModel) Init() tea.Cmd {
+	if m.state == repairOtherFolder {
+		return nil
+	}
 	return m.startDiagnosis(m.mode)
 }
 
@@ -326,7 +347,34 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.frame = nextFrame(m.frame)
 		return m, tick()
 
+	case runningResultMsg:
+		// The running check answered after the flow opened. While the
+		// diagnosis is being prepared or shown (read-only, nothing
+		// changed) another folder's container stops it as Esc does and
+		// shows the refusal. Once the safe repairs or the rotation have
+		// started, the person reads the result that is on screen. An
+		// answer for another folder is not this flow's.
+		if msg.dir != m.targetDir || msg.mismatch.Kind != deploy.MismatchFolder ||
+			(m.state != repairPreparing && m.state != repairDiagnosis) {
+			return m, nil
+		}
+		if m.stream != nil {
+			m.stream.Kill()
+		} else if m.cancel != nil {
+			m.cancel()
+		}
+		return m.refuseOtherFolder(msg.mismatch.Folder), nil
+
 	case repairReadyMsg:
+		if m.state == repairOtherFolder {
+			// The start the refusal stopped reported back with a run
+			// anyway: nobody is watching it, so it is killed, as the one
+			// that arrives after Ctrl-C is.
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			return m, nil
+		}
 		if m.quitting {
 			if msg.stream == nil {
 				return m, tea.Quit
@@ -351,6 +399,9 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, readEngineStream(m.send, m.stream, repairStream)
 
 	case repairForeignMsg:
+		if m.state == repairOtherFolder {
+			return m, nil // the refusal stands; the start it stopped found nothing to show
+		}
 		if m.quitting {
 			// The start was cancelled, and it started nothing.
 			return m, tea.Quit
@@ -642,7 +693,7 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case repairRotating:
 		return m.handleRotateKey(msg)
 
-	case repairNotFound:
+	case repairNotFound, repairOtherFolder:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228), as in Update and Remove.
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
@@ -807,6 +858,8 @@ func (m RepairModel) view() string {
 	case repairNotFound:
 		return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
 			"There's nothing here for Repair to read — nothing was changed.")
+	case repairOtherFolder:
+		return viewOtherFolder(m.star, m.width, m.height, m.otherFolder, repairOtherFolderBody)
 	}
 	return m.viewDiagnosis()
 }

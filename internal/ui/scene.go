@@ -87,6 +87,36 @@ func viewNoDeployment(star starfield.Model, width, height int, dir string, body 
 	return skyBlock(star, width, height, b.String())
 }
 
+// The lines every other-folder refusal shares (#316): the next step, and
+// the faint promise that this screen changed nothing.
+const (
+	otherFolderAdvice    = "Start the launcher from that folder instead."
+	otherFolderUntouched = "nothing has been changed, and nothing will be by this screen"
+)
+
+// viewOtherFolder is the dead end Update, Repair and Remove open as when
+// the deployment's app container was started from another folder (#316),
+// in viewNoDeployment's grammar: the amber mark (the stale-volume
+// refusal's), a title naming that folder (wrapped, and escaped by
+// wrapHard, since nobody chose its length), the flow's own body line and
+// the shared advice, each wrapped on its own, the faint promise, then the
+// dead end's one row. The title runs to errorWidth rather than
+// proseWidth: with a short folder it is 61 cells, and a path that is to
+// be compared with another should not break at the sentence's join.
+func viewOtherFolder(star starfield.Model, width, height int, otherFolder, body string) string {
+	var b strings.Builder
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark),
+		wrapHard("This Orbit was started from "+otherFolder, measure(width, errorWidth), width-4, folderRows)...)
+	for _, line := range []string{body, otherFolderAdvice} {
+		writeWrappedIn(&b, style.MutedText, line, measure(width, proseWidth), textArea(width))
+	}
+	fmt.Fprintln(&b)
+	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, measure(width, proseWidth), textArea(width))
+	fmt.Fprintln(&b)
+	writeStackedMenu(&b, deadEndRows, 0)
+	return skyBlock(star, width, height, b.String())
+}
+
 // unreadableEnvAdvice is the one line of advice for a deployment file that
 // Detect could not read, whatever the cause: the OS's own words above it
 // say which.

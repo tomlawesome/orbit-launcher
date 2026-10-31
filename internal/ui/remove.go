@@ -27,6 +27,9 @@ const (
 	removeStateFailed
 	removeStateCancelled
 	removeStateNotFound
+	// removeStateOtherFolder is the dead end for a deployment whose app
+	// container was started from another folder (#316).
+	removeStateOtherFolder
 )
 
 // standDownResultMsg carries the outcome of the async StandDown call back
@@ -68,6 +71,10 @@ type RemoveModel struct {
 	// instead of "No Orbit deployment found" (#238).
 	detectErr error
 
+	// otherFolder is the folder the app container was started from, in
+	// removeStateOtherFolder (#316).
+	otherFolder string
+
 	// standDown is overridable in tests so they don't need a real Docker
 	// daemon — production code always leaves this nil and gets
 	// deploy.StandDown.
@@ -101,6 +108,16 @@ func NewRemoveModel(d *deploy.Deployment) RemoveModel {
 	return m
 }
 
+// removeOtherFolderBody is the refusal's first body line.
+const removeOtherFolderBody = "Remove here would stop that folder's Orbit."
+
+// refuseOtherFolder turns the flow into the dead end that names folder,
+// where the container was started from (#316).
+func (m RemoveModel) refuseOtherFolder(folder string) RemoveModel {
+	m.state, m.otherFolder = removeStateOtherFolder, folder
+	return m
+}
+
 const removeCopy = "Copy command"
 
 var (
@@ -128,7 +145,12 @@ func (m RemoveModel) standDownFunc() func(context.Context, string) error {
 
 // Init implements tea.Model. It starts the read-only install-date
 // lookup; the confirm screen shows the date only once Docker answers.
-func (m RemoveModel) Init() tea.Cmd { return installedAtCmd(m.lookupInstalledAt, m.deployment) }
+func (m RemoveModel) Init() tea.Cmd {
+	if m.state == removeStateOtherFolder {
+		return nil // the refusal shows no date
+	}
+	return installedAtCmd(m.lookupInstalledAt, m.deployment)
+}
 
 // Update implements tea.Model.
 func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -164,6 +186,16 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case runningResultMsg:
+		// The running check answered after the flow opened. Only the
+		// confirmation turns into the refusal; a stand-down in progress
+		// is never interrupted (#227) and the screens after it show a
+		// result. An answer for another folder is not this flow's.
+		if m.state == removeStateConfirm && msg.dir == m.targetDir && msg.mismatch.Kind == deploy.MismatchFolder {
+			m = m.refuseOtherFolder(msg.mismatch.Folder)
+		}
+		return m, nil
+
 	case SignalQuitMsg:
 		// The stand-down is not interrupted (see handleKey), but nobody
 		// may be left to see its result, so the quit waits for it.
@@ -192,7 +224,7 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case removeStateNotFound:
+	case removeStateNotFound, removeStateOtherFolder:
 		// The dead end: its one row and Esc both go back to the menu
 		// (#205, 4a; #228).
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
@@ -290,6 +322,8 @@ func (m RemoveModel) view() string {
 		return m.viewDone()
 	case removeStateFailed:
 		return m.viewFailed()
+	case removeStateOtherFolder:
+		return viewOtherFolder(m.star, m.width, m.height, m.otherFolder, removeOtherFolderBody)
 	default:
 		return ""
 	}
