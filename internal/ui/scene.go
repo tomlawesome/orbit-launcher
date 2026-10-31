@@ -94,8 +94,17 @@ const (
 	otherFolderUntouched = "nothing has been changed, and nothing will be by this screen"
 )
 
-// viewOtherFolder is the dead end Update, Repair and Remove open as when
-// the deployment's app container was started from another folder (#316),
+// The refusal's title leads: Update, Repair and Remove point at "This
+// Orbit"; Install, which may open in a folder with nothing on screen to
+// point at, says whose Orbit it is (#318).
+const (
+	otherFolderLead        = "This Orbit was started from "
+	installOtherFolderLead = "This machine's Orbit was started from "
+)
+
+// viewOtherFolder is the dead end Update, Repair, Remove and Install open
+// as when the deployment's app container was started from another folder
+// (#316, #318), with lead the title's opening words,
 // in viewNoDeployment's grammar: the amber mark (the stale-volume
 // refusal's), a title naming that folder (wrapped, and escaped by
 // wrapHard, since nobody chose its length), the flow's own body line and
@@ -103,10 +112,10 @@ const (
 // dead end's one row. The title runs to errorWidth rather than
 // proseWidth: with a short folder it is 61 cells, and a path that is to
 // be compared with another should not break at the sentence's join.
-func viewOtherFolder(star starfield.Model, width, height int, otherFolder, body string) string {
+func viewOtherFolder(star starfield.Model, width, height int, lead, otherFolder, body string) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark),
-		wrapHard("This Orbit was started from "+otherFolder, measure(width, errorWidth), width-4, folderRows)...)
+		wrapHard(lead+otherFolder, measure(width, errorWidth), width-4, folderRows)...)
 	for _, line := range []string{body, otherFolderAdvice} {
 		writeWrappedIn(&b, style.MutedText, line, measure(width, proseWidth), textArea(width))
 	}

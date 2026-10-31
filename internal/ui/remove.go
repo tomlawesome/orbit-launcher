@@ -323,7 +323,7 @@ func (m RemoveModel) view() string {
 	case removeStateFailed:
 		return m.viewFailed()
 	case removeStateOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, m.otherFolder, removeOtherFolderBody)
+		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, removeOtherFolderBody)
 	default:
 		return ""
 	}
