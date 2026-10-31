@@ -652,9 +652,13 @@ func startLiveEnv(t *testing.T, binPath, dir string, extraEnv ...string) *liveSe
 	t.Cleanup(func() { stderrFile.Close() })
 	cmd.Stderr = stderrFile // stdin and stdout are left to vtscreen: the pty
 
-	// The health probe stays on, as an operator's launcher has it. The
-	// other behaviours HermeticEnv turns off matter to this suite as
-	// follows.
+	// The health probe stays on, as an operator's launcher has it. So
+	// does the running check (#316), for the same reason: this folder
+	// owns its own stack, so its rows and refusals must not appear on
+	// any screen the suite drives, and the update leg's second folder
+	// (TestLive_Update) needs the check to show that they do when the
+	// stack is another folder's. The other behaviours HermeticEnv turns
+	// off matter to this suite as follows.
 	//
 	// The stale-database-volume pre-flight (issue #105) reads the
 	// host's volumes, so a volume left behind by a crashed earlier
@@ -688,7 +692,7 @@ func startLiveEnv(t *testing.T, binPath, dir string, extraEnv ...string) *liveSe
 	// visual-regression.yml. What this suite exists to pin is the
 	// install.sh handoff contract, which the animation only ever
 	// added nondeterminism to.
-	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe),
+	cmd.Env = append(launcher.HermeticEnv(launcher.HealthProbe, launcher.RunningCheck),
 		// GOTRACEBACK=all so a SIGQUIT from liveSession.diagnose dumps
 		// every goroutine, not just the one that took the signal.
 		"GOTRACEBACK=all",

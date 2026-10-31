@@ -56,6 +56,11 @@ test.beforeAll(async () => {
       // ever run Orbit it would legitimately interrupt the flow — same
       // hermeticity rule as the two above.
       ORBIT_LAUNCHER_NO_VOLUME_CHECK: "1",
+      // NO_RUNNING_CHECK: the running check asks the local Docker daemon
+      // what runs under the deployment's project, so a container left by
+      // an earlier run, or started from another folder, would add rows to
+      // the screenshot — same hermeticity rule as the three above.
+      ORBIT_LAUNCHER_NO_RUNNING_CHECK: "1",
     },
   });
 

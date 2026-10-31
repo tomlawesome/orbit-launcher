@@ -29,6 +29,13 @@ var (
 	screenOIDCClientID = []string{"OIDC client ID"}
 	screenOIDCSecret   = []string{"OIDC client secret"}
 	screenSuccess      = []string{"Get into Orbit"}
+	// The running check's second-folder screens (#316): the splash row
+	// that says the stack was started from another folder, and the refusal
+	// Update opens on there. Only the launcher under test draws them: the
+	// earlier release's launcher never runs in the second folder, so no
+	// older wording sits beside these.
+	screenOtherFolder        = []string{"started from another folder"}
+	screenOtherFolderRefusal = []string{"This Orbit was started from"}
 )
 
 // inConsolePromptMarker is the guidance line the launcher prints under
