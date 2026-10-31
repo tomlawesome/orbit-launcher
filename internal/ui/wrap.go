@@ -111,6 +111,24 @@ func endCut(text string, limit int) string {
 	return xansi.Truncate(text, limit-1, "") + "…"
 }
 
+// startCut keeps text to one row of at most limit cells, ending as it
+// ends: when anything is cut the row starts with "…" and keeps the last
+// whole escapeUnits that fit, so a path's last components, which tell
+// two folders apart, always read (#316). A limit of 0 or less means no
+// cut. text is already escaped (visibleText).
+func startCut(text string, limit int) string {
+	if limit <= 0 || lipgloss.Width(text) <= limit {
+		return text
+	}
+	units := escapeUnits(text)
+	room, from := limit-1, len(units)
+	for from > 0 && lipgloss.Width(units[from-1]) <= room {
+		room -= lipgloss.Width(units[from-1])
+		from--
+	}
+	return "…" + strings.Join(units[from:], "")
+}
+
 // escapedQuote is how shellQuote writes an apostrophe inside a quoted
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`

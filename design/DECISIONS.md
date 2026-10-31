@@ -68,6 +68,20 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
 
 - **Identity block sits tight** under the wordmark: FQDN directly beneath,
   status word directly beneath that. No floating gaps.
+- **The identity block ends with the folder row** (#316): the absolute path
+  the launcher was started in, faint, one row, in every state, never with a
+  `~`. Wider than the screen less two cells it is cut from the start (`…`),
+  so the last components, which tell two deployment folders apart, always
+  read. When the app container contradicts the record, up to three rows
+  follow: the fact in amber (`started from another folder` or `started from
+  a different build`), the detail in muted text, the next step in faint
+  text. A row is a fact, never a guess: nothing shows while the check runs
+  or when it could not run. The next step is plain advice, never a key.
+- **The other-folder refusal** (#316): Update, Repair and Remove opened
+  while the app container was started from another folder are a dead end in
+  the no-deployment grammar: the amber mark, a title naming that folder, a
+  muted line for the flow and the shared advice, a faint line saying nothing
+  was changed, and the one `Menu` row.
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.

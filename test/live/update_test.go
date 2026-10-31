@@ -150,6 +150,40 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		installed = !t.Failed()
 	})
 
+	// The running check's warning against real Docker (#316): the stack
+	// the earlier install started belongs to dir, so a copy of its record
+	// and Compose file in a second folder is the mistake the check exists
+	// for, a launcher started in the wrong folder. It runs before the
+	// update, while the stack is up, and leaves both folders as they were.
+	t.Run("OtherFolder", func(t *testing.T) {
+		if !installed {
+			t.Skip("the earlier install did not run or failed; nothing is running to be warned about")
+		}
+		other := t.TempDir()
+		for _, name := range []string{".env-orbit", "docker-compose.yml"} {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatalf("read the installed folder's %s: %v", name, err)
+			}
+			if err := os.WriteFile(filepath.Join(other, name), data, 0o600); err != nil {
+				t.Fatalf("copy %s to the second folder: %v", name, err)
+			}
+		}
+		// The folder is shown whole or cut from its start, so the end of
+		// its path is what is looked for.
+		tail := dir[max(0, len(dir)-24):]
+
+		session := startLive(t, binPath, other)
+		session.mustSoonScreen(append(append([]string{}, screenOtherFolder...), tail, "start the launcher from that folder instead")...)
+		// Chosen by digit, for the caret race removeAndAssertCleanup explains.
+		session.choose("Update")
+		session.mustSoon(screenOtherFolderRefusal...)
+		session.mustSoonScreen("Start the launcher from that folder instead.", "Menu")
+		session.send("\r") // Menu, the refusal's one row
+		session.mustSoon(screenOtherFolder...)
+		session.choose("Exit")
+	})
+
 	t.Run("Update", func(t *testing.T) {
 		if !installed {
 			t.Skip("the earlier install did not run or failed; nothing to update")
