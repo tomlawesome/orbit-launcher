@@ -202,6 +202,16 @@ func (m AppModel) WithoutVolumeCheck() AppModel {
 	return m
 }
 
+// WithRunningReader supplies how the app container is read.
+// stub for #316's tests; the build replaces it
+func (m AppModel) WithRunningReader(read func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)) AppModel {
+	return m
+}
+
+// WithoutRunningCheck turns the running check off.
+// stub for #316's tests; the build replaces it
+func (m AppModel) WithoutRunningCheck() AppModel { return m }
+
 // WithAltScreen renders in the terminal's alternate screen buffer, so the
 // launcher owns the whole window and hands the user's scrollback back
 // untouched on exit. Only cmd/orbit-launcher asks for it — see

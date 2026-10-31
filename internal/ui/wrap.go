@@ -111,6 +111,10 @@ func endCut(text string, limit int) string {
 	return xansi.Truncate(text, limit-1, "") + "…"
 }
 
+// startCut keeps text to one row of at most limit cells, cut from the
+// start. stub for #316's tests; the build replaces it
+func startCut(text string, limit int) string { return "" }
+
 // escapedQuote is how shellQuote writes an apostrophe inside a quoted
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`

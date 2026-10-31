@@ -23,6 +23,9 @@ const (
 	// NoVolumeCheckEnv skips Install's stale-database-volume pre-flight
 	// (#105).
 	NoVolumeCheckEnv = "ORBIT_LAUNCHER_NO_VOLUME_CHECK"
+	// NoRunningCheckEnv skips the check of the app container against the
+	// record. stub for #316's tests; the build replaces it
+	NoRunningCheckEnv = "ORBIT_LAUNCHER_NO_RUNNING_CHECK"
 	// RequireInConsoleConfigEnv makes a fallback from in-console
 	// configuration to the terminal handoff a hard stop (#190).
 	RequireInConsoleConfigEnv = "ORBIT_LAUNCHER_REQUIRE_IN_CONSOLE_CONFIG"
