@@ -195,7 +195,11 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		empty := t.TempDir()
 		tail := dir[max(0, len(dir)-24):]
 
-		session := startLive(t, binPath, empty)
+		// startLive gives every folder its own project, which is the
+		// other-project case (#321), not this one. Here the shell names
+		// the running stack's project, as it would for a person whose
+		// shell sets COMPOSE_PROJECT_NAME, so Install here would use it.
+		session := startLiveEnv(t, binPath, empty, "COMPOSE_PROJECT_NAME="+composeProjectName(dir))
 		// Keys sent before the menu is drawn are lost: wait for it, as
 		// the other steps do.
 		session.mustSoonScreen("Install", "dormant")
