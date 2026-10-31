@@ -347,6 +347,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.splash = updated.(SplashModel)
 	}
 
+	// A diagnosis that started after Repair was left (Esc while it was
+	// preparing) has nobody watching it: kill it (#319).
+	if ready, ok := msg.(repairReadyMsg); ok && m.state != appStateRepair {
+		if ready.stream != nil {
+			ready.stream.Kill()
+		}
+		return m, nil
+	}
+
 	switch m.state {
 	case appStateSplash:
 		return m.updateSplash(msg)

@@ -366,10 +366,10 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.refuseOtherFolder(msg.mismatch.Folder), nil
 
 	case repairReadyMsg:
-		if m.state == repairOtherFolder {
-			// The start the refusal stopped reported back with a run
-			// anyway: nobody is watching it, so it is killed, as the one
-			// that arrives after Ctrl-C is.
+		if m.state == repairOtherFolder || m.Done {
+			// The start the refusal or Esc stopped reported back with a
+			// run anyway: nobody is watching it, so it is killed, as the
+			// one that arrives after Ctrl-C is (#319).
 			if msg.stream != nil {
 				msg.stream.Kill()
 			}
