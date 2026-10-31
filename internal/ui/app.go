@@ -433,15 +433,14 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 }
 
 // startRepair opens Repair on the launcher's folder, from the splash or
-// from a stopped Install or Update that left its services in place.
+// from a stopped Install or Update that left its services in place. When
+// the running check found the app container started from another folder
+// it opens on the refusal instead, and no diagnosis starts (#316).
 func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
-	return m.startRepairFor("")
-}
-
-// startRepairFor is startRepair that opens on the other-folder refusal
-// when otherFolder names the folder the app container was started from
-// (#316): no diagnosis starts then.
-func (m AppModel) startRepairFor(otherFolder string) (tea.Model, tea.Cmd) {
+	otherFolder := ""
+	if m.splash.mismatch.Kind == deploy.MismatchFolder {
+		otherFolder = m.splash.mismatch.Folder
+	}
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 	m.repair.engineRunSeams = m.flowSeams
@@ -511,7 +510,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// pre-flight it starts with the flow.
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
-		return m.startRepairFor(otherFolder)
+		return m.startRepair()
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		if m.collected == nil {
