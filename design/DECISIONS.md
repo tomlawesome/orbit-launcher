@@ -86,6 +86,17 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   end, its title reading "This machine's Orbit was started from". It has no
   "Continue anyway", because the act it prevents is Compose's takeover of
   that folder's Orbit, not a refusal of the installer's.
+- **The other-project advisory** (#321): Install opened while an Orbit app
+  container exists under another Compose project is the stale-volume
+  screen's shape: the amber mark, the title "There is already an Orbit on
+  this machine", a row naming where (the folder it was started from, or the
+  Compose project when the label has none or the folder is this one), the
+  reason, plain advice, the faint promise, and `Continue anyway` and
+  `Cancel`. It is an advisory, not a dead end, because the act it predicts
+  is the installer's own refusal (Compose's container-name conflict, rolled
+  back by ai/orbit#1456), not a takeover. Order of the three Install
+  pre-flights: the same-project clash, this, the stale volume. A check that
+  cannot run, or finds two such containers, stays silent.
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.
