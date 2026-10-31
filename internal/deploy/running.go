@@ -176,3 +176,96 @@ func sameFolder(a, b string) bool {
 	rb, errB := filepath.EvalSymlinks(b)
 	return errA == nil && errB == nil && ra == rb
 }
+
+// OtherProjectApp is an Orbit app container that belongs to a Compose
+// project other than the one an install here would use (#321).
+type OtherProjectApp struct {
+	// Found is true when exactly one such container exists, running or
+	// not.
+	Found bool
+	// Project is the Compose project it belongs to.
+	Project string
+	// Folder is the working directory Compose was started from, empty
+	// when the container carries no such label.
+	Folder string
+	// State is Docker's state word: running, exited, ...
+	State string
+}
+
+// OtherFolder is the folder to name for the container: Folder when it is
+// set and is not dir, else "". The caller compares nothing itself. An
+// empty answer means the screen names the project: the label is missing,
+// or the container was started from dir itself under another project
+// name, where "that folder" would point here.
+func (a OtherProjectApp) OtherFolder(dir string) string {
+	if a.Folder == "" || sameFolder(a.Folder, dir) {
+		return ""
+	}
+	return a.Folder
+}
+
+// OtherProjectAppOf asks Docker for Orbit app containers under any
+// Compose project but project, found by the service label and read with
+// `ps -a`, so a stopped container counts: Docker's names are unique over
+// stopped containers too, and Compose fails on them just the same.
+//
+// Docker has no not-equal filter, so every project's app container is
+// asked for and project's own are dropped here: they are the
+// same-project clash's (#318). None left is an answer (Found false). Two
+// or more is an error: two Orbit stacks under two other projects cannot
+// both hold the fixed container names, so one is not an Orbit as
+// shipped, and naming either would be a guess. Everything else that
+// stops the question being answered is an error too (no docker on PATH,
+// no daemon, no answer within RunningAppTimeout, a line that does not
+// parse, an empty project label or argument). The caller turns every
+// error into silence.
+func OtherProjectAppOf(ctx context.Context, project string) (OtherProjectApp, error) {
+	if project == "" {
+		return OtherProjectApp{}, errors.New("no project to look past")
+	}
+	ctx, cancel := context.WithTimeout(ctx, RunningAppTimeout)
+	defer cancel()
+
+	// Both labels are printed JSON-quoted, as RunningAppOf's is: a label
+	// can hold a newline, and printed raw it would start a line that
+	// reads like another container (#277).
+	ps, err := dockerCommand(ctx, "ps", "-a", "--no-trunc",
+		"--filter", "label="+labelComposeService+"="+appService,
+		"--filter", "label="+labelComposeProject,
+		"--format", `{{.ID}}`+"\t"+`{{json (.Label "`+labelComposeProject+`")}}`+"\t"+
+			`{{json (.Label "`+labelComposeWorkingDir+`")}}`+"\t"+`{{.State}}`).Output()
+	if err != nil {
+		return OtherProjectApp{}, fmt.Errorf("list the app containers: %w", err)
+	}
+
+	var found []OtherProjectApp
+	for _, line := range strings.Split(string(ps), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 || !containerIDPattern.MatchString(fields[0]) {
+			return OtherProjectApp{}, errors.New("unreadable container list")
+		}
+		other := labelValue(fields[1])
+		if other == "" {
+			return OtherProjectApp{}, errors.New("an app container with no project label")
+		}
+		if other == project {
+			continue
+		}
+		found = append(found, OtherProjectApp{
+			Found:   true,
+			Project: other,
+			Folder:  labelValue(fields[2]),
+			State:   strings.TrimSpace(fields[3]),
+		})
+	}
+	switch len(found) {
+	case 0:
+		return OtherProjectApp{}, nil
+	case 1:
+		return found[0], nil
+	}
+	return OtherProjectApp{}, fmt.Errorf("%d app containers under projects other than %s", len(found), project)
+}
