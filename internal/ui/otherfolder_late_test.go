@@ -444,3 +444,36 @@ func TestOtherFolderLate_RepairStreamArrivingAfterTheRefusalIsKilled(t *testing.
 	}
 	assertRefusal(t, m, otherProduction, refuseRepair, "reading the deployment")
 }
+
+// Every way into Repair honours the refusal, the stopped Install screen's
+// Open Repair included: the answer reached the splash while the install
+// ran, and Open Repair then shows the refusal with no diagnosis started.
+func TestOtherFolderLate_StoppedScreenOpenRepairShowsTheRefusal(t *testing.T) {
+	m, queue := installApp(t, failedScript(nil,
+		"phase=application component=application state=failed reason=application-health action=repair elapsed=3s",
+		[]string{"Orbit installer: The web service did not become ready in time."}), 80, 26)
+	if s := screen(m); !strings.Contains(flat(s), stopNotReady) || caretLabel(s) != "Open Repair" {
+		t.Fatalf("setup: not on the services-left-running screen with Open Repair preselected:\n%s", s)
+	}
+	var prepared atomic.Int32
+	m.flowSeams.prepareRepair = func(context.Context, string, deploy.RepairMode) (*engine.Stream, error) {
+		prepared.Add(1)
+		return sleepingStream(t), nil
+	}
+	// The running check answers: this folder's Orbit is not the running one.
+	m, _ = updateAs(t, m, lateFolderMsg(m.splash.targetDir))
+	if s := screen(m); !strings.Contains(flat(s), stopNotReady) {
+		t.Fatalf("setup: the answer changed the stopped screen:\n%s", s)
+	}
+
+	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Open Repair
+	m = driveUntil(t, m, cmd, shows("This Orbit was started from"), queue)
+
+	if m.state != appStateRepair {
+		t.Fatalf("the app is in state %v, want Repair's refusal:\n%s", m.state, screen(m))
+	}
+	assertRefusal(t, m, otherProduction, refuseRepair, "reading the deployment")
+	if n := prepared.Load(); n != 0 {
+		t.Errorf("a diagnosis was prepared %d times, want none", n)
+	}
+}
