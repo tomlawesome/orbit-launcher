@@ -196,6 +196,9 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		tail := dir[max(0, len(dir)-24):]
 
 		session := startLive(t, binPath, empty)
+		// Keys sent before the menu is drawn are lost: wait for it, as
+		// the other steps do.
+		session.mustSoonScreen("Install", "dormant")
 		// Chosen by digit, for the caret race removeAndAssertCleanup explains.
 		session.choose("Install")
 		session.mustSoon(screenInstallOtherFolder...)
