@@ -36,6 +36,11 @@ var (
 	// older wording sits beside these.
 	screenOtherFolder        = []string{"started from another folder"}
 	screenOtherFolderRefusal = []string{"This Orbit was started from"}
+	// The same check from Install (#318): the refusal a launcher in a
+	// folder with no deployment opens Install on while the stack runs from
+	// another. The launcher under test alone draws it, with no older
+	// wording beside it.
+	screenInstallOtherFolder = []string{"This machine's Orbit was started from"}
 )
 
 // inConsolePromptMarker is the guidance line the launcher prints under

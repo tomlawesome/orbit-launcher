@@ -53,6 +53,10 @@ func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 	if _, cmd := updateAs(t, m, ctrlC()); !isQuit(cmd) {
 		t.Fatal("Ctrl+C on the notice did not quit")
 	}
+	// The refusal for a container started from another folder (#318).
+	if _, cmd := updateAs(t, clashed(t, otherProduction), ctrlC()); !isQuit(cmd) {
+		t.Fatal("Ctrl+C on the other-folder refusal did not quit")
+	}
 }
 
 func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {
