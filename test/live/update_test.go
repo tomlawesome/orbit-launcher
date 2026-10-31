@@ -184,6 +184,27 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		session.choose("Exit")
 	})
 
+	// Install's own refusal against real Docker (#318): the stack the
+	// earlier install started still belongs to dir, so Install in a third,
+	// empty folder would take it over. It opens on the refusal, names dir,
+	// and changes nothing in either folder.
+	t.Run("InstallElsewhere", func(t *testing.T) {
+		if !installed {
+			t.Skip("the earlier install did not run or failed; nothing is running to refuse a takeover of")
+		}
+		empty := t.TempDir()
+		tail := dir[max(0, len(dir)-24):]
+
+		session := startLive(t, binPath, empty)
+		// Chosen by digit, for the caret race removeAndAssertCleanup explains.
+		session.choose("Install")
+		session.mustSoon(screenInstallOtherFolder...)
+		session.mustSoonScreen(tail, "Start the launcher from that folder instead.", "Menu")
+		session.send("\r") // Menu, the refusal's one row
+		session.mustSoon("Install")
+		session.choose("Exit")
+	})
+
 	t.Run("Update", func(t *testing.T) {
 		if !installed {
 			t.Skip("the earlier install did not run or failed; nothing to update")
