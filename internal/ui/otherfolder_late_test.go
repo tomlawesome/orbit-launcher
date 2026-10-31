@@ -374,3 +374,73 @@ func TestApp_WithoutRunningCheckOpensFlowsAsToday(t *testing.T) {
 		t.Errorf("Repair opened on a refusal:\n%s", s)
 	}
 }
+
+// The app hands the late answer to a Repair that is open, as it does to
+// Update and Remove: while the diagnosis is being prepared and on its
+// diagnosis screen, Repair becomes the refusal.
+func TestOtherFolderLate_RepairForwardedByTheAppBecomesTheRefusal(t *testing.T) {
+	openRepair := func(t *testing.T, opts ...appOpt) (AppModel, string) {
+		t.Helper()
+		dir := installedFolder(t)
+		opts = append([]appOpt{runningAs(deploy.RunningApp{}, nil)}, opts...)
+		m := started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding, opts...))
+		m = moveCaretTo(t, m, "Repair")
+		m, _ = updateAs(t, m, key(tea.KeyEnter))
+		if m.state != appStateRepair {
+			t.Fatalf("setup: state = %v, want the repair flow", m.state)
+		}
+		return sized(t, m, 80, 26), dir
+	}
+
+	t.Run("preparing", func(t *testing.T) {
+		// The flow's start command is not run, so the diagnosis is still
+		// being prepared when the answer arrives.
+		m, dir := openRepair(t)
+		if s := screen(m); !strings.Contains(s, "reading the deployment") {
+			t.Fatalf("setup: Repair is not preparing:\n%s", s)
+		}
+
+		m, _ = updateAs(t, m, lateFolderMsg(dir))
+
+		if m.state != appStateRepair {
+			t.Fatalf("state = %v, want it to stay on the repair flow's refusal", m.state)
+		}
+		assertRefusal(t, m, otherProduction, refuseRepair, "reading the deployment")
+	})
+	t.Run("diagnosis", func(t *testing.T) {
+		queue := newSink()
+		m, dir := openRepair(t,
+			func(m AppModel) AppModel {
+				m.flowSeams.prepareRepair = fakeRepairStream(`echo 'diagnosis result=healthy checked=1 skipped=0'; exit 0`)
+				return m.WithSender(queue.Send)
+			})
+		// Run the flow's own start and take what its stream pushes.
+		m = drive(t, m, m.repair.Init())
+		m = appDrainStream(t, m, queue)
+		if s := screen(m); !strings.Contains(s, "Diagnosis clear") {
+			t.Fatalf("setup: Repair is not on its diagnosis:\n%s", s)
+		}
+
+		m, _ = updateAs(t, m, lateFolderMsg(dir))
+
+		assertRefusal(t, m, otherProduction, refuseRepair, "Diagnosis clear")
+	})
+}
+
+// A diagnosis that was being started when the answer stopped it may still
+// report back with a run. That run is read-only and nobody is watching it:
+// it is killed, as the one that arrives after Ctrl-C is, and the refusal
+// stays.
+func TestOtherFolderLate_RepairStreamArrivingAfterTheRefusalIsKilled(t *testing.T) {
+	m := sizedRepair(t)
+	m, _ = updateAs(t, m, lateFolderMsg(m.targetDir))
+	assertRefusal(t, m, otherProduction, refuseRepair, "reading the deployment")
+	s := sleepingStream(t)
+
+	m, _ = updateAs(t, m, repairReadyMsg{stream: s})
+
+	if d := awaitEnd(t, s); d.ExitCode == 0 {
+		t.Errorf("the diagnosis that arrived after the refusal was left going (%+v)", d)
+	}
+	assertRefusal(t, m, otherProduction, refuseRepair, "reading the deployment")
+}
