@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -103,8 +104,12 @@ type RepairModel struct {
 	// reports back, killing a diagnosis it managed to start. A mutation
 	// that started anyway is kept instead, on a fresh context (see
 	// keepRunAfterCancel).
-	ctx      context.Context
-	cancel   context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	// flow is this model's id among the Repair flows of the process; its
+	// starts stamp it on their reply, so a reply from a flow that was
+	// left is told apart from this one's (#319).
+	flow     uint64
 	quitting bool
 	// signalQuit is a SignalQuitMsg that arrived during the safe repairs
 	// or the rotation: the launcher quits as soon as the engine has ended.
@@ -156,7 +161,13 @@ type (
 type repairReadyMsg struct {
 	stream *engine.Stream
 	err    error
+	// flow is the id of the RepairModel whose start this answers (#319).
+	flow uint64
 }
+
+// repairFlows counts the Repair flows opened, to give each its id. A
+// Cmd goroutine may build a model, so it is atomic.
+var repairFlows atomic.Uint64
 
 // repairRotateReadyMsg carries the started rotation session.
 type repairRotateReadyMsg struct {
@@ -186,7 +197,7 @@ var repairStream = streamWrap{
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan, services: &serviceReading{}}
+	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan, services: &serviceReading{}, flow: repairFlows.Add(1)}
 	// One context for the model's whole life: Init cannot store state,
 	// and the model quits once it is cancelled.
 	m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -234,10 +245,10 @@ func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}
-	targetDir, ctx := m.targetDir, m.prepareContext()
+	targetDir, ctx, flow := m.targetDir, m.prepareContext(), m.flow
 	return func() tea.Msg {
 		stream, err := prepare(ctx, targetDir, mode)
-		return repairReadyMsg{stream: stream, err: err}
+		return repairReadyMsg{stream: stream, err: err, flow: flow}
 	}
 }
 
@@ -366,6 +377,16 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.refuseOtherFolder(msg.mismatch.Folder), nil
 
 	case repairReadyMsg:
+		if msg.flow != 0 && msg.flow != m.flow {
+			// The start of another Repair flow, one that was left (Esc)
+			// before this one opened: it is not this flow's to read, and
+			// nobody is watching it, so it is killed (#319). Flow 0 is a
+			// reply no start stamped (ids begin at 1), which tests send.
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			return m, nil
+		}
 		if m.state == repairOtherFolder || m.Done {
 			// The start the refusal or Esc stopped reported back with a
 			// run anyway: nobody is watching it, so it is killed, as the
