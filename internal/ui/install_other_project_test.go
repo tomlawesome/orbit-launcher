@@ -755,3 +755,54 @@ func TestApp_WithoutRunningCheckAsksNoOtherProject(t *testing.T) {
 		t.Errorf("Install did not open on the profile screen (state %v):\n%s", m.install.state, s)
 	}
 }
+
+// --- later answers after "Continue anyway" ------------------------------
+
+// "Continue anyway" returns to the profile screen, where a later answer
+// still acts: the clash check outranks the advisory it was chosen on, so
+// its refusal replaces the profile screen (#318 above #321).
+func TestInstallOtherProject_ClashAfterContinueAnywayStillWins(t *testing.T) {
+	m, _, clash, other := opInstallWith(t, clashDir, startedFrom(otherProduction), opFinding(opProject, otherProduction))
+	m, _ = updateAs(t, m, other)
+	if m.state != installStateOtherProject {
+		t.Fatalf("setup: state = %v, want the advisory:\n%s", m.state, screen(m))
+	}
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
+	if m.state != installStateProfile {
+		t.Fatalf("setup: Continue anyway left state %v, want the profile screen:\n%s", m.state, screen(m))
+	}
+
+	m, _ = updateAs(t, m, clash)
+
+	if m.state != installStateOtherFolder {
+		t.Fatalf("state = %v, want the clash's refusal after Continue anyway:\n%s", m.state, screen(m))
+	}
+	assertClashRefusal(t, m, otherProduction)
+	if strings.Contains(screen(m), opTitle) {
+		t.Errorf("the advisory shows on the refusal:\n%s", screen(m))
+	}
+}
+
+// A stale-volume finding that reaches the profile screen after "Continue
+// anyway" still shows: one that arrived while the advisory was up was
+// dropped, this one was not.
+func TestInstallOtherProject_VolumeFindingAfterContinueAnywayStillShows(t *testing.T) {
+	m, vol, _, other := opInstall(t, clashDir, opFinding(opProject, otherProduction), deploy.DatabaseVolume{Name: "orbit-db-data"})
+	m, _ = updateAs(t, m, other)
+	if m.state != installStateOtherProject {
+		t.Fatalf("setup: state = %v, want the advisory:\n%s", m.state, screen(m))
+	}
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
+	if m.state != installStateProfile {
+		t.Fatalf("setup: Continue anyway left state %v, want the profile screen:\n%s", m.state, screen(m))
+	}
+
+	m, _ = updateAs(t, m, vol)
+
+	if m.state != installStateStaleVolume || !strings.Contains(screen(m), "This machine already has an Orbit database") {
+		t.Fatalf("state = %v, want the stale-volume screen after Continue anyway:\n%s", m.state, screen(m))
+	}
+	if strings.Contains(screen(m), opTitle) {
+		t.Errorf("the advisory shows on the stale-volume screen:\n%s", screen(m))
+	}
+}
