@@ -200,15 +200,15 @@ func TestBuildBinary_SuitesCallTheHarness(t *testing.T) {
 	}
 }
 
-var hermeticSetting = regexp.MustCompile(`^(TERM|NO_COLOR|ORBIT_LAUNCHER_NO_(UPDATE_CHECK|HEALTH_PROBE|VOLUME_CHECK|ANIMATION))=`)
+var hermeticSetting = regexp.MustCompile(`^(TERM|NO_COLOR|ORBIT_LAUNCHER_NO_(UPDATE_CHECK|HEALTH_PROBE|VOLUME_CHECK|RUNNING_CHECK|ANIMATION))=`)
 
-// SU-19: the hermetic environment's six variables are spelled out once, in
+// SU-19: the hermetic environment's seven variables are spelled out once, in
 // HermeticEnv, with the reason for each deviation next to the call that
 // makes it.
-func TestHermeticEnv_TheSixVariablesAreTypedOnlyInTheHarness(t *testing.T) {
+func TestHermeticEnv_TheSevenVariablesAreTypedOnlyInTheHarness(t *testing.T) {
 	harness := launcherSources(t)
 	for _, name := range []string{"TERM", "NO_COLOR", "ORBIT_LAUNCHER_NO_UPDATE_CHECK", "ORBIT_LAUNCHER_NO_HEALTH_PROBE",
-		"ORBIT_LAUNCHER_NO_VOLUME_CHECK", "ORBIT_LAUNCHER_NO_ANIMATION"} {
+		"ORBIT_LAUNCHER_NO_VOLUME_CHECK", "ORBIT_LAUNCHER_NO_RUNNING_CHECK", "ORBIT_LAUNCHER_NO_ANIMATION"} {
 		if len(literalHits(harness, func(s string) bool { return strings.Contains(s, name) })) == 0 {
 			t.Errorf("the harness never spells out %s", name)
 		}
