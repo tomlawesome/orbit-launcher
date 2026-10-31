@@ -111,7 +111,9 @@ func viewOtherFolder(star starfield.Model, width, height int, otherFolder, body 
 		writeWrappedIn(&b, style.MutedText, line, measure(width, proseWidth), textArea(width))
 	}
 	fmt.Fprintln(&b)
-	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, measure(width, proseWidth), textArea(width))
+	// The promise runs to errorWidth too: at proseWidth its last word
+	// would sit alone on a row.
+	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, measure(width, errorWidth), textArea(width))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
 	return skyBlock(star, width, height, b.String())
