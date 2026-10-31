@@ -215,7 +215,7 @@ func (m UpdateModel) view() string {
 	case updateStateRunning:
 		return m.run.view(m.width, m.height)
 	case updateStateOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, m.otherFolder, updateOtherFolderBody)
+		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, updateOtherFolderBody)
 	}
 	return ""
 }

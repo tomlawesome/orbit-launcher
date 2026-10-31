@@ -212,7 +212,8 @@ func (m AppModel) WithoutVolumeCheck() AppModel {
 // WithRunningReader turns the running check on (#316): the splash asks
 // read which app container the deployment runs and says so when it
 // contradicts the record, and Update, Repair and Remove refuse a
-// container started from another folder. In production read is
+// container started from another folder; Install asks too, for the
+// project it would use, in any folder (#318). In production read is
 // deploy.RunningAppOf; tests pass a fake, so none depends on the
 // machine's Docker. Whichever order this and WithDeploymentStatus are
 // given in, the check is made for an installed deployment only.
@@ -532,6 +533,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.install.checkVolumes = deploy.UnownedDatabaseVolumes
 		}
 		m.install.noVolumeCheck = m.flowNoVolumeCheck
+		m.install.runningRead = m.runningReader
 		m.install.noticeDuration = m.flowNoticeDuration
 		m.install.send = m.flowSend
 		m.state = appStateInstall

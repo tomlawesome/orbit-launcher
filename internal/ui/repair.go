@@ -880,7 +880,7 @@ func (m RepairModel) view() string {
 		return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
 			"There's nothing here for Repair to read — nothing was changed.")
 	case repairOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, m.otherFolder, repairOtherFolderBody)
+		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, repairOtherFolderBody)
 	}
 	return m.viewDiagnosis()
 }
