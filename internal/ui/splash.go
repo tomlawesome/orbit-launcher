@@ -27,6 +27,13 @@ type healthResultMsg struct {
 	counted           bool
 }
 
+// runningResultMsg carries the running check's verdict for dir.
+// stub for #316's tests; the build replaces it
+type runningResultMsg struct {
+	dir      string
+	mismatch deploy.Mismatch
+}
+
 // deployState is the splash's three-valued status vocabulary
 // (design/mockups-v5.html): dormant (nothing installed), alive
 // (deployment answers), degraded (deployment exists but is not
