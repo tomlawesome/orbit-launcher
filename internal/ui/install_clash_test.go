@@ -284,6 +284,39 @@ func TestInstallClash_ArrivingFirstIsKeptWhenAVolumeFollows(t *testing.T) {
 	}
 }
 
+// "Continue anyway" on the stale-volume screen ends the volume check's
+// say, not the clash check's: Enter on the profile screen after it still
+// waits for the folder check, opens no notice, and the refusal follows
+// when the clash arrives.
+func TestInstallClash_ContinueAnywayStillWaitsForTheClash(t *testing.T) {
+	m, vol, clash := clashInstall(t, clashDir, startedFrom(otherProduction), deploy.DatabaseVolume{Name: "orbit-db-data"})
+	m, _ = updateAs(t, m, key(tea.KeyEnter), vol)
+	if m.state != installStateStaleVolume || !strings.Contains(screen(m), "This machine already has an Orbit database") {
+		t.Fatalf("setup: state = %v, want the stale-volume screen:\n%s", m.state, screen(m))
+	}
+
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
+	if m.state != installStateProfile || !strings.Contains(screen(m), profileTitle) {
+		t.Fatalf("setup: Continue anyway left state %v, want the profile screen:\n%s", m.state, screen(m))
+	}
+
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
+
+	if m.state != installStateProfile {
+		t.Fatalf("Enter moved on to state %v while the clash check was still out", m.state)
+	}
+	if s := screen(m); !strings.Contains(s, clashChecking) {
+		t.Errorf("the waiting screen lacks %q:\n%s", clashChecking, s)
+	}
+
+	m, _ = updateAs(t, m, clash)
+
+	if m.state != installStateOtherFolder {
+		t.Fatalf("state = %v, want the refusal once the clash arrives", m.state)
+	}
+	assertClashRefusal(t, m, otherProduction)
+}
+
 // --- what is no clash --------------------------------------------------
 
 // assertNoClash checks that Install in dir, with the reader read, ends
