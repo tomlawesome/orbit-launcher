@@ -142,6 +142,13 @@ func c9Screens(t *testing.T) map[string]string {
 	sv.staleVolumes = []deploy.DatabaseVolume{{Name: "orbit_pgdata", Project: "orbit"}, {Name: "mail_pgdata"}}
 	out["install_stale_volume"] = sv.View().Content
 
+	// #318: the refusal Install opens on when the machine's Orbit was
+	// started from another folder; the title's lead is Install's own.
+	of := c9Size(t, NewInstallModel("/opt/orbit", "v1"), 80)
+	of.state = installStateOtherFolder
+	of.otherFolder = "/srv/orbit-deployments/production"
+	out["install_other_folder"] = of.View().Content
+
 	// remove and update confirm: the identity line in plain ink.
 	rc := c9Size(t, NewRemoveModel(deployment), 80)
 	rc.installedAt = installedAt

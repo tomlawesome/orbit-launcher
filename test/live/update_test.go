@@ -184,6 +184,34 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		session.choose("Exit")
 	})
 
+	// Install's own refusal against real Docker (#318): the stack the
+	// earlier install started still belongs to dir, so Install in a third,
+	// empty folder would take it over. It opens on the refusal, names dir,
+	// and changes nothing in either folder.
+	t.Run("InstallElsewhere", func(t *testing.T) {
+		if !installed {
+			t.Skip("the earlier install did not run or failed; nothing is running to refuse a takeover of")
+		}
+		empty := t.TempDir()
+		tail := dir[max(0, len(dir)-24):]
+
+		// startLive gives every folder its own project, which is the
+		// other-project case (#321), not this one. Here the shell names
+		// the running stack's project, as it would for a person whose
+		// shell sets COMPOSE_PROJECT_NAME, so Install here would use it.
+		session := startLiveEnv(t, binPath, empty, "COMPOSE_PROJECT_NAME="+composeProjectName(dir))
+		// Keys sent before the menu is drawn are lost: wait for it, as
+		// the other steps do.
+		session.mustSoonScreen("Install", "dormant")
+		// Chosen by digit, for the caret race removeAndAssertCleanup explains.
+		session.choose("Install")
+		session.mustSoon(screenInstallOtherFolder...)
+		session.mustSoonScreen(tail, "Start the launcher from that folder instead.", "Menu")
+		session.send("\r") // Menu, the refusal's one row
+		session.mustSoon("Install")
+		session.choose("Exit")
+	})
+
 	t.Run("Update", func(t *testing.T) {
 		if !installed {
 			t.Skip("the earlier install did not run or failed; nothing to update")

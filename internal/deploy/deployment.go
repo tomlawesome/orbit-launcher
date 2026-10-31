@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 )
@@ -77,6 +78,35 @@ type Deployment struct {
 // docker-compose.yml: the project Compose uses when .env-orbit sets no
 // COMPOSE_PROJECT_NAME, the same precedence orbit's installer applies.
 const defaultComposeProject = "orbit"
+
+// projectNamePattern is the installer's own pattern for a
+// COMPOSE_PROJECT_NAME it accepts (ai/orbit target-identity.ts).
+var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// InstallTarget describes dir as an install there would find it, for the
+// pre-flight that asks Docker which project's containers it would meet
+// (#318). It mirrors the order Orbit's installer derives a fresh
+// install's Compose project name in: COMPOSE_PROJECT_NAME in an existing
+// .env-orbit, else the same name in the shell's environment (when it is
+// one the installer accepts), else the compose file's own name, "orbit".
+//
+// A folder without .env-orbit is described by its TargetDir and Project
+// alone. An .env-orbit that cannot be read is the error Detect gives.
+func InstallTarget(dir string) (*Deployment, error) {
+	d, err := Detect(dir)
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		d = &Deployment{TargetDir: dir, Project: defaultComposeProject}
+	}
+	if d.Project == defaultComposeProject {
+		if name := os.Getenv("COMPOSE_PROJECT_NAME"); projectNamePattern.MatchString(name) {
+			d.Project = name
+		}
+	}
+	return d, nil
+}
 
 // Detect looks for a recognised Orbit deployment in targetDir. It returns
 // (nil, nil) — not an error — when there simply isn't one there; an error

@@ -81,7 +81,11 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   while the app container was started from another folder are a dead end in
   the no-deployment grammar: the amber mark, a title naming that folder, a
   muted line for the flow and the shared advice, a faint line saying nothing
-  was changed, and the one `Menu` row.
+  was changed, and the one `Menu` row. Install (#318) opened while the
+  project's app container was started from another folder is the same dead
+  end, its title reading "This machine's Orbit was started from". It has no
+  "Continue anyway", because the act it prevents is Compose's takeover of
+  that folder's Orbit, not a refusal of the installer's.
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.

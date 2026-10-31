@@ -39,10 +39,10 @@ var foreignMenu = []string{removeCopy, "Diagnose again", "Menu", "Exit"}
 func (m RepairModel) startDiagnosis(mode deploy.RepairMode) tea.Cmd {
 	run := m.startRun(mode)
 	check := m.foreignOwned
-	targetDir := m.targetDir
+	targetDir, flow := m.targetDir, m.flow
 	return func() tea.Msg {
 		if err := deploy.CheckFolderName(targetDir); err != nil {
-			return repairReadyMsg{err: err}
+			return repairReadyMsg{err: err, flow: flow}
 		}
 		if check != nil {
 			if own, err := check(targetDir); err == nil && len(own.Files) > 0 {
