@@ -90,6 +90,11 @@ type AppModel struct {
 	// (WithRunningReader), and WithoutRunningCheck switches it off again.
 	runningReader func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)
 
+	// otherReader asks Docker for an Orbit app container under another
+	// Compose project, for Install's pre-flight (#321). Nil means no
+	// check; WithoutRunningCheck clears it with runningReader.
+	otherReader func(context.Context, string) (deploy.OtherProjectApp, error)
+
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 20 s default).
 	flowNoticeDuration time.Duration
@@ -225,12 +230,22 @@ func (m AppModel) WithRunningReader(read func(context.Context, *deploy.Deploymen
 	return m
 }
 
+// WithOtherProjectReader turns Install's other-project check on (#321):
+// before anything is written it asks read for an Orbit app container
+// under a Compose project other than the one an install here would use.
+// In production read is deploy.OtherProjectAppOf; tests pass a fake.
+func (m AppModel) WithOtherProjectReader(read func(context.Context, string) (deploy.OtherProjectApp, error)) AppModel {
+	m.otherReader = read
+	return m
+}
+
 // WithoutRunningCheck turns the running check off: no question, no rows
-// and no refusals. Its answer comes from the local Docker daemon, which a
-// hermetic test suite does not control. See ORBIT_LAUNCHER_NO_RUNNING_CHECK
+// and no refusals, Install's other-project check included. Their answers
+// come from the local Docker daemon, which a hermetic test suite does not
+// control. See ORBIT_LAUNCHER_NO_RUNNING_CHECK
 // in cmd/orbit-launcher.
 func (m AppModel) WithoutRunningCheck() AppModel {
-	return m.WithRunningReader(nil)
+	return m.WithRunningReader(nil).WithOtherProjectReader(nil)
 }
 
 // WithAltScreen renders in the terminal's alternate screen buffer, so the
@@ -534,6 +549,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.install.noVolumeCheck = m.flowNoVolumeCheck
 		m.install.runningRead = m.runningReader
+		m.install.otherRead = m.otherReader
 		m.install.noticeDuration = m.flowNoticeDuration
 		m.install.send = m.flowSend
 		m.state = appStateInstall

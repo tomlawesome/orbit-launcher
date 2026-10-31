@@ -105,7 +105,10 @@ func startApp(stdout, stderr io.Writer) int {
 	// The running check (#316) asks the same daemon which folder started
 	// the deployment's app container and which build it runs, so it has
 	// its own gate for the same reason.
-	app = app.WithRunningReader(deploy.RunningAppOf)
+	// Install's other-project check (#321) asks the same daemon the same
+	// question, widened to any Compose project, so the same gate turns it
+	// off.
+	app = app.WithRunningReader(deploy.RunningAppOf).WithOtherProjectReader(deploy.OtherProjectAppOf)
 	if os.Getenv(deploy.NoRunningCheckEnv) != "" {
 		app = app.WithoutRunningCheck()
 	}
