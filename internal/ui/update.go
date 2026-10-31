@@ -19,6 +19,9 @@ const (
 	updateStateNotFound updateState = iota
 	updateStateConfirm
 	updateStateRunning
+	// updateStateOtherFolder is the dead end for a deployment whose app
+	// container was started from another folder (#316).
+	updateStateOtherFolder
 )
 
 // UpdateModel is the Update flow: confirm, then the same mission
@@ -36,6 +39,10 @@ type UpdateModel struct {
 	detectErr     error // deploy.Detect's error for targetDir; see RemoveModel
 	state         updateState
 	confirm       menu // updateConfirmRows
+
+	// otherFolder is the folder the app container was started from, in
+	// updateStateOtherFolder (#316).
+	otherFolder string
 
 	// left is Esc, Cancel or Menu on the flow's first screen: back to the
 	// main menu with nothing started (#210).
@@ -71,6 +78,16 @@ var updateConfirmRows = []string{"Update Orbit", "Cancel"}
 // deadEndRows are a dead end's one row, Update's and Remove's not-found
 // screens: back to the main menu (#228).
 var deadEndRows = []string{"Menu"}
+
+// updateOtherFolderBody is the refusal's first body line.
+const updateOtherFolderBody = "Update here would act on that folder's Orbit, and Orbit's installer refuses it."
+
+// refuseOtherFolder turns the flow into the dead end that names folder,
+// where the container was started from (#316).
+func (m UpdateModel) refuseOtherFolder(folder string) UpdateModel {
+	m.state, m.otherFolder = updateStateOtherFolder, folder
+	return m
+}
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
 // the person left on the first screen, otherwise the engine run's.
@@ -113,6 +130,17 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The running check may answer after the flow has opened. Before the
+	// run starts, another folder's container turns the confirmation into
+	// the refusal; once it has, the installer's own refusal is the net.
+	// An answer for another folder is not this flow's.
+	if r, ok := msg.(runningResultMsg); ok {
+		if m.state == updateStateConfirm && r.dir == m.targetDir && r.mismatch.Kind == deploy.MismatchFolder {
+			m = m.refuseOtherFolder(r.mismatch.Folder)
+		}
+		return m, nil
+	}
+
 	if m.state == updateStateRunning {
 		var cmd tea.Cmd
 		m.run, cmd = m.run.update(msg)
@@ -135,7 +163,7 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch m.state {
-	case updateStateNotFound:
+	case updateStateNotFound, updateStateOtherFolder:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228).
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
@@ -186,6 +214,8 @@ func (m UpdateModel) view() string {
 		return m.viewConfirm()
 	case updateStateRunning:
 		return m.run.view(m.width, m.height)
+	case updateStateOtherFolder:
+		return viewOtherFolder(m.star, m.width, m.height, m.otherFolder, updateOtherFolderBody)
 	}
 	return ""
 }

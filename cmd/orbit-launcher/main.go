@@ -102,6 +102,13 @@ func startApp(stdout, stderr io.Writer) int {
 	if os.Getenv(deploy.NoVolumeCheckEnv) != "" {
 		app = app.WithoutVolumeCheck()
 	}
+	// The running check (#316) asks the same daemon which folder started
+	// the deployment's app container and which build it runs, so it has
+	// its own gate for the same reason.
+	app = app.WithRunningReader(deploy.RunningAppOf)
+	if os.Getenv(deploy.NoRunningCheckEnv) != "" {
+		app = app.WithoutRunningCheck()
+	}
 
 	// The engine stream reader pushes into the event loop rather than
 	// being asked for each message (#159), and tea.NewProgram takes the
