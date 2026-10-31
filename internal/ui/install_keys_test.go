@@ -57,6 +57,10 @@ func TestInstallModel_CtrlCQuitsFromAnyPreRunScreen(t *testing.T) {
 	if _, cmd := updateAs(t, clashed(t, otherProduction), ctrlC()); !isQuit(cmd) {
 		t.Fatal("Ctrl+C on the other-folder refusal did not quit")
 	}
+	// The advisory for an Orbit under another Compose project (#321).
+	if _, cmd := updateAs(t, advisory(t, otherProduction, opProject), ctrlC()); !isQuit(cmd) {
+		t.Fatal("Ctrl+C on the other-project advisory did not quit")
+	}
 }
 
 func TestInstallModel_UnavailableProfileExplainsAndOnlyGoesBack(t *testing.T) {

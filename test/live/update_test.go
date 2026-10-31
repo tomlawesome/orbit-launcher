@@ -212,6 +212,39 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		session.choose("Exit")
 	})
 
+	// Install's other-project advisory against real Docker (#321): the
+	// stack the earlier install started is under liveProjectName(dir) and
+	// was started from dir. A fourth, empty folder gets its own project
+	// from startLive (liveProjectName of that folder) with no extra
+	// environment, so the running stack is another project's Orbit, which
+	// is the case wanted here (InstallElsewhere had to name the stack's
+	// project to get the same-project one). Install opens on the advisory,
+	// names dir, lets Continue anyway through to the profile screen and
+	// changes nothing in either folder.
+	t.Run("InstallOtherProject", func(t *testing.T) {
+		if !installed {
+			t.Skip("the earlier install did not run or failed; nothing is running to be advised of")
+		}
+		fourth := t.TempDir()
+		tail := dir[max(0, len(dir)-24):]
+
+		session := startLive(t, binPath, fourth)
+		// Keys sent before the menu is drawn are lost: wait for it, as
+		// the other steps do.
+		session.mustSoonScreen("Install", "dormant")
+		// Chosen by digit, for the caret race removeAndAssertCleanup explains.
+		session.choose("Install")
+		session.mustSoon(screenInstallOtherProject...)
+		session.mustSoonScreen(tail, "Start the launcher from that folder instead.", "Continue anyway", "Cancel")
+		session.send("\r") // Continue anyway, preselected
+		session.mustSoon(screenProfile...)
+		// Esc on the profile screen is back to the menu. The menu is told
+		// apart from the profile screen by its dormant status line.
+		session.send("\x1b")
+		session.mustSoonScreen("Install", "dormant")
+		session.choose("Exit")
+	})
+
 	t.Run("Update", func(t *testing.T) {
 		if !installed {
 			t.Skip("the earlier install did not run or failed; nothing to update")

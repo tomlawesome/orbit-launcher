@@ -41,6 +41,10 @@ var (
 	// another. The launcher under test alone draws it, with no older
 	// wording beside it.
 	screenInstallOtherFolder = []string{"This machine's Orbit was started from"}
+	// And the advisory Install opens on when the Orbit is under another
+	// Compose project (#321). The launcher under test alone draws it, with
+	// no older wording beside it.
+	screenInstallOtherProject = []string{"There is already an Orbit on this machine"}
 )
 
 // inConsolePromptMarker is the guidance line the launcher prints under
