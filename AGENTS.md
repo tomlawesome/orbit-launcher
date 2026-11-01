@@ -71,6 +71,19 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
   default. Its first install runs that release's own launcher, which
   `live-prepare` fetches (from `previous/`, then from `build_launcher`) and
   checks against the signed manifest (#307, #313).
+- `ORBIT_TO_RECORD_IMAGE_JOB` and `ORBIT_TO_SIGN_EVIDENCE_JOB` do the same for
+  the release updated to (#324): the job IDs of the preview being released, so
+  Orbit's release acceptance can start the live legs against it. They are read
+  and verified as the `ORBIT_FIRST_*` pair is, and `install.sh` is then fetched
+  from the commit the release's manifest names. Set `ORBIT_FIRST_*` with them:
+  the default earlier release is the predecessor of the branch's latest build.
+  Never give them a default.
+- The update leg also checks that data survives (#324): after its first install
+  it seeds one household, item and document (row and stored file), and after
+  the update reads them back, the app's reported version and `/api/health`.
+  The seed SQL is `updateSentinelSeedSQL` in `test/live/update_sentinels.go`,
+  written against the earlier release's schema; when that release moves on and
+  the seed fails, it is the only thing to update.
 - Orbit is pinned in `orbit/pin.json` (branch and commit, #193); move it with
   `scripts/bump-orbit-pin.sh <ref>`. `ORBIT_BRANCH`, empty by default, set on
   a hand-started pipeline overrides the pin: files from that branch's tip.

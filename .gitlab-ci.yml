@@ -677,6 +677,21 @@ visual:
 # Its artifacts last seven days: a leg started later than that needs this job
 # retried first.
 #
+# Which Orbit releases the update leg goes between (#198, #324). By default the
+# release updated to is the latest build of the pin's branch and the one
+# updated from is that build's predecessor. A pipeline started by hand can name
+# either by the job IDs of an ai/orbit preview pipeline, all four being
+# numbers:
+#   - ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB: the
+#     release updated from (its record_image and sign_evidence jobs).
+#   - ORBIT_TO_RECORD_IMAGE_JOB and ORBIT_TO_SIGN_EVIDENCE_JOB: the release
+#     updated to, so Orbit's release acceptance can start the leg against the
+#     preview being released. Its install.sh is fetched from the commit its
+#     manifest names. Set ORBIT_FIRST_* with them: the default earlier release
+#     is the predecessor of the branch's latest build, which is not this one's.
+# Each pair is read, verified and checked as the other is, both jobs or
+# neither. Never give any of them a default.
+#
 # ORBIT_READ_TOKEN is a CI/CD variable the owner creates on ai/orbit-launcher
 # (Settings > CI/CD > Variables):
 #   - its value is a project access token on ai/orbit, role Reporter, scope
@@ -864,26 +879,58 @@ live-prepare:
           head -1 ".live/orbit/scripts/ci/$script" | grep -q '^#!' || { echo "ai/orbit did not return a script for scripts/ci/$script at ${orbit_at}"; exit 1; }
         done
         head -1 .live/orbit/cosign.pub | grep -qx -e '-----BEGIN PUBLIC KEY-----' || { echo "ai/orbit did not return a public key for cosign.pub at ${orbit_at}"; exit 1; }
-        # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
-        # these two stay on the plain branch name; the pair is verified below
-        # against the cosign.pub fetched at the pinned commit (or, under
-        # ORBIT_BRANCH, by full ref) above (#273).
-        curl --fail --silent --show-error --location --max-redirs 0 \
-          --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
-          --output .live/orbit/release/orbit-release-manifest.json \
-          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image" \
-          || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
-        curl --fail --silent --show-error --location --max-redirs 0 \
-          --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
-          --output .live/orbit/release/orbit-release-manifest.json.sig \
-          "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence" \
-          || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
+        # The release the legs update to (#324): the latest build of the
+        # pin's branch, unless a pipeline started by hand sets
+        # ORBIT_TO_RECORD_IMAGE_JOB and ORBIT_TO_SIGN_EVIDENCE_JOB, the
+        # record_image and sign_evidence job IDs of an ai/orbit preview
+        # pipeline, read by ID like ORBIT_FIRST_* below. That is how Orbit's
+        # release acceptance starts this against the preview being released.
+        # Both come with it, and install.sh then comes from the commit that
+        # release's manifest names (below), not from the pin. Give
+        # ORBIT_FIRST_* with it: the default earlier release is the
+        # predecessor of the branch's latest build, not of this one.
+        to_record="${ORBIT_TO_RECORD_IMAGE_JOB:-}"
+        to_sign="${ORBIT_TO_SIGN_EVIDENCE_JOB:-}"
+        if [ -n "$to_record" ] || [ -n "$to_sign" ]; then
+          for job_id in "$to_record" "$to_sign"; do
+            case "$job_id" in
+              ''|*[!0-9]*) echo "ORBIT_TO_RECORD_IMAGE_JOB and ORBIT_TO_SIGN_EVIDENCE_JOB must both be ai/orbit job IDs (#324)"; exit 1 ;;
+            esac
+          done
+          current_from="ai/orbit jobs ${to_record}/${to_sign}"
+          curl --fail --silent --show-error --location --max-redirs 0 \
+            --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+            --output .live/orbit/release/orbit-release-manifest.json \
+            "${CI_API_V4_URL}/projects/${project}/jobs/${to_record}/artifacts/.orbit-supply-chain/orbit-release-manifest.json" \
+            || { echo "could not read the release manifest from ai/orbit job ${to_record} (#324)"; exit 1; }
+          curl --fail --silent --show-error --location --max-redirs 0 \
+            --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+            --output .live/orbit/release/orbit-release-manifest.json.sig \
+            "${CI_API_V4_URL}/projects/${project}/jobs/${to_sign}/artifacts/.orbit-supply-chain/orbit-release-manifest.json.sig" \
+            || { echo "could not read the release signature from ai/orbit job ${to_sign} (#324)"; exit 1; }
+        else
+          current_from="ai/orbit's latest ${orbit_branch} build"
+          # The artifacts endpoint rejects full refs (404 for refs/heads/...), so
+          # these two stay on the plain branch name; the pair is verified below
+          # against the cosign.pub fetched at the pinned commit (or, under
+          # ORBIT_BRANCH, by full ref) above (#273).
+          curl --fail --silent --show-error --location --max-redirs 0 \
+            --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+            --output .live/orbit/release/orbit-release-manifest.json \
+            "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json?job=record_image" \
+            || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
+          curl --fail --silent --show-error --location --max-redirs 0 \
+            --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+            --output .live/orbit/release/orbit-release-manifest.json.sig \
+            "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence" \
+            || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
+        fi
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
           env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
-          || { echo "the preview release manifest at ${orbit_branch} failed verification; nothing is installed from it (#194)"; exit 1; }
+          || { echo "the preview release manifest from ${current_from} failed verification; nothing is installed from it (#194)"; exit 1; }
         # install.sh comes from the pinned commit (#193), the manifest from
         # the latest preview pipeline of the pin's branch. Once that branch
         # moves on, or while the pinned commit's own build is still running,
@@ -891,10 +938,29 @@ live-prepare:
         # another's image, so it stops until they are one release (#236).
         # Under ORBIT_BRANCH install.sh is the branch tip, and the gap is
         # that branch's pipeline catching up.
-        [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
-          || { echo "install.sh at ${orbit_at} is not the one the latest signed preview release records: ${orbit_mismatch} (#193, #236)"; exit 1; }
+        if [ -n "$to_record" ]; then
+          # A release picked by job ID is not the pin's, so install.sh comes
+          # from the commit its manifest names, as the earlier release's does
+          # below, and must match the sha256 the manifest records for it.
+          to_commit="$(jq -r .commit .live/orbit/release/orbit-release-manifest.json)"
+          case "$to_commit" in
+            *[!0-9a-f]*) to_commit="" ;;
+          esac
+          [ "${#to_commit}" -eq 40 ] || { echo "the release manifest from ${current_from} names no source commit (#324)"; exit 1; }
+          curl --fail --silent --show-error --location --max-redirs 0 \
+            --header "PRIVATE-TOKEN: ${ORBIT_READ_TOKEN}" \
+            --output .live/install-script/install.sh \
+            "${CI_API_V4_URL}/projects/${project}/repository/files/scripts%2Finstall.sh/raw?ref=${to_commit}" \
+            || { echo "could not fetch scripts/install.sh from ${ORBIT_PROJECT} at ${to_commit} (#324)"; exit 1; }
+          head -1 .live/install-script/install.sh | grep -q '^#!' || { echo "ai/orbit did not return a script at ${to_commit} (#324)"; exit 1; }
+          [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+            || { echo "install.sh at ${to_commit} does not match the sha256 the release manifest from ${current_from} records for it (#324)"; exit 1; }
+        else
+          [ "sha256:$(sha256sum .live/install-script/install.sh | cut -d' ' -f1)" = "$(jq -r '.files["install.sh"]' .live/orbit/release/orbit-release-manifest.json)" ] \
+            || { echo "install.sh at ${orbit_at} is not the one the latest signed preview release records: ${orbit_mismatch} (#193, #236)"; exit 1; }
+        fi
         current_manifest="$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json"
-        echo "the verified preview release manifest names image $(jq -r .image.digest "$current_manifest")"
+        echo "the verified preview release manifest from ${current_from} names image $(jq -r .image.digest "$current_manifest")"
         # The update leg's first install (#198): the preview build before
         # the current one, so the update goes from one signed image to
         # another. ai/orbit's record_image keeps that build's signed manifest
