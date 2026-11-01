@@ -577,11 +577,6 @@ func readUpdateSentinels(t *testing.T, dir string) updateSentinels {
 // own error, naming what changed.
 func checkUpdateSentinels(t *testing.T, dir string, want updateSentinels, wantVersion string) {
 	t.Helper()
-	// TEMPORARY (#324 "Done when"): delete the document file to show the
-	// leg fails when a sentinel is lost. Reverted in the next commit.
-	if _, err := composeExec(dir, "", "orbit-app", "rm", "-f", sentinelFilePath()); err != nil {
-		t.Logf("remove the document sentinel file for the demonstration: %v", err)
-	}
 	for _, problem := range sentinelChanges(want, readUpdateSentinels(t, dir)) {
 		t.Error(problem)
 	}
