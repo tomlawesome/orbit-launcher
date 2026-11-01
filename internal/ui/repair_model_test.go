@@ -170,6 +170,39 @@ func TestRepairModel_EscWhileReadingKillsTheRunAndReturnsToMenu(t *testing.T) {
 	}
 }
 
+// #325: the working line says only what holds for all four safe
+// repairs (every step reversible) and makes no claim about backups,
+// which only one of the four takes. cannotStopLine stays on the row
+// below it.
+func TestRepairModel_ExecutingScreenSaysEveryStepReversibleAndNoBackupClaim(t *testing.T) {
+	m := sizedRepair(t)
+	m.state = repairExecuting
+	rows := strings.Split(screen(m), "\n")
+	const want = "running the safe repairs — every step reversible"
+	at := -1
+	for i, row := range rows {
+		if strings.TrimSpace(strings.TrimLeft(row, " ")) == "" {
+			continue
+		}
+		if strings.Contains(row, want) {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		t.Fatalf("no row carries %q:\n%s", want, screen(m))
+	}
+	if !strings.HasSuffix(strings.TrimRight(rows[at], " "), want) {
+		t.Errorf("row %q carries more than the working line", rows[at])
+	}
+	if strings.Contains(strings.ToLower(screen(m)), "backup") {
+		t.Errorf("the executing screen mentions a backup:\n%s", screen(m))
+	}
+	if at+1 >= len(rows) || !strings.Contains(rows[at+1], cannotStopLine) {
+		t.Errorf("the row after the working line is not cannotStopLine:\n%s", screen(m))
+	}
+}
+
 func TestRepairModel_EscWhileExecutingDoesNotAbandonTheRepair(t *testing.T) {
 	m := sizedRepair(t)
 	m.state = repairExecuting
