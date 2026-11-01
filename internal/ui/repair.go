@@ -32,11 +32,12 @@ import (
 // error, and the flow falls back to `--check` — capability detected by
 // behaviour. When the plan proposes executable actions the menu offers
 // them (orbit#261 slice 4): the safe batch runs unattended (the
-// script's documented automation path — reversible actions, per-file
-// backups, full re-diagnosis after), and the guarded database-
-// credential rotation is driven in-console over the same machine
-// prompt grammar as configuration (typed action word + checkpoint
-// passphrase, never automatable by the script's own contract). The
+// script's documented automation path — reversible actions, a backup
+// wherever a file is replaced, full re-diagnosis after), and the
+// guarded database-credential rotation is driven in-console over the
+// same machine prompt grammar as configuration (typed action word +
+// checkpoint passphrase, never automatable by the script's own
+// contract). The
 // menu never offers an action the plan didn't propose.
 type RepairModel struct {
 	width, height int
