@@ -54,7 +54,8 @@ var realPlanPairs = []realPlanPair{
 	{"database-credential-unverifiable", "manual"},
 }
 
-// orbitClassOrder is Orbit's repair.sh class_order at dev e697be42, in
+// orbitClassOrder is Orbit's repair.sh class_order at dev e697be42 (unchanged
+// at preview 77ddc612, the channel the live suite installs), in
 // its order, with each class's plan action from the same file's
 // action_for_class map (manual where the map has no entry).
 // secret-missing has no entry: resolve_secret_missing_action picks
