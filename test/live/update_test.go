@@ -5,6 +5,7 @@ package live
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,13 @@ const (
 // against losing a configured secret rather than through the readiness
 // check this leg means to exercise.
 //
+// Household data must also survive it (#324), the standard upgrade test:
+// after InstallEarlier the leg seeds a household with an item and a document
+// whose file sits in the app container's storage (seedUpdateSentinels), and
+// after the update reads them back, checks the app reports the new image's
+// version and that health says ready. A failure names which sentinel
+// changed.
+//
 // The evidence is `docker events`: every container created during the
 // update, recorded as it happens. None may come from the old image, and at
 // least one one-off must come from the new image in the stretch where only
@@ -91,7 +99,8 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	if currentManifest == "" || firstManifest == "" || firstScript == "" {
 		t.Skipf("no earlier Orbit release to update from: %s, %s and ORBIT_RELEASE_MANIFEST must all be set. "+
 			"In CI the live job sets them from the previous build ai/orbit's record_image keeps (#263), or from "+
-			"ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB on a hand-started pipeline (#198)", firstManifestEnv, firstScriptEnv)
+			"ORBIT_FIRST_RECORD_IMAGE_JOB and ORBIT_FIRST_SIGN_EVIDENCE_JOB on a hand-started pipeline (#198); "+
+			"ORBIT_TO_RECORD_IMAGE_JOB and ORBIT_TO_SIGN_EVIDENCE_JOB name the release updated to the same way (#324)", firstManifestEnv, firstScriptEnv)
 	}
 	// The first-release manifest and script are set, so the job means to run
 	// the update leg: it needs the earlier launcher, and without it fails
@@ -105,6 +114,7 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 	}
 	newDigest := readManifestDigest(t, currentManifest)
 	oldDigest := readManifestDigest(t, firstManifest)
+	newVersion := readManifestVersion(t, currentManifest)
 	if oldDigest == newDigest {
 		t.Fatalf("the earlier release names the same image as the current one (%s); an update between them proves nothing", newDigest)
 	}
@@ -249,6 +259,9 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 		if !installed {
 			t.Skip("the earlier install did not run or failed; nothing to update")
 		}
+		// Before the secret is emptied, so the earlier release is still
+		// whole and healthy while the household's data goes in (#324).
+		sentinels := seedUpdateSentinels(t, dir)
 		emptyOIDCSecret(t, dir)
 
 		old := imageIdentity{Digest: oldDigest, ID: localImageID(t, oldRef)}
@@ -302,6 +315,7 @@ func TestLive_UpdateReconfiguresOnTheNewImage(t *testing.T) {
 			t.Errorf("after the update the deployment records image digest %q, want the current release's %s", got, newDigest)
 		}
 		waitHealthy(t, session)
+		checkUpdateSentinels(t, dir, sentinels, newVersion)
 		quitFromSuccess(session)
 	})
 
@@ -324,6 +338,19 @@ func readManifestDigest(t *testing.T, path string) string {
 		t.Fatalf("%s: %v", path, err)
 	}
 	return digest
+}
+
+func readManifestVersion(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read release manifest: %v", err)
+	}
+	version, err := manifestVersion(data)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return version
 }
 
 // deployedImage is the ORBIT_IMAGE the deployment in dir records: the image
@@ -452,4 +479,132 @@ func (r *createRecorder) stop(t *testing.T) []containerCreate {
 	t.Logf("docker events: %d container creates recorded during the update, kept in %s", len(creates), r.path)
 	r.creates = creates
 	return creates
+}
+
+// composeExec runs args as `docker compose exec -T` in the deployment in dir
+// and returns its trimmed stdout. The project is this run's own
+// (liveProjectName), as dockerComposeDown pins it, so an exec cannot reach a
+// real Orbit on the host.
+func composeExec(dir, stdin string, args ...string) (string, error) {
+	full := append([]string{"compose", "--project-directory", dir,
+		"--env-file", filepath.Join(dir, ".env-orbit"), "exec", "-T"}, args...)
+	cmd := exec.Command("docker", full...)
+	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+liveProjectName(dir))
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// psql runs script in the deployment's database container, as Orbit's own
+// scripts/test-backup-restore.sh does, and returns what it printed.
+func psql(dir, script string) (string, error) {
+	return composeExec(dir, script, "orbit-db", "sh", "-c",
+		`exec psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align`)
+}
+
+// storedFileSHA256 is the sha256 of the sentinel file in the app container,
+// or "" if it cannot be read.
+func storedFileSHA256(dir string) (string, error) {
+	out, err := composeExec(dir, "", "orbit-app", "sha256sum", sentinelFilePath())
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("sha256sum printed nothing")
+	}
+	return fields[0], nil
+}
+
+// seedUpdateSentinels puts the household data of #324 into the running
+// earlier release and returns what to read back: the file first, written as
+// the app's own user into its documents volume, then the rows that name it
+// (updateSentinelSeedSQL holds the earlier release's schema).
+func seedUpdateSentinels(t *testing.T, dir string) updateSentinels {
+	t.Helper()
+	want := wantedSentinels()
+	if _, err := composeExec(dir, "", "--user", "orbit:orbit", "orbit-app", "sh", "-c",
+		`mkdir -p "$(dirname "$1")" && printf '%s' "$2" > "$1"`, "sh", sentinelFilePath(), sentinelFileContent); err != nil {
+		t.Fatalf("write the document sentinel file into the earlier release's app container: %v", err)
+	}
+	if got, err := storedFileSHA256(dir); err != nil || got != want.FileSHA256 {
+		t.Fatalf("the document sentinel file reads back as sha256 %q (error: %v) before the update, want %s", got, err, want.FileSHA256)
+	}
+	if _, err := psql(dir, updateSentinelSeedSQL()); err != nil {
+		t.Fatalf("seed the household, item and document rows into the earlier release's database "+
+			"(the earlier release's schema may have moved: update updateSentinelSeedSQL): %v", err)
+	}
+	if got := readUpdateSentinels(t, dir); len(sentinelChanges(want, got)) != 0 {
+		t.Fatalf("the sentinels do not read back right after seeding the earlier release: %v", sentinelChanges(want, got))
+	}
+	t.Logf("seeded on the earlier release: item %q, document %q, file sha256 %s", want.ItemName, want.DocumentName, want.FileSHA256)
+	return want
+}
+
+// readUpdateSentinels reads the sentinels from the running deployment. What
+// cannot be read comes back "", which sentinelChanges reports as gone.
+func readUpdateSentinels(t *testing.T, dir string) updateSentinels {
+	t.Helper()
+	var got updateSentinels
+	var err error
+	if got.ItemName, err = psql(dir, sentinelReadBackSQL("items", "title_enc", sentinelItemID)); err != nil {
+		t.Logf("read the item sentinel: %v", err)
+	}
+	if got.DocumentName, err = psql(dir, sentinelReadBackSQL("documents", "display_name", sentinelDocumentID)); err != nil {
+		t.Logf("read the document row sentinel: %v", err)
+	}
+	if got.FileSHA256, err = storedFileSHA256(dir); err != nil {
+		t.Logf("read the document file sentinel: %v", err)
+	}
+	return got
+}
+
+// checkUpdateSentinels is #324's end of the leg: after the update the
+// household's rows and file are as they were seeded, the running app reports
+// the version of the release updated to (its ORBIT_VERSION, which Orbit's
+// admin health page shows), and /api/health says ready. Each failure is its
+// own error, naming what changed.
+func checkUpdateSentinels(t *testing.T, dir string, want updateSentinels, wantVersion string) {
+	t.Helper()
+	for _, problem := range sentinelChanges(want, readUpdateSentinels(t, dir)) {
+		t.Error(problem)
+	}
+	if got, err := composeExec(dir, "", "orbit-app", "printenv", "ORBIT_VERSION"); err != nil {
+		t.Errorf("read the version the app reports after the update: %v", err)
+	} else if got != wantVersion {
+		t.Errorf("after the update the app reports version %q, want the release updated to, %s", got, wantVersion)
+	}
+	// The app has just been restarted onto the new image, so give readiness
+	// a short while to settle rather than judge its first answer.
+	var status string
+	var lastErr error
+	until := time.Now().Add(time.Minute)
+	for {
+		status, lastErr = "", nil
+		resp, err := healthClient.Get("http://localhost:3000/api/health")
+		if err != nil {
+			lastErr = err
+		} else {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				lastErr = readErr
+			} else {
+				status, lastErr = healthStatus(body)
+			}
+		}
+		if status == "ready" || time.Now().After(until) {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if status != "ready" {
+		t.Errorf("after the update /api/health reports %q, want ready (last error: %v)", status, lastErr)
+	}
 }
