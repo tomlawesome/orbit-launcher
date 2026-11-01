@@ -50,14 +50,18 @@ func assertStoppedMutationScreen(t *testing.T, m RepairModel, title string) {
 	for _, want := range []string{
 		title,
 		"exit status 4",
-		"it may have changed the deployment partway",
-		"backups were taken first",
-		"diagnose again to see where it stands",
+		"it may have changed the deployment partway — diagnose again to see where it stands",
 		"Diagnose again",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("screen lacks %q:\n%s", want, screen(m))
 		}
+	}
+	if strings.Contains(s, "backups were taken first") {
+		t.Errorf("the screen still claims backups were taken first:\n%s", screen(m))
+	}
+	if strings.Contains(strings.ToLower(s), "backup") {
+		t.Errorf("the screen mentions a backup:\n%s", screen(m))
 	}
 	if strings.Contains(s, "Diagnosis stopped") {
 		t.Errorf("a run that may have changed the deployment is titled as a failed read-only check:\n%s", screen(m))
@@ -174,7 +178,7 @@ func TestRepairModel_MutationThatNeverStartedClaimsNoChange(t *testing.T) {
 	if !strings.Contains(s, "Repairs stopped") || !strings.Contains(s, "fetch repair.sh: connection refused") {
 		t.Errorf("screen:\n%s", screen(m))
 	}
-	for _, not := range []string{"Diagnosis stopped", "Diagnose again", "may have changed the deployment", "backups were taken first"} {
+	for _, not := range []string{"Diagnosis stopped", "Diagnose again", "may have changed the deployment", "diagnose again to see where it stands"} {
 		if strings.Contains(s, not) {
 			t.Errorf("a run that never started shows %q:\n%s", not, screen(m))
 		}
@@ -201,7 +205,7 @@ func TestRepairModel_FailedCheckKeepsDiagnosisStoppedAndNoDiagnoseAgain(t *testi
 	if !strings.Contains(s, "Diagnosis stopped") || !strings.Contains(s, "exit status 1") {
 		t.Errorf("screen:\n%s", screen(m))
 	}
-	for _, not := range []string{"Repairs stopped", "Credential rotation stopped", "Diagnose again", "backups were taken first", "may have changed the deployment"} {
+	for _, not := range []string{"Repairs stopped", "Credential rotation stopped", "Diagnose again", "diagnose again to see where it stands", "may have changed the deployment"} {
 		if strings.Contains(s, not) {
 			t.Errorf("a failed read-only check shows %q:\n%s", not, screen(m))
 		}
@@ -235,7 +239,7 @@ func assertNothingRanScreen(t *testing.T, m RepairModel, title, words string) {
 			t.Errorf("screen lacks %q:\n%s", want, screen(m))
 		}
 	}
-	for _, not := range []string{"Diagnosis stopped", "Diagnose again", "backups were taken first", "may have changed the deployment"} {
+	for _, not := range []string{"Diagnosis stopped", "Diagnose again", "diagnose again to see where it stands", "may have changed the deployment"} {
 		if strings.Contains(s, not) {
 			t.Errorf("a run that changed nothing shows %q:\n%s", not, screen(m))
 		}
@@ -263,7 +267,7 @@ func assertNoDeploymentScreen(t *testing.T, m RepairModel) {
 	if !strings.Contains(s, "No Orbit deployment found") {
 		t.Errorf("screen lacks %q:\n%s", "No Orbit deployment found", screen(m))
 	}
-	for _, not := range []string{"Credential rotation stopped", "Repairs stopped", "Diagnosis stopped", "Diagnose again", "backups were taken first"} {
+	for _, not := range []string{"Credential rotation stopped", "Repairs stopped", "Diagnosis stopped", "Diagnose again", "diagnose again to see where it stands", "may have changed the deployment"} {
 		if strings.Contains(s, not) {
 			t.Errorf("no-deployment screen shows %q:\n%s", not, screen(m))
 		}
