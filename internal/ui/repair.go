@@ -32,11 +32,12 @@ import (
 // error, and the flow falls back to `--check` — capability detected by
 // behaviour. When the plan proposes executable actions the menu offers
 // them (orbit#261 slice 4): the safe batch runs unattended (the
-// script's documented automation path — reversible actions, per-file
-// backups, full re-diagnosis after), and the guarded database-
-// credential rotation is driven in-console over the same machine
-// prompt grammar as configuration (typed action word + checkpoint
-// passphrase, never automatable by the script's own contract). The
+// script's documented automation path — reversible actions, a backup
+// wherever a file is replaced, full re-diagnosis after), and the
+// guarded database-credential rotation is driven in-console over the
+// same machine prompt grammar as configuration (typed action word +
+// checkpoint passphrase, never automatable by the script's own
+// contract). The
 // menu never offers an action the plan didn't propose.
 type RepairModel struct {
 	width, height int
@@ -865,7 +866,7 @@ func (m RepairModel) view() string {
 	case repairPreparing:
 		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "reading the deployment", "nothing will be changed"))
 	case repairExecuting:
-		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible, backups first", cannotStopLine))
+		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible", cannotStopLine))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -1034,7 +1035,7 @@ func (m RepairModel) viewError() string {
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
-		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
+		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
 		rows = executedMenu
 	}
 	if m.runErr != nil || m.stoppedMutation() {
