@@ -136,7 +136,7 @@ func TestLiveUpdateLegJobIDsHaveNoDefault(t *testing.T) {
 		if vars == nil || vars.kind != 'm' {
 			t.Fatalf("%s did not read as a mapping", where)
 		}
-		for _, name := range []string{"ORBIT_FIRST_RECORD_IMAGE_JOB", "ORBIT_FIRST_SIGN_EVIDENCE_JOB"} {
+		for _, name := range []string{"ORBIT_FIRST_RECORD_IMAGE_JOB", "ORBIT_FIRST_SIGN_EVIDENCE_JOB", "ORBIT_TO_RECORD_IMAGE_JOB", "ORBIT_TO_SIGN_EVIDENCE_JOB"} {
 			if v, ok := vars.vals[name]; ok && numeric.MatchString(v.dump()) {
 				t.Errorf("%s give %s a default, %s: the job IDs are an override set on a hand-started pipeline (#263)", where, name, v.dump())
 			}
