@@ -321,6 +321,7 @@ var manualSubjects = map[string]string{
 	"managed-file-missing":                 "managed file",
 	"managed-file-symlink":                 "managed file",
 	"compose-interpolation-failed":         "compose",
+	"compose-file-drift":                   "docker-compose.yml",
 	"container-foreign-owner":              "container",
 	"docker-unavailable":                   "docker",
 	"unrelated-resource-present":           "volume",
