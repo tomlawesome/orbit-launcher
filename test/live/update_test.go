@@ -547,6 +547,11 @@ func seedUpdateSentinels(t *testing.T, dir string) updateSentinels {
 	return want
 }
 
+// sentinelReadBackSQL reads one value back, by the current release's names.
+func sentinelReadBackSQL(table, column, id string) string {
+	return fmt.Sprintf("select %s from %s where id = '%s';", column, table, id)
+}
+
 // readUpdateSentinels reads the sentinels from the running deployment. What
 // cannot be read comes back "", which sentinelChanges reports as gone.
 func readUpdateSentinels(t *testing.T, dir string) updateSentinels {
