@@ -88,11 +88,6 @@ insert into document_crypto (document_id, storage_key, ciphertext_size, envelope
 		sentinelDocumentID, sentinelDocumentName, size, sentinelFileSHA256(), sentinelStorageKey)
 }
 
-// sentinelReadBackSQL reads one value back, by the current release's names.
-func sentinelReadBackSQL(table, column, id string) string {
-	return fmt.Sprintf("select %s from %s where id = '%s';", column, table, id)
-}
-
 // sentinelChanges names each sentinel that is not what was seeded, so a
 // failure says which part of the household's data the update lost or
 // changed (#324).
