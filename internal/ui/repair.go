@@ -865,7 +865,7 @@ func (m RepairModel) view() string {
 	case repairPreparing:
 		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "reading the deployment", "nothing will be changed"))
 	case repairExecuting:
-		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible, backups first", cannotStopLine))
+		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible", cannotStopLine))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -1034,7 +1034,7 @@ func (m RepairModel) viewError() string {
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
-		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
+		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
 		rows = executedMenu
 	}
 	if m.runErr != nil || m.stoppedMutation() {
