@@ -925,8 +925,8 @@ live-prepare:
             "${CI_API_V4_URL}/projects/${project}/jobs/artifacts/${orbit_branch_path}/raw/.orbit-supply-chain/orbit-release-manifest.json.sig?job=sign_evidence" \
             || { echo "could not fetch the signed release manifest from ${orbit_branch}: only preview and hotfix/* branches have one (a 401 or 403 above means ORBIT_READ_TOKEN instead)"; exit 1; }
         fi
-        jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "ai/orbit's record_image artifact at ${orbit_branch} is not a JSON release manifest"; exit 1; }
-        [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "ai/orbit's sign_evidence artifact at ${orbit_branch} is an empty signature"; exit 1; }
+        jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "the record_image artifact from ${current_from} is not a JSON release manifest"; exit 1; }
+        [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "the sign_evidence artifact from ${current_from} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
           env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
