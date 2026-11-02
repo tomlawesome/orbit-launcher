@@ -126,14 +126,24 @@ variables:
   # so staticcheck fails on every package (#202). Master moved to x/tools
   # v0.51.0 and Go 1.27 on 2026-10-09. Move back to a release tag once one
   # carries it.
+  # renovate: datasource=git-refs depName=staticcheck packageName=https://github.com/dominikh/go-tools branch=master
   STATICCHECK_VERSION: 452d5bb86b45416c35891262f6a11dbd6a970117
   # The `deps` job's two tools.
-  GOVULNCHECK_VERSION: v1.8.0
+  # renovate: datasource=go depName=golang.org/x/vuln
+  GOVULNCHECK_VERSION: v1.9.0
+  # renovate: datasource=go depName=github.com/google/go-licenses/v2
   GO_LICENSES_VERSION: v2.0.1
+  # Every *_VERSION pin carries a `# renovate:` line, read by renovate.json's
+  # annotation manager (#328). Renovate cannot work out a download's checksum,
+  # so its merge request for a pin with a *_SHA256 fails the download check:
+  # that is expected. Put the new release's checksum in the same merge request.
+  # renovate: datasource=github-releases depName=bats-core/bats-core extractVersion=^v(?<version>.+)$
   BATS_VERSION: "1.14.0"
   BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
+  # renovate: datasource=github-releases depName=tsl0922/ttyd
   TTYD_VERSION: "1.7.7"
   TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+  # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
