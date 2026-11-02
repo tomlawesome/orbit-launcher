@@ -597,8 +597,8 @@ trivy:
       /tmp/bin/trivy --version
       mkdir -p reports
       # JSON for the record; the table is what a person reads in the log.
-      /tmp/bin/trivy fs --scanners vuln,license --format json --output reports/trivy.json .
-      /tmp/bin/trivy fs --scanners vuln,license --format table --skip-db-update .
+      /tmp/bin/trivy fs --scanners vuln,license --skip-dirs .trivy-cache --format json --output reports/trivy.json .
+      /tmp/bin/trivy fs --scanners vuln,license --skip-dirs .trivy-cache --format table --skip-db-update .
   artifacts:
     when: always
     expire_in: 14 days
