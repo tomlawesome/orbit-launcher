@@ -195,7 +195,7 @@ variables:
 # --- Reusable pieces ---------------------------------------------------------
 
 .go_cache:
-  cache:
+  cache: &go_cache_entry
     key:
       prefix: go
       files:
@@ -578,15 +578,10 @@ trivy:
       artifacts: true
   variables:
     TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivy-cache
-  # Two caches: the Go modules (as .go_cache) and Trivy's databases.
+  # Two caches: .go_cache's Go modules (the same entry, by anchor) and
+  # Trivy's databases.
   cache:
-    - key:
-        prefix: go
-        files:
-          - go.sum
-      paths:
-        - .go/mod
-        - .go/build
+    - *go_cache_entry
     - key: trivy-db
       paths:
         - .trivy-cache

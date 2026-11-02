@@ -63,8 +63,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-          with:
-            persist-credentials: false
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -81,7 +81,7 @@ jobs:
         run: |
           branch="$ORBIT_BRANCH"
           case "$branch" in
-            *[!A-Za-z0-9._/-]*|-*|*..*) echo "orbit_branch is not a branch name: $branch" >&2; exit 1 ;;
+            *[!A-Za-z0-9._/-]*|-*|*..*) echo "orbit_branch is not a valid branch name" >&2; exit 1 ;;
           esac
           echo "ORBIT_LAUNCHER_INSTALL_SCRIPT_URL=https://raw.githubusercontent.com/tomlawesome/orbit/$branch/scripts/install.sh" >> "$GITHUB_ENV"
 
