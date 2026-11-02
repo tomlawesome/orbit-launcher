@@ -1,5 +1,6 @@
 # golangci-lint v2 (#322, #323). Only the three linters below; staticcheck
-# stays its own CI job. Report-only in CI for now.
+# stays its own CI job. unused and dupl block in CI; gosec reports only
+# until its findings are triaged (#322).
 version: "2"
 linters:
   default: none

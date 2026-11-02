@@ -545,13 +545,14 @@ private-details:
     # and old messages name its branches, which no path entry can allow.
     PRIVATE_DETAILS_SINCE: 04f7b59efeaf4b41d57ffb29f525ca212fd39bf0
 
-# --- report-only scanners (#322, #323) --------------------------------------
+# --- code scanners (#322, #323) -------------------------------------------
 #
-# REPORT ONLY for now: `allow_failure: true`, and each report is kept as an
-# artifact for 14 days, so the first pipeline shows the noise before anything
-# can block a merge. After that run, #322 (Trivy: High and above; zizmor and
-# actionlint) and #323 (golangci-lint: unused, dupl, gosec) make them blocking
-# and move false alarms into ignore files with a reason and an expiry.
+# Each ran report-only first (pipelines 3428 and 3432) and now blocks:
+# Trivy at High and above, zizmor and actionlint on any finding,
+# golangci-lint's unused and dupl on any finding. gosec still only reports:
+# its first findings are triaged after the next audit, then it blocks too.
+# A false alarm goes into the tool's ignore file with a reason and an
+# expiry. Every report is kept as an artifact for 14 days.
 #
 # The tools are release tarballs checked against a pinned digest by
 # scripts/ci/fetch-verified.sh, never an action or an install script. They
@@ -565,7 +566,6 @@ private-details:
 trivy:
   stage: fast
   rules: *checks_rules
-  allow_failure: true
   tags: [light]
   # The Go image, so the modules can be downloaded first: Trivy reads each Go
   # module's licence from the module cache and reports "-" without it.
@@ -612,6 +612,8 @@ trivy:
       # JSON for the record; the table is what a person reads in the log.
       /tmp/bin/trivy fs $flags --format json --output reports/trivy.json .
       /tmp/bin/trivy fs $flags --format table --skip-db-update .
+      # The gate: fails on a High or Critical vulnerability or licence.
+      /tmp/bin/trivy fs $flags --skip-db-update --severity HIGH,CRITICAL --exit-code 1 --format table .
   artifacts:
     when: always
     expire_in: 14 days
@@ -623,7 +625,6 @@ trivy:
 golangci-lint:
   stage: fast
   rules: *checks_rules
-  allow_failure: true
   tags: [light]
   image:
     <<: *pull_if_not_present
@@ -648,7 +649,10 @@ golangci-lint:
       mv /tmp/glint/golangci-lint /tmp/bin/golangci-lint
       /tmp/bin/golangci-lint version
       mkdir -p reports
-      /tmp/bin/golangci-lint run --output.text.path=stdout --output.json.path=reports/golangci-lint.json ./...
+      # Blocking: unused and dupl. Then gosec on its own, report-only
+      # until its findings are triaged (#322).
+      /tmp/bin/golangci-lint run --enable-only unused,dupl --output.text.path=stdout ./...
+      /tmp/bin/golangci-lint run --enable-only gosec --output.text.path=stdout --output.json.path=reports/golangci-lint.json ./... || echo "gosec: findings above are report-only for now (#322)"
   artifacts:
     when: always
     expire_in: 14 days
@@ -662,7 +666,6 @@ golangci-lint:
 workflow-lint:
   stage: fast
   rules: *checks_rules
-  allow_failure: true
   tags: [light]
   image:
     <<: *pull_if_not_present
