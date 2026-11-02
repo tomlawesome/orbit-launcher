@@ -40,7 +40,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-            persist-credentials: false
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Set up Go
@@ -109,8 +109,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-          with:
-            persist-credentials: false
+        with:
+          persist-credentials: false
 
       - name: Check the flake log
         run: sh scripts/ci/flake-check.sh --quarantined scripts/quarantine.txt docs/flakes.md
