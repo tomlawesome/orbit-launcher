@@ -12,3 +12,8 @@ linters:
       # golangci-lint's own default, kept: no reason yet to differ. Tune
       # after the first report shows how much it finds.
       threshold: 150
+issues:
+  # Report every finding: golangci-lint's defaults stop at 3 of one kind and
+  # 50 per linter, which hid most of the first report.
+  max-issues-per-linter: 0
+  max-same-issues: 0
