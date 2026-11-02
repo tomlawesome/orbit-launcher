@@ -1,0 +1,14 @@
+# golangci-lint v2 (#322, #323). Only the three linters below; staticcheck
+# stays its own CI job. Report-only in CI for now.
+version: "2"
+linters:
+  default: none
+  enable:
+    - unused
+    - dupl
+    - gosec
+  settings:
+    dupl:
+      # golangci-lint's own default, kept: no reason yet to differ. Tune
+      # after the first report shows how much it finds.
+      threshold: 150

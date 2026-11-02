@@ -146,6 +146,22 @@ variables:
   # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # Report-only scanners (#322, #323). Their checksums come from the upstream
+  # checksums.txt of each release, except zizmor's, which is our own: upstream
+  # publishes none, so the digest below is of the tarball as downloaded on
+  # 2026-11-02.
+  # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
+  TRIVY_VERSION: "0.76.1"
+  TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+  # renovate: datasource=github-releases depName=golangci/golangci-lint extractVersion=^v(?<version>.+)$
+  GOLANGCI_LINT_VERSION: "2.15.0"
+  GOLANGCI_LINT_SHA256: 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
+  # renovate: datasource=github-releases depName=zizmorcore/zizmor extractVersion=^v(?<version>.+)$
+  ZIZMOR_VERSION: "1.31.1"
+  ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
+  # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
   # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
   # this GitLab, not the GitHub mirror, at the branch and commit
   # orbit/pin.json names (#193; scripts/bump-orbit-pin.sh moves it).
@@ -528,6 +544,155 @@ private-details:
     # was adopted (#245): older merge commits name the assistant's account,
     # and old messages name its branches, which no path entry can allow.
     PRIVATE_DETAILS_SINCE: 04f7b59efeaf4b41d57ffb29f525ca212fd39bf0
+
+# --- report-only scanners (#322, #323) --------------------------------------
+#
+# REPORT ONLY for now: `allow_failure: true`, and each report is kept as an
+# artifact for 14 days, so the first pipeline shows the noise before anything
+# can block a merge. After that run, #322 (Trivy: High and above; zizmor and
+# actionlint) and #323 (golangci-lint: unused, dupl, gosec) make them blocking
+# and move false alarms into ignore files with a reason and an expiry.
+#
+# The tools are release tarballs checked against a pinned digest by
+# scripts/ci/fetch-verified.sh, never an action or an install script. They
+# sit on $UBUNTU_IMAGE, which carries no Go, so golangci-lint (which needs the
+# toolchain to type-check) uses $GO_IMAGE.
+
+# Trivy's vulnerability and licence databases are fetched at run time and
+# cached by GitLab, never committed. Trivy 0.76.1's checksums file was checked
+# with cosign (its .sigstore.json bundle, identity aquasecurity/trivy on
+# GitHub Actions) when the pin was taken, on 2026-11-02.
+trivy:
+  stage: fast
+  rules: *checks_rules
+  allow_failure: true
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  timeout: 15m
+  needs:
+    - job: classify
+      artifacts: true
+  variables:
+    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivy-cache
+  cache:
+    key: trivy-db
+    paths:
+      - .trivy-cache
+  before_script:
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git
+    - *drop_job_credentials
+  script:
+    - *docs_only_skip
+    - |
+      set -euo pipefail
+      tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}" \
+        "${TRIVY_SHA256}" "/tmp/${tarball}"
+      mkdir -p /tmp/bin
+      tar -xzf "/tmp/${tarball}" -C /tmp/bin trivy
+      /tmp/bin/trivy --version
+      mkdir -p reports
+      # JSON for the record; the table is what a person reads in the log.
+      /tmp/bin/trivy fs --scanners vuln,license --format json --output reports/trivy.json .
+      /tmp/bin/trivy fs --scanners vuln,license --format table --skip-db-update .
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - reports/trivy.json
+
+# golangci-lint with only unused, dupl and gosec (.golangci.yml). staticcheck
+# stays its own job (`fast`).
+golangci-lint:
+  stage: fast
+  rules: *checks_rules
+  allow_failure: true
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $GO_IMAGE
+  extends: .go_cache
+  timeout: 15m
+  needs:
+    - job: classify
+      artifacts: true
+  before_script:
+    - *drop_job_credentials
+  script:
+    - *docs_only_skip
+    - |
+      set -euo pipefail
+      tarball="golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/${tarball}" \
+        "${GOLANGCI_LINT_SHA256}" "/tmp/${tarball}"
+      mkdir -p /tmp/bin /tmp/glint
+      tar -xzf "/tmp/${tarball}" -C /tmp/glint --strip-components=1
+      mv /tmp/glint/golangci-lint /tmp/bin/golangci-lint
+      /tmp/bin/golangci-lint version
+      mkdir -p reports
+      /tmp/bin/golangci-lint run --output.text.path=stdout --output.json.path=reports/golangci-lint.json ./...
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - reports/golangci-lint.json
+
+# zizmor and actionlint over the GitHub workflows, which the mirror still runs.
+# zizmor runs offline (--offline, no token): it then skips the checks that ask
+# GitHub's API, which is the price of giving it no credential. Upstream
+# publishes no checksums for it, so ZIZMOR_SHA256 is our own record.
+workflow-lint:
+  stage: fast
+  rules: *checks_rules
+  allow_failure: true
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $UBUNTU_IMAGE
+  timeout: 10m
+  needs:
+    - job: classify
+      artifacts: true
+  before_script:
+    - *apt_prologue
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl git
+    - *drop_job_credentials
+  script:
+    - *docs_only_skip
+    - |
+      set -euo pipefail
+      mkdir -p /tmp/bin /tmp/zizmor /tmp/actionlint reports
+      ztar="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${ztar}" \
+        "${ZIZMOR_SHA256}" "/tmp/${ztar}"
+      tar -xzf "/tmp/${ztar}" -C /tmp/zizmor
+      cp "$(find /tmp/zizmor -type f -name zizmor | head -n 1)" /tmp/bin/zizmor
+      atar="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+      bash scripts/ci/fetch-verified.sh \
+        "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${atar}" \
+        "${ACTIONLINT_SHA256}" "/tmp/${atar}"
+      tar -xzf "/tmp/${atar}" -C /tmp/actionlint actionlint
+      cp /tmp/actionlint/actionlint /tmp/bin/actionlint
+      chmod +x /tmp/bin/zizmor /tmp/bin/actionlint
+      /tmp/bin/zizmor --version
+      /tmp/bin/actionlint -version
+      # Both run, whatever the first finds; the job fails if either did.
+      rc=0
+      /tmp/bin/zizmor --offline --no-progress .github/workflows/*.yml 2>&1 | tee reports/zizmor.txt || rc=1
+      /tmp/bin/actionlint .github/workflows/*.yml 2>&1 | tee reports/actionlint.txt || rc=1
+      exit "$rc"
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - reports/zizmor.txt
+      - reports/actionlint.txt
 
 # secret-scan.yml, step for step. Full history: the point is catching a secret
 # that reached the remote in an earlier commit and is no longer in the working
