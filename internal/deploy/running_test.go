@@ -445,7 +445,7 @@ func TestCompare_MissingOtherFolderIsAnotherFolder(t *testing.T) {
 	d := runningDeployment()
 	d.TargetDir = dir
 
-	want := Mismatch{Kind: MismatchFolder, Folder: gone}
+	want := Mismatch{Kind: MismatchFolder, Folder: gone, FolderGone: true}
 	if got := CompareRunning(d, dir, matching(d, gone)); got != want {
 		t.Errorf("CompareRunning = %+v, want %+v", got, want)
 	}
