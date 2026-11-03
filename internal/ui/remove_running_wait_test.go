@@ -138,12 +138,14 @@ func TestRemoveRunning_AnswerAfterTheSplashSaidNothing(t *testing.T) {
 	}
 	m = moveCaretTo(t, m, "Remove")
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
-	if m.state != appStateRemove || !strings.Contains(screen(m), "Stand down Orbit") {
-		t.Fatalf("setup: Remove did not open its confirm (state %v):\n%s", m.state, screen(m))
+	if m.state != appStateRemove {
+		t.Fatalf("setup: Enter on Remove did not open Remove (state %v)", m.state)
 	}
 	sd := &standDownCounter{}
 	m.remove.standDown = sd.fn
 
+	// Remove's size arrives in its opening batch, so its confirm is drawn
+	// only once that batch is fed, minus the running answer held back.
 	var withheld []removeRunningMsg
 	for _, msg := range answersOf(cmd) {
 		if r, ok := msg.(removeRunningMsg); ok {
@@ -154,6 +156,9 @@ func TestRemoveRunning_AnswerAfterTheSplashSaidNothing(t *testing.T) {
 	}
 	if len(withheld) != 1 {
 		t.Fatalf("setup: Remove's opening produced %d running answers, want 1", len(withheld))
+	}
+	if !strings.Contains(screen(m), "Stand down Orbit") {
+		t.Fatalf("setup: Remove did not draw its confirm:\n%s", screen(m))
 	}
 
 	m, cmd = updateAs(t, m, key(tea.KeyEnter))
@@ -247,8 +252,10 @@ func TestRemoveRunning_SameFolderCarriesOnAsToday(t *testing.T) {
 		m, cmd = updateAs(t, m, running)
 
 		assertStandsDown(t, m, cmd, sd)
-		if showsWorkingLine(screen(m)) {
-			t.Errorf("the working line should be gone:\n%s", screen(m))
+		// The stand-down screen has its own working line, so look for
+		// the confirm's waiting text, not any spinner.
+		if strings.Contains(screen(m), removeChecking) {
+			t.Errorf("the confirm's working line should be gone:\n%s", screen(m))
 		}
 	})
 }
