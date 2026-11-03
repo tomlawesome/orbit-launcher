@@ -249,8 +249,8 @@ variables:
   apt-get update -qq
 
 # Credential hygiene for the jobs that run branch or dependency code and
-# need no token (#301, #303): fast, deps, visual, classify, gitleaks and
-# flake-check run this once git is available and before any of that code.
+# need no token (#301, #303): fast, deps, visual, classify, gitleaks,
+# flake-check, trivy, golangci-lint and workflow-lint run this once git is available and before any of that code.
 # fast, deps and visual run it first (their images ship git); classify,
 # gitleaks and flake-check are on $UBUNTU_IMAGE, which has none, so they
 # install git from apt first (apt runs
@@ -563,7 +563,10 @@ private-details:
 # Trivy's vulnerability and licence databases are fetched at run time and
 # cached by GitLab, never committed. Trivy 0.76.1's checksums file was checked
 # with cosign (its .sigstore.json bundle, identity aquasecurity/trivy on
-# GitHub Actions) when the pin was taken, on 2026-11-02.
+# GitHub Actions) when the pin was taken, on 2026-11-02. The gate blocks on
+# every High and Critical finding; when one has no fix and blocks merges, the
+# way back is a dated entry in .trivyignore (its header says what each needs),
+# not --ignore-unfixed.
 trivy:
   stage: fast
   rules: *checks_rules
@@ -609,7 +612,7 @@ trivy:
       # The caches live in the project folder and are not the project's own
       # files. --include-dev-deps: test/visual's packages are all
       # devDependencies, which Trivy otherwise skips.
-      flags="--scanners vuln,license --skip-dirs .trivy-cache --skip-dirs .go --include-dev-deps --no-progress"
+      flags="--scanners vuln,license --skip-dirs .trivy-cache --skip-dirs .go --include-dev-deps --no-progress --ignorefile .trivyignore"
       # JSON for the record; the table is what a person reads in the log.
       /tmp/bin/trivy fs $flags --format json --output reports/trivy.json .
       /tmp/bin/trivy fs $flags --format table --skip-db-update .
