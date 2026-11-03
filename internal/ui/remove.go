@@ -269,7 +269,7 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// carried past; one that is back refuses (#334). An answer for
 		// another folder is not this flow's.
 		if m.state == removeStateConfirm && msg.dir == m.targetDir && msg.mismatch.Kind == deploy.MismatchFolder &&
-			!(m.carriedOn && msg.mismatch.FolderGone) {
+			!(m.carriedOn && msg.mismatch.FolderGone && !msg.mismatch.BuildDiffers) {
 			m = m.refuseOtherFolder(msg.mismatch)
 		}
 		return m, nil
@@ -284,7 +284,7 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != removeStateConfirm {
 			return m, nil
 		}
-		if msg.otherFolder != "" && !(m.carriedOn && msg.gone) {
+		if msg.otherFolder != "" && !(m.carriedOn && msg.gone && !msg.buildDiffers) {
 			return m.refuseOtherFolder(msg.mismatch()), nil
 		}
 		if m.awaiting {

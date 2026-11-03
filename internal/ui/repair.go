@@ -393,7 +393,7 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this flow's.
 		if msg.dir != m.targetDir || msg.mismatch.Kind != deploy.MismatchFolder ||
 			!m.readOnlyScreen() ||
-			(m.carriedOn && msg.mismatch.FolderGone) {
+			(m.carriedOn && msg.mismatch.FolderGone && !msg.mismatch.BuildDiffers) {
 			return m, nil
 		}
 		if m.stream != nil {

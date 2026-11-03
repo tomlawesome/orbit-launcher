@@ -81,7 +81,8 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   while the app container was started from another folder are a dead end in
   the no-deployment grammar: the amber mark, a title naming that folder, a
   muted line for the flow and the shared advice, a faint line saying nothing
-  was changed, and the one `Menu` row. Install (#318) opened while the
+  was changed, and the one `Menu` row (a gone folder with the same build
+  offers more; see below). Install (#318) opened while the
   project's app container was started from another folder is the same dead
   end, its title reading "This machine's Orbit was started from". It has no
   "Continue anyway", because the act it prevents is Compose's takeover of
@@ -97,7 +98,8 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   Repair's diagnosis, Remove's confirm and its own running check), and the
   row writes, relabels and asks Docker nothing; Compose restamps the label
   on the next Update. While carried on, an answer whose folder is still
-  gone is no mismatch; one whose folder is back refuses as above. With
+  gone with the same build is no mismatch; one whose folder is back, or
+  whose build differs, refuses as above. With
   another build the screen is a dead end that says so. Install never
   offers the row: with this folder's record it points at Update, Repair or
   Remove; without one it prints `docker compose --project-name <name>

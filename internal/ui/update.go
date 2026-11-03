@@ -151,7 +151,7 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// this flow's.
 	if r, ok := msg.(runningResultMsg); ok {
 		if m.state == updateStateConfirm && r.dir == m.targetDir && r.mismatch.Kind == deploy.MismatchFolder &&
-			!(m.carriedOn && r.mismatch.FolderGone) {
+			!(m.carriedOn && r.mismatch.FolderGone && !r.mismatch.BuildDiffers) {
 			m = m.refuseOtherFolder(r.mismatch)
 		}
 		return m, nil
