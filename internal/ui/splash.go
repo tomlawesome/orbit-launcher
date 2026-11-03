@@ -345,26 +345,33 @@ func (m SplashModel) checkRunningCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		type answer struct {
-			app deploy.RunningApp
-			err error
+		return runningResultMsg{dir: dir, mismatch: runningMismatch(read, d, dir)}
+	}
+}
+
+// runningMismatch is the body of a running check, shared by the splash and
+// Remove: it compares d's app container with dir, and answers the zero
+// Mismatch when the read fails or outlasts deploy.RunningAppTimeout.
+func runningMismatch(read func(context.Context, *deploy.Deployment) (deploy.RunningApp, error), d *deploy.Deployment, dir string) deploy.Mismatch {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type answer struct {
+		app deploy.RunningApp
+		err error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		app, err := read(ctx, d)
+		answered <- answer{app, err}
+	}()
+	select {
+	case a := <-answered:
+		if a.err != nil {
+			return deploy.Mismatch{}
 		}
-		answered := make(chan answer, 1)
-		go func() {
-			app, err := read(ctx, d)
-			answered <- answer{app, err}
-		}()
-		select {
-		case a := <-answered:
-			if a.err != nil {
-				return runningResultMsg{dir: dir}
-			}
-			return runningResultMsg{dir: dir, mismatch: deploy.CompareRunning(d, dir, a.app)}
-		case <-time.After(deploy.RunningAppTimeout):
-			return runningResultMsg{dir: dir}
-		}
+		return deploy.CompareRunning(d, dir, a.app)
+	case <-time.After(deploy.RunningAppTimeout):
+		return deploy.Mismatch{}
 	}
 }
 
