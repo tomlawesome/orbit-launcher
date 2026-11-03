@@ -59,6 +59,11 @@ Tags are made by a CI button, never by hand.
    request runs `live` by itself), then `preview` into `main`, which runs
    nothing new. Merging into `main` starts the `main` pipeline, which
    offers only the release buttons.
+   Merge each promotion with the plain **Merge** button, never **Rebase**:
+   a rebase copies `dev`'s commits onto `preview` as new ones. If the
+   `preview` into `main` merge request was opened by the agent's account,
+   GitLab starts no pipeline for it (that account may not run pipelines on
+   `preview`, #333): press **Run pipeline** on its Pipelines tab.
 2. Open the newest `main` pipeline on GitLab (the buttons only appear on
    `main` pipelines) and press **release:patch** (a fix on the current
    minor, e.g. 0.4.1 to 0.4.2) or **release:minor** (e.g. 0.4.1 to
