@@ -75,7 +75,7 @@ func FetchInstallScript(ctx context.Context) ([]byte, error) {
 // a download: a caller that set the path is trusting this exact file, not
 // asking for best-effort.
 func readInstallScriptFile(path string) ([]byte, error) {
-	body, err := os.ReadFile(path) //nolint:gosec // G304, G703: path set by get-orbit.sh to its verified copy in a mktemp -d folder
+	body, err := os.ReadFile(path) //nolint:gosec // G304, G703: an operator-set path (get-orbit.sh sets it to its verified copy); checking that file is the setter's job
 	if err != nil {
 		return nil, fmt.Errorf("read install script from %s=%s: %w", InstallScriptPathEnv, path, err)
 	}
