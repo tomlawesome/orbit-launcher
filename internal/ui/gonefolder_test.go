@@ -345,11 +345,11 @@ func TestGoneFolder_RemoveEnterProceedsOnAGoneAnswer(t *testing.T) {
 	sd := &standDownCounter{}
 	m, held := openCarriedRemove(t, m, sd)
 
-	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	m, _ = updateAs(t, m, key(tea.KeyEnter))
 	if n := sd.calls.Load(); n != 0 {
 		t.Fatalf("the stand-down ran before Remove's own check answered")
 	}
-	m, cmd = updateAs(t, m, held)
+	m, cmd := updateAs(t, m, held)
 	m = drive(t, m, cmd)
 
 	if n := sd.calls.Load(); n != 1 {
