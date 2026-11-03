@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -31,11 +32,12 @@ import (
 // error, and the flow falls back to `--check` — capability detected by
 // behaviour. When the plan proposes executable actions the menu offers
 // them (orbit#261 slice 4): the safe batch runs unattended (the
-// script's documented automation path — reversible actions, per-file
-// backups, full re-diagnosis after), and the guarded database-
-// credential rotation is driven in-console over the same machine
-// prompt grammar as configuration (typed action word + checkpoint
-// passphrase, never automatable by the script's own contract). The
+// script's documented automation path — reversible actions, a backup
+// wherever a file is replaced, full re-diagnosis after), and the
+// guarded database-credential rotation is driven in-console over the
+// same machine prompt grammar as configuration (typed action word +
+// checkpoint passphrase, never automatable by the script's own
+// contract). The
 // menu never offers an action the plan didn't propose.
 type RepairModel struct {
 	width, height int
@@ -83,6 +85,9 @@ type RepairModel struct {
 	// unset. foreign is the answer that stopped the run.
 	foreignOwned func(dir string) (deploy.Ownership, error)
 	foreign      deploy.Ownership
+	// otherFolder is the folder the app container was started from, in
+	// repairOtherFolder (#316).
+	otherFolder string
 	// clipboard is where the stop screen's Copy command writes its OSC 52
 	// sequence: nil in production, which means os.Stdout. copied is that
 	// row having copied.
@@ -100,8 +105,12 @@ type RepairModel struct {
 	// reports back, killing a diagnosis it managed to start. A mutation
 	// that started anyway is kept instead, on a fresh context (see
 	// keepRunAfterCancel).
-	ctx      context.Context
-	cancel   context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	// flow is this model's id among the Repair flows of the process; its
+	// starts stamp it on their reply, so a reply from a flow that was
+	// left is told apart from this one's (#319).
+	flow     uint64
 	quitting bool
 	// signalQuit is a SignalQuitMsg that arrived during the safe repairs
 	// or the rotation: the launcher quits as soon as the engine has ended.
@@ -137,6 +146,10 @@ const (
 	// repairForeign is the stop screen for files another account owns
 	// (#265): no engine ran.
 	repairForeign
+	// repairOtherFolder is the dead end for a deployment whose app
+	// container was started from another folder (#316): no engine ran,
+	// or the one that was starting has been stopped.
+	repairOtherFolder
 )
 
 type (
@@ -149,7 +162,13 @@ type (
 type repairReadyMsg struct {
 	stream *engine.Stream
 	err    error
+	// flow is the id of the RepairModel whose start this answers (#319).
+	flow uint64
 }
+
+// repairFlows counts the Repair flows opened, to give each its id. A
+// Cmd goroutine may build a model, so it is atomic.
+var repairFlows atomic.Uint64
 
 // repairRotateReadyMsg carries the started rotation session.
 type repairRotateReadyMsg struct {
@@ -179,7 +198,7 @@ var repairStream = streamWrap{
 
 // NewRepairModel constructs the Repair flow for targetDir.
 func NewRepairModel(targetDir, version string) RepairModel {
-	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan, services: &serviceReading{}}
+	m := RepairModel{targetDir: targetDir, version: version, mode: deploy.RepairPlan, services: &serviceReading{}, flow: repairFlows.Add(1)}
 	// One context for the model's whole life: Init cannot store state,
 	// and the model quits once it is cancelled.
 	m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -200,10 +219,24 @@ func (m RepairModel) Outcome() flowOutcome {
 	return flowOutcome{Done: m.Done, WantsMenu: m.WantsMenu}
 }
 
+// repairOtherFolderBody is the refusal's first body line.
+const repairOtherFolderBody = "Repair here would read and change that folder's Orbit using this folder's files."
+
+// refuseOtherFolder turns the flow into the dead end that names folder,
+// where the container was started from (#316).
+func (m RepairModel) refuseOtherFolder(folder string) RepairModel {
+	m.state, m.otherFolder = repairOtherFolder, folder
+	return m
+}
+
 // Init implements tea.Model: the diagnosis starts immediately — it is
 // read-only by the script's own contract, so there is nothing to
-// confirm first.
+// confirm first. Not in the other-folder refusal: it would read that
+// folder's Orbit as if it were this one's (#316).
 func (m RepairModel) Init() tea.Cmd {
+	if m.state == repairOtherFolder {
+		return nil
+	}
 	return m.startDiagnosis(m.mode)
 }
 
@@ -213,10 +246,10 @@ func (m RepairModel) startRun(mode deploy.RepairMode) tea.Cmd {
 	if prepare == nil {
 		prepare = defaultPrepareRepair
 	}
-	targetDir, ctx := m.targetDir, m.prepareContext()
+	targetDir, ctx, flow := m.targetDir, m.prepareContext(), m.flow
 	return func() tea.Msg {
 		stream, err := prepare(ctx, targetDir, mode)
-		return repairReadyMsg{stream: stream, err: err}
+		return repairReadyMsg{stream: stream, err: err, flow: flow}
 	}
 }
 
@@ -326,7 +359,44 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.frame = nextFrame(m.frame)
 		return m, tick()
 
+	case runningResultMsg:
+		// The running check answered after the flow opened. While the
+		// diagnosis is being prepared or shown (read-only, nothing
+		// changed) another folder's container stops it as Esc does and
+		// shows the refusal. Once the safe repairs or the rotation have
+		// started, the person reads the result that is on screen. An
+		// answer for another folder is not this flow's.
+		if msg.dir != m.targetDir || msg.mismatch.Kind != deploy.MismatchFolder ||
+			(m.state != repairPreparing && m.state != repairDiagnosis) {
+			return m, nil
+		}
+		if m.stream != nil {
+			m.stream.Kill()
+		} else if m.cancel != nil {
+			m.cancel()
+		}
+		return m.refuseOtherFolder(msg.mismatch.Folder), nil
+
 	case repairReadyMsg:
+		if msg.flow != 0 && msg.flow != m.flow {
+			// The start of another Repair flow, one that was left (Esc)
+			// before this one opened: it is not this flow's to read, and
+			// nobody is watching it, so it is killed (#319). Flow 0 is a
+			// reply no start stamped (ids begin at 1), which tests send.
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			return m, nil
+		}
+		if m.state == repairOtherFolder || m.Done {
+			// The start the refusal or Esc stopped reported back with a
+			// run anyway: nobody is watching it, so it is killed, as the
+			// one that arrives after Ctrl-C is (#319).
+			if msg.stream != nil {
+				msg.stream.Kill()
+			}
+			return m, nil
+		}
 		if m.quitting {
 			if msg.stream == nil {
 				return m, tea.Quit
@@ -351,6 +421,9 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, readEngineStream(m.send, m.stream, repairStream)
 
 	case repairForeignMsg:
+		if m.state == repairOtherFolder {
+			return m, nil // the refusal stands; the start it stopped found nothing to show
+		}
 		if m.quitting {
 			// The start was cancelled, and it started nothing.
 			return m, tea.Quit
@@ -575,7 +648,7 @@ func (m RepairModel) planMenu() []string {
 func (m RepairModel) planHasSafe() bool {
 	for _, p := range m.planActions {
 		switch p.Action {
-		case "fix-permissions", "restore-transaction", "restart-services":
+		case "fix-permissions", "restore-transaction", "restart-services", "restore-compose-file":
 			return true
 		}
 	}
@@ -642,7 +715,7 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case repairRotating:
 		return m.handleRotateKey(msg)
 
-	case repairNotFound:
+	case repairNotFound, repairOtherFolder:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228), as in Update and Remove.
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
@@ -793,7 +866,7 @@ func (m RepairModel) view() string {
 	case repairPreparing:
 		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "reading the deployment", "nothing will be changed"))
 	case repairExecuting:
-		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible, backups first", cannotStopLine))
+		return skyBlock(m.star, m.width, m.height, workingLine(m.frame, "running the safe repairs — every step reversible", cannotStopLine))
 	case repairRotating:
 		return m.viewRotating()
 	case repairExecuted:
@@ -807,6 +880,8 @@ func (m RepairModel) view() string {
 	case repairNotFound:
 		return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
 			"There's nothing here for Repair to read — nothing was changed.")
+	case repairOtherFolder:
+		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, repairOtherFolderBody)
 	}
 	return m.viewDiagnosis()
 }
@@ -960,7 +1035,7 @@ func (m RepairModel) viewError() string {
 	}
 	rows := repairMenu
 	if m.stoppedMutation() {
-		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — backups were taken first; diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
+		writeWrappedIn(&b, style.DegradedText, "it may have changed the deployment partway — diagnose again to see where it stands", measure(m.width, errorWidth), textArea(m.width))
 		rows = executedMenu
 	}
 	if m.runErr != nil || m.stoppedMutation() {
@@ -1248,6 +1323,8 @@ func planReasonWords(action, class string) string {
 		noun, lead = "container", "a container is"
 	case "secret-missing":
 		noun, lead = "secret", "a secret is"
+	case "compose-file-restorable", "compose-file-drift":
+		noun, lead = "docker-compose.yml", "docker-compose.yml"
 	case "managed-file-missing", "managed-file-symlink":
 		noun, lead = "managed file", "a managed file"
 		if class == "managed-file-missing" {
@@ -1277,6 +1354,8 @@ func actionWords(action string) string {
 		return "regenerate the secret"
 	case "restart-services":
 		return "restart Orbit's services"
+	case "restore-compose-file":
+		return "put back docker-compose.yml from this version's image"
 	case "manual":
 		return "needs your hands"
 	default:
@@ -1386,6 +1465,10 @@ func classWords(class string) string {
 		return "no recognisable Orbit installation"
 	case "managed-file-missing":
 		return "missing"
+	case "compose-file-restorable":
+		return "missing, and this version's image can put it back"
+	case "compose-file-drift":
+		return "differs from this version's copy (left as it is; a deliberate edit is fine)"
 	case "managed-file-symlink":
 		return "is a symlink, refusing to trust it"
 	case "managed-file-permissions":

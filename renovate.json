@@ -49,6 +49,23 @@
       ],
       "datasourceTemplate": "golang-version",
       "depNameTemplate": "go"
+    },
+    {
+      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead, and git-refs pins need the manager below instead.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>go|github-releases|github-tags) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z0-9_]+_VERSION:\\s+\"?(?<currentValue>[^\\s\"]+)\"?"
+      ]
+    },
+    {
+      "description": "A tool pinned to a commit on a branch rather than a release -- STATICCHECK_VERSION today (#202) -- read as a digest on that branch, so a newer commit is proposed until the pin moves back to a release (#328).",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=git-refs depName=(?<depName>\\S+) packageName=(?<packageName>\\S+) branch=(?<currentValue>\\S+)\\s+[A-Z0-9_]+_VERSION:\\s+(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "datasourceTemplate": "git-refs"
     }
   ],
   "vulnerabilityAlerts": {
@@ -74,6 +91,12 @@
       "matchManagers": ["gitlabci", "custom.regex"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "gitlab-ci image minor and patch"
+    },
+    {
+      "description": "CI tool pins from the two annotation managers (#328) get their own group, so a tool bump is not filed as an image bump. Listed after the image group above so this grouping wins for them.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["go", "github-releases", "github-tags", "git-refs"],
+      "groupName": "ci tools"
     },
     {
       "description": "PLAYWRIGHT_IMAGE and @playwright/test must move together or the gate breaks the way #161 found it: the image is chosen so no browser download happens in the `visual` job, which only holds while the image and the lockfile name the same Playwright release. test/supplychain/pins_test.go (#179) now checks the two agree; this makes Renovate propose them as one merge request instead of two. github-actions is listed because GitHub's visual job types the same image into its `container:` key, and test/supplychain fails unless both copies move in the one merge request. Listed after the image group and the github-actions group above so this grouping wins for these packages.",

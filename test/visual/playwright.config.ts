@@ -12,8 +12,12 @@ export default defineConfig({
   // 15s budget. 60s gives real headroom without masking a genuinely
   // hung build.
   timeout: 60_000,
+  // Measured in the pinned image (#320): run-to-run noise is 0 px, and
+  // the smallest change worth catching, one character in a faint row, is
+  // 30 px at threshold 0. The default per-pixel threshold (0.2) misses a
+  // changed word entirely, and a 1% ratio passed a whole new row.
   expect: {
-    toHaveScreenshot: { maxDiffPixelRatio: 0.01 },
+    toHaveScreenshot: { threshold: 0, maxDiffPixels: 10 },
   },
   fullyParallel: false,
   retries: 0,

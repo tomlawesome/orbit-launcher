@@ -7,6 +7,9 @@ package supplychain
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -77,6 +80,138 @@ func TestLiveSubtestsNeverUseTheResultOfRun(t *testing.T) {
 	}
 	for _, b := range bad {
 		t.Error(b)
+	}
+}
+
+// installedProblems parses a test/live file and returns one message per
+// `var installed bool` whose function has no setup subtest ending in
+// `installed = !t.Failed()`. The variable replaces t.Run's result, so a
+// subtest that never sets it (or sets it before its last check) leaves the
+// dependent Remove skipping, or running against a failed install (#310).
+func installedProblems(src string) []string {
+	file, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
+	if err != nil {
+		return []string{"parse: " + err.Error()}
+	}
+	var problems []string
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		declares := false
+		for _, st := range fn.Body.List {
+			ds, ok := st.(*ast.DeclStmt)
+			if !ok {
+				continue
+			}
+			gd, ok := ds.Decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				if vs, ok := sp.(*ast.ValueSpec); ok {
+					for _, n := range vs.Names {
+						if n.Name == "installed" {
+							declares = true
+						}
+					}
+				}
+			}
+		}
+		if !declares {
+			continue
+		}
+		recorded := false
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) != 2 {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); !ok || sel.Sel.Name != "Run" {
+				return true
+			}
+			body, ok := call.Args[1].(*ast.FuncLit)
+			if !ok || len(body.Body.List) == 0 {
+				return true
+			}
+			as, ok := body.Body.List[len(body.Body.List)-1].(*ast.AssignStmt)
+			if !ok || as.Tok != token.ASSIGN || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+				return true
+			}
+			lhs, lhsOK := as.Lhs[0].(*ast.Ident)
+			not, notOK := as.Rhs[0].(*ast.UnaryExpr)
+			if !lhsOK || !notOK || lhs.Name != "installed" || not.Op != token.NOT {
+				return true
+			}
+			if c, ok := not.X.(*ast.CallExpr); ok {
+				if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Failed" && len(c.Args) == 0 {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "t" {
+						recorded = true
+					}
+				}
+			}
+			return true
+		})
+		if !recorded {
+			problems = append(problems, fn.Name.Name+" declares `var installed bool` but no t.Run subtest in it ends with `installed = !t.Failed()`")
+		}
+	}
+	return problems
+}
+
+func TestInstalledProblemsClassifier(t *testing.T) {
+	const good = `package live
+func TestX(t *testing.T) {
+	var installed bool
+	t.Run("Install", func(t *testing.T) {
+		do(t)
+		installed = !t.Failed()
+	})
+	t.Run("Remove", func(t *testing.T) {})
+}`
+	for _, c := range []struct {
+		name, src string
+		bad       bool
+	}{
+		{"good", good, false},
+		{"commented-declaration style", strings.Replace(good, "var installed bool", "var installed bool // set by Install", 1), false},
+		{"never set", strings.Replace(good, "installed = !t.Failed()", "", 1), true},
+		{"set from the wrong thing", strings.Replace(good, "!t.Failed()", "true", 1), true},
+		{"not negated", strings.Replace(good, "!t.Failed()", "t.Failed()", 1), true},
+		{"set before the last check", strings.Replace(good, "installed = !t.Failed()", "installed = !t.Failed()\n\t\tdo(t)", 1), true},
+		{"set outside any subtest", strings.Replace(strings.Replace(good, "installed = !t.Failed()", "", 1), "t.Run(\"Remove\"", "installed = !t.Failed()\n\tt.Run(\"Remove\"", 1), true},
+		{"no installed variable", strings.Replace(good, "var installed bool", "", 1), false},
+	} {
+		if got := len(installedProblems(c.src)) > 0; got != c.bad {
+			t.Errorf("%s: problems = %q, want bad=%v", c.name, installedProblems(c.src), c.bad)
+		}
+	}
+}
+
+func TestLiveSubtestsRecordTheirOwnSuccess(t *testing.T) {
+	dir := filepath.Join(root, "test", "live")
+	found := 0
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") {
+			return err
+		}
+		body, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		found += strings.Count(string(body), "var installed bool")
+		rel, _ := filepath.Rel(root, p)
+		for _, problem := range installedProblems(string(body)) {
+			t.Errorf("%s: %s (#310, fr3-1)", filepath.ToSlash(rel), problem)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found < 3 {
+		t.Errorf("found %d `var installed bool` declarations in test/live, want at least 3 (two in live_test.go, one in update_test.go): the check has lost sight of the live subtests", found)
 	}
 }
 

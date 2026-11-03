@@ -126,6 +126,12 @@ const (
 	// in front of the install that no suite expects. It has its own unit
 	// and seam tests instead of tests on machine state.
 	VolumeCheck Behaviour = "ORBIT_LAUNCHER_NO_VOLUME_CHECK"
+	// RunningCheck asks the host's Docker what runs under the
+	// deployment's project (#316): a container left by another run, or
+	// started from another folder, would put rows and refusals on screens
+	// no suite expects. It has its own unit and seam tests instead of
+	// tests on machine state.
+	RunningCheck Behaviour = "ORBIT_LAUNCHER_NO_RUNNING_CHECK"
 	// Animation is the splash's arrival (#120): keys are swallowed until
 	// it ends, so a selection sent too early is eaten as the skip. Its
 	// own behaviour is internal/ui's to test and its look test/visual's.
@@ -139,7 +145,7 @@ const (
 // the call.
 func HermeticEnv(keep ...Behaviour) []string {
 	env := append(os.Environ(), "TERM=xterm", "NO_COLOR=1")
-	for _, b := range []Behaviour{UpdateCheck, HealthProbe, VolumeCheck, Animation} {
+	for _, b := range []Behaviour{UpdateCheck, HealthProbe, VolumeCheck, RunningCheck, Animation} {
 		if !slices.Contains(keep, b) {
 			env = append(env, string(b)+"=1")
 		}

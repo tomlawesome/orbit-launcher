@@ -29,6 +29,22 @@ var (
 	screenOIDCClientID = []string{"OIDC client ID"}
 	screenOIDCSecret   = []string{"OIDC client secret"}
 	screenSuccess      = []string{"Get into Orbit"}
+	// The running check's second-folder screens (#316): the splash row
+	// that says the stack was started from another folder, and the refusal
+	// Update opens on there. Only the launcher under test draws them: the
+	// earlier release's launcher never runs in the second folder, so no
+	// older wording sits beside these.
+	screenOtherFolder        = []string{"started from another folder"}
+	screenOtherFolderRefusal = []string{"This Orbit was started from"}
+	// The same check from Install (#318): the refusal a launcher in a
+	// folder with no deployment opens Install on while the stack runs from
+	// another. The launcher under test alone draws it, with no older
+	// wording beside it.
+	screenInstallOtherFolder = []string{"This machine's Orbit was started from"}
+	// And the advisory Install opens on when the Orbit is under another
+	// Compose project (#321). The launcher under test alone draws it, with
+	// no older wording beside it.
+	screenInstallOtherProject = []string{"There is already an Orbit on this machine"}
 )
 
 // inConsolePromptMarker is the guidance line the launcher prints under

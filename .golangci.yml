@@ -1,0 +1,20 @@
+# golangci-lint v2 (#322, #323). Only the three linters below; staticcheck
+# stays its own CI job. unused and dupl block in CI; gosec reports only
+# until its findings are triaged (#322).
+version: "2"
+linters:
+  default: none
+  enable:
+    - unused
+    - dupl
+    - gosec
+  settings:
+    dupl:
+      # golangci-lint's own default, kept: no reason yet to differ. Tune
+      # after the first report shows how much it finds.
+      threshold: 150
+issues:
+  # Report every finding: golangci-lint's defaults stop at 3 of one kind and
+  # 50 per linter, which hid most of the first report.
+  max-issues-per-linter: 0
+  max-same-issues: 0

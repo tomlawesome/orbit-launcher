@@ -111,6 +111,24 @@ func endCut(text string, limit int) string {
 	return xansi.Truncate(text, limit-1, "") + "…"
 }
 
+// startCut keeps text to one row of at most limit cells, ending as it
+// ends: when anything is cut the row starts with "…" and keeps the last
+// whole escapeUnits that fit, so a path's last components, which tell
+// two folders apart, always read (#316). A limit of 0 or less means no
+// cut. text is already escaped (visibleText).
+func startCut(text string, limit int) string {
+	if limit <= 0 || lipgloss.Width(text) <= limit {
+		return text
+	}
+	units := escapeUnits(text)
+	room, from := limit-1, len(units)
+	for from > 0 && lipgloss.Width(units[from-1]) <= room {
+		room -= lipgloss.Width(units[from-1])
+		from--
+	}
+	return "…" + strings.Join(units[from:], "")
+}
+
 // escapedQuote is how shellQuote writes an apostrophe inside a quoted
 // word: close the quote, a backslash-quote, reopen the quote.
 const escapedQuote = `'\''`
@@ -135,9 +153,10 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 		}
 	}
 	open, closing := "", ""
-	if len(u) >= 2 && u[0] == '\'' && u[len(u)-1] == '\'' {
+	switch quotedWord(u) {
+	case "'":
 		open, closing, u = "'", "'", u[1:len(u)-1]
-	} else if len(u) >= 3 && strings.HasPrefix(u, "$'") && u[len(u)-1] == '\'' {
+	case "$'":
 		// bash's $'...' form (#277 W2): reopened as $' so each fragment
 		// keeps its escapes, and \' is never split.
 		open, closing, u = "$'", "'", u[2:len(u)-1]
@@ -149,6 +168,11 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 		case strings.HasPrefix(rest, a):
 		case open != "'" && rest[0] == '\\':
 			a = shellEscape(rest, open == "$'")
+		case open == "" && (rest[0] == '\'' || rest[0] == '"' || strings.HasPrefix(rest, "$'")):
+			// A quoted piece of a bare word (visibleCommand writes a
+			// hidden character as a $'\xHH' piece, #304) is one atom:
+			// a cut inside it would change what it reads as.
+			a = rest[:quotedPieceLen(rest)]
 		default:
 			a = firstUnit(rest) // an escape such as \x1b is never cut
 		}
@@ -184,6 +208,54 @@ func cutUnit(u string, limit int) (rows []string, last string) {
 		atoms, head = atoms[n:], ""
 	}
 	return rows, head + open + strings.Join(atoms, "") + closing
+}
+
+// quotedWord is the quote u is written in when the whole of it is one
+// quoted word: "'" for '...' (an escapedQuote inside is part
+// of it), "$'" for bash's $'...', and "" otherwise. It scans the quote
+// state, so a bare word that merely starts and ends with quoted pieces,
+// such as $'\x01'/srv/x$'\x01', is not mistaken for one (#304).
+func quotedWord(u string) string {
+	switch {
+	case strings.HasPrefix(u, "$'"):
+		if len(u) >= 3 && quotedPieceLen(u) == len(u) {
+			return "$'"
+		}
+	case strings.HasPrefix(u, "'"):
+		for i := 1; i < len(u); i++ {
+			if u[i] != '\'' {
+				continue
+			}
+			if i == len(u)-1 {
+				return "'"
+			}
+			if !strings.HasPrefix(u[i:], escapedQuote) {
+				return ""
+			}
+			i += len(escapedQuote) - 1
+		}
+	}
+	return ""
+}
+
+// quotedPieceLen is the length of the quoted piece rest starts with
+// ('...', "..." or $'...'), through its closing quote, as bash reads
+// it: no escapes in '...', a backslash escaping the next byte in the
+// others. A piece left open runs to the end of rest.
+func quotedPieceLen(rest string) int {
+	start, quote, escapes := 1, rest[0], rest[0] == '"'
+	if strings.HasPrefix(rest, "$'") {
+		start, quote, escapes = 2, '\'', true
+	}
+	for i := start; i < len(rest); i++ {
+		switch {
+		case escapes && rest[i] == '\\':
+			i++
+		case rest[i] == quote:
+			return i + 1
+		}
+	}
+	return len(rest)
 }
 
 // shellEscape is the backslash at the start of rest together with what

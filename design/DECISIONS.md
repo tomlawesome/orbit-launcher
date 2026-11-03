@@ -68,6 +68,35 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
 
 - **Identity block sits tight** under the wordmark: FQDN directly beneath,
   status word directly beneath that. No floating gaps.
+- **The identity block ends with the folder row** (#316): the absolute path
+  the launcher was started in, faint, one row, in every state, never with a
+  `~`. Wider than the screen less two cells it is cut from the start (`…`),
+  so the last components, which tell two deployment folders apart, always
+  read. When the app container contradicts the record, up to three rows
+  follow: the fact in amber (`started from another folder` or `started from
+  a different build`), the detail in muted text, the next step in faint
+  text. A row is a fact, never a guess: nothing shows while the check runs
+  or when it could not run. The next step is plain advice, never a key.
+- **The other-folder refusal** (#316): Update, Repair and Remove opened
+  while the app container was started from another folder are a dead end in
+  the no-deployment grammar: the amber mark, a title naming that folder, a
+  muted line for the flow and the shared advice, a faint line saying nothing
+  was changed, and the one `Menu` row. Install (#318) opened while the
+  project's app container was started from another folder is the same dead
+  end, its title reading "This machine's Orbit was started from". It has no
+  "Continue anyway", because the act it prevents is Compose's takeover of
+  that folder's Orbit, not a refusal of the installer's.
+- **The other-project advisory** (#321): Install opened while an Orbit app
+  container exists under another Compose project is the stale-volume
+  screen's shape: the amber mark, the title "There is already an Orbit on
+  this machine", a row naming where (the folder it was started from, or the
+  Compose project when the label has none or the folder is this one), the
+  reason, plain advice, the faint promise, and `Continue anyway` and
+  `Cancel`. It is an advisory, not a dead end, because the act it predicts
+  is the installer's own refusal (Compose's container-name conflict, rolled
+  back by ai/orbit#1456), not a takeover. Order of the three Install
+  pre-flights: the same-project clash, this, the stale volume. A check that
+  cannot run, or finds two such containers, stays silent.
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.
