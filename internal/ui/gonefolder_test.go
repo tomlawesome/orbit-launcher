@@ -671,3 +671,39 @@ func TestGoneFolder_MenuGrammar(t *testing.T) {
 		})
 	}
 }
+
+// --- a late other-build answer after carrying on (#334) ---------------------
+
+func TestGoneFolder_LateOtherBuildAnswerAfterCarryOnRefuses(t *testing.T) {
+	for _, flow := range []string{"Update", "Repair", "Remove"} {
+		t.Run(flow, func(t *testing.T) {
+			m, dir, _ := silentApp(t)
+			m = openFlow(t, m, flow)
+			m, _ = updateAs(t, m, goneMsg(dir))
+			assertCarryOn(t, m)
+			m, cmd := updateAs(t, m, key(tea.KeyEnter))
+			m = drive(t, m, cmd)
+
+			m, _ = updateAs(t, m, runningResultMsg{dir: dir, mismatch: goneMismatch(true)})
+
+			assertGoneDeadEnd(t, m)
+		})
+	}
+}
+
+func TestGoneFolder_RemoveEnterRefusesOnAGoneOtherBuildAnswer(t *testing.T) {
+	m, _, _ := goneApp(t, false)
+	sd := &standDownCounter{}
+	m, held := openCarriedRemove(t, m, sd)
+	held.gone, held.buildDiffers, held.otherFolder = true, true, goneFolder
+
+	m, cmd := updateAs(t, m, key(tea.KeyEnter))
+	m, cmd2 := updateAs(t, m, held)
+	m = drive(t, m, cmd)
+	m = drive(t, m, cmd2)
+
+	if n := sd.calls.Load(); n != 0 {
+		t.Errorf("the stand-down ran %d times on a gone, other-build answer", n)
+	}
+	assertGoneDeadEnd(t, m)
+}
