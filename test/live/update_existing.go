@@ -1,6 +1,8 @@
 package live
 
 import (
+	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,22 +30,22 @@ func existingDeploymentInputs(
 	if !filepath.IsAbs(in.Dir) {
 		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR=%q must be the absolute path of the deployment folder", in.Dir)
 	}
-	envPath := filepath.Join(in.Dir, ".env-orbit")
+	envPath := filepath.Join(in.Dir, deploy.EnvFile)
 	envData, err := read(envPath)
 	if err != nil {
-		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: cannot read .env-orbit: %w", err)
+		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: cannot read %s: %w", deploy.EnvFile, err)
 	}
 	image := envFileValue(envData, "ORBIT_IMAGE")
 	if in.OldDigest = digestOf(image); in.OldDigest == "" {
-		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: ORBIT_IMAGE in .env-orbit is %q, want <repository>@sha256:<64 hex>", image)
+		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: ORBIT_IMAGE in %s is %q, want <repository>@sha256:<64 hex>", deploy.EnvFile, image)
 	}
 	if in.AppURL = envFileValue(envData, "APP_URL"); in.AppURL == "" {
-		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: .env-orbit records no APP_URL")
+		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: %s records no APP_URL", deploy.EnvFile)
 	}
 	if in.Project = envFileValue(envData, "COMPOSE_PROJECT_NAME"); in.Project == "" {
 		in.Project = "orbit" // the compose file's own name
 	}
-	if _, err := stat(filepath.Join(in.Dir, "docker-compose.yml")); err != nil {
+	if _, err := stat(filepath.Join(in.Dir, deploy.ComposeFile)); err != nil {
 		return in, fmt.Errorf("ORBIT_LIVE_EXISTING_DIR: no docker-compose.yml: %w", err)
 	}
 
