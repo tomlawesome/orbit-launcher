@@ -139,6 +139,18 @@ var addedBy306 = []string{"promoted"}
 // change and no changedBy310 rewrite is needed.
 var addedBy310 = []string{"flake-check"}
 
+// What #322 and #323 add on purpose: four report-only scanner jobs (Trivy,
+// golangci-lint, and zizmor with actionlint in one job) and their pins. New
+// jobs, so no fixture job's lines change.
+var addedBy322 = []string{"trivy", "golangci-lint", "workflow-lint"}
+
+var variablesAddedBy322 = map[string]bool{
+	"TRIVY_VERSION": true, "TRIVY_SHA256": true,
+	"GOLANGCI_LINT_VERSION": true, "GOLANGCI_LINT_SHA256": true,
+	"ZIZMOR_VERSION": true, "ZIZMOR_SHA256": true,
+	"ACTIONLINT_VERSION": true, "ACTIONLINT_SHA256": true,
+}
+
 // Passed already: every job and template keeps its name (and extras may only
 // be hidden templates, which GitLab never runs). The restructure adds anchors;
 // it must not rename, split or drop a job.
@@ -196,6 +208,12 @@ func TestCIJobNamesUnchanged(t *testing.T) {
 		typed[k] = true
 		if !have[k] {
 			t.Errorf("%q, which #310 adds, is missing from .gitlab-ci.yml", k)
+		}
+	}
+	for _, k := range addedBy322 {
+		typed[k] = true
+		if !have[k] {
+			t.Errorf("%q, which #322/#323 add, is missing from .gitlab-ci.yml", k)
 		}
 	}
 	for _, k := range doc.root.keys {
@@ -343,6 +361,8 @@ func compareTopLevelVariables(t *testing.T, oldDoc, newDoc *yamlDoc) {
 			t.Errorf("top-level variable %s is gone (#236)\nwas: %s", k, o.dump())
 		case !inOld && k == variableAddedBy183:
 			// the Fedora leg's image, a tool pin like UBUNTU_IMAGE
+		case !inOld && variablesAddedBy322[k]:
+			// a report-only scanner's pin (#322, #323)
 		case !inOld:
 			t.Errorf("top-level variable %s is new (#236)\nnow: %s", k, n.dump())
 		case isToolPinVariable(k):
@@ -1527,7 +1547,7 @@ install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
 		jobs: []string{"live"},
 		old:  `python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 		new: `# Runs beside the tests, so without the credentials (#301).
-env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
   python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 	},
 	{
@@ -1574,7 +1594,7 @@ nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPEND
 # credentials (#301). That keeps them out of its logs and dumps; it does
 # not hide them from the tests, which can read this whole container
 # (see .live_leg, #303).
-nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \`,
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \`,
 	},
 	{ // C1
 		jobs: []string{"live"},
@@ -2071,7 +2091,7 @@ var changedByAuditE = []struct {
   go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
 		new: `quarantined="$(bash scripts/ci/quarantine-skip.sh)"
 bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
   go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
 	},
 	{ // a merge request into preview or main from any branch but the stage
@@ -2398,7 +2418,7 @@ func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
 	for _, j := range jobs {
 		have[j] = true
 	}
-	for _, want := range []string{"classify", "deps", "fast", "gitleaks", "visual"} {
+	for _, want := range []string{"classify", "deps", "fast", "flake-check", "gitleaks", "visual"} {
 		if !have[want] {
 			t.Errorf("job %q no longer uses the credential drop (#303); users: %v", want, jobs)
 		}

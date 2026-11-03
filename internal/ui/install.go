@@ -23,6 +23,12 @@ const (
 	installStateNotice
 	installStateRunning
 	installStateStaleVolume
+	// installStateOtherFolder is the dead end for a machine whose Orbit
+	// was started from another folder (#318).
+	installStateOtherFolder
+	// installStateOtherProject is the advisory for a machine with an Orbit
+	// under another Compose project (#321).
+	installStateOtherProject
 )
 
 // InstallModel is the Install flow: profile choice, the development
@@ -87,6 +93,36 @@ type InstallModel struct {
 	volumesAnswered bool
 	awaiting        string
 
+	// runningRead asks Docker which app container the project an install
+	// here would use already has (#318). Nil means no check: no wait and
+	// no refusal. AppModel copies its running reader here.
+	runningRead func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)
+
+	// clashAnswered is set when the clash check's answer has arrived;
+	// like volumesAnswered, Enter on the profile screen waits for it.
+	clashAnswered bool
+
+	// otherFolder is the folder the app container was started from, in
+	// installStateOtherFolder.
+	otherFolder string
+
+	// otherRead asks Docker for an Orbit app container under a Compose
+	// project other than this install's (#321), with the project an
+	// install here would use. Nil means no check: no wait and no
+	// screen. AppModel copies its other-project reader here.
+	otherRead func(context.Context, string) (deploy.OtherProjectApp, error)
+
+	// otherAnswered is set when the other-project check's answer has
+	// arrived; like the other two, Enter on the profile screen waits
+	// for it.
+	otherAnswered bool
+
+	// other is what installStateOtherProject names: the folder the
+	// other Orbit was started from (empty when there is none to point
+	// at) and its Compose project. otherRows are the advisory's rows.
+	other     struct{ folder, project string }
+	otherRows menu
+
 	// frame is the working line's spinner frame, advanced on the shared tick.
 	frame int
 
@@ -133,6 +169,9 @@ type engineRunSeams struct {
 	recheckConfig  recheckConfigFunc
 	prepareRepair  prepareRepairFunc
 	prepareRotate  prepareRotateFunc
+	// checkIssuer checks an OIDC_ISSUER answer against the provider's
+	// discovery document (#314); nil is deploy.CheckOidcIssuer.
+	checkIssuer func(ctx context.Context, answer string) deploy.IssuerCheck
 	// listFolder reads the folder for the stopped screen's listing;
 	// nil is os.ReadDir. folderLimit is how long the screen waits for
 	// it; zero is folderReadLimit.
@@ -273,6 +312,25 @@ var (
 	installUnavailableRows = []string{"Back"}
 )
 
+// installOtherFolderBody is Install's own line on the refusal (#318): it
+// names the act, which under one Compose project name is a takeover.
+const installOtherFolderBody = "Install here would take over that folder's Orbit."
+
+// The other-project advisory's words (#321). The fact row is one of the
+// two leads and a name; the body names the mechanism and predicts only
+// what the installer does; the advice depends on whether a folder can be
+// pointed at.
+const (
+	installOtherProjectTitle      = "There is already an Orbit on this machine"
+	installOtherProjectFolderRow  = "started from "
+	installOtherProjectProjectRow = "under the Compose project "
+	installOtherProjectBody       = "That Orbit holds the container names every Orbit uses, so the installer will stop when it starts services here."
+	installOtherProjectAdvice     = "Use that Orbit, or remove it, before installing here."
+)
+
+// installChecking is the working line while any pre-flight is out.
+const installChecking = "Checking for an earlier Orbit on this machine…"
+
 // Outcome surfaces the flow's result to AppModel: back to the menu when
 // the person left on the first screen, otherwise the engine run's.
 func (m InstallModel) Outcome() flowOutcome {
@@ -287,19 +345,154 @@ func (m InstallModel) Outcome() flowOutcome {
 // flow proceeds exactly as it always has.
 type staleVolumesMsg struct{ volumes []deploy.DatabaseVolume }
 
-// Init implements tea.Model: the stale-database-volume pre-flight starts
-// immediately. It is read-only — one `docker volume ls` — so there is
-// nothing to confirm first, and it runs off the first frame's path so
-// the profile screen is never waiting on Docker to draw.
+// installClashMsg carries the clash check's answer back into the event
+// loop (#318): the folder the project's app container was started from,
+// empty when there is no clash or the check could not run.
+type installClashMsg struct{ dir, otherFolder string }
+
+// installOtherProjectMsg carries the other-project check's answer back
+// into the event loop (#321): the folder the other Orbit was started from
+// (already compared with this folder, empty when there is none to name)
+// and its Compose project. An empty project is no finding: there is none,
+// or the check could not run.
+type installOtherProjectMsg struct{ dir, folder, project string }
+
+// Init implements tea.Model: the stale-database-volume pre-flight and,
+// when there are readers, the clash and other-project pre-flights start
+// immediately. All are read-only — a `docker volume ls`, a `docker ps`
+// and an inspect — so there is nothing to confirm first, and they run off
+// the first frame's path so the profile screen is never waiting on Docker
+// to draw.
 func (m InstallModel) Init() tea.Cmd {
 	check := m.checkVolumes
 	if check == nil {
 		check = deploy.UnownedDatabaseVolumes
 	}
 	targetDir := m.targetDir
-	return func() tea.Msg {
+	volumes := func() tea.Msg {
 		return staleVolumesMsg{volumes: check(context.Background(), targetDir)}
 	}
+	cmds := []tea.Cmd{volumes}
+	if clash := m.checkClashCmd(); clash != nil {
+		cmds = append(cmds, clash)
+	}
+	if other := m.checkOtherProjectCmd(); other != nil {
+		cmds = append(cmds, other)
+	}
+	if len(cmds) == 1 {
+		return volumes
+	}
+	return tea.Batch(cmds...)
+}
+
+// checkClashCmd asks Docker whether the app container of the Compose
+// project an install here would use was started from another folder
+// (#318), or returns nil when there is nothing to ask (no reader). A
+// check that cannot run answers "no clash": an unreadable record, a
+// Docker that does not answer, output that does not parse, two app
+// containers.
+//
+// The command waits at most deploy.RunningAppTimeout, the limit the read
+// puts on itself, with the reader on a goroutine of its own (the
+// splash's checkRunningCmd): when it is late the command answers and
+// returns, cancelling the reader's context, and the late answer, which
+// has a buffered slot, is dropped, so a clash can never arrive late.
+func (m InstallModel) checkClashCmd() tea.Cmd {
+	read, dir := m.runningRead, m.targetDir
+	if read == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		target, err := deploy.InstallTarget(dir)
+		if err != nil {
+			return installClashMsg{dir: dir}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		type answer struct {
+			app deploy.RunningApp
+			err error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			app, err := read(ctx, target)
+			answered <- answer{app, err}
+		}()
+		select {
+		case a := <-answered:
+			if a.err != nil {
+				return installClashMsg{dir: dir}
+			}
+			if c := deploy.CompareRunning(target, dir, a.app); c.Kind == deploy.MismatchFolder {
+				return installClashMsg{dir: dir, otherFolder: c.Folder}
+			}
+		case <-time.After(deploy.RunningAppTimeout):
+		}
+		return installClashMsg{dir: dir}
+	}
+}
+
+// checkOtherProjectCmd asks Docker whether an Orbit app container exists
+// under a Compose project other than the one an install here would use
+// (#321), or returns nil when there is nothing to ask (no reader). A
+// check that cannot run answers "none": an unreadable record, a Docker
+// that does not answer, output that does not parse, two such containers.
+//
+// It is checkClashCmd's shape: the command waits at most
+// deploy.RunningAppTimeout with the reader on a goroutine of its own, and
+// when it is late the command answers "none" and returns, so a finding
+// can never arrive late.
+func (m InstallModel) checkOtherProjectCmd() tea.Cmd {
+	read, dir := m.otherRead, m.targetDir
+	if read == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		target, err := deploy.InstallTarget(dir)
+		if err != nil {
+			return installOtherProjectMsg{dir: dir}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		type answer struct {
+			app deploy.OtherProjectApp
+			err error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			app, err := read(ctx, target.Project)
+			answered <- answer{app, err}
+		}()
+		select {
+		case a := <-answered:
+			if a.err == nil && a.app.Found && a.app.Project != "" {
+				return installOtherProjectMsg{dir: dir, folder: a.app.OtherFolder(dir), project: a.app.Project}
+			}
+		case <-time.After(deploy.RunningAppTimeout):
+		}
+		return installOtherProjectMsg{dir: dir}
+	}
+}
+
+// waiting is whether a pre-flight Enter must wait for is still out: the
+// volume check, the clash check or the other-project check (#267, #318,
+// #321).
+func (m InstallModel) waiting() bool {
+	volumePending := m.checkVolumes != nil && !m.volumesAnswered && !m.noVolumeCheck
+	clashPending := m.runningRead != nil && !m.clashAnswered
+	otherPending := m.otherRead != nil && !m.otherAnswered
+	return volumePending || clashPending || otherPending
+}
+
+// proceed lets a waiting Enter through once nothing is out: it carries
+// on as it would have, to the row it chose.
+func (m InstallModel) proceed() (tea.Model, tea.Cmd) {
+	if m.awaiting == "" || m.state != installStateProfile || m.waiting() {
+		return m, nil
+	}
+	chosen := m.awaiting
+	m.awaiting = ""
+	return m.chooseProfile(chosen)
 }
 
 // Update implements tea.Model.
@@ -348,23 +541,52 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if found, ok := msg.(staleVolumesMsg); ok {
 		m.volumesAnswered = true
-		chosen := m.awaiting
-		m.awaiting = ""
 		// Only the profile screen is interrupted. The check is async, so
 		// a quick hand can already be past it — and stopping someone
 		// mid-notice to report a pre-flight finding would be worse than
-		// letting the engine give them the same news.
+		// letting the engine give them the same news. The refusal below
+		// is not replaced by it either (#318).
 		if len(found.volumes) > 0 && m.state == installStateProfile {
 			m.staleVolumes = found.volumes
 			m.state = installStateStaleVolume
 			m.volume = newMenu(installVolumeRows...)
+			m.awaiting = ""
 			return m, nil
 		}
-		// None found: a waiting Enter carries on as it would have.
-		if chosen != "" && m.state == installStateProfile {
-			return m.chooseProfile(chosen)
+		// None found: a waiting Enter carries on once the clash check
+		// has answered too.
+		return m.proceed()
+	}
+
+	if clash, ok := msg.(installClashMsg); ok {
+		m.clashAnswered = true
+		// The clash wins over the other-project advisory and the stale
+		// volume: "Continue anyway" there would lead straight to the
+		// takeover. In any other state (the notice, the run) the answer
+		// is ignored, as the volume finding is.
+		if clash.otherFolder != "" && (m.state == installStateProfile || m.state == installStateStaleVolume || m.state == installStateOtherProject) {
+			m.otherFolder = clash.otherFolder
+			m.state = installStateOtherFolder
+			m.awaiting = ""
+			return m, nil
 		}
-		return m, nil
+		return m.proceed()
+	}
+
+	if other, ok := msg.(installOtherProjectMsg); ok {
+		m.otherAnswered = true
+		// The advisory sits above the stale volume (it names the folder
+		// that screen cannot) and below the clash's refusal, so it
+		// acts on the profile screen and the stale-volume screen only;
+		// anywhere else (the refusal, the notice, the run) it is dropped.
+		if other.project != "" && (m.state == installStateProfile || m.state == installStateStaleVolume) {
+			m.other.folder, m.other.project = other.folder, other.project
+			m.state = installStateOtherProject
+			m.otherRows = newMenu(installVolumeRows...)
+			m.awaiting = ""
+			return m, nil
+		}
+		return m.proceed()
 	}
 
 	if m.state == installStateRunning {
@@ -391,6 +613,15 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case installStateStaleVolume:
 		return m.handleStaleVolumeKey(msg)
+	case installStateOtherProject:
+		return m.handleOtherProjectKey(msg)
+	case installStateOtherFolder:
+		// The dead end: its one row and Esc both go back to the menu.
+		// Nothing was started, so there is nothing to stop.
+		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
+			m.left = true
+		}
+		return m, nil
 	case installStateProfile:
 		return m.handleProfileKey(msg)
 	case installStateUnavailableProfile:
@@ -426,6 +657,25 @@ func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.
 	return m, nil
 }
 
+// handleOtherProjectKey keeps the other-project advisory (#321), in
+// handleStaleVolumeKey's rules: Continue anyway is always offered and
+// always works, because the installer makes the refusal this screen
+// predicts on its own, and a detection mistake here must never stand
+// between someone and an install. Esc and Cancel are back to the main
+// menu, as on the stale-volume screen.
+func (m InstallModel) handleOtherProjectKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	var chosen string
+	var back bool
+	m.otherRows, chosen, back = m.otherRows.onScreen(msg)
+	switch {
+	case chosen == "Continue anyway":
+		m.state = installStateProfile
+	case back, chosen == "Cancel":
+		m.left = true
+	}
+	return m, nil
+}
+
 func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var chosen string
 	var back bool
@@ -442,9 +692,9 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		// "not enough": the caret rests here but Enter does nothing, and
 		// the line under the table says why.
 		m.awaiting = ""
-	case m.checkVolumes != nil && !m.volumesAnswered && !m.noVolumeCheck:
-		// The pre-flight has not answered: wait for it rather than
-		// moving on past a finding it is about to report.
+	case m.waiting():
+		// A pre-flight has not answered: wait for it rather than moving
+		// on past a finding it is about to report.
 		m.awaiting = chosen
 	default:
 		return m.chooseProfile(chosen)
@@ -551,6 +801,10 @@ func (m InstallModel) view() string {
 	switch m.state {
 	case installStateStaleVolume:
 		return m.viewStaleVolume()
+	case installStateOtherProject:
+		return m.viewOtherProject()
+	case installStateOtherFolder:
+		return viewOtherFolder(m.star, m.width, m.height, installOtherFolderLead, m.otherFolder, installOtherFolderBody)
 	case installStateProfile:
 		return m.viewProfile()
 	case installStateUnavailableProfile:
@@ -609,6 +863,35 @@ func (m InstallModel) viewStaleVolume() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
+// viewOtherProject is the advisory for an Orbit under another Compose
+// project (#321), in viewStaleVolume's grammar: the amber mark, a fixed
+// title, the fact in plain ink (the folder it was started from, or the
+// project when there is no folder to point at), muted prose and advice,
+// the shared promise and the two rows. The fact is escaped and cut across
+// rows by wrapHard, since nobody chose its length or characters.
+func (m InstallModel) viewOtherProject() string {
+	var b strings.Builder
+	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), installOtherProjectTitle)
+
+	fact, advice := installOtherProjectProjectRow+m.other.project, installOtherProjectAdvice
+	if m.other.folder != "" {
+		fact, advice = installOtherProjectFolderRow+m.other.folder, otherFolderAdvice
+	}
+	for _, row := range wrapHard(fact, measure(m.width, errorWidth), m.width-4, folderRows) {
+		fmt.Fprintln(&b, style.Ink.Render(row))
+	}
+	fmt.Fprintln(&b)
+
+	for _, line := range []string{installOtherProjectBody, advice} {
+		writeWrappedIn(&b, style.MutedText, line, measure(m.width, proseWidth), textArea(m.width))
+	}
+	fmt.Fprintln(&b)
+	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, measure(m.width, errorWidth), textArea(m.width))
+	fmt.Fprintln(&b)
+	m.otherRows.write(&b)
+	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
 func (m InstallModel) viewProfile() string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "Choose a deployment profile")
@@ -634,7 +917,7 @@ func (m InstallModel) viewProfile() string {
 	}
 	if m.awaiting != "" {
 		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, workingLine(m.frame, "Checking for an old Orbit database…", ""))
+		fmt.Fprintln(&b, workingLine(m.frame, installChecking, ""))
 	}
 	return skyBlock(m.star, m.width, m.height, b.String())
 }

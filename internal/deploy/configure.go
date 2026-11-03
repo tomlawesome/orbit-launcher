@@ -155,6 +155,11 @@ func AdoptConfig(configTree, targetDir string) error {
 	if err := requireTrustedConfigDirs(targetDir); err != nil {
 		return err
 	}
+	// The collected tree is read from $TMPDIR, where anyone can plant
+	// one: it gets the same rule before its answers are taken (#304).
+	if err := requireTrustedCollectedTree(configTree); err != nil {
+		return err
+	}
 	removeStaleTemps(targetDir)
 
 	plan, err := planAdoption(configTree, targetDir)

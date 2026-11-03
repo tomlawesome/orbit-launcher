@@ -102,6 +102,16 @@ func startApp(stdout, stderr io.Writer) int {
 	if os.Getenv(deploy.NoVolumeCheckEnv) != "" {
 		app = app.WithoutVolumeCheck()
 	}
+	// The running check (#316) asks the same daemon which folder started
+	// the deployment's app container and which build it runs, so it has
+	// its own gate for the same reason.
+	// Install's other-project check (#321) asks the same daemon the same
+	// question, widened to any Compose project, so the same gate turns it
+	// off.
+	app = app.WithRunningReader(deploy.RunningAppOf).WithOtherProjectReader(deploy.OtherProjectAppOf)
+	if os.Getenv(deploy.NoRunningCheckEnv) != "" {
+		app = app.WithoutRunningCheck()
+	}
 
 	// The engine stream reader pushes into the event loop rather than
 	// being asked for each message (#159), and tea.NewProgram takes the
@@ -153,6 +163,14 @@ func startApp(stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "\norbit-launcher:", note)
 			return 1
 		}
+		// SIGTERM or SIGHUP quit an Update that had already started
+		// applying and left it to finish: say so, and exit as a shell
+		// reports a signal (#304, owner decision 10a). SIGINT stopped
+		// the same way is the interrupted exit above.
+		if sig, ok := app.SignalStop().(syscall.Signal); ok && (sig == syscall.SIGTERM || sig == syscall.SIGHUP) {
+			fmt.Fprintln(stderr, "stopped during an update that had already started applying; run orbit-launcher and choose Repair to check Orbit")
+			return 128 + int(sig)
+		}
 	}
 	return 0
 }
@@ -189,13 +207,13 @@ func watchSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func(), inter
 			case sig := <-sigs:
 				switch sig {
 				case syscall.SIGHUP, syscall.SIGTERM:
-					send(ui.SignalQuitMsg{})
+					send(ui.SignalQuitMsg{Signal: sig})
 				case syscall.SIGINT:
 					if ui.TerminalHandedOver() {
 						continue
 					}
 					if interrupts.Add(1) == 1 {
-						send(ui.SignalQuitMsg{})
+						send(ui.SignalQuitMsg{Signal: sig})
 					} else {
 						send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 					}

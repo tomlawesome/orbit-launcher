@@ -1,6 +1,10 @@
 package ui
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"os"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 // A key press arrives as a key code plus the modifiers held with it, so a
 // control combination is a code-and-modifier pair rather than a key of
@@ -17,7 +21,12 @@ func isCtrlC(msg tea.KeyPressMsg) bool {
 // so a dropped session never leaves the launcher on a screen nobody sees.
 // A repeated signal never forces a stop that is already under way; only a
 // second Ctrl-C key does.
-type SignalQuitMsg struct{}
+type SignalQuitMsg struct {
+	// Signal is the signal that arrived, nil when not known. An Update
+	// stopped past its commit by SIGTERM or SIGHUP is reported to main
+	// (AppModel.SignalStop); a SIGINT shares this message and is not.
+	Signal os.Signal
+}
 
 // ctrlCPress is the key press a SignalQuitMsg acts as wherever Ctrl-C is
 // not ignored, so the two cannot drift apart.

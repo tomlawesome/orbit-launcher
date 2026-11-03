@@ -114,6 +114,8 @@ type flowOutcome struct {
 	Elapsed     time.Duration
 	// ExitNote is printed by main after the screen closes.
 	ExitNote string
+	// SignalStop is the signal that quit an Update past its commit.
+	SignalStop os.Signal
 }
 
 // backToMenu is leaving a flow for the main menu before anything has
@@ -126,7 +128,7 @@ func outcomeOf(r engineRun) flowOutcome {
 	if r.signalQuit {
 		// The launcher is quitting: a finished run has no screen to go
 		// to, and the app must not replace the quit with one.
-		return flowOutcome{ExitNote: r.exitNote}
+		return flowOutcome{ExitNote: r.exitNote, SignalStop: r.signalStop}
 	}
 	return flowOutcome{
 		Done:        r.Done,
@@ -136,6 +138,7 @@ func outcomeOf(r engineRun) flowOutcome {
 		URL:         r.URL,
 		Elapsed:     r.Elapsed,
 		ExitNote:    r.exitNote,
+		SignalStop:  r.signalStop,
 	}
 }
 
@@ -337,6 +340,9 @@ type engineRun struct {
 	// was still undoing its work; main prints it after the screen closes
 	// and exits 1. Empty means a clean stop, or no stop.
 	exitNote string
+
+	// signalStop is the signal that quit an Update past its commit.
+	signalStop os.Signal
 
 	// menu is the cursor on whichever post-run screen is showing; each
 	// screen names its own rows (stoppedRows).
@@ -606,7 +612,7 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 	case folderReadMsg:
 		return r.gotFolder(msg), nil
 
-	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg:
+	case configPlanMsg, configStepMsg, configStreamMsg, configStreamEndedMsg, configRecheckMsg, configAdoptedMsg, issuerCheckedMsg:
 		return r.handleConfigMsg(msg)
 
 	case installPreparedMsg:
@@ -662,7 +668,10 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 		// after the commit", #1518), and nobody may be left to wait for
 		// it. The installer leads its own session, so the hangup did not
 		// reach it either; the launcher sends it nothing and quits.
+		// Quitting closes the installer's stdout pipe: it survives that
+		// only because Orbit's install.sh ignores SIGPIPE (trap '' PIPE).
 		if r.state == runStreaming && r.action == deploy.ActionUpdate && r.committed {
+			r.signalStop = msg.Signal
 			return r.quitNow(false)
 		}
 		// A hangup or terminate that repeats while the stop it asked for
@@ -675,8 +684,9 @@ func (r engineRun) handle(msg tea.Msg) (engineRun, tea.Cmd) {
 		return r.handleKey(ctrlCPress)
 
 	case tea.PasteMsg:
-		// Only the configuration prompt takes a paste (#222).
-		if r.state == runConfigCollect {
+		// Only the configuration prompt takes a paste (#222), and not
+		// while an OIDC issuer answer is held for its check (#314).
+		if r.state == runConfigCollect && !r.cfg.issuer.busy() {
 			r.cfg.session = r.cfg.session.paste(msg.Content)
 		}
 		return r, nil

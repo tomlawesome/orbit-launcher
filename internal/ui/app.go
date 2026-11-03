@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -83,6 +84,17 @@ type AppModel struct {
 	servicesReader    func(dir string) ([]deploy.ServiceState, error)
 	servicesReaderSet bool
 
+	// runningReader reads the deployment's app container for the
+	// splash's running check (#316). Nil, the default, checks nothing, so
+	// no constructor asks Docker; only the real entry point opts in
+	// (WithRunningReader), and WithoutRunningCheck switches it off again.
+	runningReader func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)
+
+	// otherReader asks Docker for an Orbit app container under another
+	// Compose project, for Install's pre-flight (#321). Nil means no
+	// check; WithoutRunningCheck clears it with runningReader.
+	otherReader func(context.Context, string) (deploy.OtherProjectApp, error)
+
 	// flowNoticeDuration shortens Install's development-notice countdown
 	// (#175) in tests; zero in production (the 20 s default).
 	flowNoticeDuration time.Duration
@@ -96,6 +108,9 @@ type AppModel struct {
 	// exitNote is a Ctrl-C stop's last word, kept for main to print
 	// once the screen has closed (ExitNote).
 	exitNote string
+	// signalStop is the signal that quit an Update past its commit
+	// (SignalStop).
+	signalStop os.Signal
 
 	// flowSend is how a flow's engine stream reader gets its output
 	// back into the event loop (#159). cmd/orbit-launcher supplies the
@@ -199,6 +214,40 @@ func (m AppModel) WithoutVolumeCheck() AppModel {
 	return m
 }
 
+// WithRunningReader turns the running check on (#316): the splash asks
+// read which app container the deployment runs and says so when it
+// contradicts the record, and Update, Repair and Remove refuse a
+// container started from another folder; Install asks too, for the
+// project it would use, in any folder (#318). In production read is
+// deploy.RunningAppOf; tests pass a fake, so none depends on the
+// machine's Docker. Whichever order this and WithDeploymentStatus are
+// given in, the check is made for an installed deployment only.
+func (m AppModel) WithRunningReader(read func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)) AppModel {
+	m.runningReader = read
+	if m.splash.deployment != nil { // an installed deployment was applied already
+		m.splash.runningRead = read
+	}
+	return m
+}
+
+// WithOtherProjectReader turns Install's other-project check on (#321):
+// before anything is written it asks read for an Orbit app container
+// under a Compose project other than the one an install here would use.
+// In production read is deploy.OtherProjectAppOf; tests pass a fake.
+func (m AppModel) WithOtherProjectReader(read func(context.Context, string) (deploy.OtherProjectApp, error)) AppModel {
+	m.otherReader = read
+	return m
+}
+
+// WithoutRunningCheck turns the running check off: no question, no rows
+// and no refusals, Install's other-project check included. Their answers
+// come from the local Docker daemon, which a hermetic test suite does not
+// control. See ORBIT_LAUNCHER_NO_RUNNING_CHECK
+// in cmd/orbit-launcher.
+func (m AppModel) WithoutRunningCheck() AppModel {
+	return m.WithRunningReader(nil).WithOtherProjectReader(nil)
+}
+
 // WithAltScreen renders in the terminal's alternate screen buffer, so the
 // launcher owns the whole window and hands the user's scrollback back
 // untouched on exit. Only cmd/orbit-launcher asks for it — see
@@ -210,6 +259,7 @@ func (m AppModel) WithAltScreen() AppModel {
 
 // applyDeployment populates s's identity block from a fresh detection.
 func (m AppModel) applyDeployment(s SplashModel) SplashModel {
+	s.folder = filepath.Clean(m.resolvedTargetDir())
 	d, err := deploy.Detect(m.resolvedTargetDir())
 	if err != nil {
 		// The file is there but unreadable: no identity and nothing to
@@ -241,6 +291,8 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 		return s
 	}
 	s.healthProbe = m.healthProbe
+	s.deployment = d
+	s.runningRead = m.runningReader
 	return s
 }
 
@@ -273,6 +325,9 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 	if s.healthProbe != nil && s.appURL != "" {
 		cmds = append(cmds, s.probeHealthCmd())
 	}
+	if cmd := s.checkRunningCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -298,6 +353,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the Ctrl-C key there; every flow tells the two apart itself.
 	if _, ok := msg.(SignalQuitMsg); ok && (m.state == appStateSplash || m.state == appStateSuccess) {
 		msg = ctrlCPress
+	}
+
+	// The running check may answer after a flow has opened: the splash
+	// keeps the answer, and the flow decides whether it still matters.
+	// Install and the success screen are not concerned (#316).
+	if result, ok := msg.(runningResultMsg); ok && m.state != appStateSplash {
+		updated, _ := m.splash.Update(result)
+		m.splash = updated.(SplashModel)
+	}
+
+	// A diagnosis that started after Repair was left (Esc while it was
+	// preparing) has nobody watching it: kill it (#319).
+	if ready, ok := msg.(repairReadyMsg); ok && m.state != appStateRepair {
+		if ready.stream != nil {
+			ready.stream.Kill()
+		}
+		return m, nil
 	}
 
 	switch m.state {
@@ -339,12 +411,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // it finished undoing its work; empty otherwise.
 func (m AppModel) ExitNote() string { return m.exitNote }
 
+// SignalStop is the signal that quit an Update past its commit, nil if
+// none did. main turns SIGTERM and SIGHUP into a stderr line and exit 128
+// plus the signal number (#304).
+func (m AppModel) SignalStop() os.Signal { return m.signalStop }
+
 // watchOutcome moves the app forward when a flow's engine run
 // concludes: the shared success screen, or back to the menu.
 func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	// Before the Done check: a stop quits without ever setting Done.
 	if o.ExitNote != "" {
 		m.exitNote = o.ExitNote
+	}
+	if o.SignalStop != nil {
+		m.signalStop = o.SignalStop
 	}
 	if !o.Done {
 		return m, cmd
@@ -378,14 +458,23 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 }
 
 // startRepair opens Repair on the launcher's folder, from the splash or
-// from a stopped Install or Update that left its services in place.
+// from a stopped Install or Update that left its services in place. When
+// the running check found the app container started from another folder
+// it opens on the refusal instead, and no diagnosis starts (#316).
 func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
+	otherFolder := ""
+	if m.splash.mismatch.Kind == deploy.MismatchFolder {
+		otherFolder = m.splash.mismatch.Folder
+	}
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 	m.repair.engineRunSeams = m.flowSeams
 	m.repair.serviceStates = m.readServices()
 	m.repair.foreignOwned = deploy.ForeignOwned
 	m.repair.send = m.flowSend
+	if otherFolder != "" {
+		m.repair = m.repair.refuseOtherFolder(otherFolder)
+	}
 	m.state = appStateRepair
 	return m, tea.Batch(sizeCmd, m.repair.Init())
 }
@@ -417,6 +506,14 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 
+	// A running check that has answered "started from another folder"
+	// turns Update, Repair and Remove into a refusal naming that folder.
+	// One that has not answered yet is handed to the open flow later.
+	otherFolder := ""
+	if m.splash.mismatch.Kind == deploy.MismatchFolder {
+		otherFolder = m.splash.mismatch.Folder
+	}
+
 	switch m.splash.Chosen {
 	case "Remove":
 		// deploy.Detect's error return only ever reflects a real I/O
@@ -430,6 +527,10 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.remove.targetDir = dir
 		m.remove.detectErr = err
 		m.remove.lookupInstalledAt = m.flowInstalledAt
+		m.remove.runningRead = m.runningReader
+		if otherFolder != "" && deployment != nil {
+			m.remove = m.remove.refuseOtherFolder(otherFolder)
+		}
 		m.state = appStateRemove
 		// Init looks up the install date — read-only, so like Install's
 		// pre-flight it starts with the flow.
@@ -448,6 +549,8 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.install.checkVolumes = deploy.UnownedDatabaseVolumes
 		}
 		m.install.noVolumeCheck = m.flowNoVolumeCheck
+		m.install.runningRead = m.runningReader
+		m.install.otherRead = m.otherReader
 		m.install.noticeDuration = m.flowNoticeDuration
 		m.install.send = m.flowSend
 		m.state = appStateInstall
@@ -463,6 +566,9 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
 		m.update.lookupInstalledAt = m.flowInstalledAt
+		if otherFolder != "" && deployment != nil {
+			m.update = m.update.refuseOtherFolder(otherFolder)
+		}
 		m.state = appStateUpdate
 		return m, tea.Batch(sizeCmd, m.update.Init())
 	default:

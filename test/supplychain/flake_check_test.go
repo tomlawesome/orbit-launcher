@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -774,5 +775,108 @@ func TestQuarantineHeaderStatesWhatTheSubtestCheckCanSee(t *testing.T) {
 		if !strings.Contains(header, phrase) {
 			t.Errorf("%s's header must say %q: the sub half of a name is checked only against literals in the parent's body, and the writer needs to know how Go spells it and what to do when it is named elsewhere (#310)", quarantineFile, phrase)
 		}
+	}
+}
+
+// --- every quarantined name has earned its place in docs/flakes.md ---------
+
+var (
+	flakeSightingLine = regexp.MustCompile(`^- \d{4}-\d{2}-\d{2} · `)
+	flakeIssueRef     = regexp.MustCompile(`#[0-9]+|/issues/[0-9]+|/work_items/[0-9]+`)
+)
+
+// quarantineLogProblems returns one message per line of the quarantine list
+// that no heading of the flake log justifies. The flake check matches a list
+// line as a substring of a heading (scripts/ci/flake-check.sh), and only
+// warns when a quarantined name matches no heading, or errors for a heading
+// that has three sightings and no quarantine entry -- never the other way
+// round. A test may leave the gate only after a third sighting (docs/flakes.md)
+// with the issue linked from its heading, so this requires, for each list
+// line, a heading that contains it, has at least three dated sighting lines,
+// and links an issue (SEC-SP1-2, #310).
+func quarantineLogProblems(list, flakes string) []string {
+	type heading struct {
+		text      string
+		sightings int
+	}
+	var headings []heading
+	for _, l := range strings.Split(flakes, "\n") {
+		l = strings.TrimRight(l, "\r")
+		switch {
+		case strings.HasPrefix(l, "## "):
+			headings = append(headings, heading{text: strings.TrimPrefix(l, "## ")})
+		case len(headings) > 0 && flakeSightingLine.MatchString(l):
+			headings[len(headings)-1].sightings++
+		}
+	}
+	var problems []string
+	for _, name := range quarantineLines(list) {
+		var why []string
+		ok := false
+		for _, h := range headings {
+			if !strings.Contains(h.text, name) {
+				continue
+			}
+			switch {
+			case h.sightings < 3:
+				why = append(why, fmt.Sprintf("heading %q has %d sighting line(s), want at least 3", h.text, h.sightings))
+			case !flakeIssueRef.MatchString(h.text):
+				why = append(why, fmt.Sprintf("heading %q links no issue (#N)", h.text))
+			default:
+				ok = true
+			}
+		}
+		if ok {
+			continue
+		}
+		if len(why) == 0 {
+			why = []string{"no heading contains it"}
+		}
+		problems = append(problems, fmt.Sprintf("%q: %s", name, strings.Join(why, "; ")))
+	}
+	return problems
+}
+
+func TestQuarantineLogProblemsCatchesEachShortfall(t *testing.T) {
+	const flakes = `# Flakes
+
+## TestThree (test/live) #12
+
+- 2026-10-01 · aaaaaaa · local · symptom
+- 2026-10-02 · bbbbbbb · local · symptom
+- 2026-10-03 · ccccccc · local · symptom
+
+## TestTwo #13
+
+- 2026-10-01 · aaaaaaa · local · symptom
+- 2026-10-02 · bbbbbbb · local · symptom
+- a note, not a sighting
+
+## TestNoIssue
+
+- 2026-10-01 · aaaaaaa · local · symptom
+- 2026-10-02 · bbbbbbb · local · symptom
+- 2026-10-03 · ccccccc · local · symptom
+`
+	for _, tc := range []struct {
+		name, list, want string
+	}{
+		{"empty list", "# nothing\n\n", ""},
+		{"justified", "TestThree\n", ""},
+		{"justified with a subtest", "TestThree (test/live)\n", ""},
+		{"two sightings", "TestTwo\n", "has 2 sighting"},
+		{"no issue link", "TestNoIssue\n", "links no issue"},
+		{"no heading", "TestAbsent\n", "no heading contains it"},
+	} {
+		got := strings.Join(quarantineLogProblems(tc.list, flakes), "\n")
+		if tc.want == "" && got != "" || tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("%s: problems = %q, want one containing %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestEveryQuarantinedNameHasThreeSightingsAndAnIssueInTheFlakeLog(t *testing.T) {
+	for _, p := range quarantineLogProblems(readRepoFile(t, quarantineFile), readRepoFile(t, flakeLog)) {
+		t.Errorf("%s: %s: a test leaves the gate only after a third sighting with its issue linked from the heading (%s, #310)", quarantineFile, p, flakeLog)
 	}
 }

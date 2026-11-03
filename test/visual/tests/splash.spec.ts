@@ -28,15 +28,23 @@ function buildBinary(): string {
   return binPath;
 }
 
+// folder is where the launcher starts: a fixed, empty folder, because the
+// splash shows the folder it acts on (#316) and a path that differs
+// between machines would differ in the screenshot. As stopped.spec.ts.
+const folder = "/tmp/orbit-splash";
+
 let ttyd: ChildProcess;
 let port: number;
 
 test.beforeAll(async () => {
   const binPath = buildBinary();
+  fs.rmSync(folder, { recursive: true, force: true });
+  fs.mkdirSync(folder, { recursive: true });
   port = await findFreePort();
 
   ttyd = spawn("ttyd", ["-p", String(port), "-W", binPath], {
     stdio: "pipe",
+    cwd: folder,
     // The starfield otherwise advances every 120ms — a moving background
     // would make every screenshot comparison flaky by construction. See
     // internal/ui.NewSplashModelNoAnimation.
@@ -56,6 +64,11 @@ test.beforeAll(async () => {
       // ever run Orbit it would legitimately interrupt the flow — same
       // hermeticity rule as the two above.
       ORBIT_LAUNCHER_NO_VOLUME_CHECK: "1",
+      // NO_RUNNING_CHECK: the running check asks the local Docker daemon
+      // what runs under the deployment's project, so a container left by
+      // an earlier run, or started from another folder, would add rows to
+      // the screenshot — same hermeticity rule as the three above.
+      ORBIT_LAUNCHER_NO_RUNNING_CHECK: "1",
     },
   });
 
