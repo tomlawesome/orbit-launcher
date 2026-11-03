@@ -85,7 +85,7 @@ func TestSplashModel_NumberKeyMovesTheCaretOnly(t *testing.T) {
 func TestSplashModel_EnterAfterANumberKeyActs(t *testing.T) {
 	for i, item := range MainMenu[:len(MainMenu)-1] { // Exit is below
 		t.Run(item.Label, func(t *testing.T) {
-			m, _ := updateAs(t, settled(NewSplashModel()), runeKey(rune('1'+i)))
+			m, _ := updateAs(t, settled(NewSplashModel()), runeKey(rune('1'+i))) //nolint:gosec // G115: i is a menu index below 10
 			m, cmd := updateAs(t, m, key(tea.KeyEnter))
 			if m.Chosen != item.Label {
 				t.Errorf("Chosen = %q, want %q", m.Chosen, item.Label)
@@ -96,7 +96,7 @@ func TestSplashModel_EnterAfterANumberKeyActs(t *testing.T) {
 		})
 	}
 	t.Run("Exit", func(t *testing.T) {
-		m, _ := updateAs(t, settled(NewSplashModel()), runeKey(rune('0'+len(MainMenu))))
+		m, _ := updateAs(t, settled(NewSplashModel()), runeKey(rune('0'+len(MainMenu)))) //nolint:gosec // G115: the main menu has fewer than 10 rows
 		if m, cmd := updateAs(t, m, key(tea.KeyEnter)); !isQuit(cmd) || m.Chosen == "Install" {
 			t.Errorf("Enter on Exit: quit = %v, Chosen = %q; want a quit", isQuit(cmd), m.Chosen)
 		}

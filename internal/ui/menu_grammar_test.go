@@ -478,7 +478,7 @@ func TestMenuGrammar_AppDigitMovesTheCaretAndStartsNothing(t *testing.T) {
 	for i, item := range MainMenu {
 		t.Run(item.Label, func(t *testing.T) {
 			m := leaveApp(t)
-			m, cmd := updateAs(t, m, runeKey(rune('1'+i)))
+			m, cmd := updateAs(t, m, runeKey(rune('1'+i))) //nolint:gosec // G115: i is a menu index below 10
 			if isQuit(cmd) {
 				t.Fatalf("the digit %d quit the launcher", i+1)
 			}

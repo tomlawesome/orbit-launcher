@@ -1,6 +1,6 @@
 # golangci-lint v2 (#322, #323). Only the three linters below; staticcheck
 # stays its own CI job. unused and dupl block in CI; gosec reports only
-# until its findings are triaged (#322).
+# (#322: findings triaged; false alarms carry //nolint:gosec with a reason).
 version: "2"
 linters:
   default: none
@@ -13,8 +13,29 @@ linters:
       # golangci-lint's own default, kept: no reason yet to differ. Tune
       # after the first report shows how much it finds.
       threshold: 150
+    gosec:
+      # Triaged in #322.
+      excludes:
+        # G104 (errors unhandled) is errcheck's job, not a security check
+        # (errcheck is not enabled here). All 61 hits were best-effort
+        # cleanup (Close, Remove) of the launcher's own pipes and private
+        # temps, mostly on a path already returning its own error.
+        - G104
+  exclusions:
+    rules:
+      # Tests build their own fixtures in t.TempDir(): they read, write and
+      # walk files they made, at the modes the case needs, run fixed bash,
+      # git and re-exec commands, and hold fake secret-looking strings.
+      # None of it ships. Other gosec rules still apply to tests (#322).
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "^G(101|122|204|301|302|304|306|702|703):"
 issues:
   # Report every finding: golangci-lint's defaults stop at 3 of one kind and
   # 50 per linter, which hid most of the first report.
   max-issues-per-linter: 0
   max-same-issues: 0
+  # One finding per line hid 25 further gosec findings (#322), so a
+  # line's every finding is shown.
+  uniq-by-line: false

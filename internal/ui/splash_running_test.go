@@ -84,7 +84,7 @@ func sameLabels(got, want []string) bool {
 		return false
 	}
 	for i := range got {
-		if got[i] != want[i] {
+		if got[i] != want[i] { //nolint:gosec // G602: lengths are compared just above
 			return false
 		}
 	}

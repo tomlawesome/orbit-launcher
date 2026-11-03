@@ -44,7 +44,7 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd = exec.Command("bash", scriptPath)
+	cmd = exec.Command("bash", scriptPath) //nolint:gosec // G204: bash on the launcher's own staged copy of install.sh
 	cmd.Dir = targetDir
 	cmd.Env = env
 	return cmd, cleanup, nil

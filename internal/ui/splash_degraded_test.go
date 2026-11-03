@@ -206,7 +206,7 @@ func TestSplashDegraded_DownFromTheRowGoesToInstall(t *testing.T) {
 func TestSplashDegraded_DigitFromTheRowMovesToAMenuRow(t *testing.T) {
 	for i, item := range MainMenu {
 		t.Run(item.Label, func(t *testing.T) {
-			m, cmd := updateAs(t, onDegradedRow(t), runeKey(rune('1'+i)))
+			m, cmd := updateAs(t, onDegradedRow(t), runeKey(rune('1'+i))) //nolint:gosec // G115: i is a menu index below 10
 			assertCaretOn(t, screen(m), item.Label)
 			if m.Chosen != "" || cmd != nil {
 				t.Errorf("a digit chose %q / issued a command", m.Chosen)

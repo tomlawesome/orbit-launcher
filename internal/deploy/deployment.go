@@ -136,7 +136,7 @@ func Detect(targetDir string) (*Deployment, error) {
 	// Opened without blocking and then checked: a named pipe someone left
 	// as .env-orbit would otherwise hang the open, and the launcher with
 	// it. Anything but a regular file is refused as unreadable.
-	f, err := os.OpenFile(envPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(envPath, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // G304, G703: the folder's .env-orbit, opened non-blocking and refused unless a regular file
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -229,7 +229,7 @@ func splitProfiles(value string) []string {
 // any other failure to look is an error naming the script; a script
 // that is there must pass the trust check (trusted.go) first.
 func requireScript(dir, name string, sentinel error) error {
-	if _, err := os.Lstat(filepath.Join(dir, scriptsDir, name)); err != nil {
+	if _, err := os.Lstat(filepath.Join(dir, scriptsDir, name)); err != nil { //nolint:gosec // G703: Lstat before the trusted-script check that follows
 		if errors.Is(err, fs.ErrNotExist) || scriptsNotADirectory(dir, err) {
 			return sentinel
 		}
@@ -247,6 +247,6 @@ func scriptsNotADirectory(dir string, err error) bool {
 	if !errors.Is(err, syscall.ENOTDIR) {
 		return false
 	}
-	info, statErr := os.Stat(dir)
+	info, statErr := os.Stat(dir) //nolint:gosec // G703: Stat of the operator's own folder to tell ENOTDIR apart
 	return statErr == nil && info.IsDir()
 }

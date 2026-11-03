@@ -92,7 +92,7 @@ const density = 1.2
 // New builds a deterministic sky for the given viewport. The same seed
 // always produces the same stars.
 func New(width, height int, seed int64) Model {
-	rng := rand.New(rand.NewSource(seed))
+	rng := rand.New(rand.NewSource(seed)) //nolint:gosec // G404: seeded stars for the animation, not a secret
 	count := int(float64(width*height) / 100 * density)
 	if count < 1 && width > 0 && height > 0 {
 		count = 1

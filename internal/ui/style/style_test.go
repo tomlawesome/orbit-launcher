@@ -152,7 +152,7 @@ func hexRGB(t *testing.T, hex string) (r, g, b uint8) {
 	if err != nil {
 		t.Fatalf("test fixture %q: %v", hex, err)
 	}
-	return uint8(v >> 16), uint8(v >> 8), uint8(v)
+	return uint8(v >> 16), uint8(v >> 8), uint8(v) //nolint:gosec // G115: masked bytes of a 24-bit colour fixture
 }
 
 // TestPaletteColoursMatchDocumentedHex pins every palette colour to the

@@ -61,7 +61,7 @@ func run(check bool, stdout io.Writer, shipped func() ([]review.Package, error))
 	}
 	var extras []notices.Extra
 	for _, name := range names {
-		content, err := os.ReadFile(name)
+		content, err := os.ReadFile(name) //nolint:gosec // G304: repo tool; reads the repo's own notice extras
 		if err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func run(check bool, stdout io.Writer, shipped func() ([]review.Package, error))
 	}
 
 	if !check {
-		return os.WriteFile(outPath, []byte(text), 0o644)
+		return os.WriteFile(outPath, []byte(text), 0o644) //nolint:gosec // G306, G703: fixed repo path to a committed, public notices file
 	}
 	committed, err := os.ReadFile(outPath)
 	if err != nil {

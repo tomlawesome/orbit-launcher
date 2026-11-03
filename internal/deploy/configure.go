@@ -61,8 +61,8 @@ func OpenConfigTree(configTree string) (endSession func(), err error) {
 		return nil, err
 	}
 	return func() {
-		os.Remove(filepath.Join(configTree, EnvFile))
-		os.RemoveAll(filepath.Join(configTree, SecretsDir))
+		os.Remove(filepath.Join(configTree, EnvFile))       //nolint:gosec // G703: removes files in the launcher's own config tree
+		os.RemoveAll(filepath.Join(configTree, SecretsDir)) //nolint:gosec // G703: removes files in the launcher's own config tree
 	}, nil
 }
 
@@ -86,7 +86,7 @@ func ImportTargetConfigContext(ctx context.Context, configTree, targetDir string
 	// Nothing is read or tidied in a directory the launcher does not
 	// trust (#191). A target that doesn't exist yet has nothing to
 	// import.
-	if _, err := os.Lstat(targetDir); os.IsNotExist(err) {
+	if _, err := os.Lstat(targetDir); os.IsNotExist(err) { //nolint:gosec // G703: Lstat of the operator's own deployment or config-tree path, checked by the trusted-path rules (#191)
 		return nil
 	}
 	if err := requireTrustedConfigDirs(targetDir); err != nil {
@@ -141,11 +141,11 @@ func ImportTargetConfigContext(ctx context.Context, configTree, targetDir string
 // produce are left in place.
 func AdoptConfig(configTree, targetDir string) error {
 	envSrc := filepath.Join(configTree, EnvFile)
-	if _, err := os.Stat(envSrc); err != nil {
+	if _, err := os.Stat(envSrc); err != nil { //nolint:gosec // G703: Stat of the launcher's own config tree
 		return fmt.Errorf("configuration session left no %s: %w", EnvFile, err)
 	}
 	// What dest is, when it is there, is the trust check's to judge.
-	if _, err := os.Lstat(targetDir); err != nil {
+	if _, err := os.Lstat(targetDir); err != nil { //nolint:gosec // G703: Lstat of the operator's own deployment or config-tree path, checked by the trusted-path rules (#191)
 		return fmt.Errorf("prepare target: %w", err)
 	}
 	// Nothing is written or tidied in a directory the launcher does not
@@ -214,7 +214,7 @@ func planAdoption(configTree, targetDir string) (adoptionPlan, error) {
 	}
 
 	secretsSrc := filepath.Join(configTree, SecretsDir)
-	info, err := os.Lstat(secretsSrc)
+	info, err := os.Lstat(secretsSrc) //nolint:gosec // G703: Lstat of the collected tree, trust-checked just before
 	switch {
 	case os.IsNotExist(err):
 		plan.copies = append(plan.copies, fileCopy{envSrc, envDst})
@@ -226,7 +226,7 @@ func planAdoption(configTree, targetDir string) (adoptionPlan, error) {
 	}
 
 	plan.secretsDir = filepath.Join(targetDir, SecretsDir)
-	info, err = os.Lstat(plan.secretsDir)
+	info, err = os.Lstat(plan.secretsDir) //nolint:gosec // G703: Lstat inside the trust-checked target folder
 	switch {
 	case os.IsNotExist(err):
 	case err != nil:
@@ -275,7 +275,7 @@ func refusal(reason, path string) error {
 // requireRegularSource refuses a source that isn't a regular file, so a
 // symlink is never followed out of the tree.
 func requireRegularSource(path string) error {
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) //nolint:gosec // G703: Lstat is the symlink refusal itself
 	if err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func requireRegularSource(path string) error {
 // requireReplaceable accepts a destination that doesn't exist yet or is
 // a regular file; anything else is refused, never replaced.
 func requireReplaceable(path string) error {
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) //nolint:gosec // G703: Lstat is the replaceable-file refusal itself
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -328,7 +328,7 @@ func stageAdoption(plan adoptionPlan) (staged []stagedFile, err error) {
 				return staged, err
 			}
 		}
-		if err := os.Chmod(plan.secretsDir, 0o700); err != nil {
+		if err := os.Chmod(plan.secretsDir, 0o700); err != nil { //nolint:gosec // G302: a directory needs the x bit; 0700 is owner-only
 			return staged, err
 		}
 	}
@@ -347,7 +347,7 @@ func stageAdoption(plan adoptionPlan) (staged []stagedFile, err error) {
 }
 
 func copyConfigFile(src, dst string) error {
-	info, err := os.Lstat(src)
+	info, err := os.Lstat(src) //nolint:gosec // G703: Lstat is the regular-file refusal itself
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -357,7 +357,7 @@ func copyConfigFile(src, dst string) error {
 	if !info.Mode().IsRegular() {
 		return refusal(notARegularFile, src)
 	}
-	body, err := os.ReadFile(src)
+	body, err := os.ReadFile(src) //nolint:gosec // G304, G703: src passed the trust check and the regular-file check above
 	if err != nil {
 		return err
 	}
@@ -386,7 +386,7 @@ func stageFile(dst string, body []byte) (tmp string, err error) {
 		err = closeErr
 	}
 	if err != nil {
-		os.Remove(tmp)
+		os.Remove(tmp) //nolint:gosec // G703: removes our own staging temp
 		return "", err
 	}
 	return tmp, nil
@@ -400,8 +400,8 @@ func writeFileAtomically(dst string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
+	if err := os.Rename(tmp, dst); err != nil { //nolint:gosec // G703: rename of our own 0600 temp beside dst in a trust-checked folder
+		os.Remove(tmp) //nolint:gosec // G703: removes our own staging temp
 		return err
 	}
 	return nil
@@ -417,7 +417,7 @@ func removeStaleTemps(targetDir string) {
 	} {
 		stale, _ := filepath.Glob(pattern)
 		for _, path := range stale {
-			os.Remove(path)
+			os.Remove(path) //nolint:gosec // G703: stale staging temps in a folder already trust-checked by every caller
 		}
 	}
 }
@@ -425,7 +425,7 @@ func removeStaleTemps(targetDir string) {
 // copySecretsDir copies src's regular files into dst, each only once
 // trust(name) accepts it.
 func copySecretsDir(src, dst string, trust func(name string) error) error {
-	info, err := os.Lstat(src)
+	info, err := os.Lstat(src) //nolint:gosec // G703: Lstat is the not-a-directory refusal itself
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -435,10 +435,10 @@ func copySecretsDir(src, dst string, trust func(name string) error) error {
 	if !info.IsDir() {
 		return refusal(notADirectory, src)
 	}
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+	if err := os.MkdirAll(dst, 0o700); err != nil { //nolint:gosec // G703: creates the private secrets dir inside the launcher's own config tree
 		return err
 	}
-	if err := os.Chmod(dst, 0o700); err != nil {
+	if err := os.Chmod(dst, 0o700); err != nil { //nolint:gosec // G302, G703: the launcher's own config tree; a directory needs the x bit, 0700 is owner-only
 		return err
 	}
 	entries, err := os.ReadDir(src)
@@ -467,7 +467,7 @@ const (
 	// (OIDC_CALLBACK_URL is derived from an accepted APP_URL).
 	ConfigStepInit ConfigStep = "--init"
 	// ConfigStepSecret collects the OIDC client secret.
-	ConfigStepSecret ConfigStep = "--set-oidc-secret"
+	ConfigStepSecret ConfigStep = "--set-oidc-secret" //nolint:gosec // G101: a configure.sh flag name, not a credential
 )
 
 // AuthMode is the sign-in choice the launcher's own screen collects

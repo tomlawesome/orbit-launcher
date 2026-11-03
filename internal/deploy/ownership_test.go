@@ -136,7 +136,7 @@ func TestForeignOwned_SymlinksAreNotFollowed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("as root the folder and /etc are both root-owned, so following a link would change nothing visible")
 	}
-	if fowUID(t, "/etc/passwd") == uint32(os.Getuid()) {
+	if fowUID(t, "/etc/passwd") == uint32(os.Getuid()) { //nolint:gosec // G115: a uid always fits uint32
 		t.Skip("/etc/passwd is owned by the current account here; it can't stand for a foreign file")
 	}
 	t.Run("links inside the secrets folder", func(t *testing.T) {
@@ -523,10 +523,10 @@ func TestChownCommandWords_SpecIsAcceptedByChown(t *testing.T) {
 			t.Skipf("Account = %q, want %q for this case", own.Account, u.Username)
 		}
 		fowRunChown(t, dir, own)
-		if got := fowUID(t, env); got != uint32(uid) {
+		if got := fowUID(t, env); got != uint32(uid) { //nolint:gosec // G115: a uid always fits uint32
 			t.Errorf("uid = %d, want %d", got, uid)
 		}
-		if got := fowGID(t, env); got != uint32(gid) {
+		if got := fowGID(t, env); got != uint32(gid) { //nolint:gosec // G115: a gid always fits uint32
 			t.Errorf("gid = %d, want %d (%s's login group)", got, gid, u.Username)
 		}
 	})
