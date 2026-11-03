@@ -553,6 +553,12 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.awaiting = ""
 			return m, nil
 		}
+		// The advisory pre-empts the screen but not the finding: keep it,
+		// and "Continue anyway" there shows the warning (#330).
+		if len(found.volumes) > 0 && m.state == installStateOtherProject {
+			m.staleVolumes = found.volumes
+			return m, nil
+		}
 		// None found: a waiting Enter carries on once the clash check
 		// has answered too.
 		return m.proceed()
@@ -579,6 +585,10 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// that screen cannot) and below the clash's refusal, so it
 		// acts on the profile screen and the stale-volume screen only;
 		// anywhere else (the refusal, the notice, the run) it is dropped.
+		// It replaces or pre-empts the stale-volume screen without
+		// dropping the finding (staleVolumes stays, also when it arrives
+		// while the advisory is up): "Continue anyway" then shows that
+		// warning (#330).
 		if other.project != "" && (m.state == installStateProfile || m.state == installStateStaleVolume) {
 			m.other.folder, m.other.project = other.folder, other.project
 			m.state = installStateOtherProject
@@ -670,6 +680,10 @@ func (m InstallModel) handleOtherProjectKey(msg tea.KeyPressMsg) (tea.Model, tea
 	switch {
 	case chosen == "Continue anyway":
 		m.state = installStateProfile
+		if len(m.staleVolumes) > 0 {
+			m.state = installStateStaleVolume
+			m.volume = newMenu(installVolumeRows...)
+		}
 	case back, chosen == "Cancel":
 		m.left = true
 	}
