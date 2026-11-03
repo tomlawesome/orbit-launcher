@@ -8,6 +8,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,6 +38,17 @@ var otherFolderFlows = []struct {
 	{"Update", refuseUpdate, "Pull the latest Orbit"},
 	{"Repair", refuseRepair, "reading the deployment"},
 	{"Remove", refuseRemove, "Stand down Orbit"},
+}
+
+// existingFolder makes folder and returns it: a recorded folder that does
+// not exist reads as gone (#334), so a test of the elsewhere refusal
+// names one that does.
+func existingFolder(t *testing.T, folder string) string {
+	t.Helper()
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return folder
 }
 
 // otherFolderApp is the app after the running check has answered that
@@ -157,14 +169,15 @@ func TestOtherFolder_RemoveOpensOnTheRefusal(t *testing.T) {
 // The refusal names the folder as the check read it, escaped like every
 // untrusted path.
 func TestOtherFolder_FolderControlRunesShowAsEscapes(t *testing.T) {
-	m, _, _, _ := otherFolderApp(t, "/srv/a\x1b[999mZZ")
+	base := shortTempDir(t)
+	m, _, _, _ := otherFolderApp(t, existingFolder(t, base+"/a\x1b[999mZZ"))
 
 	m = openFlow(t, m, "Update")
 
 	if raw := m.View().Content; strings.Contains(raw, "\x1b[999m") {
 		t.Errorf("the other folder's escape sequence reached the terminal: %q", raw)
 	}
-	if flat := oneLine(screen(m)); !strings.Contains(flat, `This Orbit was started from /srv/a\x1b[999mZZ`) {
+	if flat := oneLine(screen(m)); !strings.Contains(flat, `This Orbit was started from `+base+`/a\x1b[999mZZ`) {
 		t.Errorf("the title does not show the escape as \\x1b:\n%s", screen(m))
 	}
 }
@@ -240,7 +253,7 @@ func TestOtherFolder_OtherKeysDoNothing(t *testing.T) {
 // A folder nobody chose the length of wraps to at most four rows, the
 // last ending in an ellipsis, and the screen's rest still reads.
 func TestOtherFolder_LongFolderWrapsToFourRows(t *testing.T) {
-	long := "/srv" + strings.Repeat("/orbit-deployments-x", 16)
+	long := existingFolder(t, shortTempDir(t)+strings.Repeat("/orbit-deployments-x", 16))
 	m, _, _, _ := otherFolderApp(t, long)
 
 	m = openFlow(t, m, "Update")

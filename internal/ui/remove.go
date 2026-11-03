@@ -71,9 +71,13 @@ type RemoveModel struct {
 	// instead of "No Orbit deployment found" (#238).
 	detectErr error
 
-	// otherFolder is the folder the app container was started from, in
-	// removeStateOtherFolder (#316).
-	otherFolder string
+	// refusal is removeStateOtherFolder's screen: the folder the app
+	// container was started from and its rows (#316, #334).
+	refusal folderRefusal
+	// carriedOn is the person's "Carry on from this folder" (#334): while
+	// it is set, a running answer whose folder is still gone, the splash's
+	// or Remove's own, is no mismatch. It lives as long as this flow.
+	carriedOn bool
 
 	// standDown is overridable in tests so they don't need a real Docker
 	// daemon — production code always leaves this nil and gets
@@ -120,19 +124,40 @@ func NewRemoveModel(d *deploy.Deployment) RemoveModel {
 // removeOtherFolderBody is the refusal's first body line.
 const removeOtherFolderBody = "Remove here would stop that folder's Orbit."
 
-// refuseOtherFolder turns the flow into the dead end that names folder,
-// where the container was started from (#316).
-func (m RemoveModel) refuseOtherFolder(folder string) RemoveModel {
-	m.state, m.otherFolder = removeStateOtherFolder, folder
+// refuseOtherFolder turns the flow into the screen that names the folder
+// the container was started from (#316): a dead end, or with that folder
+// gone the offer to carry on from this one (#334).
+func (m RemoveModel) refuseOtherFolder(mm deploy.Mismatch) RemoveModel {
+	m.state, m.refusal, m.carriedOn = removeStateOtherFolder, newFolderRefusal(mm), false
 	m.awaiting = false
 	return m
+}
+
+// carryOn is the row (#334): the flow goes on as from the container's own
+// folder, to the confirmation with Init's install-date lookup and its own
+// running check (#329), which a held Enter waits for as ever. It writes,
+// relabels and stops nothing itself.
+func (m RemoveModel) carryOn() (tea.Model, tea.Cmd) {
+	m.state, m.carriedOn = removeStateConfirm, true
+	m.runningAnswered, m.awaiting = false, false
+	m.confirm = newMenu(removeConfirmRows...)
+	return m, m.Init()
 }
 
 // removeRunningMsg is Remove's own running check answering for dir:
 // otherFolder names the folder the app container was started from when
 // that is not dir, and is empty for every other answer, a check that could
-// not run or ran out of time included.
-type removeRunningMsg struct{ dir, otherFolder string }
+// not run or ran out of time included. gone and buildDiffers are the
+// answer's Mismatch.FolderGone and BuildDiffers (#334).
+type removeRunningMsg struct {
+	dir, otherFolder   string
+	gone, buildDiffers bool
+}
+
+// mismatch is the answer as the refusal names it.
+func (r removeRunningMsg) mismatch() deploy.Mismatch {
+	return deploy.Mismatch{Kind: deploy.MismatchFolder, Folder: r.otherFolder, FolderGone: r.gone, BuildDiffers: r.buildDiffers}
+}
 
 // removeChecking is the working line under the confirm while Enter waits
 // for the running check.
@@ -156,7 +181,7 @@ func (m RemoveModel) checkRunningCmd() tea.Cmd {
 	return func() tea.Msg {
 		msg := removeRunningMsg{dir: dir}
 		if mm := runningMismatch(read, d, dir); mm.Kind == deploy.MismatchFolder {
-			msg.otherFolder = mm.Folder
+			msg.otherFolder, msg.gone, msg.buildDiffers = mm.Folder, mm.FolderGone, mm.BuildDiffers
 		}
 		return msg
 	}
@@ -240,9 +265,12 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The running check answered after the flow opened. Only the
 		// confirmation turns into the refusal; a stand-down in progress
 		// is never interrupted (#227) and the screens after it show a
-		// result. An answer for another folder is not this flow's.
-		if m.state == removeStateConfirm && msg.dir == m.targetDir && msg.mismatch.Kind == deploy.MismatchFolder {
-			m = m.refuseOtherFolder(msg.mismatch.Folder)
+		// result. After carrying on, a folder still gone is what was
+		// carried past; one that is back refuses (#334). An answer for
+		// another folder is not this flow's.
+		if m.state == removeStateConfirm && msg.dir == m.targetDir && msg.mismatch.Kind == deploy.MismatchFolder &&
+			!(m.carriedOn && msg.mismatch.FolderGone) {
+			m = m.refuseOtherFolder(msg.mismatch)
 		}
 		return m, nil
 
@@ -256,8 +284,8 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != removeStateConfirm {
 			return m, nil
 		}
-		if msg.otherFolder != "" {
-			return m.refuseOtherFolder(msg.otherFolder), nil
+		if msg.otherFolder != "" && !(m.carriedOn && msg.gone) {
+			return m.refuseOtherFolder(msg.mismatch()), nil
 		}
 		if m.awaiting {
 			m.awaiting = false
@@ -293,12 +321,20 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case removeStateNotFound, removeStateOtherFolder:
+	case removeStateNotFound:
 		// The dead end: its one row and Esc both go back to the menu
 		// (#205, 4a; #228).
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
 		}
+		return m, nil
+	case removeStateOtherFolder:
+		var carry, leave bool
+		m.refusal, carry, leave = m.refusal.key(msg)
+		if carry {
+			return m.carryOn()
+		}
+		m.left = leave
 		return m, nil
 	case removeStateConfirm:
 		return m.handleConfirmKey(msg)
@@ -404,7 +440,7 @@ func (m RemoveModel) view() string {
 	case removeStateFailed:
 		return m.viewFailed()
 	case removeStateOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, removeOtherFolderBody)
+		return m.refusal.view(m.star, m.width, m.height, removeOtherFolderBody)
 	default:
 		return ""
 	}

@@ -29,8 +29,12 @@ const (
 	otherFolderStep = "start the launcher from that folder instead"
 	otherBuildRow   = "started from a different build"
 	otherBuildStep  = "correct .env-orbit here, or restart Orbit from this folder, then update"
-	otherProduction = "/srv/orbit-deployments/production"
 )
+
+// otherProduction is another folder an Orbit was started from, one that
+// exists: a recorded folder that does not reads as gone (#334), not as
+// elsewhere. TestMain makes it, under /tmp, and removes it.
+var otherProduction string
 
 // answer hands the app the check's answer for dir, as the splash's
 // command would.

@@ -85,9 +85,13 @@ type RepairModel struct {
 	// unset. foreign is the answer that stopped the run.
 	foreignOwned func(dir string) (deploy.Ownership, error)
 	foreign      deploy.Ownership
-	// otherFolder is the folder the app container was started from, in
-	// repairOtherFolder (#316).
-	otherFolder string
+	// refusal is repairOtherFolder's screen: the folder the app container
+	// was started from and its rows (#316, #334).
+	refusal folderRefusal
+	// carriedOn is the person's "Carry on from this folder" (#334): while
+	// it is set, a running answer whose folder is still gone is no
+	// mismatch. It lives as long as this flow.
+	carriedOn bool
 	// clipboard is where the stop screen's Copy command writes its OSC 52
 	// sequence: nil in production, which means os.Stdout. copied is that
 	// row having copied.
@@ -222,11 +226,29 @@ func (m RepairModel) Outcome() flowOutcome {
 // repairOtherFolderBody is the refusal's first body line.
 const repairOtherFolderBody = "Repair here would read and change that folder's Orbit using this folder's files."
 
-// refuseOtherFolder turns the flow into the dead end that names folder,
-// where the container was started from (#316).
-func (m RepairModel) refuseOtherFolder(folder string) RepairModel {
-	m.state, m.otherFolder = repairOtherFolder, folder
+// refuseOtherFolder turns the flow into the screen that names the folder
+// the container was started from (#316): a dead end, or with that folder
+// gone the offer to carry on from this one (#334).
+func (m RepairModel) refuseOtherFolder(mm deploy.Mismatch) RepairModel {
+	m.state, m.refusal, m.carriedOn = repairOtherFolder, newFolderRefusal(mm), false
 	return m
+}
+
+// carryOn is the row (#334): the diagnosis starts as it does from the
+// container's own folder. A start the refusal stopped belongs to the
+// flow as it was: the flow takes a new id, so that start's late reply is
+// killed rather than read, and a fresh context when the refusal
+// cancelled the old one. The row itself writes and asks Docker nothing.
+func (m RepairModel) carryOn() (tea.Model, tea.Cmd) {
+	m.carriedOn = true
+	m.flow = repairFlows.Add(1)
+	if m.ctx == nil || m.ctx.Err() != nil {
+		m.ctx, m.cancel = context.WithCancel(context.Background())
+	}
+	m.startExecution()
+	m.planActions, m.planSummary = nil, nil
+	m.state = repairPreparing
+	return m, m.startDiagnosis(m.mode)
 }
 
 // Init implements tea.Model: the diagnosis starts immediately — it is
@@ -361,13 +383,17 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runningResultMsg:
 		// The running check answered after the flow opened. While the
-		// diagnosis is being prepared or shown (read-only, nothing
-		// changed) another folder's container stops it as Esc does and
-		// shows the refusal. Once the safe repairs or the rotation have
-		// started, the person reads the result that is on screen. An
-		// answer for another folder is not this flow's.
+		// diagnosis is being prepared or shown, or has stopped (read-only,
+		// nothing changed, and its Diagnose again would read that folder's
+		// Orbit), another folder's container stops it as Esc does and
+		// shows the refusal (#334). Once the safe repairs or the rotation have
+		// started, the person reads the result that is on screen. After
+		// carrying on, a folder still gone is what was carried past; one
+		// that is back refuses (#334). An answer for another folder is not
+		// this flow's.
 		if msg.dir != m.targetDir || msg.mismatch.Kind != deploy.MismatchFolder ||
-			(m.state != repairPreparing && m.state != repairDiagnosis) {
+			!m.readOnlyScreen() ||
+			(m.carriedOn && msg.mismatch.FolderGone) {
 			return m, nil
 		}
 		if m.stream != nil {
@@ -375,7 +401,7 @@ func (m RepairModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.cancel != nil {
 			m.cancel()
 		}
-		return m.refuseOtherFolder(msg.mismatch.Folder), nil
+		return m.refuseOtherFolder(msg.mismatch), nil
 
 	case repairReadyMsg:
 		if msg.flow != 0 && msg.flow != m.flow {
@@ -715,10 +741,22 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case repairRotating:
 		return m.handleRotateKey(msg)
 
-	case repairNotFound, repairOtherFolder:
+	case repairNotFound:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228), as in Update and Remove.
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
+			m.Done = true
+			m.WantsMenu = true
+		}
+		return m, nil
+
+	case repairOtherFolder:
+		var carry, leave bool
+		m.refusal, carry, leave = m.refusal.key(msg)
+		if carry {
+			return m.carryOn()
+		}
+		if leave {
 			m.Done = true
 			m.WantsMenu = true
 		}
@@ -792,6 +830,14 @@ func (m RepairModel) diagnoseAgain() (tea.Model, tea.Cmd) {
 	m.state = repairPreparing
 	m.mode = deploy.RepairPlan
 	return m, m.startDiagnosis(deploy.RepairPlan)
+}
+
+// readOnlyScreen says nothing this flow ran has changed the deployment:
+// the diagnosis is being prepared or shown, or stopped before any safe
+// repair or rotation started.
+func (m RepairModel) readOnlyScreen() bool {
+	return m.state == repairPreparing || m.state == repairDiagnosis ||
+		(m.state == repairError && m.stoppedIn != repairExecuting && m.stoppedIn != repairRotating)
 }
 
 // stoppedMutation says the error screen is showing a safe repair or
@@ -881,7 +927,7 @@ func (m RepairModel) view() string {
 		return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
 			"There's nothing here for Repair to read — nothing was changed.")
 	case repairOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, repairOtherFolderBody)
+		return m.refusal.view(m.star, m.width, m.height, repairOtherFolderBody)
 	}
 	return m.viewDiagnosis()
 }

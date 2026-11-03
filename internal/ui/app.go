@@ -462,18 +462,15 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 // the running check found the app container started from another folder
 // it opens on the refusal instead, and no diagnosis starts (#316).
 func (m AppModel) startRepair() (tea.Model, tea.Cmd) {
-	otherFolder := ""
-	if m.splash.mismatch.Kind == deploy.MismatchFolder {
-		otherFolder = m.splash.mismatch.Folder
-	}
+	mismatch := m.splash.mismatch
 	sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 	m.repair = NewRepairModel(m.resolvedTargetDir(), m.version)
 	m.repair.engineRunSeams = m.flowSeams
 	m.repair.serviceStates = m.readServices()
 	m.repair.foreignOwned = deploy.ForeignOwned
 	m.repair.send = m.flowSend
-	if otherFolder != "" {
-		m.repair = m.repair.refuseOtherFolder(otherFolder)
+	if mismatch.Kind == deploy.MismatchFolder {
+		m.repair = m.repair.refuseOtherFolder(mismatch)
 	}
 	m.state = appStateRepair
 	return m, tea.Batch(sizeCmd, m.repair.Init())
@@ -509,10 +506,8 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// A running check that has answered "started from another folder"
 	// turns Update, Repair and Remove into a refusal naming that folder.
 	// One that has not answered yet is handed to the open flow later.
-	otherFolder := ""
-	if m.splash.mismatch.Kind == deploy.MismatchFolder {
-		otherFolder = m.splash.mismatch.Folder
-	}
+	mismatch := m.splash.mismatch
+	otherFolder := mismatch.Kind == deploy.MismatchFolder
 
 	switch m.splash.Chosen {
 	case "Remove":
@@ -528,8 +523,8 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.remove.detectErr = err
 		m.remove.lookupInstalledAt = m.flowInstalledAt
 		m.remove.runningRead = m.runningReader
-		if otherFolder != "" && deployment != nil {
-			m.remove = m.remove.refuseOtherFolder(otherFolder)
+		if otherFolder && deployment != nil {
+			m.remove = m.remove.refuseOtherFolder(mismatch)
 		}
 		m.state = appStateRemove
 		// Init looks up the install date — read-only, so like Install's
@@ -566,8 +561,8 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
 		m.update.lookupInstalledAt = m.flowInstalledAt
-		if otherFolder != "" && deployment != nil {
-			m.update = m.update.refuseOtherFolder(otherFolder)
+		if otherFolder && deployment != nil {
+			m.update = m.update.refuseOtherFolder(mismatch)
 		}
 		m.state = appStateUpdate
 		return m, tea.Batch(sizeCmd, m.update.Init())

@@ -86,6 +86,23 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   end, its title reading "This machine's Orbit was started from". It has no
   "Continue anyway", because the act it prevents is Compose's takeover of
   that folder's Orbit, not a refusal of the installer's.
+- **A gone folder** (#334; owner, 2026-11-03, 13a, 14a, 15a): when nothing
+  exists at the recorded folder (strict: a folder that exists is elsewhere,
+  whatever it holds; a relative label or a Stat that fails otherwise is
+  elsewhere too), the refusal says "That folder no longer exists." In
+  Update, Repair and Remove, with this folder's record naming the running
+  build, it offers `Carry on from this folder` and `Cancel` (Cancel goes
+  where Esc goes, the menu). Carrying on is consent, not a write: the flow
+  goes on exactly as from the container's own folder (Update's confirm,
+  Repair's diagnosis, Remove's confirm and its own running check), and the
+  row writes, relabels and asks Docker nothing; Compose restamps the label
+  on the next Update. While carried on, an answer whose folder is still
+  gone is no mismatch; one whose folder is back refuses as above. With
+  another build the screen is a dead end that says so. Install never
+  offers the row: with this folder's record it points at Update, Repair or
+  Remove; without one it prints `docker compose --project-name <name>
+  down`. The splash's rows say the folder no longer exists, and the caret
+  follows the normal rules instead of resting on Exit.
 - **The other-project advisory** (#321): Install opened while an Orbit app
   container exists under another Compose project is the stale-volume
   screen's shape: the amber mark, the title "There is already an Orbit on

@@ -40,9 +40,13 @@ type UpdateModel struct {
 	state         updateState
 	confirm       menu // updateConfirmRows
 
-	// otherFolder is the folder the app container was started from, in
-	// updateStateOtherFolder (#316).
-	otherFolder string
+	// refusal is updateStateOtherFolder's screen: the folder the app
+	// container was started from and its rows (#316, #334).
+	refusal folderRefusal
+	// carriedOn is the person's "Carry on from this folder" (#334): while
+	// it is set, a running answer whose folder is still gone is no
+	// mismatch. It lives as long as this flow.
+	carriedOn bool
 
 	// left is Esc, Cancel or Menu on the flow's first screen: back to the
 	// main menu with nothing started (#210).
@@ -82,11 +86,20 @@ var deadEndRows = []string{"Menu"}
 // updateOtherFolderBody is the refusal's first body line.
 const updateOtherFolderBody = "Update here would act on that folder's Orbit, and Orbit's installer refuses it."
 
-// refuseOtherFolder turns the flow into the dead end that names folder,
-// where the container was started from (#316).
-func (m UpdateModel) refuseOtherFolder(folder string) UpdateModel {
-	m.state, m.otherFolder = updateStateOtherFolder, folder
+// refuseOtherFolder turns the flow into the screen that names the folder
+// the container was started from (#316): a dead end, or with that folder
+// gone the offer to carry on from this one (#334).
+func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
+	m.state, m.refusal, m.carriedOn = updateStateOtherFolder, newFolderRefusal(mm), false
 	return m
+}
+
+// carryOn is the row (#334): the flow goes on as from the container's own
+// folder, to the confirmation and its install-date lookup. It writes,
+// relabels and asks Docker nothing itself.
+func (m UpdateModel) carryOn() (tea.Model, tea.Cmd) {
+	m.state, m.carriedOn = updateStateConfirm, true
+	return m, m.Init()
 }
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
@@ -133,10 +146,13 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The running check may answer after the flow has opened. Before the
 	// run starts, another folder's container turns the confirmation into
 	// the refusal; once it has, the installer's own refusal is the net.
-	// An answer for another folder is not this flow's.
+	// After carrying on, a folder still gone is what was carried past; one
+	// that is back refuses (#334). An answer for another folder is not
+	// this flow's.
 	if r, ok := msg.(runningResultMsg); ok {
-		if m.state == updateStateConfirm && r.dir == m.targetDir && r.mismatch.Kind == deploy.MismatchFolder {
-			m = m.refuseOtherFolder(r.mismatch.Folder)
+		if m.state == updateStateConfirm && r.dir == m.targetDir && r.mismatch.Kind == deploy.MismatchFolder &&
+			!(m.carriedOn && r.mismatch.FolderGone) {
+			m = m.refuseOtherFolder(r.mismatch)
 		}
 		return m, nil
 	}
@@ -163,12 +179,20 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch m.state {
-	case updateStateNotFound, updateStateOtherFolder:
+	case updateStateNotFound:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228).
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
 		}
+		return m, nil
+	case updateStateOtherFolder:
+		var carry, leave bool
+		m.refusal, carry, leave = m.refusal.key(msg)
+		if carry {
+			return m.carryOn()
+		}
+		m.left = leave
 		return m, nil
 	case updateStateConfirm:
 		return m.handleConfirmKey(msg)
@@ -215,7 +239,7 @@ func (m UpdateModel) view() string {
 	case updateStateRunning:
 		return m.run.view(m.width, m.height)
 	case updateStateOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, otherFolderLead, m.otherFolder, updateOtherFolderBody)
+		return m.refusal.view(m.star, m.width, m.height, updateOtherFolderBody)
 	}
 	return ""
 }
