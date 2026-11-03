@@ -111,7 +111,7 @@ const (
 const (
 	folderGoneLine          = "That folder no longer exists."
 	folderGoneCarryOn       = "Move it back there, or carry on from this folder."
-	folderGoneOtherBuild    = "That folder no longer exists, and this folder's " + deploy.EnvFile + " names a different build from the one running, so it cannot carry that Orbit on."
+	folderGoneOtherBuild    = "That folder no longer exists, and this folder's " + deploy.EnvFile + " names a different build from the one running, so it can't carry that Orbit on."
 	folderGoneOtherBuildFix = "Correct " + deploy.EnvFile + " here, or move the folder back, then try again."
 	installRecordHereLine   = "That folder no longer exists, and its record is in this folder."
 	installRecordHereAdvice = "Use Update, Repair or Remove here instead."

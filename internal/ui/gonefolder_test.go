@@ -38,7 +38,7 @@ const (
 	goneCarryOnRow = "Carry on from this folder"
 	goneLine       = "That folder no longer exists."
 	goneCarryOn    = "Move it back there, or carry on from this folder."
-	goneOtherBuild = "That folder no longer exists, and this folder's .env-orbit names a different build from the one running, so it cannot carry that Orbit on."
+	goneOtherBuild = "That folder no longer exists, and this folder's .env-orbit names a different build from the one running, so it can't carry that Orbit on."
 	goneCorrect    = "Correct .env-orbit here, or move the folder back, then try again."
 
 	installGoneRecordHere = "That folder no longer exists, and its record is in this folder."
