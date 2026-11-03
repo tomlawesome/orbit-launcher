@@ -395,8 +395,11 @@ func TestRemoveRunning_TimeoutProceeds(t *testing.T) {
 	m.lookupInstalledAt = func(context.Context, *deploy.Deployment) time.Time { return time.Time{} }
 
 	got := make(chan removeRunningMsg, 1)
+	// Init is called here, not in the goroutine: the goroutine must not
+	// read m while the Enter below replaces it.
+	initCmd := m.Init()
 	go func() {
-		for _, msg := range answersOf(m.Init()) {
+		for _, msg := range answersOf(initCmd) {
 			if r, ok := msg.(removeRunningMsg); ok {
 				got <- r
 			}
