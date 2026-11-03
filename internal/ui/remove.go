@@ -92,6 +92,15 @@ type RemoveModel struct {
 	// set it so they neither write to the real terminal nor go unchecked.
 	clipboard io.Writer
 
+	// runningRead reads the app container for Remove's own running check:
+	// nil means no check and no wait. The app copies its reader here, as
+	// for Install.
+	runningRead func(context.Context, *deploy.Deployment) (deploy.RunningApp, error)
+	// runningAnswered is set once that check has answered; awaiting is an
+	// Enter on "Stand down Orbit" held until it does.
+	runningAnswered bool
+	awaiting        bool
+
 	// signalQuit is a SignalQuitMsg that arrived during the stand-down:
 	// the launcher quits as soon as the stand-down's result is in.
 	signalQuit bool
@@ -115,7 +124,42 @@ const removeOtherFolderBody = "Remove here would stop that folder's Orbit."
 // where the container was started from (#316).
 func (m RemoveModel) refuseOtherFolder(folder string) RemoveModel {
 	m.state, m.otherFolder = removeStateOtherFolder, folder
+	m.awaiting = false
 	return m
+}
+
+// removeRunningMsg is Remove's own running check answering for dir:
+// otherFolder names the folder the app container was started from when
+// that is not dir, and is empty for every other answer, a check that could
+// not run or ran out of time included.
+type removeRunningMsg struct{ dir, otherFolder string }
+
+// removeChecking is the working line under the confirm while Enter waits
+// for the running check.
+const removeChecking = "checking where Orbit was started from"
+
+// checkRunningCmd is Remove's own running check, nil with no reader or no
+// deployment.
+//
+// The confirmation does not trust the splash's answer alone: that check
+// may still be out, or may have given up without a word, and the
+// stand-down runs `compose down` by project name, so it would stop an
+// Orbit started from another folder (#329). Remove asks again when it
+// opens, and Enter waits for this answer, never the splash's. A check that
+// cannot run or runs out of time answers "", and the stand-down proceeds
+// as every silent check lets its flow proceed.
+func (m RemoveModel) checkRunningCmd() tea.Cmd {
+	read, d, dir := m.runningRead, m.deployment, m.targetDir
+	if read == nil || d == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := removeRunningMsg{dir: dir}
+		if mm := runningMismatch(read, d, dir); mm.Kind == deploy.MismatchFolder {
+			msg.otherFolder = mm.Folder
+		}
+		return msg
+	}
 }
 
 const removeCopy = "Copy command"
@@ -144,12 +188,18 @@ func (m RemoveModel) standDownFunc() func(context.Context, string) error {
 }
 
 // Init implements tea.Model. It starts the read-only install-date
-// lookup; the confirm screen shows the date only once Docker answers.
+// lookup, and the running check when there is a reader; the confirm
+// screen shows the date only once Docker answers.
 func (m RemoveModel) Init() tea.Cmd {
 	if m.state == removeStateOtherFolder {
 		return nil // the refusal shows no date
 	}
-	return installedAtCmd(m.lookupInstalledAt, m.deployment)
+	lookup := installedAtCmd(m.lookupInstalledAt, m.deployment)
+	check := m.checkRunningCmd()
+	if check == nil {
+		return lookup
+	}
+	return tea.Batch(lookup, check)
 }
 
 // Update implements tea.Model.
@@ -193,6 +243,25 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// result. An answer for another folder is not this flow's.
 		if m.state == removeStateConfirm && msg.dir == m.targetDir && msg.mismatch.Kind == deploy.MismatchFolder {
 			m = m.refuseOtherFolder(msg.mismatch.Folder)
+		}
+		return m, nil
+
+	case removeRunningMsg:
+		// Remove's own check answered. A folder refuses on the confirm,
+		// waiting or not; a clean answer releases a held Enter.
+		if msg.dir != m.targetDir {
+			return m, nil
+		}
+		m.runningAnswered = true
+		if m.state != removeStateConfirm {
+			return m, nil
+		}
+		if msg.otherFolder != "" {
+			return m.refuseOtherFolder(msg.otherFolder), nil
+		}
+		if m.awaiting {
+			m.awaiting = false
+			return m.startStandDown()
 		}
 		return m, nil
 
@@ -245,16 +314,28 @@ func (m RemoveModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	m.confirm, chosen, back = m.confirm.onScreen(msg)
 	switch {
 	case back, chosen == "Cancel":
-		m.left = true
+		m.left, m.awaiting = true, false
+	case chosen == "":
+		m.awaiting = false // a caret move drops a held Enter
 	case chosen == "Stand down Orbit":
-		m.state = removeStateStandingDown
-		targetDir := m.deployment.TargetDir
-		standDown := m.standDownFunc()
-		return m, func() tea.Msg {
-			return standDownResultMsg{err: standDown(context.Background(), targetDir)}
+		if m.runningRead != nil && !m.runningAnswered {
+			m.awaiting = true
+			return m, nil
 		}
+		return m.startStandDown()
 	}
 	return m, nil
+}
+
+// startStandDown starts the stand-down, from Enter or from the running
+// check's clean answer to a held Enter.
+func (m RemoveModel) startStandDown() (tea.Model, tea.Cmd) {
+	m.state = removeStateStandingDown
+	targetDir := m.deployment.TargetDir
+	standDown := m.standDownFunc()
+	return m, func() tea.Msg {
+		return standDownResultMsg{err: standDown(context.Background(), targetDir)}
+	}
 }
 
 // handleDoneKey drives the two screens after the stand-down. Esc and
@@ -365,6 +446,10 @@ func (m RemoveModel) viewConfirm() string {
 	}
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
+	if m.awaiting {
+		fmt.Fprintln(&b)
+		b.WriteString(workingLine(m.frame, removeChecking, ""))
+	}
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 

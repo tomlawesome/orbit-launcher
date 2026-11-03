@@ -527,6 +527,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.remove.targetDir = dir
 		m.remove.detectErr = err
 		m.remove.lookupInstalledAt = m.flowInstalledAt
+		m.remove.runningRead = m.runningReader
 		if otherFolder != "" && deployment != nil {
 			m.remove = m.remove.refuseOtherFolder(otherFolder)
 		}
