@@ -1,6 +1,7 @@
 # golangci-lint v2 (#322, #323). Only the three linters below; staticcheck
-# stays its own CI job. unused and dupl block in CI; gosec reports only
-# (#322: findings triaged; false alarms carry //nolint:gosec with a reason).
+# stays its own CI job. All three block in CI. gosec's findings were
+# triaged (#322): a false alarm carries //nolint:gosec with its reason, and
+# the rules excluded below say why.
 version: "2"
 linters:
   default: none
