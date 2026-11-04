@@ -116,9 +116,11 @@ const updateOtherFolderBody = "Update here would act on that folder's Orbit, and
 
 // refuseOtherFolder turns the flow into the screen that names the folder
 // the container was started from (#316): a dead end, or with that folder
-// gone the offer to carry on from this one (#334).
+// gone the offer to carry on from this one (#334). A held Enter is
+// dropped: it agreed to the confirmation the refusal replaced, so a
+// carry-on needs a fresh one.
 func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
-	m.state, m.refusal, m.carriedOn = updateStateOtherFolder, newFolderRefusal(mm), false
+	m.state, m.refusal, m.carriedOn, m.awaiting = updateStateOtherFolder, newFolderRefusal(mm), false, false
 	return m
 }
 

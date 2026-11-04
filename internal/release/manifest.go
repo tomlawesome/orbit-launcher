@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -57,11 +58,14 @@ var targetLookupClient = &http.Client{Timeout: targetLookupTimeout}
 // one request, cap and parser every manifest read shares; the callers
 // check the fields they use.
 func getManifest(ctx context.Context, client *http.Client, url string) (raw rawManifest, found bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// G704 below: url is built from the fixed release host, or from
+	// ORBIT_INSTALL_TEST_MANIFEST_BASE_URL, which an operator or a test
+	// sets and install.sh reads too; nothing a remote party controls.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G704: base URL is the fixed release host or the operator's/test's own override, as install.sh reads it
 	if err != nil {
 		return rawManifest{}, false, fmt.Errorf("build request: %w", err)
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: base URL is the fixed release host or the operator's/test's own override, as install.sh reads it
 	if err != nil {
 		return rawManifest{}, false, fmt.Errorf("fetch release manifest: %w", err)
 	}
@@ -116,11 +120,22 @@ func fetchManifest(ctx context.Context, url string) (Manifest, error) {
 func readManifestFile(path string) (Manifest, error) {
 	// The path is the person's own ORBIT_RELEASE_MANIFEST, the file
 	// install.sh will read; reading it to show its version is the point.
-	f, err := os.Open(filepath.Clean(path)) //nolint:gosec // G304: the person's own manifest path, read for display only
+	// Opened without blocking and then checked, as deploy.Detect does: a
+	// named pipe would otherwise hang the open, and the confirm screen's
+	// lookup with it. Anything but a regular file is refused.
+	path = filepath.Clean(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // G304, G703: the person's own manifest path, opened non-blocking, read for display only and refused unless a regular file
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read release manifest: %w", err)
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return Manifest{}, fmt.Errorf("read release manifest: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return Manifest{}, fmt.Errorf("read release manifest: %s is not a regular file", path)
+	}
 	raw, err := decodeManifest(f)
 	if err != nil {
 		return Manifest{}, err
