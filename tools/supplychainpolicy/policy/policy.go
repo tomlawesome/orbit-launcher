@@ -34,7 +34,7 @@ const SchemaVersion = 2
 const (
 	PolicyPath   = ".github/supply-chain-policy.json"
 	workflowsDir = ".github/workflows"
-	secretScan   = ".github/workflows/secret-scan.yml"
+	secretScan   = ".github/workflows/secret-scan.yml" //nolint:gosec // G101: a workflow file path, not a credential
 	gitlabCI     = ".gitlab-ci.yml"
 )
 
@@ -135,7 +135,7 @@ func CollectPins(root string) ([]Pin, error) {
 			continue
 		}
 		workflows++
-		body, err := os.ReadFile(filepath.Join(dir, f.Name()))
+		body, err := os.ReadFile(filepath.Join(dir, f.Name())) //nolint:gosec // G304: repo tool; reads the repo's own workflows
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", f.Name(), err)
 		}
@@ -184,7 +184,7 @@ func GitleaksPin(root string) (version, sha256 string, err error) {
 // Every line setting a key must agree, so a second copy cannot hide.
 func gitleaksPinIn(root, rel string, line func(string) *regexp.Regexp) (version, sha256 string, err error) {
 	name := filepath.Base(rel)
-	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) //nolint:gosec // G304: repo tool; reads the repo's own CI files
 	if err != nil {
 		return "", "", fmt.Errorf("reading %s: %w", name, err)
 	}
@@ -227,7 +227,7 @@ func pinValue(raw string) string {
 // Load reads the committed policy.
 func Load(root string) (Policy, error) {
 	var p Policy
-	raw, err := os.ReadFile(filepath.Join(root, PolicyPath))
+	raw, err := os.ReadFile(filepath.Join(root, PolicyPath)) //nolint:gosec // G304: repo tool; reads the repo's own policy file
 	if err != nil {
 		return p, fmt.Errorf("reading the supply-chain policy: %w", err)
 	}

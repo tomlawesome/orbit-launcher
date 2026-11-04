@@ -50,7 +50,7 @@ func RequireTrustedPath(dir, rel string) error {
 	path := dir
 	for i, part := range parts {
 		path = filepath.Join(path, part)
-		info, err := os.Lstat(path)
+		info, err := os.Lstat(path) //nolint:gosec // G703: Lstat is the trusted-path check itself
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ var launcherEUID = os.Geteuid
 // world-writable, owned by the launcher's user — and returns its owner. dir must already be Cleaned: Lstat
 // follows a symlink named as "link/" or "link/.".
 func trustedRoot(dir string) (int, error) {
-	info, err := os.Lstat(dir)
+	info, err := os.Lstat(dir) //nolint:gosec // G703: Lstat is the trusted-path check itself
 	if err != nil {
 		return 0, err
 	}
@@ -112,7 +112,7 @@ func launcherOwns(dir string, owner int) error {
 // (trustedRoot) that follows wherever something is run from it.
 func requireLauncherOwnsIfDir(dir string) error {
 	dir = filepath.Clean(dir)
-	info, err := os.Lstat(dir)
+	info, err := os.Lstat(dir) //nolint:gosec // G703: Lstat is the trusted-path check itself
 	if err != nil || !info.IsDir() {
 		return nil
 	}
@@ -130,7 +130,7 @@ func requireTrustedConfigDirs(dir string) error {
 		return err
 	}
 	secrets := filepath.Join(dir, SecretsDir)
-	info, err := os.Lstat(secrets)
+	info, err := os.Lstat(secrets) //nolint:gosec // G703: Lstat is the trusted-path check itself
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -153,7 +153,7 @@ func requireTrustedCollectedTree(tree string) error {
 		return err
 	}
 	secrets := filepath.Join(tree, SecretsDir)
-	info, err := os.Lstat(secrets)
+	info, err := os.Lstat(secrets) //nolint:gosec // G703: Lstat is the trusted-path check itself
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -227,7 +227,7 @@ func ownerOf(info os.FileInfo) int {
 // requireTrustedIfPresent is RequireTrustedPath for a file that may
 // legitimately be absent (a fresh install has no configuration yet).
 func requireTrustedIfPresent(dir, rel string) error {
-	if _, err := os.Lstat(filepath.Join(dir, rel)); os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(dir, rel)); os.IsNotExist(err) { //nolint:gosec // G703: Lstat is the trusted-path check itself
 		return nil
 	}
 	return RequireTrustedPath(dir, rel)

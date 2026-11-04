@@ -193,7 +193,7 @@ func refuseSharedFolder(targetDir string) error {
 	// account answers whose home it is: its owner's passwd entry, the
 	// lookup ForeignOwned already makes. A folder that does not exist,
 	// or an owner the account database cannot name, adds no refusal.
-	if info, err := os.Stat(targetDir); err == nil {
+	if info, err := os.Stat(targetDir); err == nil { //nolint:gosec // G703: Stat of the operator's own folder to find its owner
 		if u, err := user.LookupId(strconv.Itoa(ownerOf(info))); err == nil && u.HomeDir != "" && c == canonical(u.HomeDir) {
 			return ErrHomeFolder
 		}

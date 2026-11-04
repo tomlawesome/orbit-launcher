@@ -49,7 +49,7 @@ func TestStrip_AlwaysReturnsValidUTF8(t *testing.T) {
 	}
 	// A deterministic sweep over the bytes that matter to the parser.
 	alphabet := []string{"\x1b", "[", "]", "P", "_", "^", "X", "\\", "\x07", "\n", "m", "3", ";", "(", " ", "é", "日", "\xff", "a"}
-	r := rand.New(rand.NewSource(1))
+	r := rand.New(rand.NewSource(1)) //nolint:gosec // G404: fixed-seed fuzz input, not a secret
 	for n := 0; n < 20000; n++ {
 		var b strings.Builder
 		for k := r.Intn(12); k >= 0; k-- {

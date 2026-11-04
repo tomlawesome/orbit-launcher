@@ -70,7 +70,7 @@ func sgGlyphs(s string) int {
 // nothing the copy shares with the original is written to.
 func sgStarless(v reflect.Value) {
 	if v.Type() == reflect.TypeOf(starfield.Model{}) {
-		*(*starfield.Model)(unsafe.Pointer(v.UnsafeAddr())) = starfield.Model{}
+		*(*starfield.Model)(unsafe.Pointer(v.UnsafeAddr())) = starfield.Model{} //nolint:gosec // G103: test resets an unexported field of its own model
 		return
 	}
 	if v.Kind() == reflect.Struct {

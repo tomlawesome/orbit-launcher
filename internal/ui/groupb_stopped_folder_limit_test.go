@@ -68,7 +68,7 @@ func gbStWithFolderLimit(t *testing.T, seams *engineRunSeams, limit time.Duratio
 	if !f.IsValid() || f.Type() != reflect.TypeOf(time.Duration(0)) {
 		t.Fatal("engineRunSeams has no folderLimit time.Duration field (assumed name, like RepairModel's servicesLimit)")
 	}
-	reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().Set(reflect.ValueOf(limit))
+	reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().Set(reflect.ValueOf(limit)) //nolint:gosec // G103: test seam sets an unexported field of its own package
 }
 
 // A read that does not answer within the limit is "could not be read" and

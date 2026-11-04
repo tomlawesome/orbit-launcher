@@ -203,7 +203,7 @@ func emulateVolumeLs(args []string, vols []emulatedVolume) int {
 		format = "{{.Driver}}     {{.Name}}"
 	}
 	format = strings.TrimPrefix(format, "table ")
-	tmpl, err := template.New("").Funcs(dockerFuncs).Parse(format)
+	tmpl, err := template.New("").Funcs(dockerFuncs).Parse(format) //nolint:gosec // G708: fake docker's --format template, written by the test
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -292,7 +292,7 @@ func emulateVolumeInspect(args []string, vols []emulatedVolume) int {
 	if format == "json" {
 		format = "{{json .}}"
 	}
-	tmpl, err := template.New("").Funcs(dockerFuncs).Parse(format)
+	tmpl, err := template.New("").Funcs(dockerFuncs).Parse(format) //nolint:gosec // G708: fake docker's --format template, written by the test
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

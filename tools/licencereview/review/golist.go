@@ -31,7 +31,7 @@ func Shipped() ([]Package, error) {
 
 // Linked lists the packages pkg links on goos/goarch.
 func Linked(pkg, goos, goarch string) ([]Package, error) {
-	cmd := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles,SFiles,EmbedFiles,Module", pkg)
+	cmd := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles,SFiles,EmbedFiles,Module", pkg) //nolint:gosec // G204: go list with fixed flags; argv, no shell
 	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
