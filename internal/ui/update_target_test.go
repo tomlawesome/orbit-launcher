@@ -254,7 +254,7 @@ func TestUpdateConfirm_NonSemverInstalledGetsCaseAWordingNotADeadEnd(t *testing.
 	}
 	s := screen(m)
 	title, ok := targetRowContaining(s, "Update Orbit from v0.3.6-")
-	if !ok || !strings.HasSuffix(strings.Trim(title, " ✦●⟡"), "to v0.3.6") {
+	if !ok || !strings.HasSuffix(textOf(title), "to v0.3.6") {
 		t.Errorf("want case A wording with the installed string shown:\n%s", s)
 	}
 	if !slices.Contains(screenLabels(s), "Update Orbit") {
@@ -293,7 +293,7 @@ func TestUpdateConfirm_TenCellVersionsKeepTitlesAndRowsInside(t *testing.T) {
 				t.Errorf("%s@%d: no title row:\n%s", c.name, width, s)
 				continue
 			}
-			if w := lipgloss.Width(strings.Trim(title, " ✦●⟡")); w > 48 {
+			if w := lipgloss.Width(textOf(title)); w > 48 {
 				t.Errorf("%s@%d: title is %d cells, want at most 48", c.name, width, w)
 			}
 			for i, l := range strings.Split(s, "\n") {
@@ -485,5 +485,30 @@ func TestUpdateConfirm_InstallDateStillShowsInCasesABCAndC2(t *testing.T) {
 				t.Errorf("%s (%s): install date missing:\n%s", name, order, s)
 			}
 		}
+	}
+}
+
+// The app hands WithTargetLookup's function to the Update model: opening
+// Update from the menu asks it once, and its answer reaches the screen.
+func TestAppWithTargetLookup_OpeningUpdateCallsTheInjectedLookup(t *testing.T) {
+	dir := shortTempDir(t)
+	writeEnv(t, dir, "APP_URL="+wiringApp+"\n")
+	calls := 0
+	m := NewAppModelNoAnimation().WithoutVolumeCheck().WithVersion("v9.9.9").
+		WithTargetLookup(func(context.Context) (release.Target, error) {
+			calls++
+			return release.Target{Version: "v0.3.6", Pin: true}, nil
+		})
+	m.targetDir = dir
+
+	m = openUpdate(t, m, nil)
+	if m.state != appStateUpdate {
+		t.Fatalf("state = %v, want the Update flow", m.state)
+	}
+	if calls != 1 {
+		t.Errorf("the injected lookup was called %d times on opening Update, want 1", calls)
+	}
+	if s := screen(m); !strings.Contains(s, "v0.3.6") {
+		t.Errorf("the lookup's answer did not reach the confirm screen:\n%s", s)
 	}
 }
