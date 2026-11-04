@@ -129,12 +129,8 @@ func readManifestFile(path string) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("read release manifest: %w", err)
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return Manifest{}, fmt.Errorf("read release manifest: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return Manifest{}, fmt.Errorf("read release manifest: %s is not a regular file", path)
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return Manifest{}, fmt.Errorf("read release manifest: %s is not a readable regular file", path)
 	}
 	raw, err := decodeManifest(f)
 	if err != nil {
