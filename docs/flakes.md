@@ -19,11 +19,6 @@ delete the heading.
 - 2026-10-20 · 86a3b52 (plus comment-only edits) · local, full `go test ./internal/ui/` · failed once, output not kept; passed 6 of 6 reruns. Possibly a star drawn inside a line of text, which #270 fixed (that flake's heading was removed: 10 of 10 runs passed after the fix)
 - 2026-10-21 · 8f1f1bb plus a one-line notice.go clamp · local, full `go test ./...` · failed once, output not kept; passed 2 of 2 reruns
 
-## TestConsole_RealPTY_ClosingTheTerminalMidInstallLetsTheInstallerRollBack (test/pty)
-
-- 2026-10-22 · c4432e7 · pipeline 2896 / fast (`-race`) · the launcher exited 1.1 s after the terminal closed with exit status 1; the installer's EXIT trap left no marker and staged files stayed in TMPDIR. Passed 5 of 5 local `-race` runs on the same commit and 5 of 5 on `dev` aad8058
-- 2026-10-28 · bf0bc57 (Go code as 4f4f0b5; only .gitlab-ci.yml changed) · local, full `go test ./... -count=1` (no `-race`) · same symptom: exited 1.0 s after the terminal closed with exit status 1, no rollback marker, staged files left in TMPDIR. Passed alone on rerun
-
 ## TestLive_InstallHealthyEndpointThenRemove/Install (test/live)
 
 - 2026-10-23 · 0b6bacf · pipeline 2956 / live job 39207 · install.sh stopped at the OIDC step with "OIDC provider is unavailable" after reading accounts.google.com's discovery document; the same code passed in 2954, and the retry 39208 passed
