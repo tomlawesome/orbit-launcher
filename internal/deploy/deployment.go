@@ -115,7 +115,7 @@ func InstallTarget(dir string) (*Deployment, error) {
 // recordsProjectName reports whether dir's .env-orbit sets a non-empty
 // COMPOSE_PROJECT_NAME. Detect has already read the file successfully.
 func recordsProjectName(dir string) bool {
-	data, err := os.ReadFile(filepath.Join(dir, EnvFile))
+	data, err := os.ReadFile(filepath.Join(dir, EnvFile)) //nolint:gosec // G304: the target folder's own .env-orbit, which Detect has just opened and checked
 	if err != nil {
 		return false
 	}
