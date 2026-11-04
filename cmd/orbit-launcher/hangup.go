@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ui"
 )
@@ -44,9 +45,9 @@ func (in *hangupInput) Read(b []byte) (int, error) {
 // withHangupInput is the program option that reads the keys through
 // hangupInput. Bubble Tea reads stdin when it is a terminal and opens
 // /dev/tty otherwise; that second case is left to it, so the option is
-// none then.
+// none then. term is the check Bubble Tea itself makes.
 func withHangupInput(send func(tea.Msg)) tea.ProgramOption {
-	if !isTerminal(os.Stdin) {
+	if !term.IsTerminal(os.Stdin.Fd()) {
 		return func(*tea.Program) {}
 	}
 	return tea.WithInput(&hangupInput{File: os.Stdin, send: send})
