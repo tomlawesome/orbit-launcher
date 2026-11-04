@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"io"
+	"os"
 	"os/exec"
 	"sync/atomic"
 
@@ -74,10 +75,26 @@ func (c *handoffCommand) Run() error {
 
 // The setters leave a stream the command already has, as ExecProcess's do.
 
+// TerminalFiler is a reader wrapped around the terminal that can hand
+// back the terminal file itself, as the launcher's key reader does
+// (#335).
+type TerminalFiler interface{ TerminalFile() *os.File }
+
+// SetStdin gives install.sh the terminal file itself when Bubble Tea's
+// input is a wrapper around it. os/exec passes an *os.File straight to
+// the child; any other reader becomes a pipe fed by a goroutine, so
+// install.sh's `[ -t 0 ]` would be false and that goroutine would go on
+// reading the real terminal while install.sh runs.
 func (c *handoffCommand) SetStdin(r io.Reader) {
-	if c.Stdin == nil {
-		c.Stdin = r
+	if c.Stdin != nil {
+		return
 	}
+	if t, ok := r.(TerminalFiler); ok {
+		if f := t.TerminalFile(); f != nil {
+			r = f
+		}
+	}
+	c.Stdin = r
 }
 
 func (c *handoffCommand) SetStdout(w io.Writer) {

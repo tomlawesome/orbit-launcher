@@ -126,8 +126,9 @@ func startApp(stdout, stderr io.Writer) int {
 
 	// Bubble Tea's own handler turns SIGTERM into an immediate quit that
 	// skips the engine's stop and the temp-file cleanup, so it is off and
-	// forwardSignals is the one handler. SIGKILL cannot be caught.
-	program := tea.NewProgram(app, tea.WithoutSignalHandler())
+	// forwardSignals is the one handler. SIGKILL cannot be caught. A
+	// failed read of the terminal is a hang-up too (#335).
+	program := tea.NewProgram(app, tea.WithoutSignalHandler(), withHangupInput(sender.Send))
 	sender.Attach(program)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
