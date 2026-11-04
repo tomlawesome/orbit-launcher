@@ -28,11 +28,26 @@ type hangupInput struct {
 	hung atomic.Bool
 }
 
+// The installer handoff unwraps it (ui.TerminalFiler), so install.sh
+// gets the terminal file itself rather than a pipe from this reader.
+var _ ui.TerminalFiler = (*hangupInput)(nil)
+
+// TerminalFile is the terminal this reader wraps.
+func (in *hangupInput) TerminalFile() *os.File { return in.File }
+
 func (in *hangupInput) Read(b []byte) (int, error) {
 	n, err := in.File.Read(b)
 	if err == nil {
 		return n, nil
 	}
+	// Every read error is taken as a hang-up, on purpose: none is
+	// transient here. os.File.Read already retries EINTR and waits out
+	// EAGAIN in the runtime poller, so what reaches this point is end of
+	// file, EIO or a closed file. Do not set a read deadline on this
+	// file: its timeout error would land here and stop the launcher as
+	// a false hang-up. Bubble Tea cancels a pending read through epoll
+	// on the file descriptor, not through this reader, so cancelling
+	// never lands here either.
 	// A repeated SIGHUP never forces a stop already under way
 	// (ui.SignalQuitMsg), so this one racing the real one is harmless;
 	// it is sent once all the same.
