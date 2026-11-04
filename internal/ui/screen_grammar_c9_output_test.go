@@ -34,8 +34,9 @@ package ui
 // earlier golden moved.
 // #336 added the Update confirm's final forms once its release lookup
 // answers (update_confirm_newer/_installed_unknown/_target_unknown/
-// _both_unknown) and the newer-than-current dead end (update_newer), at
-// 50 and 80; update_confirm (the pending form) did not move.
+// _both_unknown) and the dead ends for an Orbit newer than, or already,
+// the current release (update_newer, update_current), at 50 and 80;
+// update_confirm (the pending form) did not move.
 // Any other difference is a regression to look at, never a file to
 // re-record.
 
@@ -358,8 +359,8 @@ func c9OtherScreensAt(t *testing.T, out map[string]string, w int) {
 	out["update_unreadable_"+tag] = uu.View().Content
 
 	// update confirm: its final forms once the release lookup answers,
-	// and the newer-than-current dead end (#336), at 80 and 50. Case D
-	// (installed equals target) is open for the owner: no golden yet.
+	// and the two dead ends, newer than and already the current release
+	// (#336), at 80 and 50.
 	if w != 120 {
 		answered := func(name, installed string, target release.Target, err error) {
 			d := *deployment
@@ -376,6 +377,7 @@ func c9OtherScreensAt(t *testing.T, out map[string]string, w int) {
 		answered("update_confirm_target_unknown", "v0.3.5", release.Target{}, unreadable)
 		answered("update_confirm_both_unknown", "", release.Target{}, unreadable)
 		answered("update_newer", "v0.3.7", current, nil)
+		answered("update_current", "v0.3.6", current, nil)
 	}
 
 	// remove: the working screen between confirm and done.

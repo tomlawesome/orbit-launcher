@@ -26,6 +26,10 @@ const (
 	// updateStateNewer is the dead end for an installed Orbit newer than
 	// the current release: install.sh does not downgrade (#336).
 	updateStateNewer
+	// updateStateCurrent is the dead end for an installed Orbit that is
+	// already the current release: Update is not a refresh, Repair is
+	// (#336, owner 17b).
+	updateStateCurrent
 )
 
 // UpdateModel is the Update flow: confirm, then the same mission
@@ -170,8 +174,8 @@ const updateChecking = "checking which Orbit release is current"
 
 // answerTarget takes the release lookup's answer. Only the confirm
 // screen takes it: once the run has started its pin is fixed, and a flow
-// that was left starts nothing. Installed newer than the target is the
-// dead end; a held Enter starts the run on a known answer and is dropped
+// that was left starts nothing. Installed newer than the target, or the
+// target itself, is a dead end, even for a held Enter; a held Enter starts the run on a known answer and is dropped
 // on an unknown one, so the next Enter runs unpinned.
 func (m UpdateModel) answerTarget(t targetMsg) (tea.Model, tea.Cmd) {
 	if m.state != updateStateConfirm || m.left {
@@ -181,7 +185,11 @@ func (m UpdateModel) answerTarget(t targetMsg) (tea.Model, tea.Cmd) {
 	held := m.awaiting
 	m.awaiting = false
 	target := m.targetVersion()
-	if target != "" && release.NewerThan(m.installedVersion(), target) {
+	switch {
+	case target != "" && target == m.installedVersion():
+		m.state = updateStateCurrent
+		return m, nil
+	case target != "" && release.NewerThan(m.installedVersion(), target):
 		m.state = updateStateNewer
 		return m, nil
 	}
@@ -268,7 +276,7 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch m.state {
-	case updateStateNotFound, updateStateNewer:
+	case updateStateNotFound, updateStateNewer, updateStateCurrent:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228).
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
@@ -353,6 +361,8 @@ func (m UpdateModel) view() string {
 		return m.refusal.view(m.star, m.width, m.height, updateOtherFolderBody)
 	case updateStateNewer:
 		return m.viewNewer()
+	case updateStateCurrent:
+		return m.viewCurrent()
 	}
 	return ""
 }
@@ -441,14 +451,31 @@ func (m UpdateModel) releaseRow() string {
 // current release, in the no-deployment grammar: Orbit's installer
 // refuses to downgrade, so Update is not offered (#336).
 func (m UpdateModel) viewNewer() string {
+	return m.viewDeadEnd("This Orbit is newer than the current release",
+		shownVersion(m.installedVersion())+" is installed; the current stable release is "+shownVersion(m.targetVersion())+".",
+		"Orbit's installer doesn't downgrade.")
+}
+
+// viewCurrent is the dead end for an installed Orbit that is already the
+// current release, in viewNewer's grammar: there is nothing to update
+// to, and Repair is what checks or fixes a deployment (#336, owner 17b).
+func (m UpdateModel) viewCurrent() string {
+	return m.viewDeadEnd("Orbit "+shownVersion(m.installedVersion())+" is already the current release",
+		"There is no newer release to update to.",
+		"To check or fix this deployment, use Repair.")
+}
+
+// viewDeadEnd is a release dead end: the accent mark and title, its
+// muted rows, the faint promise, and the one Menu row.
+func (m UpdateModel) viewDeadEnd(title string, rows ...string) string {
 	var b strings.Builder
-	writeHeader(&b, style.AccentText.Render(style.SymbolMark), "This Orbit is newer than the current release")
-	// Every row runs to errorWidth, as the other-folder refusal's do: the
+	writeHeader(&b, style.AccentText.Render(style.SymbolMark), title)
+	// Every row runs to errorWidth, as the other-folder refusal's do: a
 	// fact row is one line at 80 columns and wraps at spaces at 50.
 	limit, edge := measure(m.width, errorWidth), textArea(m.width)
-	writeWrappedIn(&b, style.MutedText,
-		shownVersion(m.installedVersion())+" is installed; the current stable release is "+shownVersion(m.targetVersion())+".", limit, edge)
-	writeWrappedIn(&b, style.MutedText, "Orbit's installer doesn't downgrade.", limit, edge)
+	for _, row := range rows {
+		writeWrappedIn(&b, style.MutedText, row, limit, edge)
+	}
 	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, limit, edge)
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, deadEndRows, 0)
