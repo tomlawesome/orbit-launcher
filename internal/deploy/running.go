@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 )
 
 // The labels Compose and the image put on the app container. Compose
@@ -133,22 +136,45 @@ type Mismatch struct {
 	Kind MismatchKind
 	// Folder is the other folder (MismatchFolder).
 	Folder string
-	// Started and Recorded name the two builds (MismatchBuild):
-	// Recorded is empty when the record holds no applied version.
+	// FolderGone is true when Folder no longer exists (#334): see
+	// folderGone. Only MismatchFolder sets it.
+	FolderGone bool
+	// BuildDiffers is true, with a gone folder only, when this folder's
+	// record names another build than the running one: the build
+	// comparison MismatchBuild makes, filling Started and Recorded.
+	BuildDiffers bool
+	// Started and Recorded name the two builds (MismatchBuild, or a gone
+	// folder whose build differs): Recorded is empty when the record
+	// holds no applied version.
 	Started, Recorded string
 }
 
 // CompareRunning says whether the app container r contradicts the record
 // d in dir, the folder the launcher was started in. Another folder wins
-// over another build: a build started elsewhere is not compared with
-// this record.
+// over another build: a build started in a folder that exists is not
+// compared with this record. One started in a folder that is gone is
+// (#334): this record is then the only one left, and whether it names
+// the running build decides whether the launcher may carry that Orbit
+// on from here. Folder still wins Kind.
 func CompareRunning(d *Deployment, dir string, r RunningApp) Mismatch {
 	if d == nil || !r.Found {
 		return Mismatch{}
 	}
 	if r.Folder != "" && !sameFolder(r.Folder, dir) {
-		return Mismatch{Kind: MismatchFolder, Folder: r.Folder}
+		m := Mismatch{Kind: MismatchFolder, Folder: r.Folder}
+		if folderGone(r.Folder) {
+			m.FolderGone = true
+			if b := compareBuild(d, r); b.Kind == MismatchBuild {
+				m.BuildDiffers, m.Started, m.Recorded = true, b.Started, b.Recorded
+			}
+		}
+		return m
 	}
+	return compareBuild(d, r)
+}
+
+// compareBuild says whether r is the build the record d names.
+func compareBuild(d *Deployment, r RunningApp) Mismatch {
 	// The image check is the exact comparison the installer's ownership
 	// proof makes, so a row here predicts its refusal. A record naming no
 	// image has nothing to differ from.
@@ -162,6 +188,22 @@ func CompareRunning(d *Deployment, dir string, r RunningApp) Mismatch {
 		started, _, _ = strings.Cut(r.Image, "@")
 	}
 	return Mismatch{Kind: MismatchBuild, Started: started, Recorded: d.Version}
+}
+
+// folderGone reports whether nothing exists at folder (#334; owner,
+// 2026-11-03: the strict test). Only an absolute path whose Stat fails
+// with "does not exist" or "not a directory" is gone; a dangling symbolic
+// link is gone, since Stat follows it. Everything else fails closed and
+// is not gone: a relative path (the Compose client's, meaningless here),
+// anything that exists (a file included, whatever a folder holds), a
+// Stat that fails any other way (permission). The test is made afresh
+// on every call, never cached.
+func folderGone(folder string) bool {
+	if !filepath.IsAbs(folder) {
+		return false
+	}
+	_, err := os.Stat(folder)
+	return err != nil && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR))
 }
 
 // sameFolder reports whether a and b name one folder: equal once

@@ -27,3 +27,7 @@ delete the heading.
 ## TestLive_InstallHealthyEndpointThenRemove/Install (test/live)
 
 - 2026-10-23 · 0b6bacf · pipeline 2956 / live job 39207 · install.sh stopped at the OIDC step with "OIDC provider is unavailable" after reading accounts.google.com's discovery document; the same code passed in 2954, and the retry 39208 passed
+
+## TestLive_UpdateReconfiguresOnTheNewImage/Update (test/live) (host)
+
+- 2026-11-03 · 9f4d75c · pipeline 3487 / live job 44764 · the update stopped at "Resolving image identity": Docker's request to the Orbit image registry got "connection refused". The Fedora leg pulled the same image in the same pipeline, and the retry 44766 passed

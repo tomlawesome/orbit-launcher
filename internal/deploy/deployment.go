@@ -98,14 +98,34 @@ func InstallTarget(dir string) (*Deployment, error) {
 		return nil, err
 	}
 	if d == nil {
-		d = &Deployment{TargetDir: dir, Project: defaultComposeProject}
+		d = &Deployment{TargetDir: dir}
 	}
-	if d.Project == defaultComposeProject {
+	// Detect fills the compose default for a record without a name, so
+	// "recorded" is read from the file: a recorded name, "orbit" included,
+	// is kept; only an absent or empty one yields to the shell.
+	if d.Project == "" || (d.Project == defaultComposeProject && !recordsProjectName(dir)) {
+		d.Project = defaultComposeProject
 		if name := os.Getenv("COMPOSE_PROJECT_NAME"); projectNamePattern.MatchString(name) {
 			d.Project = name
 		}
 	}
 	return d, nil
+}
+
+// recordsProjectName reports whether dir's .env-orbit sets a non-empty
+// COMPOSE_PROJECT_NAME. Detect has already read the file successfully.
+func recordsProjectName(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, EnvFile))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && !strings.HasPrefix(key, "#") && strings.TrimSpace(key) == "COMPOSE_PROJECT_NAME" && envValue(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Detect looks for a recognised Orbit deployment in targetDir. It returns
