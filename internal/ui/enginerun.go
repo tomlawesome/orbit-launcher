@@ -1514,7 +1514,11 @@ func (r engineRun) viewFailed(width, height int) string {
 	// kept, one "…" row standing for those dropped (#261 ruling 1). A
 	// line that is the recovery command is not repeated: the box shows it.
 	var stderr []string
-	for _, line := range r.stderrTail {
+	tail := r.stderrTail
+	if line, ok := r.updatePathRefusal(); ok {
+		tail = []string{line}
+	}
+	for _, line := range tail {
 		if r.recoveryCommand != "" && strings.TrimSpace(line) == strings.TrimSpace(r.recoveryCommand) {
 			continue
 		}
@@ -1529,6 +1533,23 @@ func (r engineRun) viewFailed(width, height int) string {
 	}
 	b.WriteString(after.String())
 	return skyBlock(r.console.sky, width, height, b.String())
+}
+
+// updatePathRefusal is install.sh's refusal of an update from a release
+// too old to update to directly (#332): the last stderr line that starts
+// "Orbit installer: ", without that prefix. It is false for any other
+// failure, and when no stderr line has the prefix.
+func (r engineRun) updatePathRefusal() (string, bool) {
+	if r.lastFailed == nil || r.lastFailed.Reason != "update-path" || r.lastFailed.Action != "abort" {
+		return "", false
+	}
+	const prefix = "Orbit installer: "
+	for i := len(r.stderrTail) - 1; i >= 0; i-- {
+		if rest, ok := strings.CutPrefix(r.stderrTail[i], prefix); ok {
+			return rest, true
+		}
+	}
+	return "", false
 }
 
 // errorWords is an error's text as a screen shows it: visibleLines,
