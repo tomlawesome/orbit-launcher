@@ -84,6 +84,9 @@ func startApp(stdout, stderr io.Writer) int {
 	}
 	if os.Getenv(deploy.NoUpdateCheckEnv) == "" {
 		app = app.WithUpdateCheck(release.CheckForUpdate)
+		// The Update confirm's release lookup asks the same releases, so
+		// the same switch keeps it off where tests run offline (#336).
+		app = app.WithTargetLookup(release.ResolveTarget)
 	}
 	app = app.WithVersion(release.DisplayVersion(release.Version))
 	// The health probe hits only the user's own deployment (its APP_URL),

@@ -196,6 +196,12 @@ func (r engineRun) withProfile(profile string) engineRun {
 	return r
 }
 
+// withChannel pins the run to a release (#336).
+func (r engineRun) withChannel(channel string) engineRun {
+	r.channel = channel
+	return r
+}
+
 func (r engineRun) withSeams(s engineRunSeams) engineRun {
 	r.engineRunSeams = s
 	return r

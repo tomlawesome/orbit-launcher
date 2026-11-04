@@ -229,6 +229,10 @@ type engineRun struct {
 	// (deploy.ProfileEnv), sent on every start and retry; empty sends
 	// none, as an update does.
 	profile string
+	// channel is the release an update is pinned to (deploy.ChannelEnv),
+	// sent on every start and retry; empty sends none, leaving
+	// install.sh's own channel (#336).
+	channel string
 
 	state   engineRunState
 	console ConsoleModel
@@ -385,16 +389,16 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 	r.console = newConsole(r.title, r.version, r.now)
 	r.console = r.console.setSize(width, height)
 	prepare := r.prepareEngine
-	targetDir, action, script, profile := r.targetDir, string(r.action), r.script, r.profile
+	targetDir, action, script, profile, channel := r.targetDir, string(r.action), r.script, r.profile, r.channel
 	seed := r.collected.seed()
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelPrepare = cancel
 	return r, func() tea.Msg {
 		if prepare == nil {
 			if script != nil {
-				return startEngine(ctx, script, targetDir, action, profile, seed)
+				return startEngine(ctx, script, targetDir, action, profile, channel, seed)
 			}
-			return prepareEngineAs(ctx, targetDir, action, profile, seed)
+			return prepareEngineAs(ctx, targetDir, action, profile, channel, seed)
 		}
 		stream, cleanup, err := prepare(ctx, targetDir, action)
 		return engineReadyMsg{stream: stream, cleanup: cleanup, err: err}
@@ -405,24 +409,25 @@ func (r engineRun) start(width, height int) (engineRun, tea.Cmd) {
 // detached, piped, plain-mode engine run, reporting the configuration tree
 // directory the engine was handed.
 func defaultPrepareEngine(ctx context.Context, targetDir, action string) engineReadyMsg {
-	return prepareEngineAs(ctx, targetDir, action, "", "")
+	return prepareEngineAs(ctx, targetDir, action, "", "", "")
 }
 
 // prepareEngineAs is defaultPrepareEngine for a run that requests a
-// deployment profile (deploy.ProfileEnv; empty requests none) and hands
-// in the configuration collected at seed (empty hands in none).
-func prepareEngineAs(ctx context.Context, targetDir, action, profile, seed string) engineReadyMsg {
+// deployment profile (deploy.ProfileEnv; empty requests none), is pinned
+// to channel (deploy.ChannelEnv; empty pins nothing) and hands in the
+// configuration collected at seed (empty hands in none).
+func prepareEngineAs(ctx context.Context, targetDir, action, profile, channel, seed string) engineReadyMsg {
 	script, err := deploy.FetchInstallScript(ctx)
 	if err != nil {
 		return engineReadyMsg{err: err}
 	}
-	return startEngine(ctx, script, targetDir, action, profile, seed)
+	return startEngine(ctx, script, targetDir, action, profile, channel, seed)
 }
 
 // startEngine stages script and starts it as the engine run, carrying
-// profile in the environment when there is one, and seeding the run's
-// configuration tree from seed when it is set.
-func startEngine(ctx context.Context, script []byte, targetDir, action, profile, seed string) engineReadyMsg {
+// profile and channel in the environment when there are, and seeding the
+// run's configuration tree from seed when it is set.
+func startEngine(ctx context.Context, script []byte, targetDir, action, profile, channel, seed string) engineReadyMsg {
 	// A cancel that lands after the script arrived must still stop the
 	// engine from starting: once started, only the model can kill it.
 	if err := ctx.Err(); err != nil {
@@ -433,6 +438,7 @@ func startEngine(ctx context.Context, script []byte, targetDir, action, profile,
 		return engineReadyMsg{err: err}
 	}
 	deploy.WithProfile(cmd, profile)
+	deploy.WithChannel(cmd, channel)
 	stream, err := engine.Start(cmd)
 	if err != nil {
 		cleanup()

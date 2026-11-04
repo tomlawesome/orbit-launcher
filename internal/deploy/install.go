@@ -146,6 +146,22 @@ func stageInstall(script []byte, collected string) (scriptPath string, env []str
 	return scriptFile.Name(), env, cleanup, nil
 }
 
+// ChannelEnv is install.sh's release channel: unset or "latest" follows
+// the latest stable release, "vX.Y.Z" pins that release.
+const ChannelEnv = "ORBIT_CHANNEL"
+
+// WithChannel adds ChannelEnv=channel to cmd's environment, after
+// whatever it already holds, so it wins over an inherited
+// ORBIT_CHANNEL=latest (#336: the update is pinned to the release its
+// confirm screen named). An empty channel adds nothing, and nothing else
+// in the environment changes.
+func WithChannel(cmd *exec.Cmd, channel string) {
+	if channel == "" {
+		return
+	}
+	cmd.Env = append(cmd.Env, ChannelEnv+"="+channel)
+}
+
 // ConfigTreeDir is the configuration tree directory cmd hands install.sh,
 // or "" when it hands over none.
 func ConfigTreeDir(cmd *exec.Cmd) string {

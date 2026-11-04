@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/release"
 )
 
 type appState int
@@ -45,8 +46,11 @@ type AppModel struct {
 
 	// Configuration remembered so a refreshed splash (after a flow
 	// returns to the menu) is built exactly like the first one.
-	version       string
-	updateCheck   func(context.Context) (string, bool, error)
+	version     string
+	updateCheck func(context.Context) (string, bool, error)
+	// lookupTarget is the Update confirm's release lookup (#336); nil
+	// asks nothing (see WithTargetLookup).
+	lookupTarget  func(context.Context) (release.Target, error)
 	healthProbe   func(ctx context.Context, appURL string) deploy.HealthReason
 	detectOnStart bool
 
@@ -141,6 +145,15 @@ func NewAppModelNoAnimation() AppModel {
 func (m AppModel) WithUpdateCheck(fn func(context.Context) (version string, hasUpdate bool, err error)) AppModel {
 	m.updateCheck = fn
 	m.splash.checkForUpdate = fn
+	return m
+}
+
+// WithTargetLookup opts the Update confirm screen into naming the
+// release it would install, using fn (in production,
+// internal/release.ResolveTarget). Like WithUpdateCheck, no constructor
+// enables it, so tests never touch the network.
+func (m AppModel) WithTargetLookup(fn func(context.Context) (release.Target, error)) AppModel {
+	m.lookupTarget = fn
 	return m
 }
 
@@ -561,6 +574,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
 		m.update.lookupInstalledAt = m.flowInstalledAt
+		m.update.lookupTarget = m.lookupTarget
 		if otherFolder && deployment != nil {
 			m.update = m.update.refuseOtherFolder(mismatch)
 		}
