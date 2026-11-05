@@ -2,9 +2,7 @@ package release
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -70,31 +68,16 @@ func CheckForUpdate(ctx context.Context) (latestVersion string, hasUpdate bool, 
 }
 
 func checkForUpdate(ctx context.Context, url, runningVersion string) (string, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", false, fmt.Errorf("build request: %w", err)
-	}
-
-	resp, err := updateCheckClient.Do(req)
+	// The shared manifest read (manifest.go), on this check's own 3 s
+	// client. Only launcher.tag is checked: Orbit's own fields are not
+	// this notice's business, so a manifest this check never needed them
+	// from still answers it.
+	manifest, found, err := getManifest(ctx, updateCheckClient, url)
 	if err != nil {
 		return "", false, fmt.Errorf("check for update: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
+	if !found {
 		return "", false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", false, fmt.Errorf("check for update: unexpected status %s", resp.Status)
-	}
-
-	var manifest struct {
-		Launcher struct {
-			Tag string `json:"tag"`
-		} `json:"launcher"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxUpdateCheckResponseBytes)).Decode(&manifest); err != nil {
-		return "", false, fmt.Errorf("decode release manifest: %w", err)
 	}
 
 	tag := manifest.Launcher.Tag

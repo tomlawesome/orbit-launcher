@@ -150,3 +150,10 @@ The launcher is not currently taking outside code changes: see
 [docs/implementation-plan.md](docs/implementation-plan.md) describes the
 code. Orbit builds and signs the launcher with each Orbit release; this
 repository holds its source, tests and version tags.
+
+`TestLive_UpdateExistingDeployment` (build tag `live`, #331) updates a
+deployment somebody else installed and leaves it running, for Orbit's upgrade
+cell (ai/orbit#1666). It is skipped unless `ORBIT_LIVE_EXISTING_DIR` is set;
+then `ORBIT_RELEASE_MANIFEST`, `ORBIT_LAUNCHER_LIVE_BINARY` and
+`ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH` (or `_URL`) are required, and
+`ORBIT_LAUNCHER_LIVE_RAW_LOG` is optional. See issue #331 for the interface.

@@ -75,7 +75,7 @@ func FetchInstallScript(ctx context.Context) ([]byte, error) {
 // a download: a caller that set the path is trusting this exact file, not
 // asking for best-effort.
 func readInstallScriptFile(path string) ([]byte, error) {
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(path) //nolint:gosec // G304, G703: an operator-set path (get-orbit.sh sets it to its verified copy); checking that file is the setter's job
 	if err != nil {
 		return nil, fmt.Errorf("read install script from %s=%s: %w", InstallScriptPathEnv, path, err)
 	}
@@ -105,13 +105,13 @@ func isClientTimeout(err error) bool {
 }
 
 func fetchInstallScript(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G704: fixed install.sh URL; the override env is the operator's or CI's
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
 	limit := limitApplied(ctx, scriptFetchClient.Timeout)
-	resp, err := scriptFetchClient.Do(req)
+	resp, err := scriptFetchClient.Do(req) //nolint:gosec // G704: fixed install.sh URL; the override env is the operator's or CI's
 	if err != nil {
 		return nil, fetchError("install.sh", err, limit)
 	}

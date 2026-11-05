@@ -256,7 +256,7 @@ func (m SuccessModel) clipboardWriter() io.Writer {
 func defaultOpenURL(url string) error {
 	for _, opener := range []string{"xdg-open", "open"} {
 		if _, err := exec.LookPath(opener); err == nil {
-			return exec.Command(opener, url).Start()
+			return exec.Command(opener, url).Start() //nolint:gosec // G204: argv, no shell; webAddress admits only http(s) URLs
 		}
 	}
 	return errors.New("no opener available")

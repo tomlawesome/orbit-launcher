@@ -42,7 +42,7 @@ func Main(t *testing.T, main func(), args ...string) (code int, stdout, stderr s
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$")
+	cmd := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$") //nolint:gosec // G204, G702: re-runs the test binary itself
 	cmd.Env = append(os.Environ(), envTest+"="+t.Name(), envArgs+"="+string(encoded))
 	// main ends in os.Exit, so the child's coverage is written by the
 	// runtime's exit hook, which reads GOCOVERDIR rather than the test

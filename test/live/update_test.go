@@ -481,15 +481,16 @@ func (r *createRecorder) stop(t *testing.T) []containerCreate {
 	return creates
 }
 
-// composeExec runs args as `docker compose exec -T` in the deployment in dir
-// and returns its trimmed stdout. The project is this run's own
-// (liveProjectName), as dockerComposeDown pins it, so an exec cannot reach a
-// real Orbit on the host.
-func composeExec(dir, stdin string, args ...string) (string, error) {
+// composeExecIn runs args as `docker compose exec -T` in the deployment in dir
+// under project and returns its trimmed stdout. The update leg passes its own
+// run's project (liveProjectName), as dockerComposeDown pins it, so an exec
+// cannot reach a real Orbit on the host; the existing-deployment test passes
+// the project the deployment records (#331).
+func composeExecIn(dir, project, stdin string, args ...string) (string, error) {
 	full := append([]string{"compose", "--project-directory", dir,
 		"--env-file", filepath.Join(dir, ".env-orbit"), "exec", "-T"}, args...)
 	cmd := exec.Command("docker", full...)
-	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+liveProjectName(dir))
+	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_NAME="+project)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -504,14 +505,14 @@ func composeExec(dir, stdin string, args ...string) (string, error) {
 // psql runs script in the deployment's database container, as Orbit's own
 // scripts/test-backup-restore.sh does, and returns what it printed.
 func psql(dir, script string) (string, error) {
-	return composeExec(dir, script, "orbit-db", "sh", "-c",
+	return composeExecIn(dir, liveProjectName(dir), script, "orbit-db", "sh", "-c",
 		`exec psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align`)
 }
 
 // storedFileSHA256 is the sha256 of the sentinel file in the app container,
 // or "" if it cannot be read.
 func storedFileSHA256(dir string) (string, error) {
-	out, err := composeExec(dir, "", "orbit-app", "sha256sum", sentinelFilePath())
+	out, err := composeExecIn(dir, liveProjectName(dir), "", "orbit-app", "sha256sum", sentinelFilePath())
 	if err != nil {
 		return "", err
 	}
@@ -529,7 +530,7 @@ func storedFileSHA256(dir string) (string, error) {
 func seedUpdateSentinels(t *testing.T, dir string) updateSentinels {
 	t.Helper()
 	want := wantedSentinels()
-	if _, err := composeExec(dir, "", "--user", "orbit:orbit", "orbit-app", "sh", "-c",
+	if _, err := composeExecIn(dir, liveProjectName(dir), "", "--user", "orbit:orbit", "orbit-app", "sh", "-c",
 		`mkdir -p "$(dirname "$1")" && printf '%s' "$2" > "$1"`, "sh", sentinelFilePath(), sentinelFileContent); err != nil {
 		t.Fatalf("write the document sentinel file into the earlier release's app container: %v", err)
 	}
@@ -580,7 +581,16 @@ func checkUpdateSentinels(t *testing.T, dir string, want updateSentinels, wantVe
 	for _, problem := range sentinelChanges(want, readUpdateSentinels(t, dir)) {
 		t.Error(problem)
 	}
-	if got, err := composeExec(dir, "", "orbit-app", "printenv", "ORBIT_VERSION"); err != nil {
+	checkUpdatedApp(t, dir, liveProjectName(dir), wantVersion)
+}
+
+// checkUpdatedApp is the half of the update leg's end the launcher owns: the
+// running app reports the version of the release updated to (its
+// ORBIT_VERSION, which Orbit's admin health page shows), and /api/health says
+// ready. project is the compose project the deployment runs under.
+func checkUpdatedApp(t *testing.T, dir, project, wantVersion string) {
+	t.Helper()
+	if got, err := composeExecIn(dir, project, "", "orbit-app", "printenv", "ORBIT_VERSION"); err != nil {
 		t.Errorf("read the version the app reports after the update: %v", err)
 	} else if got != wantVersion {
 		t.Errorf("after the update the app reports version %q, want the release updated to, %s", got, wantVersion)

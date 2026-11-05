@@ -200,7 +200,7 @@ func isVendored(moduleDir, rel string) (bool, error) {
 // syntax): Generated if its header says so,
 // Notice if a comment line matches provenance, otherwise nothing.
 func readGoFile(name string) (Kind, string, error) {
-	f, err := os.Open(name)
+	f, err := os.Open(name) //nolint:gosec // G304: repo tool; files from go list of this module's deps
 	if err != nil {
 		return "", "", err
 	}

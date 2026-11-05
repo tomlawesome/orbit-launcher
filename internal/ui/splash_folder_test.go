@@ -96,8 +96,23 @@ func rawRowOf(t *testing.T, m tea.Model, sub string) string {
 }
 
 // textOf is a screen row's text: the padding and the starfield taken off
-// both ends. A full stop is not taken off, so a sentence keeps its own.
-func textOf(row string) string { return strings.Trim(row, " ·✦●*+▸⟡") }
+// both ends. A star is a word of its own, kept a cell clear of the text
+// (#270), so only whole words made of star glyphs go; a full stop that
+// ends a sentence stays, while a '.' star standing apart does not.
+func textOf(row string) string {
+	isStar := func(w string) bool { return w != "" && strings.Trim(w, "·✦●.*+▸⟡") == "" }
+	words := strings.Fields(row)
+	for len(words) > 0 && isStar(words[0]) {
+		row = strings.TrimSpace(row)[len(words[0]):]
+		words = words[1:]
+	}
+	for len(words) > 0 && isStar(words[len(words)-1]) {
+		row = strings.TrimSpace(row)
+		row = row[:len(row)-len(words[len(words)-1])]
+		words = words[:len(words)-1]
+	}
+	return strings.TrimSpace(row)
+}
 
 // The folder row sits directly beneath the status word, in the faint
 // style, and says the whole folder with no ~.

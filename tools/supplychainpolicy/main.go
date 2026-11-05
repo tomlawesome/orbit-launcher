@@ -198,7 +198,7 @@ func regenerate(root string, pins []scp.Pin, stdout io.Writer) error {
 		return err
 	}
 	path := filepath.Join(root, scp.PolicyPath)
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o644); err != nil { //nolint:gosec // G306: a committed, public policy file
 		return fmt.Errorf("writing the policy: %w", err)
 	}
 	fmt.Fprintf(stdout, "wrote %s: %d actions, %d tools\n", path, len(out.Actions), len(out.Tools))

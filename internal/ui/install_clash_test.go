@@ -470,7 +470,7 @@ func TestInstallClash_OtherKeysDoNothing(t *testing.T) {
 // --- the folder as drawn -----------------------------------------------
 
 func TestInstallClash_LongFolderWrapsToFourRows(t *testing.T) {
-	long := "/srv" + strings.Repeat("/orbit-deployments-x", 16) + strings.Repeat("/more", 8)
+	long := existingFolder(t, shortTempDir(t)+strings.Repeat("/orbit-deployments-x", 16)+strings.Repeat("/more", 8))
 	m := clashed(t, long)
 
 	s := screen(m)
