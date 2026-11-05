@@ -313,7 +313,10 @@ func (m SplashModel) probeHealthCmd() tea.Cmd {
 		if err != nil {
 			return msg
 		}
-		expected := expectedServices(dir)
+		expected, err := expectedServices(dir)
+		if err != nil {
+			return msg
+		}
 		inSet := make(map[string]bool, len(expected))
 		for _, name := range expected {
 			inSet[name] = true

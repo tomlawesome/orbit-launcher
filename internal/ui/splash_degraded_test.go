@@ -460,6 +460,34 @@ func TestSplashProbe_ServiceStatesErrorMeansNotCounted(t *testing.T) {
 	}
 }
 
+func TestSplashProbe_UnreadableEnvFileMeansNotCounted(t *testing.T) {
+	for name, states := range map[string][]deploy.ServiceState{
+		"healthy reader": {
+			{Service: "orbit-db", State: "running"},
+			{Service: "orbit-app", State: "running"},
+			{Service: "orbit-clamav", State: "running"},
+		},
+		"missing services": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, dir := probeModel(t, "full")
+			env := filepath.Join(dir, deploy.EnvFile)
+			if err := os.Remove(env); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(env, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthNotResponding }
+			m.serviceStates = func(string) ([]deploy.ServiceState, error) { return states, nil }
+			want := healthResultMsg{reason: deploy.HealthNotResponding}
+			if got := m.probeHealthCmd()(); got != want {
+				t.Errorf("message = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
 func TestSplashProbe_NilProbeMeansNoCommand(t *testing.T) {
 	m, _ := probeModel(t, "full")
 	m.healthProbe = nil

@@ -26,3 +26,7 @@ delete the heading.
 ## TestLive_UpdateReconfiguresOnTheNewImage/Update (test/live) (host)
 
 - 2026-11-03 · 9f4d75c · pipeline 3487 / live job 44764 · the update stopped at "Resolving image identity": Docker's request to the Orbit image registry got "connection refused". The Fedora leg pulled the same image in the same pipeline, and the retry 44766 passed
+
+## test/pty tests time out waiting for the first screen (host)
+
+- 2026-11-05 · a8813d7 · local, full `go test ./...` at load average 79 · several test/pty tests timed out waiting 10 s for the first screen; the package passed alone and the full run passed on the same code. Test names not kept

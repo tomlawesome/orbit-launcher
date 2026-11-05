@@ -14,6 +14,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -511,6 +512,100 @@ func TestGoneFolder_InstallWithTheRecordHereIsADeadEnd(t *testing.T) {
 	assertInstallGone(t, m, installGoneRecordHere, installGoneUseOthers)
 	if strings.Contains(screen(m), "docker compose") {
 		t.Errorf("the record-here screen advises a command:\n%s", screen(m))
+	}
+}
+
+// #338 A-F8: with this folder's record naming another build, Install says
+// what Update, Repair and Remove say, in the same words, and advises no
+// stop command (the way on is to correct the record).
+func TestGoneFolder_InstallWithTheRecordHereOfAnotherBuildSaysWhatUpdateSays(t *testing.T) {
+	m, vol, clash := clashInstall(t, installedFolder(t), goneReader(true))
+
+	m, _ = updateAs(t, m, vol, clash)
+
+	if m.state != installStateOtherFolder {
+		t.Fatalf("state = %v, want the dead end:\n%s", m.state, screen(m))
+	}
+	assertInstallGone(t, m, goneOtherBuild, goneCorrect)
+	flat := oneLine(screen(m))
+	for _, not := range []string{"docker compose", installGoneRecordHere, installGoneUseOthers, installGoneNoRecord} {
+		if strings.Contains(flat, not) {
+			t.Errorf("the other-build screen shows %q:\n%s", not, screen(m))
+		}
+	}
+}
+
+// #338 A-R4: a .env-orbit here that exists but cannot be read stops the
+// install on the unreadable-record screen, before any Docker call. (Today
+// the clash check takes the error for "no clash" and the profile screen
+// shows.) A directory stands in for the unreadable file, so the test also
+// runs as root.
+func TestGoneFolder_InstallWithAnUnreadableRecordHereStopsOnTheUnreadableScreen(t *testing.T) {
+	dir := shortTempDir(t)
+	if err := os.Mkdir(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var asked atomic.Int32
+	m, vol, clash := clashInstall(t, dir, func(ctx context.Context, d *deploy.Deployment) (deploy.RunningApp, error) {
+		asked.Add(1)
+		return goneReader(false)(ctx, d)
+	})
+
+	m, _ = updateAs(t, m, vol, clash)
+
+	s := screen(m)
+	assertCouldntReadScreen(t, s, dir)
+	if strings.Contains(oneLine(s), profileTitle) {
+		t.Errorf("the profile screen was reached past an unreadable record:\n%s", s)
+	}
+	for _, not := range []string{installGoneRecordHere, installGoneNoRecord, "no longer exists", "docker compose"} {
+		if strings.Contains(oneLine(s), not) {
+			t.Errorf("the screen shows %q:\n%s", not, s)
+		}
+	}
+	if n := asked.Load(); n != 0 {
+		t.Errorf("Docker was asked %d times before the unreadable record stopped the install, want 0", n)
+	}
+}
+
+// Esc and the Menu row leave Install's unreadable screen for the menu
+// and start nothing, as on the other-folder dead end (#338).
+func TestGoneFolder_InstallUnreadableEscAndMenuReturnToTheMenuWithoutInstalling(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		k    tea.KeyPressMsg
+	}{{"Esc", key(tea.KeyEsc)}, {"the Menu row", key(tea.KeyEnter)}} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := shortTempDir(t)
+			if err := os.Mkdir(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			m, vol, clash := clashInstall(t, dir, startedFrom(goneFolder))
+			m, _ = updateAs(t, m, vol, clash)
+			if m.state != installStateUnreadable {
+				t.Fatalf("setup: state = %v, want the unreadable screen:\n%s", m.state, screen(m))
+			}
+			var prepared atomic.Int32
+			m.seams.prepareEngine = func(context.Context, string, string) (*engine.Stream, func() error, error) {
+				prepared.Add(1)
+				return nil, nil, errors.New("must not be called")
+			}
+
+			m, cmd := updateAs(t, m, c.k)
+
+			if cmd != nil {
+				t.Errorf("leaving started a command")
+			}
+			if !leftForMenu(m.Outcome()) {
+				t.Errorf("Outcome = %+v, want back to the menu", m.Outcome())
+			}
+			if m.state == installStateRunning {
+				t.Error("leaving started the install")
+			}
+			if n := prepared.Load(); n != 0 {
+				t.Errorf("the engine was prepared %d times, want none", n)
+			}
+		})
 	}
 }
 
