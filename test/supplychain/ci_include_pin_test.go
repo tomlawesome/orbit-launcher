@@ -51,8 +51,6 @@ func includeBlock(t *testing.T, ciYAML string) string {
 	return strings.Join(lines[start:end], "\n")
 }
 
-// includeTagsNamed returns every private-details/vN found in a comment of
-// the include block.
 // includeTagsNamed returns every snippet tag (name/vN) found in a comment of
 // the include block, in order.
 func includeTagsNamed(block string) []string {
@@ -162,8 +160,7 @@ func TestIncludePinMatchesTag(t *testing.T) {
 		}
 		out, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/tags/"+tag+"^{commit}").Output()
 		if err != nil {
-			t.Logf("the local agent-infra checkout (%s) does not have %s; fetch tags to run this check", dir, tag)
-			continue
+			t.Skipf("the local agent-infra checkout (%s) does not have %s; fetch tags to run this check", dir, tag)
 		}
 		if sha := strings.TrimSpace(string(out)); sha != e.ref {
 			t.Errorf("%s names %s on the local agent-infra checkout but the include pins %s: "+
@@ -172,46 +169,94 @@ func TestIncludePinMatchesTag(t *testing.T) {
 	}
 }
 
-// testdata/batch-snippets.yml, which the stage tests evaluate, must say what
-// the pinned templates say. Each condition there, joined onto one line, has to
-// appear in the template at the tag, whitespace folded.
+// testdata/batch-snippets.yml, which the stage tests evaluate, is a copy of
+// two templates' rules. Each snippet's section records the agent-infra commit
+// it was copied from in a `# copied-from: <name> <sha>` line.
+const snippetsFile = "testdata/batch-snippets.yml"
+
+var copiedFromRE = regexp.MustCompile(`(?m)^# copied-from: ([a-z-]+) ([0-9a-f]{40})$`)
+
+func includeRefFor(t *testing.T, name string) string {
+	t.Helper()
+	for _, e := range includeEntries(t) {
+		if allowedIncludes[e.file] == name {
+			return e.ref
+		}
+	}
+	t.Fatalf("no include for %s", name)
+	return ""
+}
+
+// Needs no checkout, so it runs in CI: when an include moves to a new commit
+// the copy must be re-checked against it and its recorded commit updated.
+func TestBatchSnippetsCopyIsOfThePinnedCommit(t *testing.T) {
+	data := readRepoFile(t, "test", "supplychain", snippetsFile)
+	recorded := map[string]string{}
+	for _, m := range copiedFromRE.FindAllStringSubmatch(data, -1) {
+		recorded[m[1]] = m[2]
+	}
+	for _, name := range []string{"catchup-check", "batch-intake"} {
+		got, ok := recorded[name]
+		if !ok {
+			t.Errorf("%s has no `# copied-from: %s <sha>` line", snippetsFile, name)
+			continue
+		}
+		if want := includeRefFor(t, name); got != want {
+			t.Errorf("%s was copied from %s's commit %s but .gitlab-ci.yml pins %s: compare the copy with the new template and update the recorded commit",
+				snippetsFile, name, got, want)
+		}
+	}
+}
+
+// snippetSection returns the text of the top-level key `.name:` up to the next
+// top-level key, comments dropped, folded-scalar markers removed and
+// whitespace folded to single spaces, so a template's `if: >-` block and the
+// copy's one-line `if:` compare equal. ok is false when the key is missing.
+func snippetSection(src, name string) (string, bool) {
+	var keep []string
+	in := false
+	for _, l := range strings.Split(src, "\n") {
+		top := l != "" && l[0] != ' ' && l[0] != '#' && l[0] != '-'
+		if top {
+			in = strings.HasPrefix(l, "."+name+":")
+		}
+		if in && !strings.HasPrefix(strings.TrimSpace(l), "#") {
+			keep = append(keep, l)
+		}
+	}
+	if len(keep) == 0 {
+		return "", false
+	}
+	return strings.Join(strings.Fields(strings.ReplaceAll(strings.Join(keep, "\n"), ">-", "")), " "), true
+}
+
+// With an agent-infra checkout: the whole rule set of each snippet (both
+// workflow rule and job rule: their conditions, the variables and
+// `when: never`) equals the template's at the pinned commit.
 func TestBatchSnippetsMatchTheTemplates(t *testing.T) {
 	dir := agentInfraDir()
 	if dir == "" {
 		t.Skip("no agent-infra checkout: set AGENT_INFRA_DIR")
 	}
-	fold := func(s string) string { return strings.Join(strings.Fields(s), " ") }
-	data := readRepoFile(t, "test", "supplychain", "testdata", "batch-snippets.yml")
+	data := readRepoFile(t, "test", "supplychain", snippetsFile)
 	for _, name := range []string{"catchup-check", "batch-intake"} {
-		var ref string
-		for _, e := range includeEntries(t) {
-			if allowedIncludes[e.file] == name {
-				ref = e.ref
-			}
-		}
+		ref := includeRefFor(t, name)
 		out, err := exec.Command("git", "-C", dir, "show", ref+":scripts/"+name+"/ci-template.yml").Output()
 		if err != nil {
-			t.Logf("the local agent-infra checkout does not have %s; skipping %s", ref, name)
+			t.Skipf("the local agent-infra checkout (%s) does not have %s; fetch it to run this check", dir, ref)
+		}
+		want, ok := snippetSection(string(out), name)
+		if !ok {
+			t.Errorf("the template %s at %s has no .%s: key", name, ref, name)
 			continue
 		}
-		tmpl := fold(string(out))
-		// The snippet's section of the testdata runs from its key to the next.
-		sec := data[strings.Index(data, "."+name+":"):]
-		if i := strings.Index(sec[1:], "\n."); i >= 0 {
-			sec = sec[:i+1]
+		got, ok := snippetSection(data, name)
+		if !ok {
+			t.Errorf("%s has no .%s: key", snippetsFile, name)
+			continue
 		}
-		n := 0
-		for _, l := range strings.Split(sec, "\n") {
-			l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "- "))
-			if cond, ok := strings.CutPrefix(l, "if: "); ok {
-				n++
-				if !strings.Contains(tmpl, fold(cond)) {
-					t.Errorf("testdata/batch-snippets.yml's %s condition is not in the template at %s:\n%s", name, ref, cond)
-				}
-			}
-		}
-		if n != 2 {
-			t.Errorf("expected 2 conditions for %s in the testdata, found %d", name, n)
+		if got != want {
+			t.Errorf("%s's .%s differs from the template at %s\ncopy:     %s\ntemplate: %s", snippetsFile, name, ref, got, want)
 		}
 	}
 }

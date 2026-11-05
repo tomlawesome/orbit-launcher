@@ -2,7 +2,10 @@
 # (catchup-check/v2, batch-intake/v1; ai/agent-infra#114), as the stage tests
 # evaluate them. The templates write each `if:` as a folded block, which the
 # test reader refuses, so the conditions are joined onto one line here.
-# TestBatchSnippetsMatchTheTemplates checks the text against the pinned tags.
+# TestBatchSnippetsMatchTheTemplates checks the text against the pinned commits
+# (when an agent-infra checkout exists); TestBatchSnippetsCopyIsOfThePinnedCommit
+# checks the recorded commits against .gitlab-ci.yml everywhere.
+# copied-from: catchup-check 03499313d89b421212af02db3735662397eebfb3
 .catchup-check:
   workflow_rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^chore\/catchup-/ && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
@@ -11,6 +14,7 @@
   job_rule:
     - if: $CATCHUP_CHECK == "true"
       when: never
+# copied-from: batch-intake 063b5b95a96b139b0a858bb009466456a19e5674
 .batch-intake:
   workflow_rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
