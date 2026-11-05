@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/ansi"
@@ -102,29 +103,109 @@ const (
 	installOtherFolderLead = "This machine's Orbit was started from "
 )
 
-// viewOtherFolder is the dead end Update, Repair, Remove and Install open
+// The lines a gone folder's screens use (#334): the recorded folder no
+// longer exists. With the same build Update, Repair and Remove offer to
+// carry on from this folder; with another build they cannot, and say
+// why. Install never offers it: it says where the record is, or that
+// there is none, and how to stop that Orbit by its project name.
+const (
+	folderGoneLine          = "That folder no longer exists."
+	folderGoneCarryOn       = "Move it back there, or carry on from this folder."
+	folderGoneOtherBuild    = "That folder no longer exists, and this folder's " + deploy.EnvFile + " names a different build from the one running, so it can't carry that Orbit on."
+	folderGoneOtherBuildFix = "Correct " + deploy.EnvFile + " here, or move the folder back, then try again."
+	installRecordHereLine   = "That folder no longer exists, and its record is in this folder."
+	installRecordHereAdvice = "Use Update, Repair or Remove here instead."
+	installNoRecordLine     = "That folder no longer exists, and its settings and secrets went with it, so there is nothing here to carry on from."
+	installNoRecordStop     = "Stop that Orbit first: docker compose --project-name "
+)
+
+// carryOnRows are the gone folder's rows when the build is the same
+// (#334): carry on adopts the running Orbit into this folder's flow;
+// Cancel goes where Esc goes, the main menu.
+const carryOnRow = "Carry on from this folder"
+
+var carryOnRows = []string{carryOnRow, "Cancel"}
+
+// canCarryOn says whether Update, Repair and Remove may offer to carry on
+// from this folder (#334): the recorded folder is gone and this folder's
+// record names the running build. A folder that exists, a gone test that
+// could not be made, and another build all withhold the row.
+func canCarryOn(mm deploy.Mismatch) bool {
+	return mm.Kind == deploy.MismatchFolder && mm.FolderGone && !mm.BuildDiffers
+}
+
+// folderRefusal is the other-folder screen Update, Repair and Remove
+// share (#316, #334): the mismatch it names and its rows' caret.
+type folderRefusal struct {
+	mismatch deploy.Mismatch
+	rows     menu
+}
+
+func newFolderRefusal(mm deploy.Mismatch) folderRefusal {
+	rows := deadEndRows
+	if canCarryOn(mm) {
+		rows = carryOnRows
+	}
+	return folderRefusal{mismatch: mm, rows: newMenu(rows...)}
+}
+
+// key is the screen's keys: carryOn is the row, leave is Esc, Cancel or
+// Menu. No other key does anything (#228).
+func (r folderRefusal) key(msg tea.KeyPressMsg) (next folderRefusal, carryOn, leave bool) {
+	var chosen string
+	var back bool
+	r.rows, chosen, back = r.rows.onScreen(msg)
+	switch {
+	case back, chosen == "Menu", chosen == "Cancel":
+		return r, false, true
+	case chosen == carryOnRow:
+		return r, true, false
+	}
+	return r, false, false
+}
+
+// view is the screen for a flow whose own body line is body: the
+// elsewhere refusal (#316) when the folder exists, else the gone screen
+// with or without the row (#334).
+func (r folderRefusal) view(star starfield.Model, width, height int, body string) string {
+	lines := []string{body, otherFolderAdvice}
+	switch {
+	case canCarryOn(r.mismatch):
+		lines = []string{folderGoneLine, folderGoneCarryOn}
+	case r.mismatch.FolderGone:
+		lines = []string{folderGoneOtherBuild, folderGoneOtherBuildFix}
+	}
+	return viewOtherFolder(star, width, height, otherFolderLead, r.mismatch.Folder, lines, r.rows, r.mismatch.FolderGone)
+}
+
+// viewOtherFolder is the screen Update, Repair, Remove and Install open
 // as when the deployment's app container was started from another folder
-// (#316, #318), with lead the title's opening words,
+// (#316, #318, #334), with lead the title's opening words,
 // in viewNoDeployment's grammar: the amber mark (the stale-volume
 // refusal's), a title naming that folder (wrapped, and escaped by
-// wrapHard, since nobody chose its length), the flow's own body line and
-// the shared advice, each wrapped on its own, the faint promise, then the
-// dead end's one row. The title runs to errorWidth rather than
-// proseWidth: with a short folder it is 61 cells, and a path that is to
-// be compared with another should not break at the sentence's join.
-func viewOtherFolder(star starfield.Model, width, height int, lead, otherFolder, body string) string {
+// wrapHard, since nobody chose its length), the body lines, each wrapped
+// on its own, the faint promise, then rows. The title runs to errorWidth
+// rather than proseWidth: with a short folder it is 61 cells, and a path
+// that is to be compared with another should not break at the sentence's
+// join. A gone folder's lines (gone) run to errorWidth too: they are
+// long sentences that at proseWidth would take a row more each (#334).
+func viewOtherFolder(star starfield.Model, width, height int, lead, otherFolder string, lines []string, rows menu, gone bool) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark),
 		wrapHard(lead+otherFolder, measure(width, errorWidth), width-4, folderRows)...)
-	for _, line := range []string{body, otherFolderAdvice} {
-		writeWrappedIn(&b, style.MutedText, line, measure(width, proseWidth), textArea(width))
+	limit := measure(width, proseWidth)
+	if gone {
+		limit = measure(width, errorWidth)
+	}
+	for _, line := range lines {
+		writeWrappedIn(&b, style.MutedText, line, limit, textArea(width))
 	}
 	fmt.Fprintln(&b)
 	// The promise runs to errorWidth too: at proseWidth its last word
 	// would sit alone on a row.
 	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, measure(width, errorWidth), textArea(width))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
+	rows.write(&b)
 	return skyBlock(star, width, height, b.String())
 }
 

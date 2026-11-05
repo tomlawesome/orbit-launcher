@@ -84,6 +84,9 @@ func startApp(stdout, stderr io.Writer) int {
 	}
 	if os.Getenv(deploy.NoUpdateCheckEnv) == "" {
 		app = app.WithUpdateCheck(release.CheckForUpdate)
+		// The Update confirm's release lookup asks the same releases, so
+		// the same switch keeps it off where tests run offline (#336).
+		app = app.WithTargetLookup(release.ResolveTarget)
 	}
 	app = app.WithVersion(release.DisplayVersion(release.Version))
 	// The health probe hits only the user's own deployment (its APP_URL),
@@ -126,8 +129,9 @@ func startApp(stdout, stderr io.Writer) int {
 
 	// Bubble Tea's own handler turns SIGTERM into an immediate quit that
 	// skips the engine's stop and the temp-file cleanup, so it is off and
-	// forwardSignals is the one handler. SIGKILL cannot be caught.
-	program := tea.NewProgram(app, tea.WithoutSignalHandler())
+	// forwardSignals is the one handler. SIGKILL cannot be caught. A
+	// failed read of the terminal is a hang-up too (#335).
+	program := tea.NewProgram(app, tea.WithoutSignalHandler(), withHangupInput(sender.Send))
 	sender.Attach(program)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)

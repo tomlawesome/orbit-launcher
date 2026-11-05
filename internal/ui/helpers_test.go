@@ -319,7 +319,7 @@ var rowLabels = map[string]bool{
 	"Continue anyway": true, "Open the guided installer": true,
 	"Install again": true, "Update again": true, "Open Repair": true,
 	"Get into Orbit": true, "Copy command": true, "Copy command · copied": true,
-	"Cancel": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
+	"Cancel": true, "Carry on from this folder": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
 }
 
 // screenRow is one screen line with the starfield, the caret and the

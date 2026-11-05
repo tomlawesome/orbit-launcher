@@ -44,7 +44,7 @@ func BuildInstallCommand(script []byte, targetDir string) (cmd *exec.Cmd, cleanu
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd = exec.Command("bash", scriptPath)
+	cmd = exec.Command("bash", scriptPath) //nolint:gosec // G204: bash on the launcher's own staged copy of install.sh
 	cmd.Dir = targetDir
 	cmd.Env = env
 	return cmd, cleanup, nil
@@ -144,6 +144,22 @@ func stageInstall(script []byte, collected string) (scriptPath string, env []str
 	// from what the person (or CI) set.
 	env = append(os.Environ(), ConfigTreeEnv+"="+configTree)
 	return scriptFile.Name(), env, cleanup, nil
+}
+
+// ChannelEnv is install.sh's release channel: unset or "latest" follows
+// the latest stable release, "vX.Y.Z" pins that release.
+const ChannelEnv = "ORBIT_CHANNEL"
+
+// WithChannel adds ChannelEnv=channel to cmd's environment, after
+// whatever it already holds, so it wins over an inherited
+// ORBIT_CHANNEL=latest (#336: the update is pinned to the release its
+// confirm screen named). An empty channel adds nothing, and nothing else
+// in the environment changes.
+func WithChannel(cmd *exec.Cmd, channel string) {
+	if channel == "" {
+		return
+	}
+	cmd.Env = append(cmd.Env, ChannelEnv+"="+channel)
 }
 
 // ConfigTreeDir is the configuration tree directory cmd hands install.sh,

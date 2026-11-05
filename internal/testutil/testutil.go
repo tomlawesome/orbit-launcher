@@ -23,7 +23,7 @@ import (
 func FakeExecutable(t testing.TB, name, script string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil { //nolint:gosec // G306: a fake executable in t.TempDir() must be executable
 		t.Fatalf("write fake %s: %v", name, err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

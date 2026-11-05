@@ -58,7 +58,7 @@ func run(reviewPath string, list bool, out io.Writer, shipped func() ([]review.P
 		return nil
 	}
 
-	text, err := os.ReadFile(reviewPath)
+	text, err := os.ReadFile(reviewPath) //nolint:gosec // G304: repo tool; path is the developer's own flag
 	if err != nil {
 		return err
 	}

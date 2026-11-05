@@ -423,7 +423,9 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (#277, owner answer 4a).
 			// A container started from another folder keeps the caret on
 			// Exit: Repair there would act on that folder's Orbit (#316).
-			if !m.userNavigated && msg.reason != deploy.HealthUnchecked && m.mismatch.Kind != deploy.MismatchFolder {
+			// One whose folder is gone does not: no flow is a dead end of
+			// its kind any more (#334).
+			if !m.userNavigated && msg.reason != deploy.HealthUnchecked && !restsOnExit(m.mismatch) {
 				m.menu.sel = menuRepair
 			}
 		}
@@ -436,8 +438,9 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mismatch = msg.mismatch
 		// Started from another folder: every flow here would act on that
 		// folder's Orbit, so the caret rests on Exit, unless the person
-		// has taken over (#316, owner answer 4a).
-		if m.mismatch.Kind == deploy.MismatchFolder && !m.userNavigated {
+		// has taken over (#316, owner answer 4a). A gone folder leaves the
+		// caret to the normal rules (#334).
+		if restsOnExit(m.mismatch) && !m.userNavigated {
 			m.menu.sel = menuExit
 		}
 		return m, nil
@@ -675,6 +678,13 @@ func (m SplashModel) centreBlockLines() []string {
 	return lines
 }
 
+// restsOnExit says the running answer leaves Exit the splash's caret
+// (#316): a container started from a folder that exists, where every
+// flow would be a dead end. A gone folder is not one (#334).
+func restsOnExit(mm deploy.Mismatch) bool {
+	return mm.Kind == deploy.MismatchFolder && !mm.FolderGone
+}
+
 // folderLines are the rows that end the identity block (#316): the folder
 // the launcher was started in, faint and on one row (cut from the start,
 // so the last components, which tell two deployment folders apart, always
@@ -689,10 +699,19 @@ func (m SplashModel) folderLines() []string {
 	}
 	switch m.mismatch.Kind {
 	case deploy.MismatchFolder:
+		fact, step := "started from another folder", "start the launcher from that folder instead"
+		if m.mismatch.FolderGone {
+			fact, step = "started from a folder that no longer exists", "update, repair or remove can carry on from this folder"
+			if m.mismatch.BuildDiffers {
+				step = "this folder's " + deploy.EnvFile + " names a different build; correct it first"
+			}
+		}
 		lines = append(lines,
-			style.DegradedText.Render("started from another folder"),
-			style.MutedText.Render(startCut(visibleText(m.mismatch.Folder), m.width-2)),
-			style.Tagline.Render("start the launcher from that folder instead"))
+			style.DegradedText.Render(fact),
+			style.MutedText.Render(startCut(visibleText(m.mismatch.Folder), m.width-2)))
+		for _, row := range wrapWords(step, max(1, m.width-2)) {
+			lines = append(lines, style.Tagline.Render(row))
+		}
 	case deploy.MismatchBuild:
 		detail := "started " + visibleText(m.mismatch.Started)
 		if m.mismatch.Recorded != "" {

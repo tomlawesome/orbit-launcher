@@ -32,6 +32,11 @@ package ui
 // success screen's four states), so a moved blank line or row anywhere
 // fails here. Those were recorded from the code as it stood, and no
 // earlier golden moved.
+// #336 added the Update confirm's final forms once its release lookup
+// answers (update_confirm_newer/_installed_unknown/_target_unknown/
+// _both_unknown) and the dead ends for an Orbit newer than, or already,
+// the current release (update_newer, update_current), at 50 and 80;
+// update_confirm (the pending form) did not move.
 // Any other difference is a regression to look at, never a file to
 // re-record.
 
@@ -50,6 +55,7 @@ import (
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/engine"
+	"github.com/tomlawesome/orbit-launcher/internal/release"
 )
 
 const (
@@ -351,6 +357,28 @@ func c9OtherScreensAt(t *testing.T, out map[string]string, w int) {
 	uu := c9Size(t, NewUpdateModel(nil, c9LongDir, "v1"), w)
 	uu.detectErr = &fs.PathError{Op: "open", Path: c9LongDir + "/" + deploy.EnvFile, Err: syscall.EACCES}
 	out["update_unreadable_"+tag] = uu.View().Content
+
+	// update confirm: its final forms once the release lookup answers,
+	// and the two dead ends, newer than and already the current release
+	// (#336), at 80 and 50.
+	if w != 120 {
+		answered := func(name, installed string, target release.Target, err error) {
+			d := *deployment
+			d.Version = installed
+			m := c9Size(t, NewUpdateModel(&d, d.TargetDir, "v1"), w)
+			m.installedAt = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+			m, _ = updateAs(t, m, targetMsg{target: target, err: err})
+			out[name+"_"+tag] = m.View().Content
+		}
+		current := release.Target{Version: "v0.3.6", Pin: true}
+		unreadable := errors.New("manifest unreachable")
+		answered("update_confirm_newer", "v0.3.5", current, nil)
+		answered("update_confirm_installed_unknown", "", current, nil)
+		answered("update_confirm_target_unknown", "v0.3.5", release.Target{}, unreadable)
+		answered("update_confirm_both_unknown", "", release.Target{}, unreadable)
+		answered("update_newer", "v0.3.7", current, nil)
+		answered("update_current", "v0.3.6", current, nil)
+	}
 
 	// remove: the working screen between confirm and done.
 	sd := c9Size(t, NewRemoveModel(deployment), w)

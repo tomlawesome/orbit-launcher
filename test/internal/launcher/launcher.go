@@ -65,7 +65,7 @@ var build = sync.OnceValues(func() (string, error) {
 			return "", fmt.Errorf("point the binary's coverage at %s: %w", dir, err)
 		}
 	}
-	cmd := exec.Command("go", append(args, "./cmd/orbit-launcher")...)
+	cmd := exec.Command("go", append(args, "./cmd/orbit-launcher")...) //nolint:gosec // G204: go build with the test's fixed flags
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("%w\n%s", err, out)

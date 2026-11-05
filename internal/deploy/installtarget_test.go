@@ -162,3 +162,28 @@ func TestCompare_ProjectOnlyRecordNeverFindsABuild(t *testing.T) {
 		}
 	}
 }
+
+// #330: an explicit COMPOSE_PROJECT_NAME in .env-orbit wins over the
+// shell's, including the value "orbit"; with no value in the record the
+// shell's stands in, as documented on InstallTarget.
+func TestInstallTarget_RecordedOrbitBeatsTheShellProjectName(t *testing.T) {
+	envProject(t, "mail")
+	dir := t.TempDir()
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, EnvFile), "COMPOSE_PROJECT_NAME=orbit")
+
+	d, err := InstallTarget(dir)
+	if err != nil || d == nil || d.Project != "orbit" {
+		t.Errorf("InstallTarget = %+v, %v, want Project orbit (the record's) and not the shell's mail", d, err)
+	}
+}
+
+func TestInstallTarget_RecordWithEmptyProjectNameYieldsToTheShell(t *testing.T) {
+	envProject(t, "mail")
+	dir := t.TempDir()
+	testutil.WriteEnvOrbit(t, filepath.Join(dir, EnvFile), "COMPOSE_PROJECT_NAME=")
+
+	d, err := InstallTarget(dir)
+	if err != nil || d == nil || d.Project != "mail" {
+		t.Errorf("InstallTarget = %+v, %v, want Project mail", d, err)
+	}
+}

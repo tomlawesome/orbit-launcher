@@ -71,6 +71,9 @@ test.beforeAll(async () => {
       ORBIT_LAUNCHER_NO_UPDATE_CHECK: "1",
       ORBIT_LAUNCHER_NO_HEALTH_PROBE: "1",
       ORBIT_LAUNCHER_NO_VOLUME_CHECK: "1",
+      // NO_RUNNING_CHECK: as in splash.spec.ts, the running check asks the
+      // local Docker daemon, so leftover containers must not reach the screen.
+      ORBIT_LAUNCHER_NO_RUNNING_CHECK: "1",
       ORBIT_LAUNCHER_INSTALL_SCRIPT_PATH: fixtureScript,
     },
   });

@@ -31,7 +31,7 @@ const pipeWaitDelay = 2 * time.Second
 // (BuildInstallCommand) do not come through here: they stay attached to
 // the launcher's session.
 func detachedCommand(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: every caller passes bash and a fixed script path; argv, no shell
 	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return killGroup(cmd) }
@@ -44,7 +44,7 @@ func detachedCommand(ctx context.Context, dir, name string, args ...string) *exe
 // bounding the wait for pipes a survivor still holds (#207). Callers
 // bring their own deadline in ctx.
 func dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // G204: docker with argv built by the launcher; no shell
 	cmd.WaitDelay = pipeWaitDelay
 	return cmd
 }

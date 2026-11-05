@@ -95,7 +95,7 @@ func check(profilePath, floorsPath string, stdout io.Writer) error {
 }
 
 func readProfile(path string) (map[string]floor.Coverage, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: repo tool; path is the developer's own argument
 	if err != nil {
 		return nil, fmt.Errorf("opening coverage profile: %w", err)
 	}
@@ -104,7 +104,7 @@ func readProfile(path string) (map[string]floor.Coverage, error) {
 }
 
 func readFloors(path string) (map[string]floor.Floor, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: repo tool; path is the developer's own argument
 	if err != nil {
 		return nil, fmt.Errorf("opening floors file: %w", err)
 	}

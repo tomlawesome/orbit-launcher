@@ -148,7 +148,7 @@ func TestAppHandsRotateSeamToRepair(t *testing.T) {
 		t.Fatalf("prepareRotate has type %s; want func(context.Context, string) (*engine.Stream, io.WriteCloser, error)", field.Type())
 	}
 	// The field is unexported; reflect needs its address to set it.
-	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(fn.Convert(field.Type()))
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(fn.Convert(field.Type())) //nolint:gosec // G103: test seam sets an unexported field of its own package
 
 	queue := newSink()
 	m := NewAppModelNoAnimation().WithSender(queue.Send).WithoutVolumeCheck()

@@ -65,7 +65,7 @@ func New(cols, rows int, raw io.Writer) (*Terminal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open pty: %w", err)
 	}
-	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil {
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil { //nolint:gosec // G115: terminal sizes the tests choose, far below 65536
 		_ = ptmx.Close()
 		_ = tty.Close()
 		return nil, fmt.Errorf("size pty: %w", err)

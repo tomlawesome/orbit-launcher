@@ -103,8 +103,13 @@ type InstallModel struct {
 	clashAnswered bool
 
 	// otherFolder is the folder the app container was started from, in
-	// installStateOtherFolder.
-	otherFolder string
+	// installStateOtherFolder. otherGone says it no longer exists (#334);
+	// then recordHere says this folder holds a record, and otherProject
+	// is the Compose project the clash check used.
+	otherFolder  string
+	otherGone    bool
+	recordHere   bool
+	otherProject string
 
 	// otherRead asks Docker for an Orbit app container under a Compose
 	// project other than this install's (#321), with the project an
@@ -188,6 +193,12 @@ func (r engineRun) withSend(send func(tea.Msg)) engineRun {
 // withProfile makes the run request a deployment profile.
 func (r engineRun) withProfile(profile string) engineRun {
 	r.profile = profile
+	return r
+}
+
+// withChannel pins the run to a release (#336).
+func (r engineRun) withChannel(channel string) engineRun {
+	r.channel = channel
 	return r
 }
 
@@ -316,6 +327,25 @@ var (
 // names the act, which under one Compose project name is a takeover.
 const installOtherFolderBody = "Install here would take over that folder's Orbit."
 
+// otherFolderLines are the refusal's body (#318). With the folder gone
+// Install never offers to carry on (#334): with this folder's record
+// here, that is Update's, Repair's or Remove's to do; without it the
+// settings and secrets went with the folder, and the one followable step
+// is stopping that Orbit by its project name. The name is the one the
+// clash check used, InstallTarget's, already held to projectNamePattern,
+// so it is printed as it is.
+func (m InstallModel) otherFolderLines() []string {
+	switch {
+	case m.otherGone && m.recordHere:
+		return []string{installRecordHereLine, installRecordHereAdvice}
+	case m.otherGone:
+		// The command is set apart from the sentence by a row, as the
+		// step to take.
+		return []string{installNoRecordLine, "", installNoRecordStop + m.otherProject + " down"}
+	}
+	return []string{installOtherFolderBody, otherFolderAdvice}
+}
+
 // The other-project advisory's words (#321). The fact row is one of the
 // two leads and a name; the body names the mechanism and predicts only
 // what the installer does; the advice depends on whether a folder can be
@@ -347,8 +377,15 @@ type staleVolumesMsg struct{ volumes []deploy.DatabaseVolume }
 
 // installClashMsg carries the clash check's answer back into the event
 // loop (#318): the folder the project's app container was started from,
-// empty when there is no clash or the check could not run.
-type installClashMsg struct{ dir, otherFolder string }
+// empty when there is no clash or the check could not run. With a clash,
+// gone says that folder no longer exists, recordHere that this folder
+// holds a deployment record, and project is the Compose project the
+// check used (#334).
+type installClashMsg struct {
+	dir, otherFolder string
+	gone, recordHere bool
+	project          string
+}
 
 // installOtherProjectMsg carries the other-project check's answer back
 // into the event loop (#321): the folder the other Orbit was started from
@@ -424,7 +461,12 @@ func (m InstallModel) checkClashCmd() tea.Cmd {
 				return installClashMsg{dir: dir}
 			}
 			if c := deploy.CompareRunning(target, dir, a.app); c.Kind == deploy.MismatchFolder {
-				return installClashMsg{dir: dir, otherFolder: c.Folder}
+				msg := installClashMsg{dir: dir, otherFolder: c.Folder, gone: c.FolderGone, project: target.Project}
+				if c.FolderGone {
+					d, _ := deploy.Detect(dir)
+					msg.recordHere = d != nil
+				}
+				return msg
 			}
 		case <-time.After(deploy.RunningAppTimeout):
 		}
@@ -553,6 +595,12 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.awaiting = ""
 			return m, nil
 		}
+		// The advisory pre-empts the screen but not the finding: keep it,
+		// and "Continue anyway" there shows the warning (#330).
+		if len(found.volumes) > 0 && m.state == installStateOtherProject {
+			m.staleVolumes = found.volumes
+			return m, nil
+		}
 		// None found: a waiting Enter carries on once the clash check
 		// has answered too.
 		return m.proceed()
@@ -565,7 +613,8 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// takeover. In any other state (the notice, the run) the answer
 		// is ignored, as the volume finding is.
 		if clash.otherFolder != "" && (m.state == installStateProfile || m.state == installStateStaleVolume || m.state == installStateOtherProject) {
-			m.otherFolder = clash.otherFolder
+			m.otherFolder, m.otherGone = clash.otherFolder, clash.gone
+			m.recordHere, m.otherProject = clash.recordHere, clash.project
 			m.state = installStateOtherFolder
 			m.awaiting = ""
 			return m, nil
@@ -579,6 +628,10 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// that screen cannot) and below the clash's refusal, so it
 		// acts on the profile screen and the stale-volume screen only;
 		// anywhere else (the refusal, the notice, the run) it is dropped.
+		// It replaces or pre-empts the stale-volume screen without
+		// dropping the finding (staleVolumes stays, also when it arrives
+		// while the advisory is up): "Continue anyway" then shows that
+		// warning (#330).
 		if other.project != "" && (m.state == installStateProfile || m.state == installStateStaleVolume) {
 			m.other.folder, m.other.project = other.folder, other.project
 			m.state = installStateOtherProject
@@ -670,6 +723,10 @@ func (m InstallModel) handleOtherProjectKey(msg tea.KeyPressMsg) (tea.Model, tea
 	switch {
 	case chosen == "Continue anyway":
 		m.state = installStateProfile
+		if len(m.staleVolumes) > 0 {
+			m.state = installStateStaleVolume
+			m.volume = newMenu(installVolumeRows...)
+		}
 	case back, chosen == "Cancel":
 		m.left = true
 	}
@@ -804,7 +861,7 @@ func (m InstallModel) view() string {
 	case installStateOtherProject:
 		return m.viewOtherProject()
 	case installStateOtherFolder:
-		return viewOtherFolder(m.star, m.width, m.height, installOtherFolderLead, m.otherFolder, installOtherFolderBody)
+		return viewOtherFolder(m.star, m.width, m.height, installOtherFolderLead, m.otherFolder, m.otherFolderLines(), newMenu(deadEndRows...), m.otherGone)
 	case installStateProfile:
 		return m.viewProfile()
 	case installStateUnavailableProfile:

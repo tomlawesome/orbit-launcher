@@ -93,9 +93,10 @@
       "groupName": "gitlab-ci image minor and patch"
     },
     {
-      "description": "CI tool pins from the two annotation managers (#328) get their own group, so a tool bump is not filed as an image bump. Listed after the image group above so this grouping wins for them.",
+      "description": "CI tool pins from the two annotation managers (#328) get their own group, so a tool bump is not filed as an image bump. Majors are left out so a major tool release comes in its own merge request. Listed after the image group above so this grouping wins for them.",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["go", "github-releases", "github-tags", "git-refs"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "ci tools"
     },
     {
