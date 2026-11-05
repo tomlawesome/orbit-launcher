@@ -93,9 +93,15 @@ func (m RepairModel) readServices() tea.Cmd {
 		}()
 		select {
 		case a := <-answered:
-			return repairServicesMsg{reading: r, expected: expectedServices(dir), states: a.states, err: a.err}
+			expected, err := expectedServices(dir)
+			if err != nil {
+				// An unreadable record means the list would be a
+				// guess (#338): the block says it could not check.
+				return repairServicesMsg{reading: r, err: err}
+			}
+			return repairServicesMsg{reading: r, expected: expected, states: a.states, err: a.err}
 		case <-time.After(limit):
-			return repairServicesMsg{reading: r, expected: expectedServices(dir), err: errServicesNoAnswer}
+			return repairServicesMsg{reading: r, err: errServicesNoAnswer}
 		}
 	}
 }
@@ -111,12 +117,16 @@ func (m RepairModel) gotServices(msg repairServicesMsg) RepairModel {
 }
 
 // expectedServices are the services the deployment's profiles call for,
-// in fixed order.
-func expectedServices(dir string) []string {
+// in fixed order. With no record at all it is the base three; a record
+// that cannot be read returns the error, never a guessed list (#338).
+func expectedServices(dir string) ([]string, error) {
 	out := []string{"orbit-db", "orbit-app", "orbit-clamav"}
-	d, _ := deploy.Detect(dir)
+	d, err := deploy.Detect(dir)
+	if err != nil {
+		return nil, err
+	}
 	if d == nil {
-		return out
+		return out, nil
 	}
 	has := func(names ...string) bool {
 		for _, p := range d.Profiles {
@@ -134,7 +144,7 @@ func expectedServices(dir string) []string {
 	if has("ai", "full") {
 		out = append(out, "orbit-ollama")
 	}
-	return out
+	return out, nil
 }
 
 // serviceRow is one service's line: faulted rows are never collapsed.

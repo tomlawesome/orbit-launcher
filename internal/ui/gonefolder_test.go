@@ -14,6 +14,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -564,6 +565,47 @@ func TestGoneFolder_InstallWithAnUnreadableRecordHereStopsOnTheUnreadableScreen(
 	}
 	if n := asked.Load(); n != 0 {
 		t.Errorf("Docker was asked %d times before the unreadable record stopped the install, want 0", n)
+	}
+}
+
+// Esc and the Menu row leave Install's unreadable screen for the menu
+// and start nothing, as on the other-folder dead end (#338).
+func TestGoneFolder_InstallUnreadableEscAndMenuReturnToTheMenuWithoutInstalling(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		k    tea.KeyPressMsg
+	}{{"Esc", key(tea.KeyEsc)}, {"the Menu row", key(tea.KeyEnter)}} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := shortTempDir(t)
+			if err := os.Mkdir(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			m, vol, clash := clashInstall(t, dir, startedFrom(goneFolder))
+			m, _ = updateAs(t, m, vol, clash)
+			if m.state != installStateUnreadable {
+				t.Fatalf("setup: state = %v, want the unreadable screen:\n%s", m.state, screen(m))
+			}
+			var prepared atomic.Int32
+			m.seams.prepareEngine = func(context.Context, string, string) (*engine.Stream, func() error, error) {
+				prepared.Add(1)
+				return nil, nil, errors.New("must not be called")
+			}
+
+			m, cmd := updateAs(t, m, c.k)
+
+			if cmd != nil {
+				t.Errorf("leaving started a command")
+			}
+			if !leftForMenu(m.Outcome()) {
+				t.Errorf("Outcome = %+v, want back to the menu", m.Outcome())
+			}
+			if m.state == installStateRunning {
+				t.Error("leaving started the install")
+			}
+			if n := prepared.Load(); n != 0 {
+				t.Errorf("the engine was prepared %d times, want none", n)
+			}
+		})
 	}
 }
 

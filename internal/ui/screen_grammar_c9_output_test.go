@@ -107,8 +107,9 @@ func c9Screens(t *testing.T) map[string]string {
 
 		// Install shows the same screen for an unreadable record here
 		// (#338 A-R4), reached through the clash check on a real folder
-		// whose .env-orbit cannot be read; the golden is recorded by the
-		// builder, as the screen does not exist yet.
+		// whose .env-orbit cannot be read; #338 added the screen and
+		// recorded install_unreadable_*, which must keep rendering byte
+		// for byte like the rest.
 		out["install_unreadable_"+tag] = c9InstallUnreadable(t, w)
 
 		rm := c9Size(t, NewRemoveModel(deployment), w)
@@ -662,15 +663,30 @@ func firstRowDiff(want, got string) string {
 // c9InstallUnreadable is Install's screen at width w for a record here
 // that cannot be read (#338 A-R4): the clash check runs on a folder at a
 // fixed path whose .env-orbit is a directory, so the OS's words, and the
-// golden, are stable. Not parallel: the folder's path is shared.
+// golden, are stable. The path is shared by every test run on the host,
+// so the folder lives only while an exclusive lock on a sibling lock
+// file is held: a second run waits rather than deleting the folder under
+// the first. The lock and the folder end with this call, not the test,
+// because c9Screens calls it six times in one test and a second flock
+// on a new descriptor would wait on the first forever. The lock file
+// itself stays: removing it would let two runs lock different files.
 func c9InstallUnreadable(t *testing.T, w int) string {
 	t.Helper()
 	const dir = "/tmp/orbit-c9-install-unreadable"
+	lock, err := os.OpenFile(dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
 	_ = os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	if err := os.MkdirAll(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	m, vol, clash := clashInstall(t, dir, startedFrom(goneFolder))
 	m, _ = updateAs(t, m, vol, clash)
 	return c9Size(t, m, w).View().Content
