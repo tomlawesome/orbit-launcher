@@ -74,9 +74,10 @@ include:
     file: scripts/batch-intake/ci-template.yml
 
 stages:
-  # catchup-check's job runs here; the snippet names stage `test`.
-  - test
   - classify
+  # catchup-check's job runs here (the snippet names stage `test`). Second, so
+  # flake-check stays in the first stage.
+  - test
   - fast
   - acceptance
   - release

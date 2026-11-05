@@ -1,0 +1,21 @@
+# The rules of the two shared batch-branch snippets from ai/agent-infra
+# (catchup-check/v1, batch-intake/v1; ai/agent-infra#114), as the stage tests
+# evaluate them. The templates write each `if:` as a folded block, which the
+# test reader refuses, so the conditions are joined onto one line here.
+# TestBatchSnippetsMatchTheTemplates checks the text against the pinned tags.
+.catchup-check:
+  workflow_rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^chore\/catchup-/ && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
+      variables:
+        CATCHUP_CHECK: "true"
+  job_rule:
+    - if: $CATCHUP_CHECK == "true"
+      when: never
+.batch-intake:
+  workflow_rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
+      variables:
+        BATCH_INTAKE: "true"
+  job_rule:
+    - if: $BATCH_INTAKE == "true"
+      when: never

@@ -245,6 +245,12 @@ func TestCIEffectiveRulesAndScriptsUnchanged(t *testing.T) {
 		o, n := oldDoc.root.vals[k].dump(), newDoc.root.vals[k].dump()
 		if k == "workflow" {
 			o = workflowChangedBy306
+			// ai/agent-infra#114: the two shared snippets' rules come first.
+			o = strings.Replace(o, `{"rules": [`, `{"rules": [`+batchWorkflowRefs114+`, `, 1)
+		}
+		if k == "stages" {
+			// ai/agent-infra#114: the stage catchup-check's job runs in.
+			o = strings.Replace(o, `"classify", "fast"`, `"classify", "test", "fast"`, 1)
 		}
 		if o != n {
 			t.Errorf("top-level %q changed (#217)\nwant: %s\n got: %s", k, o, n)
@@ -2144,6 +2150,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy307...)
 	all = append(all, changedBy306...)
 	all = append(all, changedByAuditE...)
+	all = append(all, changedBy114...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
@@ -2710,4 +2717,48 @@ func TestOnlyLiveJobLinesLooksForTheLiveKey(t *testing.T) {
 	if !helperFound {
 		t.Fatal("liveJobLines is not declared, so the absence checked here is vacuous (SU-18, #217)")
 	}
+}
+
+// ai/agent-infra#114 (decision 66a): a merge request into batch-a or batch-b
+// runs the static checks only, and a chore/catchup-* one runs a single small
+// job. The two shared snippets' rules sit first in workflow:rules, and each
+// job's rules start with the snippet references. Spelled out per job so a job
+// that gains or loses a reference shows up here.
+const (
+	catchupJobRef114     = `"!reference [.catchup-check, job_rule]"`
+	batchJobRef114       = `"!reference [.batch-intake, job_rule]"`
+	batchWorkflowRefs114 = `"!reference [.catchup-check, workflow_rules]", "!reference [.batch-intake, workflow_rules]"`
+	batchStaticRule114   = `{"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"batch-a\" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"batch-b\")"}`
+	devRuleStart114      = `{"if": "$CI_PIPELINE_SOURCE == \"merge_request_event\" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == \"dev\" ||`
+)
+
+var changedBy114 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{ // the static checks: skipped on a catch-up, run on a batch merge request
+		jobs: []string{"classify", "deps", "gitleaks"},
+		key:  "rules",
+		old:  `[` + devRuleStart114,
+		new:  `[` + catchupJobRef114 + `, ` + batchStaticRule114 + `, ` + devRuleStart114,
+	},
+	{ // the build and test job: skipped on both
+		jobs: []string{"fast"},
+		key:  "rules",
+		old:  `[` + devRuleStart114,
+		new:  `[` + catchupJobRef114 + `, ` + batchJobRef114 + `, ` + devRuleStart114,
+	},
+	{
+		jobs: []string{"visual"},
+		key:  "rules",
+		old:  `[{"if": "$CI_PIPELINE_SOURCE == \"web\""}`,
+		new:  `[` + catchupJobRef114 + `, ` + batchJobRef114 + `, {"if": "$CI_PIPELINE_SOURCE == \"web\""}`,
+	},
+	{
+		jobs: []string{"live"},
+		key:  "rules",
+		old:  `[{"if": "$RUN_LIVE == \"true\""}`,
+		new:  `[` + catchupJobRef114 + `, ` + batchJobRef114 + `, {"if": "$RUN_LIVE == \"true\""}`,
+	},
 }

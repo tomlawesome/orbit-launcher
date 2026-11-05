@@ -17,7 +17,9 @@
 // each scenario states whether the changed files match (changesMatch), because
 // the rule says which files, not what this pipeline changed. A rule key it
 // does not know stops the test rather than being skipped. `variables:` set
-// inside a rule are ignored.
+// inside a workflow rule are applied; elsewhere they are ignored.
+// `- !reference [.snippet, key]` items are expanded from
+// testdata/batch-snippets.yml (see expandReferences).
 package supplychain
 
 import (
@@ -33,7 +35,8 @@ type ciVars map[string]string
 
 type ruleVerdict struct {
 	matched    bool
-	never      bool // when: never
+	rule       *yamlNode // the rule that matched
+	never      bool      // when: never
 	manual     bool
 	allowFail  bool // allow_failure: true, or a manual job's implicit default
 	allowFailS string
@@ -199,7 +202,7 @@ func evalRules(t *testing.T, where string, rules *yamlNode, vars ciVars, changes
 	if rules.kind != 'q' {
 		t.Fatalf("%s: rules: did not read as a list", where)
 	}
-	for i, r := range rules.items {
+	for i, r := range expandReferences(t, rules.items) {
 		if r.kind != 'm' {
 			t.Fatalf("%s: rule %d did not read as a mapping", where, i+1)
 		}
@@ -216,7 +219,7 @@ func evalRules(t *testing.T, where string, rules *yamlNode, vars ciVars, changes
 		if _, ok := r.vals["changes"]; ok && !changesMatch {
 			continue
 		}
-		v := ruleVerdict{matched: true}
+		v := ruleVerdict{matched: true, rule: r}
 		when, _ := scalarOf(r, "when")
 		switch when {
 		case "never":
@@ -264,6 +267,14 @@ func pipelineFor(t *testing.T, doc *yamlDoc, vars ciVars, changesMatch bool) map
 			v := evalRules(t, "workflow", rules, all, changesMatch)
 			if !v.matched || v.never {
 				return nil
+			}
+			// The first matching workflow rule's variables apply to the
+			// pipeline, as in GitLab (the snippets set CATCHUP_CHECK and
+			// BATCH_INTAKE this way).
+			if vs := v.rule.vals["variables"]; vs != nil && vs.kind == 'm' {
+				for _, k := range vs.keys {
+					all[k] = vs.vals[k].str
+				}
 			}
 		}
 	}
@@ -680,5 +691,88 @@ func TestCIStages_AHandStartedRunLivePipelineRunsTheLiveInstalls(t *testing.T) {
 		if j := jobs[n]; j.manual {
 			t.Errorf("`%s` must run by itself on a hand-started RUN_LIVE=true pipeline", n)
 		}
+	}
+}
+
+// ---- shared snippets (ai/agent-infra#114) ----------------------------------
+
+var snippetRefRe = regexp.MustCompile(`^!reference \[(\.[A-Za-z0-9_-]+), ([a-z_]+)\]$`)
+
+// expandReferences replaces each `!reference [.job, key]` item with the rules
+// that list holds in testdata/batch-snippets.yml, the two shared snippets'
+// rules. A reference to anything else stops the test.
+func expandReferences(t *testing.T, items []*yamlNode) []*yamlNode {
+	t.Helper()
+	var out []*yamlNode
+	var snippets *yamlDoc
+	for _, it := range items {
+		if it.kind != 's' || !strings.HasPrefix(it.str, "!reference") {
+			out = append(out, it)
+			continue
+		}
+		m := snippetRefRe.FindStringSubmatch(it.str)
+		if m == nil {
+			t.Fatalf("rules: cannot read %q", it.str)
+		}
+		if snippets == nil {
+			var err error
+			snippets, err = parseMiniYAML(readRepoFile(t, "test", "supplychain", "testdata", "batch-snippets.yml"))
+			if err != nil {
+				t.Fatalf("reading the snippet rules: %v", err)
+			}
+		}
+		job := snippets.root.vals[m[1]]
+		if job == nil || job.vals[m[2]] == nil || job.vals[m[2]].kind != 'q' {
+			t.Fatalf("rules: %q is not one of the snippet rule lists in testdata/batch-snippets.yml", it.str)
+		}
+		out = append(out, job.vals[m[2]].items...)
+	}
+	return out
+}
+
+var staticChecksOnBatch = []string{"classify", "deps", "gitleaks", "private-details", "flake-check"}
+
+// A merge request into a batch branch runs the static checks only (decision
+// 60a): nothing that builds, tests or installs.
+func TestCIStages_AMergeRequestIntoABatchBranchRunsOnlyTheStaticChecks(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	for _, target := range []string{"batch-a", "batch-b"} {
+		for _, changes := range []bool{true, false} {
+			jobs := pipelineFor(t, doc, mrVars("feat/x", target), changes)
+			assertPresent(t, jobs, staticChecksOnBatch...)
+			assertAbsent(t, jobs, "fast", "visual", "promoted", "renovate")
+			assertAbsent(t, jobs, liveFamily...)
+			assertAbsent(t, jobs, releaseJobs...)
+		}
+	}
+}
+
+// A catch-up merge request creates a pipeline, and none of this file's jobs
+// is in it: the snippet's own catchup-check job is the only one.
+func TestCIStages_ACatchUpMergeRequestRunsNoJobOfThisFile(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	for _, target := range []string{"batch-a", "batch-b"} {
+		for _, changes := range []bool{true, false} {
+			jobs := pipelineFor(t, doc, mrVars("chore/catchup-2026-11-05", target), changes)
+			if jobs == nil {
+				t.Fatalf("a catch-up merge request into %s must create a pipeline for catchup-check to run in", target)
+			}
+			if len(jobs) != 0 {
+				t.Errorf("a catch-up merge request into %s must run none of this file's jobs; it runs %v", target, jobNames(jobs))
+			}
+		}
+	}
+	// Only into a batch branch: into dev it is an ordinary merge request.
+	jobs := pipelineFor(t, doc, mrVars("chore/catchup-x", "dev"), false)
+	assertPresent(t, jobs, "classify", "fast")
+}
+
+// A merge request into dev, preview or main is unchanged by the batch rules,
+// and the batch-to-dev one runs the full set.
+func TestCIStages_ABatchBranchIntoDevRunsTheFullChecks(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	for _, source := range []string{"batch-a", "batch-b"} {
+		jobs := pipelineFor(t, doc, mrVars(source, "dev"), false)
+		assertPresent(t, jobs, "classify", "fast", "deps", "gitleaks", "private-details", "flake-check")
 	}
 }
