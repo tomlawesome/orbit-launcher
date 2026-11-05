@@ -106,8 +106,10 @@ const (
 // The lines a gone folder's screens use (#334): the recorded folder no
 // longer exists. With the same build Update, Repair and Remove offer to
 // carry on from this folder; with another build they cannot, and say
-// why. Install never offers it: it says where the record is, or that
-// there is none, and how to stop that Orbit by its project name.
+// why. Install never offers it: with the record here and the running
+// build it points at those three; with another build it says what they
+// say (#338 A-F8); with no record it says so, and how to stop that Orbit
+// by its project name.
 const (
 	folderGoneLine          = "That folder no longer exists."
 	folderGoneCarryOn       = "Move it back there, or carry on from this folder."
@@ -215,11 +217,12 @@ func viewOtherFolder(star starfield.Model, width, height int, lead, otherFolder 
 const unreadableEnvAdvice = "Check the error above, the file type and the permissions."
 
 // viewUnreadableDeployment is the "it is there but I can't read it"
-// screen Update and Remove share (#238), beside viewNoDeployment and with
-// the same dead-end grammar: the failure glyph in front of a title naming
-// the directory (wrapped, since nobody chose its length), the OS's own
-// words in Tagline as the Stand-down screen shows Docker's, one line of
-// advice for every cause in muted text, then the dead end's one row.
+// screen Update, Remove and Install share (#238, #338), beside
+// viewNoDeployment and with the same dead-end grammar: the failure glyph
+// in front of a title naming the directory (wrapped, since nobody chose
+// its length), the OS's own words in Tagline as the Stand-down screen
+// shows Docker's, one line of advice for every cause in muted text, then
+// the dead end's one row.
 func viewUnreadableDeployment(star starfield.Model, width, height int, dir string, err error) string {
 	var b strings.Builder
 	glyph := style.ErrorText.Render(style.SymbolFailure)

@@ -29,6 +29,10 @@ const (
 	// installStateOtherProject is the advisory for a machine with an Orbit
 	// under another Compose project (#321).
 	installStateOtherProject
+	// installStateUnreadable is the dead end for a .env-orbit here that
+	// exists but cannot be read (#338 A-R4): Update's and Remove's
+	// unreadable screen (#238).
+	installStateUnreadable
 )
 
 // InstallModel is the Install flow: profile choice, the development
@@ -104,12 +108,18 @@ type InstallModel struct {
 
 	// otherFolder is the folder the app container was started from, in
 	// installStateOtherFolder. otherGone says it no longer exists (#334);
-	// then recordHere says this folder holds a record, and otherProject
-	// is the Compose project the clash check used.
+	// then recordHere says this folder holds a record, otherBuild that
+	// the record names a different build from the running one (#338
+	// A-F8), and otherProject is the Compose project the clash check used.
 	otherFolder  string
 	otherGone    bool
 	recordHere   bool
+	otherBuild   bool
 	otherProject string
+
+	// recordErr is the clash check's error reading this folder's
+	// .env-orbit, shown in installStateUnreadable (#338 A-R4).
+	recordErr error
 
 	// otherRead asks Docker for an Orbit app container under a Compose
 	// project other than this install's (#321), with the project an
@@ -328,14 +338,19 @@ var (
 const installOtherFolderBody = "Install here would take over that folder's Orbit."
 
 // otherFolderLines are the refusal's body (#318). With the folder gone
-// Install never offers to carry on (#334): with this folder's record
-// here, that is Update's, Repair's or Remove's to do; without it the
-// settings and secrets went with the folder, and the one followable step
-// is stopping that Orbit by its project name. The name is the one the
-// clash check used, InstallTarget's, already held to projectNamePattern,
-// so it is printed as it is.
+// Install never offers to carry on (#334). With this folder's record here
+// and the running build, that is Update's, Repair's or Remove's to do;
+// with a record naming another build, Install says what those three say,
+// in their words and by their predicate, canCarryOn (#338 A-F8): correct
+// the record first. Without a record the settings and secrets went with
+// the folder, and the one followable step is stopping that Orbit by its
+// project name. The name is the one the clash check used, InstallTarget's,
+// already held to projectNamePattern, so it is printed as it is.
 func (m InstallModel) otherFolderLines() []string {
+	mm := deploy.Mismatch{Kind: deploy.MismatchFolder, Folder: m.otherFolder, FolderGone: m.otherGone, BuildDiffers: m.otherBuild}
 	switch {
+	case m.otherGone && m.recordHere && !canCarryOn(mm):
+		return []string{folderGoneOtherBuild, folderGoneOtherBuildFix}
 	case m.otherGone && m.recordHere:
 		return []string{installRecordHereLine, installRecordHereAdvice}
 	case m.otherGone:
@@ -379,12 +394,16 @@ type staleVolumesMsg struct{ volumes []deploy.DatabaseVolume }
 // loop (#318): the folder the project's app container was started from,
 // empty when there is no clash or the check could not run. With a clash,
 // gone says that folder no longer exists, recordHere that this folder
-// holds a deployment record, and project is the Compose project the
-// check used (#334).
+// holds a deployment record, buildDiffers that the record names another
+// build than the running one, and project is the Compose project the
+// check used (#334, #338 A-F8). recordErr is the error reading this
+// folder's .env-orbit, when it exists but cannot be read (#338 A-R4); the
+// check then asks Docker nothing.
 type installClashMsg struct {
-	dir, otherFolder string
-	gone, recordHere bool
-	project          string
+	dir, otherFolder               string
+	gone, recordHere, buildDiffers bool
+	project                        string
+	recordErr                      error
 }
 
 // installOtherProjectMsg carries the other-project check's answer back
@@ -424,10 +443,13 @@ func (m InstallModel) Init() tea.Cmd {
 
 // checkClashCmd asks Docker whether the app container of the Compose
 // project an install here would use was started from another folder
-// (#318), or returns nil when there is nothing to ask (no reader). A
-// check that cannot run answers "no clash": an unreadable record, a
-// Docker that does not answer, output that does not parse, two app
-// containers.
+// (#318), or returns nil when there is nothing to ask (no reader). It
+// reads .env-orbit once, for the project to ask about and whether a record
+// is here. A record that exists but cannot be read is answered as itself,
+// recordErr, before any Docker call (#338 A-R4): without it the project is
+// not known, and it must stop the install rather than pass for "no clash".
+// A check that cannot run otherwise answers "no clash": a Docker that does
+// not answer, output that does not parse, two app containers.
 //
 // The command waits at most deploy.RunningAppTimeout, the limit the read
 // puts on itself, with the reader on a goroutine of its own (the
@@ -440,9 +462,9 @@ func (m InstallModel) checkClashCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		target, err := deploy.InstallTarget(dir)
+		target, hasRecord, err := deploy.InstallTargetRecord(dir)
 		if err != nil {
-			return installClashMsg{dir: dir}
+			return installClashMsg{dir: dir, recordErr: err}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -461,12 +483,10 @@ func (m InstallModel) checkClashCmd() tea.Cmd {
 				return installClashMsg{dir: dir}
 			}
 			if c := deploy.CompareRunning(target, dir, a.app); c.Kind == deploy.MismatchFolder {
-				msg := installClashMsg{dir: dir, otherFolder: c.Folder, gone: c.FolderGone, project: target.Project}
-				if c.FolderGone {
-					d, _ := deploy.Detect(dir)
-					msg.recordHere = d != nil
+				return installClashMsg{
+					dir: dir, otherFolder: c.Folder, project: target.Project,
+					gone: c.FolderGone, recordHere: c.FolderGone && hasRecord, buildDiffers: c.BuildDiffers,
 				}
-				return msg
 			}
 		case <-time.After(deploy.RunningAppTimeout):
 		}
@@ -612,9 +632,19 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// volume: "Continue anyway" there would lead straight to the
 		// takeover. In any other state (the notice, the run) the answer
 		// is ignored, as the volume finding is.
-		if clash.otherFolder != "" && (m.state == installStateProfile || m.state == installStateStaleVolume || m.state == installStateOtherProject) {
+		// An unreadable record stops the install the same way, on its own
+		// screen (#338 A-R4).
+		interruptible := m.state == installStateProfile || m.state == installStateStaleVolume || m.state == installStateOtherProject
+		if clash.recordErr != nil && interruptible {
+			m.recordErr = clash.recordErr
+			m.state = installStateUnreadable
+			m.awaiting = ""
+			return m, nil
+		}
+		if clash.otherFolder != "" && interruptible {
 			m.otherFolder, m.otherGone = clash.otherFolder, clash.gone
-			m.recordHere, m.otherProject = clash.recordHere, clash.project
+			m.recordHere, m.otherBuild = clash.recordHere, clash.buildDiffers
+			m.otherProject = clash.project
 			m.state = installStateOtherFolder
 			m.awaiting = ""
 			return m, nil
@@ -668,8 +698,8 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleStaleVolumeKey(msg)
 	case installStateOtherProject:
 		return m.handleOtherProjectKey(msg)
-	case installStateOtherFolder:
-		// The dead end: its one row and Esc both go back to the menu.
+	case installStateOtherFolder, installStateUnreadable:
+		// The dead ends: the one row and Esc both go back to the menu.
 		// Nothing was started, so there is nothing to stop.
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
@@ -704,6 +734,10 @@ func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.
 	switch {
 	case chosen == "Continue anyway":
 		m.state = installStateProfile
+		// Read and passed: a later other-project advisory's Continue
+		// anyway must not bring it back (#338 A-R3). The finding arrives
+		// once, so nothing else needs it.
+		m.staleVolumes = nil
 	case back, chosen == "Cancel":
 		m.left = true
 	}
@@ -862,6 +896,8 @@ func (m InstallModel) view() string {
 		return m.viewOtherProject()
 	case installStateOtherFolder:
 		return viewOtherFolder(m.star, m.width, m.height, installOtherFolderLead, m.otherFolder, m.otherFolderLines(), newMenu(deadEndRows...), m.otherGone)
+	case installStateUnreadable:
+		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.recordErr)
 	case installStateProfile:
 		return m.viewProfile()
 	case installStateUnavailableProfile:
