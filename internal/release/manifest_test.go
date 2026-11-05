@@ -124,3 +124,69 @@ func TestFetchManifest_AbandonsAServerThatNeverAnswers(t *testing.T) {
 		t.Errorf("fetchManifest took %v; it must give up when its context ends", time.Since(start))
 	}
 }
+
+// #337 T-F1. The app sets no deadline of its own on the confirm screen's
+// lookup, so the client's own Timeout is the only bound.
+
+func TestTargetLookupClientCarriesTheTimeout(t *testing.T) {
+	if targetLookupClient.Timeout != targetLookupTimeout {
+		t.Errorf("targetLookupClient.Timeout = %v, want %v", targetLookupClient.Timeout, targetLookupTimeout)
+	}
+}
+
+// silentServer never answers until the test ends.
+func silentServer(t *testing.T) string {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	return srv.URL
+}
+
+func shortLookupClient(t *testing.T) {
+	t.Helper()
+	old := targetLookupClient
+	targetLookupClient = &http.Client{Timeout: 100 * time.Millisecond}
+	t.Cleanup(func() { targetLookupClient = old })
+}
+
+// returnsWithin fails the test if call has not returned within 3 s, so a
+// missing client bound fails fast instead of hanging until go test's own
+// timeout. The leaked call ends when the cleanup releases the server.
+func returnsWithin(t *testing.T, what string, call func() error) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- call() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("%s: want an error from a server that never answers", what)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("%s still waiting after 3s; the client's own timeout must end it", what)
+	}
+}
+
+func TestFetchManifest_ClientTimeoutBoundsASilentServerWithNoContextDeadline(t *testing.T) {
+	url := silentServer(t)
+	shortLookupClient(t)
+	returnsWithin(t, "fetchManifest", func() error {
+		_, err := fetchManifest(context.Background(), url)
+		return err
+	})
+}
+
+func TestResolveTarget_ClientTimeoutBoundsASilentServerWithNoContextDeadline(t *testing.T) {
+	url := silentServer(t)
+	shortLookupClient(t)
+	targetEnv(t, "", "", url)
+	returnsWithin(t, "ResolveTarget", func() error {
+		_, err := ResolveTarget(context.Background())
+		return err
+	})
+}
