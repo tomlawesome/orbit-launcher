@@ -420,15 +420,81 @@ func TestCIStages_APinChangeOnAMergeRequestIntoDevWaitsForAPersonAndBlocksTheMer
 	}
 }
 
-// The push that lands a merge request into dev adds nothing: semi-linear
-// history means the merge request tested exactly what lands.
-func TestCIStages_ThePushThatLandsAMergeRequestIntoDevRunsNothing(t *testing.T) {
+// The push that lands a merge request into dev runs the fast checks only
+// (ai/agent-infra#113, owner decision 2026-11-05): the secret scan and the
+// private-details scan, each with a 5 minute timeout. Nothing else, so no job
+// that builds, tests, installs, publishes or releases. Before #113 this
+// push ran nothing (semi-linear history means the merge request tested
+// exactly what lands); the full run stays on the merge request.
+func TestCIStages_ThePushThatLandsAMergeRequestIntoDevRunsOnlyTheFastChecks(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
-	for _, changes := range []bool{false, true} {
-		jobs := pipelineFor(t, doc, pushVars("dev"), changes)
-		if len(jobs) != 0 {
-			t.Errorf("a push to dev must create no jobs (changes=%v); it creates %v", changes, jobNames(jobs))
+	for _, branch := range []string{"dev", "primary"} {
+		for _, changes := range []bool{false, true} {
+			jobs := pipelineFor(t, doc, pushVars(branch), changes)
+			if got := jobNames(jobs); strings.Join(got, ",") != strings.Join(fastChecksOnLanding, ",") {
+				t.Errorf("a push to %s must create exactly %v (changes=%v); it creates %v", branch, fastChecksOnLanding, changes, got)
+			}
+			for n, j := range jobs {
+				if j.manual {
+					t.Errorf("`%s` on a push to %s must start by itself", n, branch)
+				}
+			}
 		}
+	}
+}
+
+var fastChecksOnLanding = []string{"gitleaks", "private-details"}
+
+// Each fast check on the landing push stops itself after 5 minutes.
+func TestCIStages_TheFastChecksOnTheLandingPushTimeOutAtFiveMinutes(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	for _, name := range fastChecksOnLanding {
+		eff, err := doc.effectiveJob(name)
+		if err != nil {
+			t.Fatalf("reading job %s: %v", name, err)
+		}
+		if got := jobKeyDump("timeout", eff.Keys["timeout"]); got != `"5m"` {
+			t.Errorf("`%s` timeout = %s, want \"5m\" (ai/agent-infra#113)", name, got)
+		}
+	}
+}
+
+// Every job outside the two fast checks starts its rules with the snippet's
+// job_rule, so the landing push cannot start it. Read from the file, so a new
+// job that forgets the reference fails here.
+func TestEveryOtherJobStartsWithTheDevLandingRule(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	reserved := map[string]bool{"include": true, "stages": true, "workflow": true, "default": true, "variables": true}
+	checked := 0
+	for _, name := range doc.root.keys {
+		if reserved[name] || strings.HasPrefix(name, ".") {
+			continue // a template: its users are checked
+		}
+		eff, err := doc.effectiveJob(name)
+		if err != nil {
+			t.Fatalf("reading job %s: %v", name, err)
+		}
+		rules := eff.Keys["rules"]
+		if rules == nil || rules.kind != 'q' || len(rules.items) == 0 {
+			t.Errorf("`%s` has no rules: it would run on the landing push", name)
+			continue
+		}
+		first := rules.items[0]
+		isRef := func(want string) bool { return first.kind == 's' && first.str == want }
+		switch {
+		case name == "gitleaks" || name == "private-details":
+			if !isRef("!reference [.dev-landing-check, rules]") {
+				t.Errorf("fast check `%s` must start its rules with !reference [.dev-landing-check, rules]", name)
+			}
+		default:
+			if !isRef("!reference [.dev-landing, job_rule]") {
+				t.Errorf("`%s` must start its rules with !reference [.dev-landing, job_rule] (ai/agent-infra#113)", name)
+			}
+		}
+		checked++
+	}
+	if checked < 10 {
+		t.Fatalf("checked only %d jobs: the reader is not finding them", checked)
 	}
 }
 
