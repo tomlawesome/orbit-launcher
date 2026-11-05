@@ -105,6 +105,12 @@ func c9Screens(t *testing.T) map[string]string {
 		ur.detectErr = &fs.PathError{Op: "open", Path: c9LongDir + "/" + deploy.EnvFile, Err: syscall.EACCES}
 		out["remove_unreadable_"+tag] = ur.View().Content
 
+		// Install shows the same screen for an unreadable record here
+		// (#338 A-R4), reached through the clash check on a real folder
+		// whose .env-orbit cannot be read; the golden is recorded by the
+		// builder, as the screen does not exist yet.
+		out["install_unreadable_"+tag] = c9InstallUnreadable(t, w)
+
 		rm := c9Size(t, NewRemoveModel(deployment), w)
 		rm.installedAt = installedAt
 		rm.state = removeStateDone
@@ -651,4 +657,21 @@ func firstRowDiff(want, got string) string {
 		}
 	}
 	return "the screens differ only in a way no row shows"
+}
+
+// c9InstallUnreadable is Install's screen at width w for a record here
+// that cannot be read (#338 A-R4): the clash check runs on a folder at a
+// fixed path whose .env-orbit is a directory, so the OS's words, and the
+// golden, are stable. Not parallel: the folder's path is shared.
+func c9InstallUnreadable(t *testing.T, w int) string {
+	t.Helper()
+	const dir = "/tmp/orbit-c9-install-unreadable"
+	_ = os.RemoveAll(dir)
+	if err := os.MkdirAll(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	m, vol, clash := clashInstall(t, dir, startedFrom(goneFolder))
+	m, _ = updateAs(t, m, vol, clash)
+	return c9Size(t, m, w).View().Content
 }
