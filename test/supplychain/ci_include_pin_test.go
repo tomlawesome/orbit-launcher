@@ -1,6 +1,7 @@
 // The shared job templates from ai/agent-infra are fetched with `include:`:
-// private-details, and the two batch-branch snippets catchup-check and
-// batch-intake (ai/agent-infra#114). No other include is allowed.
+// private-details, the two batch-branch snippets catchup-check and
+// batch-intake (ai/agent-infra#114), and dev-landing (ai/agent-infra#113).
+// No other include is allowed.
 //
 // The first line below is the original comment, still true of each of them:
 // the private-details job template is fetched with `include:`. A tag
@@ -18,7 +19,7 @@ import (
 
 var (
 	includeCommitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	includeTagRE    = regexp.MustCompile(`(?:private-details|catchup-check|batch-intake)/v[0-9]+`)
+	includeTagRE    = regexp.MustCompile(`(?:private-details|catchup-check|batch-intake|dev-landing)/v[0-9]+`)
 )
 
 // allowedIncludes maps each include's file to the snippet name its pinning
@@ -27,6 +28,7 @@ var allowedIncludes = map[string]string{
 	"scripts/private-details/ci-template.yml": "private-details",
 	"scripts/catchup-check/ci-template.yml":   "catchup-check",
 	"scripts/batch-intake/ci-template.yml":    "batch-intake",
+	"scripts/dev-landing/ci-template.yml":     "dev-landing",
 }
 
 // includeBlock returns the raw text from the `include:` line up to the next
@@ -95,7 +97,7 @@ func includeEntries(t *testing.T) []includeEntry {
 	return out
 }
 
-// Exactly the three allowed includes, each once, from ai/agent-infra, each
+// Exactly the four allowed includes, each once, from ai/agent-infra, each
 // pinned to a commit. Any other include, a repeat, or a tag/branch ref fails.
 func TestIncludeIsPinnedToCommit(t *testing.T) {
 	entries := includeEntries(t)
@@ -170,7 +172,7 @@ func TestIncludePinMatchesTag(t *testing.T) {
 }
 
 // testdata/batch-snippets.yml, which the stage tests evaluate, is a copy of
-// two templates' rules. Each snippet's section records the agent-infra commit
+// three templates' rules. Each snippet's section records the agent-infra commit
 // it was copied from in a `# copied-from: <name> <sha>` line.
 const snippetsFile = "testdata/batch-snippets.yml"
 
@@ -195,7 +197,7 @@ func TestBatchSnippetsCopyIsOfThePinnedCommit(t *testing.T) {
 	for _, m := range copiedFromRE.FindAllStringSubmatch(data, -1) {
 		recorded[m[1]] = m[2]
 	}
-	for _, name := range []string{"catchup-check", "batch-intake"} {
+	for _, name := range snippetNames {
 		got, ok := recorded[name]
 		if !ok {
 			t.Errorf("%s has no `# copied-from: %s <sha>` line", snippetsFile, name)
@@ -206,6 +208,16 @@ func TestBatchSnippetsCopyIsOfThePinnedCommit(t *testing.T) {
 				snippetsFile, name, got, want)
 		}
 	}
+}
+
+// snippetNames are the snippets copied into the testdata. snippetKeys lists
+// the top-level keys of each that the copy must equal.
+var snippetNames = []string{"catchup-check", "batch-intake", "dev-landing"}
+
+var snippetKeys = map[string][]string{
+	"catchup-check": {"catchup-check"},
+	"batch-intake":  {"batch-intake"},
+	"dev-landing":   {"dev-landing", "dev-landing-check"},
 }
 
 // snippetSection returns the text of the top-level key `.name:` up to the next
@@ -239,24 +251,26 @@ func TestBatchSnippetsMatchTheTemplates(t *testing.T) {
 		t.Skip("no agent-infra checkout: set AGENT_INFRA_DIR")
 	}
 	data := readRepoFile(t, "test", "supplychain", snippetsFile)
-	for _, name := range []string{"catchup-check", "batch-intake"} {
+	for _, name := range snippetNames {
 		ref := includeRefFor(t, name)
 		out, err := exec.Command("git", "-C", dir, "show", ref+":scripts/"+name+"/ci-template.yml").Output()
 		if err != nil {
 			t.Skipf("the local agent-infra checkout (%s) does not have %s; fetch it to run this check", dir, ref)
 		}
-		want, ok := snippetSection(string(out), name)
-		if !ok {
-			t.Errorf("the template %s at %s has no .%s: key", name, ref, name)
-			continue
-		}
-		got, ok := snippetSection(data, name)
-		if !ok {
-			t.Errorf("%s has no .%s: key", snippetsFile, name)
-			continue
-		}
-		if got != want {
-			t.Errorf("%s's .%s differs from the template at %s\ncopy:     %s\ntemplate: %s", snippetsFile, name, ref, got, want)
+		for _, key := range snippetKeys[name] {
+			want, ok := snippetSection(string(out), key)
+			if !ok {
+				t.Errorf("the template %s at %s has no .%s: key", name, ref, key)
+				continue
+			}
+			got, ok := snippetSection(data, key)
+			if !ok {
+				t.Errorf("%s has no .%s: key", snippetsFile, key)
+				continue
+			}
+			if got != want {
+				t.Errorf("%s's .%s differs from the template at %s\ncopy:     %s\ntemplate: %s", snippetsFile, key, ref, got, want)
+			}
 		}
 	}
 }
