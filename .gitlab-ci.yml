@@ -67,7 +67,7 @@ include:
   # request into a batch branch runs the static checks only; the full pipeline
   # runs once, on the batch-to-dev merge request (decision 60a).
   - project: ai/agent-infra
-    ref: e64904231d51574ff4cb0df2025a23f53b5b8cc1  # catchup-check/v1
+    ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
     file: scripts/catchup-check/ci-template.yml
   - project: ai/agent-infra
     ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1

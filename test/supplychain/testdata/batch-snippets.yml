@@ -1,5 +1,5 @@
 # The rules of the two shared batch-branch snippets from ai/agent-infra
-# (catchup-check/v1, batch-intake/v1; ai/agent-infra#114), as the stage tests
+# (catchup-check/v2, batch-intake/v1; ai/agent-infra#114), as the stage tests
 # evaluate them. The templates write each `if:` as a folded block, which the
 # test reader refuses, so the conditions are joined onto one line here.
 # TestBatchSnippetsMatchTheTemplates checks the text against the pinned tags.
