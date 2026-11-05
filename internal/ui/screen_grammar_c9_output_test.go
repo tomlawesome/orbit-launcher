@@ -661,33 +661,37 @@ func firstRowDiff(want, got string) string {
 }
 
 // c9InstallUnreadable is Install's screen at width w for a record here
-// that cannot be read (#338 A-R4): the clash check runs on a folder at a
-// fixed path whose .env-orbit is a directory, so the OS's words, and the
-// golden, are stable. The path is shared by every test run on the host,
-// so the folder lives only while an exclusive lock on a sibling lock
-// file is held: a second run waits rather than deleting the folder under
-// the first. The lock and the folder end with this call, not the test,
-// because c9Screens calls it six times in one test and a second flock
-// on a new descriptor would wait on the first forever. The lock file
-// itself stays: removing it would let two runs lock different files.
+// that cannot be read (#338 A-R4): the clash check runs on a real folder
+// whose .env-orbit is a directory, so the words are the OS's own. The
+// golden names the folder c9UnreadableDir, but each call makes its own
+// folder with a name of exactly that length and puts c9UnreadableDir back
+// in the output: the screen wraps the same, and no two runs on the shared
+// host, under any account, touch the same path.
+const c9UnreadableDir = "/tmp/orbit-c9-install-unreadable"
+
 func c9InstallUnreadable(t *testing.T, w int) string {
 	t.Helper()
-	const dir = "/tmp/orbit-c9-install-unreadable"
-	lock, err := os.OpenFile(dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
+	prefix := "/tmp/orbit-c9-"
+	digits := len(c9UnreadableDir) - len(prefix)
+	var dir string
+	for n := time.Now().UnixNano(); ; n++ {
+		dir = fmt.Sprintf("%s%0*d", prefix, digits, uint64(n)%1_000_000_000_000_000_000)
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			t.Fatal(err)
+		}
 	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
-	_ = os.RemoveAll(dir)
 	defer func() { _ = os.RemoveAll(dir) }()
-	if err := os.MkdirAll(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
+	if len(dir) != len(c9UnreadableDir) {
+		t.Fatalf("folder %q is not %d characters long", dir, len(c9UnreadableDir))
+	}
+	if err := os.Mkdir(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	m, vol, clash := clashInstall(t, dir, startedFrom(goneFolder))
 	m, _ = updateAs(t, m, vol, clash)
-	return c9Size(t, m, w).View().Content
+	return strings.ReplaceAll(c9Size(t, m, w).View().Content, dir, c9UnreadableDir)
 }
