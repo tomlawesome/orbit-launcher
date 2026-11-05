@@ -61,8 +61,21 @@ include:
   - project: ai/agent-infra
     ref: c93bc8e78bf5807b8f2c2f5d7c13784f4a54746d  # private-details/v3
     file: scripts/private-details/ci-template.yml
+  # Batch branches (ai/agent-infra#114, decision 66a). Pinned to the commit
+  # each tag names, as above. catchup-check: a chore/catchup-* merge request
+  # into batch-a or batch-b runs one small job. batch-intake: any other merge
+  # request into a batch branch runs the static checks only; the full pipeline
+  # runs once, on the batch-to-dev merge request (decision 60a).
+  - project: ai/agent-infra
+    ref: e64904231d51574ff4cb0df2025a23f53b5b8cc1  # catchup-check/v1
+    file: scripts/catchup-check/ci-template.yml
+  - project: ai/agent-infra
+    ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1
+    file: scripts/batch-intake/ci-template.yml
 
 stages:
+  # catchup-check's job runs here; the snippet names stage `test`.
+  - test
   - classify
   - fast
   - acceptance
@@ -78,6 +91,8 @@ stages:
 # below picks its stage; this block decides whether a pipeline exists at all.
 workflow:
   rules:
+    - !reference [.catchup-check, workflow_rules]
+    - !reference [.batch-intake, workflow_rules]
     # Tags publish nothing here: Orbit builds and ships a pinned tag (#171).
     - if: $CI_COMMIT_TAG
       when: never
@@ -317,6 +332,19 @@ variables:
 # passed no earlier stage, so it is treated as one into `dev`: the checks
 # here, and the live installs, which nothing later would run (#313).
 .checks_rules: &checks_rules
+  - !reference [.catchup-check, job_rule]
+  # The static checks also run on a merge request into a batch branch
+  # (ai/agent-infra#114): this rule matches it, and the jobs that build or
+  # test carry heavy_checks_rules instead, which stops at batch-intake.
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
+  - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+
+# The same rules for a job that builds or tests: skipped on a merge request
+# into a batch branch, where only the static checks run (batch-intake).
+.heavy_checks_rules: &heavy_checks_rules
+  - !reference [.catchup-check, job_rule]
+  - !reference [.batch-intake, job_rule]
   - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
 
@@ -402,7 +430,7 @@ flake-check:
 
 fast:
   stage: fast
-  rules: *checks_rules
+  rules: *heavy_checks_rules
   image:
     <<: *pull_if_not_present
     name: $GO_IMAGE
@@ -768,6 +796,8 @@ visual:
   timeout: 15m
   needs: []
   rules:
+    - !reference [.catchup-check, job_rule]
+    - !reference [.batch-intake, job_rule]
     - if: $CI_PIPELINE_SOURCE == "web"
     # The Go tarball and ttyd come in through the checked-download script, so
     # a change to it alone is a change to what this job runs on (#216).
@@ -913,6 +943,8 @@ live-prepare:
       optional: true
   # The legs' five routes, the change route manual and blocking as theirs (#304).
   rules:
+    - !reference [.catchup-check, job_rule]
+    - !reference [.batch-intake, job_rule]
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "dev"
@@ -1384,6 +1416,8 @@ live-prepare:
     - job: live-prepare
       artifacts: true
   rules:
+    - !reference [.catchup-check, job_rule]
+    - !reference [.batch-intake, job_rule]
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
     # The promotion into `preview` (#306): the one place the live installs
