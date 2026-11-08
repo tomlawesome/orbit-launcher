@@ -73,7 +73,7 @@ func TestProbeHealth_MaintenanceReasonText(t *testing.T) {
 
 func TestProbeHealth_APIHealthMaintenanceReadsAsClosed(t *testing.T) {
 	srv, c := healthServer(t, http.StatusOK, `{"status":"maintenance"}`, http.StatusServiceUnavailable)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthMaintenance {
+	if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthMaintenance {
 		t.Errorf("status maintenance = %q, want %q", got, HealthMaintenance)
 	}
 	if n := c.n("/api/health"); n != 1 {
@@ -86,7 +86,7 @@ func TestProbeHealth_APIHealthMaintenanceReadsAsClosed(t *testing.T) {
 
 func TestProbeHealth_APIHealthMaintenanceWithExtraFields(t *testing.T) {
 	srv, _ := healthServer(t, http.StatusOK, `{"status":"maintenance","since":"2026-10-01","detail":{"a":1}}`, http.StatusServiceUnavailable)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthMaintenance {
+	if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthMaintenance {
 		t.Errorf("maintenance with extra fields = %q, want %q", got, HealthMaintenance)
 	}
 }
@@ -95,7 +95,7 @@ func TestProbeHealth_APIHealthReadyReadsAsResponding(t *testing.T) {
 	// The home page is deliberately 503 here: the answer must come from
 	// /api/health alone.
 	srv, c := healthServer(t, http.StatusOK, `{"status":"ready"}`, http.StatusServiceUnavailable)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {
+	if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthResponding {
 		t.Errorf("status ready = %q, want %q", got, HealthResponding)
 	}
 	if n := c.n("/"); n != 0 {
@@ -104,9 +104,9 @@ func TestProbeHealth_APIHealthReadyReadsAsResponding(t *testing.T) {
 }
 
 func TestProbeHealth_APIHealthAnyOtherStatusWordIsResponding(t *testing.T) {
-	for _, word := range []string{"ok", "starting", "degraded", "up"} {
+	for _, word := range []string{"ok", "starting", "up"} {
 		srv, c := healthServer(t, http.StatusOK, `{"status":"`+word+`"}`, http.StatusServiceUnavailable)
-		if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {
+		if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthResponding {
 			t.Errorf("status %q = %q, want %q", word, got, HealthResponding)
 		}
 		if n := c.n("/"); n != 0 {
@@ -117,7 +117,7 @@ func TestProbeHealth_APIHealthAnyOtherStatusWordIsResponding(t *testing.T) {
 
 func TestProbeHealth_APIHealth2xxOtherThan200Counts(t *testing.T) {
 	srv, c := healthServer(t, http.StatusAccepted, `{"status":"maintenance"}`, http.StatusOK)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthMaintenance {
+	if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthMaintenance {
 		t.Errorf("202 maintenance = %q, want %q", got, HealthMaintenance)
 	}
 	if n := c.n("/"); n != 0 {
@@ -129,7 +129,7 @@ func TestProbeHealth_APIHealth5xxIsServerError(t *testing.T) {
 	for _, code := range []int{500, 502, 503, 504} {
 		// The home page says 200 to prove it is not consulted.
 		srv, c := healthServer(t, code, `{"status":"ready"}`, http.StatusOK)
-		if got := ProbeHealth(context.Background(), srv.URL); got != HealthServerError {
+		if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthServerError {
 			t.Errorf("/api/health %d = %q, want %q", code, got, HealthServerError)
 		}
 		if n := c.n("/"); n != 0 {
@@ -138,70 +138,43 @@ func TestProbeHealth_APIHealth5xxIsServerError(t *testing.T) {
 	}
 }
 
-func TestProbeHealth_APIHealth404FallsBackToTheAppURL(t *testing.T) {
-	// An older Orbit has no /api/health.
-	srv, c := healthServer(t, http.StatusNotFound, `not found`, http.StatusOK)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {
-		t.Errorf("404 then 200 = %q, want %q", got, HealthResponding)
-	}
-	if n := c.n("/"); n != 1 {
-		t.Errorf("/ requested %d times, want 1 (fallback)", n)
-	}
-
-	srv, c = healthServer(t, http.StatusNotFound, `not found`, http.StatusServiceUnavailable)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthServerError {
-		t.Errorf("404 then 503 = %q, want %q", got, HealthServerError)
-	}
-	if n := c.n("/"); n != 1 {
-		t.Errorf("/ requested %d times, want 1 (fallback)", n)
-	}
-}
-
-func TestProbeHealth_APIHealth4xxFallsBack(t *testing.T) {
-	for _, code := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusTeapot} {
-		// A 4xx body that looks like maintenance must not count.
-		srv, c := healthServer(t, code, `{"status":"maintenance"}`, http.StatusOK)
-		if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {
-			t.Errorf("/api/health %d then 200 = %q, want %q", code, got, HealthResponding)
-		}
-		if n := c.n("/"); n != 1 {
-			t.Errorf("/api/health %d: / requested %d times, want 1", code, n)
-		}
-	}
-}
-
-func TestProbeHealth_APIHealthNonJSONBodyFallsBack(t *testing.T) {
-	srv, c := healthServer(t, http.StatusOK, `<html>welcome</html>`, http.StatusServiceUnavailable)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthServerError {
-		t.Errorf("non-JSON 200 then 503 = %q, want %q", got, HealthServerError)
-	}
-	if n := c.n("/"); n != 1 {
-		t.Errorf("/ requested %d times, want 1", n)
-	}
-
-	srv, _ = healthServer(t, http.StatusOK, `<html>welcome</html>`, http.StatusOK)
-	if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {
-		t.Errorf("non-JSON 200 then 200 = %q, want %q", got, HealthResponding)
-	}
-}
-
-func TestProbeHealth_APIHealthJSONWithoutStatusFallsBack(t *testing.T) {
-	for name, body := range map[string]string{
-		"no status field":   `{"version":"1.2.3"}`,
-		"empty status":      `{"status":""}`,
-		"null status":       `{"status":null}`,
-		"empty object":      `{}`,
-		"empty body":        ``,
-		"array not object":  `["maintenance"]`,
-		"status wrong type": `{"status":5}`,
+// #341: there is no page fallback. An answer that is not Orbit's JSON
+// status is an unexpected answer, and the page is never asked.
+func TestProbeHealth_APIHealthWithoutOrbitsAnswerIsUnexpectedAndNeverFallsBack(t *testing.T) {
+	for name, tc := range map[string]struct {
+		code int
+		body string
+	}{
+		"404":               {http.StatusNotFound, `not found`},
+		"400":               {http.StatusBadRequest, `{"status":"maintenance"}`},
+		"401":               {http.StatusUnauthorized, `{"status":"maintenance"}`},
+		"418":               {http.StatusTeapot, `{"status":"maintenance"}`},
+		"non-JSON 200":      {http.StatusOK, `<html>welcome</html>`},
+		"no status field":   {http.StatusOK, `{"version":"1.2.3"}`},
+		"empty status":      {http.StatusOK, `{"status":""}`},
+		"null status":       {http.StatusOK, `{"status":null}`},
+		"empty object":      {http.StatusOK, `{}`},
+		"empty body":        {http.StatusOK, ``},
+		"array not object":  {http.StatusOK, `["maintenance"]`},
+		"status wrong type": {http.StatusOK, `{"status":5}`},
 	} {
-		srv, c := healthServer(t, http.StatusOK, body, http.StatusServiceUnavailable)
-		if got := ProbeHealth(context.Background(), srv.URL); got != HealthServerError {
-			t.Errorf("%s: = %q, want %q (fallback sees the 503)", name, got, HealthServerError)
+		// The page says 200 and 503 in turn to prove it is not consulted.
+		for _, root := range []int{http.StatusOK, http.StatusServiceUnavailable} {
+			srv, c := healthServer(t, tc.code, tc.body, root)
+			if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthUnexpectedAnswer {
+				t.Errorf("%s (page %d): = %q, want %q", name, root, got, HealthUnexpectedAnswer)
+			}
+			if n := c.n("/"); n != 0 {
+				t.Errorf("%s (page %d): / requested %d times, want 0", name, root, n)
+			}
 		}
-		if n := c.n("/"); n != 1 {
-			t.Errorf("%s: / requested %d times, want 1", name, n)
-		}
+	}
+}
+
+func TestProbeHealth_APIHealthDegradedStatusIsServerErrorEvenOn200(t *testing.T) {
+	srv, _ := healthServer(t, http.StatusOK, `{"status":"degraded"}`, http.StatusOK)
+	if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthServerError {
+		t.Errorf("200 degraded = %q, want %q", got, HealthServerError)
 	}
 }
 
@@ -221,45 +194,38 @@ func TestProbeHealth_APIHealthRedirectIsNotFollowed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got := ProbeHealth(context.Background(), srv.URL)
+	got := ProbeHealth(context.Background(), srv.URL+"/api/health")
 	if n := c.n("/elsewhere"); n != 0 {
 		t.Errorf("redirect target requested %d times, want 0 (redirects are not followed)", n)
 	}
-	if got != HealthResponding {
-		t.Errorf("302 from /api/health then 200 on / = %q, want %q", got, HealthResponding)
+	if got != HealthUnexpectedAnswer {
+		t.Errorf("302 from /api/health = %q, want %q", got, HealthUnexpectedAnswer)
 	}
-	if n := c.n("/"); n != 1 {
-		t.Errorf("/ requested %d times, want 1 (fallback)", n)
+	if n := c.n("/"); n != 0 {
+		t.Errorf("/ requested %d times, want 0 (no page fallback)", n)
 	}
 }
 
-func TestProbeHealth_APIHealthJoinsTheAppURLPath(t *testing.T) {
-	for _, tc := range []struct {
-		suffix string
-		want   string
-	}{
-		{"", "/api/health"},
-		{"/", "/api/health"},
-		{"/orbit", "/orbit/api/health"},
-		{"/orbit/", "/orbit/api/health"},
-		{"/a/b", "/a/b/api/health"},
-	} {
+// #341: the URL is the health address itself (deploy.LocalHealthURL ends
+// in /api/health), so the probe asks exactly that path and appends nothing.
+func TestProbeHealth_AsksExactlyTheURLItIsGiven(t *testing.T) {
+	for _, path := range []string{"/api/health", "/orbit/api/health", "/x"} {
 		c := &pathCounter{}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c.record(r)
-			if r.URL.Path == tc.want {
+			if r.URL.Path == path {
 				_, _ = w.Write([]byte(`{"status":"maintenance"}`))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
 		}))
-		got := ProbeHealth(context.Background(), srv.URL+tc.suffix)
+		got := ProbeHealth(context.Background(), srv.URL+path)
 		srv.Close()
-		if c.n(tc.want) != 1 {
-			t.Errorf("APP_URL suffix %q: %s requested %d times, want 1", tc.suffix, tc.want, c.n(tc.want))
+		if c.n(path) != 1 {
+			t.Errorf("%s requested %d times, want 1", path, c.n(path))
 		}
 		if got != HealthMaintenance {
-			t.Errorf("APP_URL suffix %q = %q, want %q", tc.suffix, got, HealthMaintenance)
+			t.Errorf("%s = %q, want %q", path, got, HealthMaintenance)
 		}
 	}
 }
@@ -268,24 +234,11 @@ func TestProbeHealth_APIHealthSendsNoCredentials(t *testing.T) {
 	srv, c := healthServer(t, http.StatusOK, `{"status":"ready"}`, http.StatusOK)
 	withCreds := strings.Replace(srv.URL, "http://", "http://admin:s3cret@", 1)
 
-	if got := ProbeHealth(context.Background(), withCreds); got != HealthResponding {
+	if got := ProbeHealth(context.Background(), withCreds+"/api/health"); got != HealthResponding {
 		t.Errorf("APP_URL with credentials = %q, want %q", got, HealthResponding)
 	}
 	if n := c.n("/api/health"); n != 1 {
 		t.Fatalf("/api/health requested %d times, want 1", n)
-	}
-	if a := c.authFor("/api/health"); a != "" {
-		t.Errorf("/api/health received an Authorization header %q, want none", a)
-	}
-}
-
-func TestProbeHealth_APIHealthFallbackAlsoSendsNoCredentials(t *testing.T) {
-	srv, c := healthServer(t, http.StatusNotFound, `nope`, http.StatusOK)
-	withCreds := strings.Replace(srv.URL, "http://", "http://admin:s3cret@", 1)
-
-	_ = ProbeHealth(context.Background(), withCreds)
-	if a := c.authFor("/"); a != "" {
-		t.Errorf("fallback request received an Authorization header %q, want none", a)
 	}
 	if a := c.authFor("/api/health"); a != "" {
 		t.Errorf("/api/health received an Authorization header %q, want none", a)
@@ -310,7 +263,7 @@ func TestProbeHealth_APIHealthHangGivesNotRespondingWithoutASecondRequest(t *tes
 	defer close(release)
 
 	done := make(chan HealthReason, 1)
-	go func() { done <- ProbeHealth(context.Background(), srv.URL) }()
+	go func() { done <- ProbeHealth(context.Background(), srv.URL+"/api/health") }()
 
 	select {
 	case got := <-done:
@@ -332,42 +285,8 @@ func TestProbeHealth_APIHealthTransportErrorGivesTheUsualReason(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	if got := ProbeHealth(context.Background(), url); got != HealthNotResponding {
+	if got := ProbeHealth(context.Background(), url+"/api/health"); got != HealthNotResponding {
 		t.Errorf("connection refused = %q, want %q", got, HealthNotResponding)
-	}
-}
-
-func TestProbeHealth_APIHealthStaysInsideOneTimeLimitOnSlowFallback(t *testing.T) {
-	// /api/health answers 404 at once; the home page hangs. The whole
-	// probe is still bounded by the one limit.
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
-	defer srv.Close()
-	defer close(release)
-
-	done := make(chan HealthReason, 1)
-	start := time.Now()
-	go func() { done <- ProbeHealth(context.Background(), srv.URL) }()
-
-	select {
-	case got := <-done:
-		if got != HealthNotResponding {
-			t.Errorf("hanging fallback = %q, want %q", got, HealthNotResponding)
-		}
-		if d := time.Since(start); d > 3*time.Second {
-			t.Errorf("probe took %v, want within the single 2s limit", d)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("ProbeHealth still waiting after 5s")
 	}
 }
 

@@ -40,7 +40,7 @@ func TestDetect_QuotedOrPaddedAppURLReachesProbeHealthClean(t *testing.T) {
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	}))
 	defer srv.Close()
 
