@@ -18,7 +18,8 @@ const (
 	NoAnimationEnv = "ORBIT_LAUNCHER_NO_ANIMATION"
 	// NoUpdateCheckEnv skips the check for a newer launcher release.
 	NoUpdateCheckEnv = "ORBIT_LAUNCHER_NO_UPDATE_CHECK"
-	// NoHealthProbeEnv skips probing the detected deployment's APP_URL.
+	// NoHealthProbeEnv skips probing the detected deployment's local
+	// health address (LocalHealthURL).
 	NoHealthProbeEnv = "ORBIT_LAUNCHER_NO_HEALTH_PROBE"
 	// NoVolumeCheckEnv skips Install's stale-database-volume pre-flight
 	// (#105).

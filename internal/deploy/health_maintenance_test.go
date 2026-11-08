@@ -103,11 +103,13 @@ func TestProbeHealth_APIHealthReadyReadsAsResponding(t *testing.T) {
 	}
 }
 
-func TestProbeHealth_APIHealthAnyOtherStatusWordIsResponding(t *testing.T) {
+// Orbit sends only ready, degraded and maintenance; another service on a
+// stale ORBIT_PORT answering "ok" must not read as alive (#341).
+func TestProbeHealth_APIHealthAnyOtherStatusWordIsUnexpected(t *testing.T) {
 	for _, word := range []string{"ok", "starting", "up"} {
 		srv, c := healthServer(t, http.StatusOK, `{"status":"`+word+`"}`, http.StatusServiceUnavailable)
-		if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthResponding {
-			t.Errorf("status %q = %q, want %q", word, got, HealthResponding)
+		if got := ProbeHealth(context.Background(), srv.URL+"/api/health"); got != HealthUnexpectedAnswer {
+			t.Errorf("status %q = %q, want %q", word, got, HealthUnexpectedAnswer)
 		}
 		if n := c.n("/"); n != 0 {
 			t.Errorf("status %q: / requested %d times, want 0", word, n)

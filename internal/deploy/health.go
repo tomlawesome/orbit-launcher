@@ -103,7 +103,7 @@ func firstSet(values ...string) string {
 // ProbeHealth asks Orbit at healthURL, the deployment's own health
 // address (LocalHealthURL), whether it is responding, from that one
 // answer alone: no path is added and there is no page fallback (#341).
-// A 2xx whose JSON status is ready (or any word but the two below) is responding, maintenance is
+// A 2xx whose JSON status is ready is responding, maintenance is
 // HealthMaintenance (#302), degraded or any 5xx a server error; any other
 // answer (a redirect, a 4xx, a body that is not Orbit's JSON) is
 // HealthUnexpectedAnswer, so a stranger on the port is not called alive.
@@ -150,11 +150,11 @@ func ProbeHealth(ctx context.Context, healthURL string) HealthReason {
 		return HealthMaintenance
 	case "degraded":
 		return HealthServerError
-	case "":
-		return HealthUnexpectedAnswer
 	}
-	// Any other status word is still Orbit's own JSON answer.
-	return HealthResponding
+	// Orbit sends only the three words above; anything else (an empty
+	// status, or another service's "ok" on a stale ORBIT_PORT) is not
+	// Orbit's answer, so a stranger on the port is not called alive.
+	return HealthUnexpectedAnswer
 }
 
 // transportReason names a failed request's cause.
