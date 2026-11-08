@@ -58,14 +58,24 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   maintenance `#facc15` yellow, degraded `#fb923c` deep amber ("up but
   wrong" — never red, red means stopped/failed). A status word is never a
   guess: unknown health renders the FQDN with no word at all.
-- Status vocabulary: **dormant / alive / maintenance / degraded**. Fixed.
+- Status vocabulary: **dormant / alive / maintenance / degraded / can't tell**. Fixed.
   `maintenance` is Orbit's own health answer saying it is closed to users
   (owner, 2026-10-28, #302 answer 11): up and healthy, closed on purpose,
   so it is neither alive nor degraded. Beneath it, one faint line:
   `closed to users`. No status row or drawer; those stay degraded-only.
-- Alive is decided at the deployment's published port on this machine
-  (`ORBIT_BIND_ADDRESS`/`ORBIT_PORT`), not through the public address: a
-  server often cannot reach its own public address (#341).
+  `can't tell` is either half of the check missing with no fault seen
+  (Docker could not be read, or no health address could be worked out;
+  owner, 2026-11-08, #341 answer 2: "we should say that we can't tell"):
+  faint word under the FQDN, gold mark, one faint line per missing half
+  (`Docker couldn't be read`, `health address couldn't be worked out`),
+  no status row or drawer, caret unmoved. An HTTP failure over unreadable
+  Docker is still degraded: a seen fault outranks an unknown.
+- The word is decided from the containers themselves (#341): Docker's
+  health of the profile's expected containers plus Orbit's own answer at
+  its published port on this machine (`ORBIT_BIND_ADDRESS`/`ORBIT_PORT`),
+  worst component wins. The public address is never checked or mentioned
+  (owner, 2026-11-08, #341 answer 3b): external access is the user's to
+  resolve.
 
 ## Layout grammar
 
