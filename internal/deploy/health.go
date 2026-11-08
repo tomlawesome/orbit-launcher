@@ -6,10 +6,13 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,39 +47,81 @@ const (
 	HealthServerError         HealthReason = "server error"
 	HealthCertificateRejected HealthReason = "certificate rejected"
 	HealthUnchecked           HealthReason = "could not check"
+	// HealthUnexpectedAnswer is an answer at the health address that is
+	// not Orbit's: another service on the port (#341).
+	HealthUnexpectedAnswer HealthReason = "unexpected answer"
 	// HealthMaintenance is a deployment Orbit itself reports as closed to
 	// users for maintenance: up and healthy, not degraded (#302).
 	HealthMaintenance HealthReason = "closed to users"
 )
 
-// ProbeHealth asks the deployment at appURL whether it is responding.
-// It first reads Orbit's own health answer, <APP_URL>/api/health, which
-// tells a deployment closed for maintenance (HealthMaintenance) from a
-// failing one (#302); Orbit answers its pages with 503 in maintenance, so
-// the page alone would read as a server error. An Orbit without that
-// answer (a 3xx or 4xx, or no status in it) is asked the old way: a GET
-// against the app's own URL, where a 2xx to 4xx answer is responding and
-// a 5xx a server error. A transport failure is named by its cause (a name
-// that does not exist, certificate) or reads as not responding, and is
-// not retried. This is deliberately coarse, a reachability check for the
-// splash's state, not a per-service sweep. Both requests together give up
-// after healthProbeTimeout, or sooner if ctx ends.
-func ProbeHealth(ctx context.Context, appURL string) HealthReason {
-	// APP_URL comes from a file the launcher may not have written, so
-	// only a web address is ever asked; any other scheme is not checked.
-	u, err := url.Parse(appURL)
+// LocalHealthURL is the address the deployment answers its health check
+// on from this machine: its published port, not the public APP_URL, which
+// a server often cannot reach itself (no NAT loopback, #341). The address
+// is ORBIT_BIND_ADDRESS, else the .env-orbit value, else 0.0.0.0, and the
+// port ORBIT_PORT the same way, default 3000; the process environment wins
+// over the file as it does for Compose, and an empty value counts as
+// unset. A wildcard address (0.0.0.0, ::) is reached through loopback,
+// the rule Orbit's own scripts apply. The address must be an IP literal
+// and the port 1-65535, else an error. Always plain http: TLS belongs to
+// the reverse proxy, outside this check.
+func LocalHealthURL(d *Deployment) (string, error) {
+	if d == nil {
+		return "", errors.New("no deployment")
+	}
+	addr := firstSet(os.Getenv("ORBIT_BIND_ADDRESS"), d.BindAddress, "0.0.0.0")
+	port := firstSet(os.Getenv("ORBIT_PORT"), d.Port, "3000")
+	addr = strings.TrimSuffix(strings.TrimPrefix(addr, "["), "]")
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return "", fmt.Errorf("ORBIT_BIND_ADDRESS %q is not an IP address", addr)
+	}
+	if ip.IsUnspecified() {
+		if ip.To4() != nil {
+			ip = net.IPv4(127, 0, 0, 1)
+		} else {
+			ip = net.IPv6loopback
+		}
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("ORBIT_PORT %q is not a port number", port)
+	}
+	return "http://" + net.JoinHostPort(ip.String(), port) + "/api/health", nil
+}
+
+// firstSet is the first non-empty value.
+func firstSet(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ProbeHealth asks Orbit at healthURL, the deployment's own health
+// address (LocalHealthURL), whether it is responding, from that one
+// answer alone: no path is added and there is no page fallback (#341).
+// A 2xx whose JSON status is ready (or any word but the two below) is responding, maintenance is
+// HealthMaintenance (#302), degraded or any 5xx a server error; any other
+// answer (a redirect, a 4xx, a body that is not Orbit's JSON) is
+// HealthUnexpectedAnswer, so a stranger on the port is not called alive.
+// A transport failure is named by its cause or reads as not responding,
+// and is not retried. The request gives up after healthProbeTimeout, or
+// sooner if ctx ends.
+func ProbeHealth(ctx context.Context, healthURL string) HealthReason {
+	// The URL is not trusted to be ours, so only a web address is ever
+	// asked; any other scheme is not checked.
+	u, err := url.Parse(healthURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return HealthUnchecked
 	}
 	// Go's client turns a user:password@ in the address into Basic auth;
-	// the probe never needs credentials (a 401 already counts as
-	// responding), so none are sent (#277 W1).
+	// the probe never needs credentials, so none are sent (#277 W1).
 	u.User = nil
 	ctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
 	defer cancel()
-	if reason, decided := probeAPIHealth(ctx, *u); decided {
-		return reason
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return HealthUnchecked
@@ -89,42 +134,27 @@ func ProbeHealth(ctx context.Context, appURL string) HealthReason {
 	if resp.StatusCode >= 500 {
 		return HealthServerError
 	}
-	return HealthResponding
-}
-
-// probeAPIHealth reads Orbit's health answer under the app's URL. It
-// decides when Orbit gave one (a 2xx naming a status, or a 5xx) or the
-// request failed outright; anything else (a redirect, a 4xx from an Orbit
-// without the endpoint, a body that is not its JSON) leaves the decision
-// to the page probe.
-func probeAPIHealth(ctx context.Context, u url.URL) (HealthReason, bool) {
-	u.Path = strings.TrimSuffix(u.Path, "/") + "/api/health"
-	u.RawPath, u.RawQuery, u.Fragment = "", "", ""
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return "", false
-	}
-	resp, err := healthClient.Do(req)
-	if err != nil {
-		return transportReason(err), true
-	}
-	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode >= 500:
-		return HealthServerError, true
-	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return "", false
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return HealthUnexpectedAnswer
 	}
 	var body struct {
 		Status string `json:"status"`
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body) != nil || body.Status == "" {
-		return "", false
+	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body) != nil {
+		return HealthUnexpectedAnswer
 	}
-	if body.Status == "maintenance" {
-		return HealthMaintenance, true
+	switch body.Status {
+	case "ready":
+		return HealthResponding
+	case "maintenance":
+		return HealthMaintenance
+	case "degraded":
+		return HealthServerError
+	case "":
+		return HealthUnexpectedAnswer
 	}
-	return HealthResponding, true
+	// Any other status word is still Orbit's own JSON answer.
+	return HealthResponding
 }
 
 // transportReason names a failed request's cause.
