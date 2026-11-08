@@ -177,6 +177,12 @@ func TestSplashDegraded_ResultDoesNotMoveACaretTheUserPlaced(t *testing.T) {
 	if m.menu.sel != 3 {
 		t.Errorf("selected = %d, want 3", m.menu.sel)
 	}
+	// #341: nor does a fault with a ready answer.
+	m, _ = updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('4'))
+	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthResponding, faults: []deploy.ServiceFault{{Service: "orbit-clamav", Word: "unhealthy"}}})
+	if m.state != stateDegraded || m.menu.sel != 3 {
+		t.Errorf("state = %v, selected = %d, want degraded with the caret still on 3", m.state, m.menu.sel)
+	}
 }
 
 func TestSplashDegraded_UpFromInstallReachesTheRow(t *testing.T) {
@@ -310,7 +316,13 @@ func TestSplashDegraded_EveryReasonRendersItsExactText(t *testing.T) {
 	for _, tc := range allReasons {
 		t.Run(tc.name, func(t *testing.T) {
 			m := openDrawer(t, func() SplashModel {
-				m := degradedWith(t, tc.reason)
+				msg := healthResultMsg{reason: tc.reason}
+				if tc.reason == deploy.HealthUnchecked {
+					// Amended 2026-11-08: alone it is can't tell, no
+					// drawer; its row shows beside a fault.
+					msg.faults = []deploy.ServiceFault{fault("orbit-tika", "stopped")}
+				}
+				m := degradedSplash(t, msg)
 				m = onInstall(t, m)
 				m, _ = updateAs(t, m, key(tea.KeyUp))
 				return m
@@ -424,14 +436,18 @@ func TestSplashProbe_ReportsReasonAndServiceCount(t *testing.T) {
 			{Service: "orbit-app", State: "running"},
 			{Service: "orbit-clamav", State: "running"},
 			{Service: "orbit-tika", State: "exited"},
+			{Service: "orbit-ollama", State: "running"},
 		}, nil
 	}
 	cmd := m.probeHealthCmd()
 	if cmd == nil {
 		t.Fatal("probeHealthCmd returned nil")
 	}
-	want := healthResultMsg{reason: deploy.HealthServerError, running: 3, expected: 5, counted: true}
-	if got := cmd(); got != want {
+	want := healthResultMsg{
+		reason: deploy.HealthServerError, running: 4, expected: 5, counted: true, asked: true,
+		faults: []deploy.ServiceFault{{Service: "orbit-tika", Word: deploy.FaultStopped}},
+	}
+	if got := cmd(); !sameHealthMsg(got, want) {
 		t.Errorf("message = %+v, want %+v", got, want)
 	}
 }
@@ -457,8 +473,8 @@ func TestSplashProbe_ServiceStatesErrorMeansNotCounted(t *testing.T) {
 	m, _ := probeModel(t, "full")
 	m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthNotResponding }
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) { return nil, errors.New("docker unreachable") }
-	want := healthResultMsg{reason: deploy.HealthNotResponding}
-	if got := m.probeHealthCmd()(); got != want {
+	want := healthResultMsg{reason: deploy.HealthNotResponding, asked: true}
+	if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {
 		t.Errorf("message = %+v, want %+v", got, want)
 	}
 }
@@ -483,8 +499,10 @@ func TestSplashProbe_UnreadableEnvFileMeansNotCounted(t *testing.T) {
 			}
 			m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthNotResponding }
 			m.serviceStates = func(string) ([]deploy.ServiceState, error) { return states, nil }
-			want := healthResultMsg{reason: deploy.HealthNotResponding}
-			if got := m.probeHealthCmd()(); got != want {
+			// Spec: an unreadable record means not counted, and "Docker
+			// couldn't be read" is asked && !counted, so asked is true.
+			want := healthResultMsg{reason: deploy.HealthNotResponding, asked: true}
+			if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {
 				t.Errorf("message = %+v, want %+v", got, want)
 			}
 		})
@@ -509,32 +527,6 @@ func TestSplashProbe_PassesTheLocalURLToTheProbe(t *testing.T) {
 	m.probeHealthCmd()()
 	if got != "http://198.51.100.9:8443/api/health" {
 		t.Errorf("probe asked about %q, want the local URL (not %q)", got, m.appURL)
-	}
-}
-
-// #341 spec 15: the services are read only after a degraded local answer.
-func TestSplashProbe_ServicesReadOnlyAfterADegradedAnswer(t *testing.T) {
-	for _, c := range []struct {
-		reason deploy.HealthReason
-		reads  int
-	}{
-		{deploy.HealthResponding, 0},
-		{deploy.HealthMaintenance, 0},
-		{deploy.HealthUnchecked, 0},
-		{deploy.HealthNotResponding, 1},
-		{deploy.HealthServerError, 1},
-		{deploy.HealthUnexpectedAnswer, 1},
-	} {
-		t.Run(string(c.reason), func(t *testing.T) {
-			m, _ := probeModel(t, "full")
-			m.healthProbe = func(context.Context, string) deploy.HealthReason { return c.reason }
-			reads := 0
-			m.serviceStates = func(string) ([]deploy.ServiceState, error) { reads++; return nil, nil }
-			m.probeHealthCmd()()
-			if reads != c.reads {
-				t.Errorf("services read %d times for %q, want %d", reads, c.reason, c.reads)
-			}
-		})
 	}
 }
 
@@ -582,8 +574,11 @@ func TestSplashProbe_UnhealthyServiceIsNotCountedAsRunning(t *testing.T) {
 					{Service: "orbit-clamav", State: "running", Health: ""},
 				}, nil
 			}
-			want := healthResultMsg{reason: deploy.HealthServerError, running: 2, expected: 3, counted: true}
-			if got := m.probeHealthCmd()(); got != want {
+			want := healthResultMsg{
+				reason: deploy.HealthServerError, running: 2, expected: 3, counted: true, asked: true,
+				faults: []deploy.ServiceFault{{Service: "orbit-app", Word: health}},
+			}
+			if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {
 				t.Errorf("message = %+v, want %+v", got, want)
 			}
 		})

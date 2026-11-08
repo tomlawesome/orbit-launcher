@@ -100,7 +100,9 @@ func firstSet(values ...string) string {
 	return ""
 }
 
-// ProbeHealth asks Orbit at healthURL, the deployment's own health
+// ProbeHealth is the application-level half of the splash's composite
+// check (#341); Docker's view of the containers is the other. It asks
+// Orbit at healthURL, the deployment's own health
 // address (LocalHealthURL), whether it is responding, from that one
 // answer alone: no path is added and there is no page fallback (#341).
 // A 2xx whose JSON status is ready is responding, maintenance is

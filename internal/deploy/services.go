@@ -24,6 +24,11 @@ const (
 	ContainerRestarting = "restarting"
 	HealthUnhealthy     = "unhealthy"
 	HealthStarting      = "starting"
+	// FaultMissing is the word for an expected service Docker lists no
+	// container for; FaultStopped for one that exited, was created but
+	// never started, is paused or is dead.
+	FaultMissing = "missing"
+	FaultStopped = "stopped"
 )
 
 // ServiceState is one container of the deployment as `docker compose
@@ -41,6 +46,44 @@ type ServiceState struct {
 // types the rule itself.
 func (s ServiceState) Running() bool {
 	return s.State == ContainerRunning && s.Health != HealthUnhealthy && s.Health != HealthStarting
+}
+
+// ServiceFault is one expected service that is not running, with the
+// word that says why.
+type ServiceFault struct {
+	Service, Word string
+}
+
+// ServiceFaults names the expected services that Running() denies, in
+// expected order (not Docker's), each with its fault word: missing,
+// unhealthy, starting, restarting or stopped. Services Docker lists
+// that are not expected are never faults. Repair's block and the splash
+// share this one rule.
+func ServiceFaults(expected []string, have []ServiceState) []ServiceFault {
+	var out []ServiceFault
+	for _, name := range expected {
+		var found *ServiceState
+		for i := range have {
+			if have[i].Service == name {
+				found = &have[i]
+				break
+			}
+		}
+		switch {
+		case found == nil:
+			out = append(out, ServiceFault{name, FaultMissing})
+		case found.Running():
+		case found.State == ContainerRunning && found.Health == HealthUnhealthy:
+			out = append(out, ServiceFault{name, HealthUnhealthy})
+		case found.State == ContainerRunning && found.Health == HealthStarting:
+			out = append(out, ServiceFault{name, HealthStarting})
+		case found.State == ContainerRestarting:
+			out = append(out, ServiceFault{name, ContainerRestarting})
+		default:
+			out = append(out, ServiceFault{name, FaultStopped})
+		}
+	}
+	return out
 }
 
 // ServiceStates lists the deployment's containers, stopped ones

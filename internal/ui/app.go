@@ -182,7 +182,8 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, healthURL
 }
 
 // WithServicesReader supplies how the services are read, for Repair's
-// services block and the splash's count, in place of the real `docker
+// services block and the splash's container half of the health check
+// (faults and count), in place of the real `docker
 // compose ps` (#277): tests pass a fake, so no app-level test depends on
 // the machine's Docker. Nil reads nothing: the splash does not count and
 // Repair shows no services block, whichever order this and
