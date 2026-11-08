@@ -18,7 +18,7 @@ import (
 
 const (
 	cantTellWord   = "can't tell"
-	cantTellDocker = "Docker couldn't be read"
+	cantTellDocker = "containers couldn't be checked"
 	cantTellAddr   = "health address couldn't be worked out"
 )
 
@@ -166,12 +166,12 @@ func TestSplashCantTell_IdentityBlockLines(t *testing.T) {
 
 // Case 15: the texts are exact and pass the wording rule's contraction scan.
 func TestSplashCantTell_TextsAreExactAndContracted(t *testing.T) {
-	for _, text := range []string{"can't tell", "Docker couldn't be read", "health address couldn't be worked out"} {
+	for _, text := range []string{"can't tell", "containers couldn't be checked", "health address couldn't be worked out"} {
 		if hits := spelledOutForms(text); len(hits) > 0 {
 			t.Errorf("%q spells out %v", text, hits)
 		}
 	}
-	if cantTellWord != "can't tell" || cantTellDocker != "Docker couldn't be read" || cantTellAddr != "health address couldn't be worked out" {
+	if cantTellWord != "can't tell" || cantTellDocker != "containers couldn't be checked" || cantTellAddr != "health address couldn't be worked out" {
 		t.Error("test constants drifted from the spec's texts")
 	}
 }

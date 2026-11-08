@@ -67,7 +67,7 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   (Docker could not be read, or no health address could be worked out;
   owner, 2026-11-08, #341 answer 2: "we should say that we can't tell"):
   faint word under the FQDN, gold mark, one faint line per missing half
-  (`Docker couldn't be read`, `health address couldn't be worked out`),
+  (`containers couldn't be checked`, `health address couldn't be worked out`),
   no status row or drawer, caret unmoved. An HTTP failure over unreadable
   Docker is still degraded: a seen fault outranks an unknown.
 - The word is decided from the containers themselves (#341): Docker's

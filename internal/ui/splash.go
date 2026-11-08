@@ -634,7 +634,7 @@ func (m SplashModel) drawerLines() []string {
 func (m SplashModel) cantTellLines() []string {
 	var lines []string
 	if m.health.asked && !m.health.counted {
-		lines = append(lines, style.Tagline.Render("Docker couldn't be read"))
+		lines = append(lines, style.Tagline.Render("containers couldn't be checked"))
 	}
 	if m.health.reason == deploy.HealthUnchecked {
 		lines = append(lines, style.Tagline.Render("health address couldn't be worked out"))
