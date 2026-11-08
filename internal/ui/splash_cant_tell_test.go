@@ -287,6 +287,7 @@ func TestSplashCantTell_MovesNoCaret(t *testing.T) {
 func TestSplashCantTell_BothLinesKeepTheMenuOnScreen(t *testing.T) {
 	m, _ := updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.targetDir = "/opt/orbit"
+	m.folder = "/opt/orbit" // the folder row reads m.folder
 	m, _ = updateAs(t, m, msgBothMissing)
 	if m.state != stateCantTell {
 		t.Fatalf("state = %v, want can't tell", m.state)

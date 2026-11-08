@@ -555,8 +555,9 @@ func TestSplashRunning_FootIsUnchangedByAMismatch(t *testing.T) {
 }
 
 // The worst case at 80x26: degraded with the drawer open, the three
-// rows and the update notice make a 20-row centre block, which fits the
-// 25-row body.
+// rows, the three missing-service rows the empty Docker answer now shows
+// (#341) and the update notice make a 23-row centre block, which fits
+// the 25-row body.
 func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 	dir := installedFolder(t, "ORBIT_CONFIG_APPLIED_VERSION=v1.2.0")
 	m := folderApp(t, dir, 80, 26, deploy.HealthNotResponding,
@@ -582,8 +583,8 @@ func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 	}
 	top := lineIndex(s, "O R B I T") - 2 // the mark, a blank row, then the wordmark
 	exit := lineIndex(s, "Exit")
-	if block := exit - top + 1; block != 20 {
-		t.Errorf("the centre block is %d rows (rows %d to %d), want 20:\n%s", block, top, exit, s)
+	if block := exit - top + 1; block != 23 {
+		t.Errorf("the centre block is %d rows (rows %d to %d), want 23:\n%s", block, top, exit, s)
 	}
 	if exit >= 25 {
 		t.Errorf("Exit is on row %d, want it inside the 25-row body above the foot:\n%s", exit, s)

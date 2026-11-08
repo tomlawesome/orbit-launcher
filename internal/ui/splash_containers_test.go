@@ -28,7 +28,13 @@ func allRunning(n int) []deploy.ServiceState {
 
 // sameHealthMsg compares two messages; the faults are a slice, so the
 // message is not == comparable. No faults is nil or empty alike.
-func sameHealthMsg(a, b healthResultMsg) bool {
+// a is the command's tea.Msg as returned; anything but a healthResultMsg
+// never matches.
+func sameHealthMsg(msg tea.Msg, b healthResultMsg) bool {
+	a, ok := msg.(healthResultMsg)
+	if !ok {
+		return false
+	}
 	if len(a.faults) == 0 && len(b.faults) == 0 {
 		a.faults, b.faults = nil, nil
 	}
