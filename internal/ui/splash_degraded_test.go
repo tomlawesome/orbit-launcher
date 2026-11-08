@@ -27,6 +27,7 @@ var allReasons = []struct {
 	{"server error", deploy.HealthServerError, "server error"},
 	{"certificate rejected", deploy.HealthCertificateRejected, "certificate rejected"},
 	{"unchecked", deploy.HealthUnchecked, "could not check"},
+	{"unexpected answer", deploy.HealthUnexpectedAnswer, "unexpected answer"},
 }
 
 func TestSplashDegraded_ReasonTextsAreExact(t *testing.T) {
@@ -37,6 +38,7 @@ func TestSplashDegraded_ReasonTextsAreExact(t *testing.T) {
 		deploy.HealthServerError:         "server error",
 		deploy.HealthCertificateRejected: "certificate rejected",
 		deploy.HealthUnchecked:           "could not check",
+		deploy.HealthUnexpectedAnswer:    "unexpected answer",
 	}
 	for r, text := range want {
 		if string(r) != text {
@@ -405,6 +407,7 @@ func probeModel(t *testing.T, profiles string) (SplashModel, string) {
 		t.Fatal(err)
 	}
 	m := seedDeployment(NewSplashModel())
+	m.localURL = "http://127.0.0.1:3000/api/health"
 	m.targetDir = dir
 	return m, dir
 }
@@ -496,14 +499,73 @@ func TestSplashProbe_NilProbeMeansNoCommand(t *testing.T) {
 	}
 }
 
-func TestSplashProbe_PassesTheAppURLToTheProbe(t *testing.T) {
+// #341: the probe is asked about the local health address, never APP_URL.
+func TestSplashProbe_PassesTheLocalURLToTheProbe(t *testing.T) {
 	m, _ := probeModel(t, "")
+	m.localURL = "http://198.51.100.9:8443/api/health"
 	var got string
 	m.healthProbe = func(_ context.Context, u string) deploy.HealthReason { got = u; return deploy.HealthResponding }
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) { return nil, nil }
 	m.probeHealthCmd()()
-	if got != m.appURL {
-		t.Errorf("probe asked about %q, want %q", got, m.appURL)
+	if got != "http://198.51.100.9:8443/api/health" {
+		t.Errorf("probe asked about %q, want the local URL (not %q)", got, m.appURL)
+	}
+}
+
+// #341 spec 15: the services are read only after a degraded local answer.
+func TestSplashProbe_ServicesReadOnlyAfterADegradedAnswer(t *testing.T) {
+	for _, c := range []struct {
+		reason deploy.HealthReason
+		reads  int
+	}{
+		{deploy.HealthResponding, 0},
+		{deploy.HealthMaintenance, 0},
+		{deploy.HealthUnchecked, 0},
+		{deploy.HealthNotResponding, 1},
+		{deploy.HealthServerError, 1},
+		{deploy.HealthUnexpectedAnswer, 1},
+	} {
+		t.Run(string(c.reason), func(t *testing.T) {
+			m, _ := probeModel(t, "full")
+			m.healthProbe = func(context.Context, string) deploy.HealthReason { return c.reason }
+			reads := 0
+			m.serviceStates = func(string) ([]deploy.ServiceState, error) { reads++; return nil, nil }
+			m.probeHealthCmd()()
+			if reads != c.reads {
+				t.Errorf("services read %d times for %q, want %d", reads, c.reason, c.reads)
+			}
+		})
+	}
+}
+
+// An empty local URL (LocalHealthURL failed) is not probed at all: the
+// result is "could not check" and the probe seam is never called.
+func TestSplashProbe_NoLocalURLMeansUncheckedWithoutProbing(t *testing.T) {
+	m, _ := probeModel(t, "full")
+	m.localURL = ""
+	probes := 0
+	m.healthProbe = func(context.Context, string) deploy.HealthReason { probes++; return deploy.HealthResponding }
+	m.serviceStates = func(string) ([]deploy.ServiceState, error) { return nil, nil }
+	cmd := m.probeHealthCmd()
+	if cmd == nil {
+		t.Fatal("probeHealthCmd returned nil")
+	}
+	msg, ok := cmd().(healthResultMsg)
+	if !ok || msg.reason != deploy.HealthUnchecked {
+		t.Errorf("message = %+v, want a healthResultMsg with reason %q", msg, deploy.HealthUnchecked)
+	}
+	if probes != 0 {
+		t.Errorf("probe ran %d times without a local URL, want 0", probes)
+	}
+}
+
+func TestSplashDegraded_UnexpectedAnswerIsDegradedWithRepairPreselected(t *testing.T) {
+	m := degradedWith(t, deploy.HealthUnexpectedAnswer)
+	if m.state != stateDegraded {
+		t.Errorf("state = %v, want degraded", m.state)
+	}
+	if m.menu.sel != menuRepair {
+		t.Errorf("selected = %d, want Repair", m.menu.sel)
 	}
 }
 

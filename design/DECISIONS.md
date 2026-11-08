@@ -63,6 +63,9 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   (owner, 2026-10-28, #302 answer 11): up and healthy, closed on purpose,
   so it is neither alive nor degraded. Beneath it, one faint line:
   `closed to users`. No status row or drawer; those stay degraded-only.
+- Alive is decided at the deployment's published port on this machine
+  (`ORBIT_BIND_ADDRESS`/`ORBIT_PORT`), not through the public address: a
+  server often cannot reach its own public address (#341).
 
 ## Layout grammar
 

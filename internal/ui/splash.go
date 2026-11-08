@@ -182,7 +182,12 @@ type SplashModel struct {
 	// a detection message and the user's first keypress).
 	fqdn   string
 	appURL string
-	state  deployState
+
+	// localURL is the deployment's health address on this machine
+	// (deploy.LocalHealthURL), what the health probe asks; empty when it
+	// could not be worked out (#341). appURL is never probed.
+	localURL string
+	state    deployState
 
 	// userNavigated flips on the first Up/Down/number key and permanently
 	// stops the async health probe from moving the caret — state may
@@ -213,7 +218,7 @@ type SplashModel struct {
 	// entry point opts in (AppModel.WithDeploymentStatus + deploy.
 	// ProbeHealth), and ORBIT_LAUNCHER_NO_HEALTH_PROBE gates it, so
 	// tests stay deterministic and offline.
-	healthProbe func(ctx context.Context, appURL string) deploy.HealthReason
+	healthProbe func(ctx context.Context, healthURL string) deploy.HealthReason
 
 	// serviceStates is Repair's seam (#255), read by the probe command for
 	// the degraded drawer's services count; targetDir is the folder it
@@ -264,7 +269,7 @@ func (m SplashModel) Init() tea.Cmd {
 	if m.checkForUpdate != nil {
 		cmds = append(cmds, m.checkForUpdateCmd())
 	}
-	if m.healthProbe != nil && m.appURL != "" {
+	if m.healthProbe != nil {
 		cmds = append(cmds, m.probeHealthCmd())
 	}
 	if cmd := m.checkRunningCmd(); cmd != nil {
@@ -291,22 +296,27 @@ func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 	}
 }
 
-// probeHealthCmd asks the detected deployment whether it's answering.
+// probeHealthCmd asks the detected deployment whether it's answering at
+// its local health address (#341); without one it reports could-not-check.
 // Like the update check it runs in the background and never surfaces an
 // error — an unreachable deployment simply reads as degraded. The probe
 // bounds its own request (deploy.ProbeHealth).
 func (m SplashModel) probeHealthCmd() tea.Cmd {
-	probe, appURL := m.healthProbe, m.appURL
+	probe, localURL := m.healthProbe, m.localURL
 	if probe == nil {
 		return nil
 	}
 	states, dir := m.serviceStates, m.targetDir
 	return func() tea.Msg {
-		msg := healthResultMsg{reason: probe(context.Background(), appURL)}
+		msg := healthResultMsg{reason: deploy.HealthUnchecked}
+		if localURL != "" {
+			msg.reason = probe(context.Background(), localURL)
+		}
 		// The count is only for the degraded drawer: a healthy answer
 		// never waits on `docker compose ps` (#277).
-		// Nor does a deployment closed for maintenance (#302).
-		if states == nil || msg.reason == deploy.HealthResponding || msg.reason == deploy.HealthMaintenance {
+		// Nor does a deployment closed for maintenance (#302), or one
+		// that could not be checked (#341).
+		if states == nil || msg.reason == deploy.HealthResponding || msg.reason == deploy.HealthMaintenance || msg.reason == deploy.HealthUnchecked {
 			return msg
 		}
 		rows, err := states(dir)
