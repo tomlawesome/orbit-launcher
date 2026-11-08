@@ -135,7 +135,7 @@ func TestApplyDeployment_HandsTheSplashTheServicesReader(t *testing.T) {
 	if len(probed) != 1 || probed[0] != "http://127.0.0.1:3000/api/health" {
 		t.Errorf("probe asked %q, want only the local URL", probed)
 	}
-	if !msg.counted || msg.running != 2 || msg.expected != 3 ||
+	if !msg.asked || !msg.counted || msg.running != 2 || msg.expected != 3 ||
 		!reflect.DeepEqual(msg.faults, []deploy.ServiceFault{{Service: "orbit-clamav", Word: deploy.FaultStopped}}) {
 		t.Errorf("message = %+v, want 2 of 3 counted with orbit-clamav stopped", msg)
 	}

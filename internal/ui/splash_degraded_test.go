@@ -316,7 +316,13 @@ func TestSplashDegraded_EveryReasonRendersItsExactText(t *testing.T) {
 	for _, tc := range allReasons {
 		t.Run(tc.name, func(t *testing.T) {
 			m := openDrawer(t, func() SplashModel {
-				m := degradedWith(t, tc.reason)
+				msg := healthResultMsg{reason: tc.reason}
+				if tc.reason == deploy.HealthUnchecked {
+					// Amended 2026-11-08: alone it is can't tell, no
+					// drawer; its row shows beside a fault.
+					msg.faults = []deploy.ServiceFault{fault("orbit-tika", "stopped")}
+				}
+				m := degradedSplash(t, msg)
 				m = onInstall(t, m)
 				m, _ = updateAs(t, m, key(tea.KeyUp))
 				return m
@@ -438,7 +444,7 @@ func TestSplashProbe_ReportsReasonAndServiceCount(t *testing.T) {
 		t.Fatal("probeHealthCmd returned nil")
 	}
 	want := healthResultMsg{
-		reason: deploy.HealthServerError, running: 4, expected: 5, counted: true,
+		reason: deploy.HealthServerError, running: 4, expected: 5, counted: true, asked: true,
 		faults: []deploy.ServiceFault{{Service: "orbit-tika", Word: deploy.FaultStopped}},
 	}
 	if got := cmd(); !sameHealthMsg(got, want) {
@@ -467,7 +473,7 @@ func TestSplashProbe_ServiceStatesErrorMeansNotCounted(t *testing.T) {
 	m, _ := probeModel(t, "full")
 	m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthNotResponding }
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) { return nil, errors.New("docker unreachable") }
-	want := healthResultMsg{reason: deploy.HealthNotResponding}
+	want := healthResultMsg{reason: deploy.HealthNotResponding, asked: true}
 	if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {
 		t.Errorf("message = %+v, want %+v", got, want)
 	}
@@ -493,7 +499,9 @@ func TestSplashProbe_UnreadableEnvFileMeansNotCounted(t *testing.T) {
 			}
 			m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthNotResponding }
 			m.serviceStates = func(string) ([]deploy.ServiceState, error) { return states, nil }
-			want := healthResultMsg{reason: deploy.HealthNotResponding}
+			// Spec: an unreadable record means not counted, and "Docker
+			// couldn't be read" is asked && !counted, so asked is true.
+			want := healthResultMsg{reason: deploy.HealthNotResponding, asked: true}
 			if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {
 				t.Errorf("message = %+v, want %+v", got, want)
 			}
@@ -567,7 +575,7 @@ func TestSplashProbe_UnhealthyServiceIsNotCountedAsRunning(t *testing.T) {
 				}, nil
 			}
 			want := healthResultMsg{
-				reason: deploy.HealthServerError, running: 2, expected: 3, counted: true,
+				reason: deploy.HealthServerError, running: 2, expected: 3, counted: true, asked: true,
 				faults: []deploy.ServiceFault{{Service: "orbit-app", Word: health}},
 			}
 			if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {

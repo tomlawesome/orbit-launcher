@@ -85,8 +85,8 @@ func TestSplashProbe_ServicesAreReadOnEveryAnswer(t *testing.T) {
 			if reads != 1 {
 				t.Errorf("services read %d times for %q, want 1", reads, reason)
 			}
-			if !msg.counted || msg.running != 5 || msg.expected != 5 || len(msg.faults) != 0 {
-				t.Errorf("message = %+v, want 5 of 5 counted and no faults", msg)
+			if !msg.asked || !msg.counted || msg.running != 5 || msg.expected != 5 || len(msg.faults) != 0 {
+				t.Errorf("message = %+v, want asked, 5 of 5 counted and no faults", msg)
 			}
 		})
 	}
@@ -130,7 +130,7 @@ func TestSplashProbe_ServicesOutsideTheSetNeverAppear(t *testing.T) {
 		}, nil
 	}
 	msg := m.probeHealthCmd()().(healthResultMsg)
-	if len(msg.faults) != 0 || msg.running != 3 || msg.expected != 3 || !msg.counted {
+	if len(msg.faults) != 0 || msg.running != 3 || msg.expected != 3 || !msg.counted || !msg.asked {
 		t.Errorf("message = %+v, want 3 of 3 and no faults", msg)
 	}
 }
@@ -151,15 +151,20 @@ func TestSplashProbe_FaultsFollowExpectedOrderAndWords(t *testing.T) {
 		fault("orbit-app", "missing"), fault("orbit-clamav", "unhealthy"),
 		fault("orbit-tika", "missing"), fault("orbit-ollama", "starting"),
 	}
-	if !reflect.DeepEqual(msg.faults, want) || msg.running != 1 || msg.expected != 5 {
+	if !reflect.DeepEqual(msg.faults, want) || msg.running != 1 || msg.expected != 5 || !msg.asked || !msg.counted {
 		t.Errorf("message = %+v, want faults %+v, 1 of 5", msg, want)
 	}
 }
 
-// Unreadable Docker with an HTTP failure: degraded on the HTTP reason,
-// no count row.
+// Case 6 (amended 2026-11-08): unreadable Docker (asked, not counted) with
+// an HTTP failure is still degraded on the HTTP reason, Repair
+// preselected, no count row.
 func TestSplashDegraded_UnreadableDockerWithAnHTTPFailureShowsNoCount(t *testing.T) {
-	s := openDegradedDrawer(t, healthResultMsg{reason: deploy.HealthNotResponding})
+	msg := healthResultMsg{reason: deploy.HealthNotResponding, asked: true}
+	if got := degradedSplash(t, msg).menu.sel; got != menuRepair {
+		t.Errorf("selected = %d, want Repair", got)
+	}
+	s := openDegradedDrawer(t, msg)
 	if !strings.Contains(s, "not responding") || strings.Contains(s, "services") {
 		t.Errorf("want the HTTP reason and no services row:\n%s", s)
 	}
@@ -177,7 +182,11 @@ func TestSplashState_FromFaults(t *testing.T) {
 		"ready + none":        {healthResultMsg{reason: deploy.HealthResponding, counted: true, running: 3, expected: 3}, stateAlive},
 		"maintenance + none":  {healthResultMsg{reason: deploy.HealthMaintenance, counted: true, running: 3, expected: 3}, stateMaintenance},
 		"not responding":      {healthResultMsg{reason: deploy.HealthNotResponding}, stateDegraded},
-		"unchecked + none":    {healthResultMsg{reason: deploy.HealthUnchecked, counted: true, running: 3, expected: 3}, stateDegraded},
+		// Amended 2026-11-08: a check that could not run with no fault is
+		// can't tell, no longer degraded.
+		"unchecked + none": {healthResultMsg{reason: deploy.HealthUnchecked, asked: true, counted: true, running: 3, expected: 3}, stateCantTell},
+		// Amended 2026-11-08: not responding over unreadable Docker is degraded.
+		"not responding, docker unreadable": {healthResultMsg{reason: deploy.HealthNotResponding, asked: true}, stateDegraded},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := degradedSplash(t, c.msg).state; got != c.state {
@@ -262,9 +271,39 @@ func TestSplashDegraded_DrawerRowsFollowTheFaults(t *testing.T) {
 			}
 		}
 	})
-	t.Run("could not check, no faults", func(t *testing.T) {
-		s := openDegradedDrawer(t, healthResultMsg{reason: deploy.HealthUnchecked, running: 3, expected: 3, counted: true})
-		assertInOrder(t, s, "could not check", "3 of 3 services running")
+	// Amended 2026-11-08: ready over unreadable Docker, and could not
+	// check with no faults, are can't tell: no drawer, no reason row, no
+	// count row. The old expectation (could not check / 3 of 3) is gone.
+	t.Run("ready, not counted, is can't tell with no drawer", func(t *testing.T) {
+		m := degradedSplash(t, healthResultMsg{reason: deploy.HealthResponding, asked: true})
+		if m.state != stateCantTell {
+			t.Fatalf("state = %v, want can't tell", m.state)
+		}
+		s := screen(m)
+		for _, text := range []string{"degraded", "could not check", "services running"} {
+			if strings.Contains(s, text) {
+				t.Errorf("screen shows %q:\n%s", text, s)
+			}
+		}
+	})
+	t.Run("could not check, no faults, is can't tell with no drawer", func(t *testing.T) {
+		m := degradedSplash(t, healthResultMsg{reason: deploy.HealthUnchecked, asked: true, running: 3, expected: 3, counted: true})
+		if m.state != stateCantTell {
+			t.Fatalf("state = %v, want can't tell", m.state)
+		}
+		s := screen(m)
+		for _, text := range []string{"could not check", "3 of 3 services running"} {
+			if strings.Contains(s, text) {
+				t.Errorf("screen shows %q:\n%s", text, s)
+			}
+		}
+	})
+	t.Run("could not check, one fault", func(t *testing.T) {
+		s := openDegradedDrawer(t, healthResultMsg{
+			reason: deploy.HealthUnchecked, faults: []deploy.ServiceFault{fault("orbit-tika", "stopped")},
+			asked: true, running: 4, expected: 5, counted: true,
+		})
+		assertInOrder(t, s, "could not check", "orbit-tika stopped", "4 of 5 services running")
 	})
 }
 
