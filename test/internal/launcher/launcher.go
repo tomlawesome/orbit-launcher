@@ -118,7 +118,8 @@ const (
 	// reachable from the runner is not what a suite tests, the same
 	// reason every other test here mocks its network calls.
 	UpdateCheck Behaviour = "ORBIT_LAUNCHER_NO_UPDATE_CHECK"
-	// HealthProbe requests the detected deployment's APP_URL. Kept by
+	// HealthProbe requests the detected deployment's local health
+	// address (deploy.LocalHealthURL). Kept by
 	// suites that need its result to land mid-run, as CI's does.
 	HealthProbe Behaviour = "ORBIT_LAUNCHER_NO_HEALTH_PROBE"
 	// VolumeCheck reads the host's Docker volumes before an install

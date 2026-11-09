@@ -154,29 +154,19 @@ type serviceRow struct {
 }
 
 func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
+	faults := deploy.ServiceFaults(expected, have)
 	rows := make([]serviceRow, 0, len(expected))
 	for _, name := range expected {
-		var found *deploy.ServiceState
-		for i := range have {
-			if have[i].Service == name {
-				found = &have[i]
-				break
+		r := serviceRow{name: name, glyph: style.SymbolSuccess, word: deploy.ContainerRunning, running: true}
+		for _, f := range faults {
+			if f.Service != name {
+				continue
 			}
-		}
-		r := serviceRow{name: name}
-		switch {
-		case found == nil:
-			r.glyph, r.word = style.SymbolFailure, "missing"
-		case found.State == deploy.ContainerRunning && found.Health == deploy.HealthUnhealthy:
-			r.glyph, r.word = style.SymbolWarn, deploy.HealthUnhealthy
-		case found.State == deploy.ContainerRunning && found.Health == deploy.HealthStarting:
-			r.glyph, r.word = style.SymbolWarn, deploy.HealthStarting
-		case found.Running():
-			r.glyph, r.word, r.running = style.SymbolSuccess, deploy.ContainerRunning, true
-		case found.State == deploy.ContainerRestarting:
-			r.glyph, r.word = style.SymbolWarn, deploy.ContainerRestarting
-		default:
-			r.glyph, r.word = style.SymbolWarn, "stopped"
+			r.glyph, r.word, r.running = style.SymbolWarn, f.Word, false
+			if f.Word == deploy.FaultMissing {
+				r.glyph = style.SymbolFailure
+			}
+			break
 		}
 		rows = append(rows, r)
 	}

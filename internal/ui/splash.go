@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,11 +21,18 @@ import (
 type updateAvailableMsg struct{ version string }
 
 // healthResultMsg carries the deployment health probe's verdict back
-// into the event loop — see SplashModel.probeHealthCmd.
+// into the event loop — see SplashModel.probeHealthCmd. It holds both
+// halves of the composite check (#341): reason is Orbit's own answer at
+// its published port, faults the expected services Docker reports as not
+// running, in expected order. asked says a services reader existed and
+// was run; counted that it answered and the record was readable, so
+// running and expected are meaningful. asked && !counted is "Docker
+// could not be read"; !asked is the harness with no reader.
 type healthResultMsg struct {
 	reason            deploy.HealthReason
+	faults            []deploy.ServiceFault
 	running, expected int
-	counted           bool
+	counted, asked    bool
 }
 
 // runningResultMsg carries the running check's verdict for dir, the
@@ -35,10 +43,11 @@ type runningResultMsg struct {
 	mismatch deploy.Mismatch
 }
 
-// deployState is the splash's three-valued status vocabulary
-// (design/mockups-v5.html): dormant (nothing installed), alive
-// (deployment answers), degraded (deployment exists but is not
-// answering healthily). stateUnknown covers a detected deployment whose
+// deployState is the splash's status vocabulary (design/mockups-v5.html):
+// dormant (nothing installed), alive (every expected container runs and
+// Orbit answers), maintenance, degraded (a fault was seen: a container
+// not running or Orbit not answering healthily) and can't tell (a half of
+// the check is missing and no fault was seen). stateUnknown covers a detected deployment whose
 // probe hasn't resolved (or was disabled) — rendered as the FQDN with no
 // status word, never as a guess. stateUnreadable is a .env-orbit that is
 // there but could not be read (#238): no FQDN to show, and not dormant.
@@ -53,6 +62,11 @@ const (
 	// stateMaintenance is a deployment Orbit reports as closed to users
 	// (#302): up on purpose, so neither alive nor degraded.
 	stateMaintenance
+	// stateCantTell is a check with a half missing and no fault seen:
+	// Docker could not be read, or there is no health address to ask
+	// (#341). A verdict about nothing, so it takes no state colour. It is
+	// not stateUnknown, which means the probe is still out.
+	stateCantTell
 )
 
 // MenuItem is one row of the splash screen's main menu. Gap requests a
@@ -182,7 +196,12 @@ type SplashModel struct {
 	// a detection message and the user's first keypress).
 	fqdn   string
 	appURL string
-	state  deployState
+
+	// localURL is the deployment's health address on this machine
+	// (deploy.LocalHealthURL), what the health probe asks; empty when it
+	// could not be worked out (#341). appURL is never probed.
+	localURL string
+	state    deployState
 
 	// userNavigated flips on the first Up/Down/number key and permanently
 	// stops the async health probe from moving the caret — state may
@@ -213,7 +232,7 @@ type SplashModel struct {
 	// entry point opts in (AppModel.WithDeploymentStatus + deploy.
 	// ProbeHealth), and ORBIT_LAUNCHER_NO_HEALTH_PROBE gates it, so
 	// tests stay deterministic and offline.
-	healthProbe func(ctx context.Context, appURL string) deploy.HealthReason
+	healthProbe func(ctx context.Context, healthURL string) deploy.HealthReason
 
 	// serviceStates is Repair's seam (#255), read by the probe command for
 	// the degraded drawer's services count; targetDir is the folder it
@@ -264,7 +283,7 @@ func (m SplashModel) Init() tea.Cmd {
 	if m.checkForUpdate != nil {
 		cmds = append(cmds, m.checkForUpdateCmd())
 	}
-	if m.healthProbe != nil && m.appURL != "" {
+	if m.healthProbe != nil {
 		cmds = append(cmds, m.probeHealthCmd())
 	}
 	if cmd := m.checkRunningCmd(); cmd != nil {
@@ -291,42 +310,56 @@ func (m SplashModel) checkForUpdateCmd() tea.Cmd {
 	}
 }
 
-// probeHealthCmd asks the detected deployment whether it's answering.
-// Like the update check it runs in the background and never surfaces an
-// error — an unreachable deployment simply reads as degraded. The probe
-// bounds its own request (deploy.ProbeHealth).
+// probeHealthCmd runs the two halves of the composite check (#341) in
+// parallel and waits for both: Orbit's /api/health at its published port
+// on this machine (the application-level half; without a local URL it
+// reports could-not-check) and Docker's view of the profile's expected
+// containers through the services reader. The services are read on every
+// HTTP outcome. It returns one message, never retries, and contacts
+// nothing else: the public address is not asked. The probe bounds its own
+// request (deploy.ProbeHealth) and the production reader its own.
 func (m SplashModel) probeHealthCmd() tea.Cmd {
-	probe, appURL := m.healthProbe, m.appURL
+	probe, localURL := m.healthProbe, m.localURL
 	if probe == nil {
 		return nil
 	}
 	states, dir := m.serviceStates, m.targetDir
 	return func() tea.Msg {
-		msg := healthResultMsg{reason: probe(context.Background(), appURL)}
-		// The count is only for the degraded drawer: a healthy answer
-		// never waits on `docker compose ps` (#277).
-		// Nor does a deployment closed for maintenance (#302).
-		if states == nil || msg.reason == deploy.HealthResponding || msg.reason == deploy.HealthMaintenance {
-			return msg
+		msg := healthResultMsg{reason: deploy.HealthUnchecked, asked: states != nil}
+		var wg sync.WaitGroup
+		if localURL != "" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				msg.reason = probe(context.Background(), localURL)
+			}()
 		}
-		rows, err := states(dir)
-		if err != nil {
-			return msg
+		if states != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				rows, err := states(dir)
+				if err != nil {
+					return
+				}
+				expected, err := expectedServices(dir)
+				if err != nil {
+					return
+				}
+				inSet := make(map[string]bool, len(expected))
+				for _, name := range expected {
+					inSet[name] = true
+				}
+				msg.counted, msg.expected = true, len(expected)
+				for _, row := range rows {
+					if inSet[row.Service] && row.Running() {
+						msg.running++
+					}
+				}
+				msg.faults = deploy.ServiceFaults(expected, rows)
+			}()
 		}
-		expected, err := expectedServices(dir)
-		if err != nil {
-			return msg
-		}
-		inSet := make(map[string]bool, len(expected))
-		for _, name := range expected {
-			inSet[name] = true
-		}
-		msg.counted, msg.expected = true, len(expected)
-		for _, row := range rows {
-			if inSet[row.Service] && row.Running() {
-				msg.running++
-			}
-		}
+		wg.Wait()
 		return msg
 	}
 }
@@ -410,27 +443,38 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case healthResultMsg:
 		m.health = msg
-		switch msg.reason {
-		case deploy.HealthResponding:
-			m.state = stateAlive
-		case deploy.HealthMaintenance:
-			// Closed to users on purpose (#302): preselects Update like
-			// alive, and moves no caret the person already placed.
-			m.state = stateMaintenance
-		default:
+		httpFailed := msg.reason != deploy.HealthResponding && msg.reason != deploy.HealthMaintenance && msg.reason != deploy.HealthUnchecked
+		switch {
+		case len(msg.faults) > 0 || httpFailed:
+			// A fault seen outranks anything unknown (worst component
+			// wins).
 			m.state = stateDegraded
 			// A degraded deployment preselects Repair — the mark says
 			// what's wrong, the caret already points at the fix — but
-			// only while the user hasn't taken over. A check that could
-			// not run says nothing is wrong, so the caret stays put
-			// (#277, owner answer 4a).
+			// only while the user hasn't taken over. Containers that are
+			// only still starting (with an answer that is not a failure)
+			// say nothing is wrong yet, so the caret stays put (#277,
+			// owner answer 4a; #341 answer 1).
 			// A container started from another folder keeps the caret on
 			// Exit: Repair there would act on that folder's Orbit (#316).
 			// One whose folder is gone does not: no flow is a dead end of
 			// its kind any more (#334).
-			if !m.userNavigated && msg.reason != deploy.HealthUnchecked && !restsOnExit(m.mismatch) {
+			if !m.userNavigated && !httpFailed && onlyStarting(msg.faults) {
+				break
+			}
+			if !m.userNavigated && !restsOnExit(m.mismatch) {
 				m.menu.sel = menuRepair
 			}
+		case msg.reason == deploy.HealthUnchecked || (msg.asked && !msg.counted):
+			// A half of the check is missing and nothing is known to be
+			// wrong: say so, and leave the caret alone.
+			m.state = stateCantTell
+		case msg.reason == deploy.HealthMaintenance:
+			// Closed to users on purpose (#302): preselects Update like
+			// alive, and moves no caret the person already placed.
+			m.state = stateMaintenance
+		default:
+			m.state = stateAlive
 		}
 		return m, nil
 
@@ -567,12 +611,33 @@ func (m SplashModel) statusRow() string {
 }
 
 // drawerLines are the rows beneath the degraded word while it is open:
-// the reason, then how many services run when Docker answered.
+// the HTTP reason when it is a failure or the app was not asked, one row
+// per faulted expected service, then how many services run when Docker
+// answered.
 func (m SplashModel) drawerLines() []string {
-	lines := []string{style.MutedText.Render(string(m.health.reason))}
+	var lines []string
+	if r := m.health.reason; r != deploy.HealthResponding && r != deploy.HealthMaintenance {
+		lines = append(lines, style.MutedText.Render(string(r)))
+	}
+	for _, f := range m.health.faults {
+		lines = append(lines, style.MutedText.Render(f.Service+" "+f.Word))
+	}
 	if m.health.counted {
 		lines = append(lines, style.MutedText.Render(fmt.Sprintf("%d of %d services %s",
 			m.health.running, m.health.expected, deploy.ContainerRunning)))
+	}
+	return lines
+}
+
+// cantTellLines are the faint lines beneath the can't tell word, one per
+// missing half, Docker first. Both are facts about this machine's reads.
+func (m SplashModel) cantTellLines() []string {
+	var lines []string
+	if m.health.asked && !m.health.counted {
+		lines = append(lines, style.Tagline.Render("containers couldn't be checked"))
+	}
+	if m.health.reason == deploy.HealthUnchecked {
+		lines = append(lines, style.Tagline.Render("health address couldn't be worked out"))
 	}
 	return lines
 }
@@ -654,6 +719,10 @@ func (m SplashModel) centreBlockLines() []string {
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, style.MaintenanceText.Render("maintenance"))
 		lines = append(lines, style.Tagline.Render(string(deploy.HealthMaintenance)))
+	case stateCantTell:
+		lines = append(lines, style.MutedText.Render(m.fqdn))
+		lines = append(lines, style.Tagline.Render("can't tell"))
+		lines = append(lines, m.cantTellLines()...)
 	case stateDegraded:
 		lines = append(lines, style.MutedText.Render(m.fqdn))
 		lines = append(lines, m.statusRow())
@@ -679,6 +748,17 @@ func (m SplashModel) centreBlockLines() []string {
 		lines = append(lines, menuRow(item.Label, i == m.menu.sel && !m.onStatusRow))
 	}
 	return lines
+}
+
+// onlyStarting says every fault is a container still starting, which is
+// not yet a reason to point at Repair.
+func onlyStarting(faults []deploy.ServiceFault) bool {
+	for _, f := range faults {
+		if f.Word != deploy.HealthStarting {
+			return false
+		}
+	}
+	return true
 }
 
 // restsOnExit says the running answer leaves Exit the splash's caret

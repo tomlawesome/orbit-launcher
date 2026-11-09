@@ -61,6 +61,12 @@ type Deployment struct {
 	Profiles  []string
 	Image     string
 
+	// BindAddress and Port are ORBIT_BIND_ADDRESS and ORBIT_PORT as
+	// .env-orbit records them, empty when unset: where the deployment
+	// publishes its app port on this machine (#341).
+	BindAddress string
+	Port        string
+
 	// Project is the Compose project name, which prefixes the names of
 	// the deployment's volumes. The installer persists the name it used
 	// as COMPOSE_PROJECT_NAME in .env-orbit, so this is read, not
@@ -177,6 +183,10 @@ func Detect(targetDir string) (*Deployment, error) {
 		switch strings.TrimSpace(key) {
 		case "APP_URL":
 			d.AppURL = value
+		case "ORBIT_BIND_ADDRESS":
+			d.BindAddress = value
+		case "ORBIT_PORT":
+			d.Port = value
 		case "ORBIT_IMAGE":
 			d.Image = value
 		case "COMPOSE_PROFILES":

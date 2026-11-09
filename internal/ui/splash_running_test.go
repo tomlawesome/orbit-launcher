@@ -555,37 +555,50 @@ func TestSplashRunning_FootIsUnchangedByAMismatch(t *testing.T) {
 }
 
 // The worst case at 80x26: degraded with the drawer open, the three
-// rows and the update notice make a 20-row centre block, which fits the
-// 25-row body.
+// running-mismatch rows, one row per missing service (the empty Docker
+// answer, #341) and the update notice. The default profile expects three
+// services, a 23-row centre block; the full profile five, 25 rows, which
+// fills the 25-row body exactly, so any extra row pushes Exit off.
 func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
-	dir := installedFolder(t, "ORBIT_CONFIG_APPLIED_VERSION=v1.2.0")
-	m := folderApp(t, dir, 80, 26, deploy.HealthNotResponding,
-		func(m AppModel) AppModel {
-			return m.WithServicesReader(func(string) ([]deploy.ServiceState, error) { return nil, nil })
-		})
-	m = started(t, m)
-	m, _ = updateAs(t, m, updateAvailableMsg{version: "v9.9.9"})
-	m = answer(t, m, dir, buildMismatch("v0.3.0", "v1.2.0"))
-	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp)) // Install, then the status row
-	m, _ = updateAs(t, m, key(tea.KeyRight))                              // open the drawer
+	for _, tc := range []struct {
+		name    string
+		profile []string
+		block   int
+	}{
+		{"default profile", nil, 23},
+		{"full profile", []string{"COMPOSE_PROFILES=full"}, 25},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := installedFolder(t, append([]string{"ORBIT_CONFIG_APPLIED_VERSION=v1.2.0"}, tc.profile...)...)
+			m := folderApp(t, dir, 80, 26, deploy.HealthNotResponding,
+				func(m AppModel) AppModel {
+					return m.WithServicesReader(func(string) ([]deploy.ServiceState, error) { return nil, nil })
+				})
+			m = started(t, m)
+			m, _ = updateAs(t, m, updateAvailableMsg{version: "v9.9.9"})
+			m = answer(t, m, dir, buildMismatch("v0.3.0", "v1.2.0"))
+			m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp)) // Install, then the status row
+			m, _ = updateAs(t, m, key(tea.KeyRight))                              // open the drawer
 
-	s := screen(m)
-	for _, want := range []string{"mail.example.com", "degraded", "not responding", "services", dir,
-		otherBuildRow, "started v0.3.0 · recorded v1.2.0", otherBuildStep, "update available: v9.9.9", "Exit"} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("the worst case lacks %q:\n%s", want, s)
-		}
-	}
-	rows := rowsOf(s)
-	if len(rows) > 26 {
-		t.Errorf("the screen is %d rows, want at most 26", len(rows))
-	}
-	top := lineIndex(s, "O R B I T") - 2 // the mark, a blank row, then the wordmark
-	exit := lineIndex(s, "Exit")
-	if block := exit - top + 1; block != 20 {
-		t.Errorf("the centre block is %d rows (rows %d to %d), want 20:\n%s", block, top, exit, s)
-	}
-	if exit >= 25 {
-		t.Errorf("Exit is on row %d, want it inside the 25-row body above the foot:\n%s", exit, s)
+			s := screen(m)
+			for _, want := range []string{"mail.example.com", "degraded", "not responding", "services", dir,
+				otherBuildRow, "started v0.3.0 · recorded v1.2.0", otherBuildStep, "update available: v9.9.9", "Exit"} {
+				if !strings.Contains(s, want) {
+					t.Fatalf("the worst case lacks %q:\n%s", want, s)
+				}
+			}
+			rows := rowsOf(s)
+			if len(rows) > 26 {
+				t.Errorf("the screen is %d rows, want at most 26", len(rows))
+			}
+			top := lineIndex(s, "O R B I T") - 2 // the mark, a blank row, then the wordmark
+			exit := lineIndex(s, "Exit")
+			if block := exit - top + 1; block != tc.block {
+				t.Errorf("the centre block is %d rows (rows %d to %d), want %d:\n%s", block, top, exit, tc.block, s)
+			}
+			if exit >= 25 {
+				t.Errorf("Exit is on row %d, want it inside the 25-row body above the foot:\n%s", exit, s)
+			}
+		})
 	}
 }

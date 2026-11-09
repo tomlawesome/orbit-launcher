@@ -51,7 +51,7 @@ type AppModel struct {
 	// lookupTarget is the Update confirm's release lookup (#336); nil
 	// asks nothing (see WithTargetLookup).
 	lookupTarget  func(context.Context) (release.Target, error)
-	healthProbe   func(ctx context.Context, appURL string) deploy.HealthReason
+	healthProbe   func(ctx context.Context, healthURL string) deploy.HealthReason
 	detectOnStart bool
 
 	// targetDir is where an existing deployment, if any, would be found.
@@ -174,7 +174,7 @@ func (m AppModel) WithVersion(v string) AppModel {
 // splash's Init (see SplashModel.probeHealthCmd); nil leaves the state
 // at "deployment exists, health unknown", which renders as the FQDN
 // with no status word.
-func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) deploy.HealthReason) AppModel {
+func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, healthURL string) deploy.HealthReason) AppModel {
 	m.healthProbe = probe
 	m.detectOnStart = true
 	m.splash = m.applyDeployment(m.splash)
@@ -182,7 +182,8 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 }
 
 // WithServicesReader supplies how the services are read, for Repair's
-// services block and the splash's count, in place of the real `docker
+// services block and the splash's container half of the health check
+// (faults and count), in place of the real `docker
 // compose ps` (#277): tests pass a fake, so no app-level test depends on
 // the machine's Docker. Nil reads nothing: the splash does not count and
 // Repair shows no services block, whichever order this and
@@ -288,6 +289,9 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	}
 	s.fqdn = deploymentIdentity(d)
 	s.appURL = d.AppURL
+	// An address that cannot be worked out leaves localURL empty, which
+	// the probe command reports as could-not-check (#341).
+	s.localURL, _ = deploy.LocalHealthURL(d)
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
@@ -335,7 +339,7 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 	if s.checkForUpdate != nil {
 		cmds = append(cmds, s.checkForUpdateCmd())
 	}
-	if s.healthProbe != nil && s.appURL != "" {
+	if s.healthProbe != nil {
 		cmds = append(cmds, s.probeHealthCmd())
 	}
 	if cmd := s.checkRunningCmd(); cmd != nil {

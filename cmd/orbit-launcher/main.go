@@ -89,7 +89,8 @@ func startApp(stdout, stderr io.Writer) int {
 		app = app.WithTargetLookup(release.ResolveTarget)
 	}
 	app = app.WithVersion(release.DisplayVersion(release.Version))
-	// The health probe hits only the user's own deployment (its APP_URL),
+	// The health probe hits only the user's own deployment, at its
+	// published port on this machine (deploy.LocalHealthURL, #341),
 	// resolving the splash's alive/degraded state; the env gate mirrors
 	// ORBIT_LAUNCHER_NO_UPDATE_CHECK so tests stay offline-deterministic.
 	var probe func(context.Context, string) deploy.HealthReason
