@@ -128,6 +128,26 @@ const carryOnRow = "Carry on from this folder"
 
 var carryOnRows = []string{carryOnRow, "Cancel"}
 
+// Update and Repair's gone-folder screen (#1576): run from this folder, or
+// move it back, which leaves with a line naming the old path.
+const (
+	folderGoneCantStart = "That folder no longer exists, so Orbit's containers can't start."
+	folderGoneRunHere   = "Run from this folder: the containers are made again here. Your data is kept."
+	runHereRow          = "Run from this folder"
+	moveBackRow         = "Move it back"
+)
+
+const runHereWidth = 76
+
+var runHereRows = []string{runHereRow, moveBackRow, "Cancel"}
+
+// moveBackNote is the line "Move it back" leaves on stderr: the old path
+// as the screen shows it, no command (#1576).
+func moveBackNote(oldPath string) string {
+	return "orbit-launcher: this Orbit was started from " + visibleText(oldPath) +
+		"; put the folder back there and run the launcher from it"
+}
+
 // canCarryOn says whether Update, Repair and Remove may offer to carry on
 // from this folder (#334): the recorded folder is gone and this folder's
 // record names the running build. A folder that exists, a gone test that
@@ -141,6 +161,9 @@ func canCarryOn(mm deploy.Mismatch) bool {
 type folderRefusal struct {
 	mismatch deploy.Mismatch
 	rows     menu
+	// runHere is Update and Repair's wording and rows (#1576); Remove keeps
+	// the carry-on screen.
+	runHere bool
 }
 
 func newFolderRefusal(mm deploy.Mismatch) folderRefusal {
@@ -151,19 +174,30 @@ func newFolderRefusal(mm deploy.Mismatch) folderRefusal {
 	return folderRefusal{mismatch: mm, rows: newMenu(rows...)}
 }
 
+// newRunHereRefusal is newFolderRefusal for Update and Repair (#1576).
+func newRunHereRefusal(mm deploy.Mismatch) folderRefusal {
+	r := newFolderRefusal(mm)
+	if canCarryOn(mm) {
+		r.runHere, r.rows = true, newMenu(runHereRows...)
+	}
+	return r
+}
+
 // key is the screen's keys: carryOn is the row, leave is Esc, Cancel or
 // Menu. No other key does anything (#228).
-func (r folderRefusal) key(msg tea.KeyPressMsg) (next folderRefusal, carryOn, leave bool) {
+func (r folderRefusal) key(msg tea.KeyPressMsg) (next folderRefusal, carryOn, leave, moveBack bool) {
 	var chosen string
 	var back bool
 	r.rows, chosen, back = r.rows.onScreen(msg)
 	switch {
 	case back, chosen == "Menu", chosen == "Cancel":
-		return r, false, true
-	case chosen == carryOnRow:
-		return r, true, false
+		return r, false, true, false
+	case chosen == carryOnRow, chosen == runHereRow:
+		return r, true, false, false
+	case chosen == moveBackRow:
+		return r, false, false, true
 	}
-	return r, false, false
+	return r, false, false, false
 }
 
 // view is the screen for a flow whose own body line is body: the
@@ -174,8 +208,16 @@ func (r folderRefusal) view(star starfield.Model, width, height int, body string
 	switch {
 	case canCarryOn(r.mismatch):
 		lines = []string{folderGoneLine, folderGoneCarryOn}
+		if r.runHere {
+			lines = []string{folderGoneCantStart, folderGoneRunHere}
+		}
 	case r.mismatch.FolderGone:
 		lines = []string{folderGoneOtherBuild, folderGoneOtherBuildFix}
+	}
+	if r.runHere {
+		// Update and Repair's run-from-here line is 76 cells: wrapped at
+		// errorWidth its last word would sit alone on a row (#1576).
+		return viewOtherFolderAt(star, width, height, otherFolderLead, r.mismatch.Folder, lines, r.rows, true, runHereWidth)
 	}
 	return viewOtherFolder(star, width, height, otherFolderLead, r.mismatch.Folder, lines, r.rows, r.mismatch.FolderGone)
 }
@@ -192,12 +234,21 @@ func (r folderRefusal) view(star starfield.Model, width, height int, body string
 // join. A gone folder's lines (gone) run to errorWidth too: they are
 // long sentences that at proseWidth would take a row more each (#334).
 func viewOtherFolder(star starfield.Model, width, height int, lead, otherFolder string, lines []string, rows menu, gone bool) string {
+	return viewOtherFolderAt(star, width, height, lead, otherFolder, lines, rows, gone, 0)
+}
+
+// viewOtherFolderAt is viewOtherFolder with a gone folder's lines wrapped
+// at goneWidth when that is set, else at errorWidth.
+func viewOtherFolderAt(star starfield.Model, width, height int, lead, otherFolder string, lines []string, rows menu, gone bool, goneWidth int) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark),
 		wrapHard(lead+otherFolder, measure(width, errorWidth), width-4, folderRows)...)
 	limit := measure(width, proseWidth)
 	if gone {
 		limit = measure(width, errorWidth)
+		if goneWidth > 0 {
+			limit = measure(width, goneWidth)
+		}
 	}
 	for _, line := range lines {
 		writeWrappedIn(&b, style.MutedText, line, limit, textArea(width))

@@ -109,8 +109,18 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   where Esc goes, the menu). Carrying on is consent, not a write: the flow
   goes on exactly as from the container's own folder (Update's confirm,
   Repair's diagnosis, Remove's confirm and its own running check), and the
-  row writes, relabels and asks Docker nothing; Compose restamps the label
-  on the next Update. While carried on, an answer whose folder is still
+  row writes, relabels and asks Docker nothing itself; Compose restamps
+  the label on the next Update. #1576 (owner answers 43a and 44c) changes
+  Update and Repair: the body says the containers can't start and, on
+  `Run from this folder`, are made again here with the data kept; the rows
+  are `Run from this folder`, `Move it back` and `Cancel`. In Update the
+  engine run is then asked, in its environment only
+  (`ORBIT_INSTALL_FOLDER_MOVED=recreate`, kept for a retry), to make the
+  containers again; in Repair repair.sh finds the moved folder itself.
+  `Move it back` leaves the launcher, prints one stderr line naming the old
+  path (escaped as on screen) and no command, and exits 0; Orbit never
+  moves the folder. Remove keeps the screen and row above.
+  While carried on, an answer whose folder is still
   gone with the same build is no mismatch; one whose folder is back, or
   whose build differs, refuses as above. With
   another build the screen is a dead end that says so. Install never

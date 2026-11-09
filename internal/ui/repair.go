@@ -92,6 +92,8 @@ type RepairModel struct {
 	// it is set, a running answer whose folder is still gone is no
 	// mismatch. It lives as long as this flow.
 	carriedOn bool
+	// leaveNote is "Move it back"'s line for AppModel (#1576).
+	leaveNote string
 	// clipboard is where the stop screen's Copy command writes its OSC 52
 	// sequence: nil in production, which means os.Stdout. copied is that
 	// row having copied.
@@ -220,7 +222,7 @@ func (m RepairModel) prepareContext() context.Context {
 
 // Outcome surfaces the flow result to AppModel.
 func (m RepairModel) Outcome() flowOutcome {
-	return flowOutcome{Done: m.Done, WantsMenu: m.WantsMenu}
+	return flowOutcome{Done: m.Done, WantsMenu: m.WantsMenu, LeaveNote: m.leaveNote}
 }
 
 // repairOtherFolderBody is the refusal's first body line.
@@ -230,7 +232,7 @@ const repairOtherFolderBody = "Repair here would read and change that folder's O
 // the container was started from (#316): a dead end, or with that folder
 // gone the offer to carry on from this one (#334).
 func (m RepairModel) refuseOtherFolder(mm deploy.Mismatch) RepairModel {
-	m.state, m.refusal, m.carriedOn = repairOtherFolder, newFolderRefusal(mm), false
+	m.state, m.refusal, m.carriedOn = repairOtherFolder, newRunHereRefusal(mm), false
 	return m
 }
 
@@ -751,8 +753,12 @@ func (m RepairModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case repairOtherFolder:
-		var carry, leave bool
-		m.refusal, carry, leave = m.refusal.key(msg)
+		var carry, leave, back bool
+		m.refusal, carry, leave, back = m.refusal.key(msg)
+		if back {
+			m.leaveNote = moveBackNote(m.refusal.mismatch.Folder)
+			return m, tea.Quit
+		}
 		if carry {
 			return m.carryOn()
 		}

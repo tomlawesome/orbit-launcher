@@ -212,6 +212,12 @@ func (r engineRun) withChannel(channel string) engineRun {
 	return r
 }
 
+// withFolderMoved asks the engine to make the containers again here (#1576).
+func (r engineRun) withFolderMoved(v string) engineRun {
+	r.folderMoved = v
+	return r
+}
+
 func (r engineRun) withSeams(s engineRunSeams) engineRun {
 	r.engineRunSeams = s
 	return r
