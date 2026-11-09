@@ -146,6 +146,17 @@ func assertCarryOn(t *testing.T, m tea.Model, flow string) {
 			}
 		}
 	}
+	if flow != "Remove" {
+		onOneRow := false
+		for _, line := range strings.Split(s, "\n") {
+			if strings.Contains(line, goneBodyRun) {
+				onOneRow = true
+			}
+		}
+		if !onOneRow {
+			t.Errorf("%s: no single screen row holds %q:\n%s", flow, goneBodyRun, s)
+		}
+	}
 	if strings.Contains(flat, refuseShared) {
 		t.Errorf("the screen still gives advice that cannot be followed:\n%s", s)
 	}

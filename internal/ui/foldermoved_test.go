@@ -148,6 +148,19 @@ func TestFolderMoved_AnUpdateNotReachedThroughTheRowGetsNoVariable(t *testing.T)
 			t.Errorf("the engine saw %s = %q, want one run with it unset", folderMovedEnv, got)
 		}
 	})
+	t.Run("a plain Update with the variable already in the launcher's environment", func(t *testing.T) {
+		out := folderMovedRecorder(t)
+		t.Setenv(folderMovedEnv, "recreate")
+		dir := installedFolder(t)
+		s := newSink()
+		m := started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding, runningAs(deploy.RunningApp{}, nil)))
+		m.flowSend = s.Send
+		m = openFlow(t, m, "Update")
+		m = runUpdateToStopped(t, m, s)
+		if got := recordedLines(t, out, "var"); len(got) != 1 || got[0] != "<unset>" {
+			t.Errorf("the engine saw %s = %q, want one run with it unset", folderMovedEnv, got)
+		}
+	})
 	t.Run("Cancel, then a plain Update later", func(t *testing.T) {
 		out := folderMovedRecorder(t)
 		m, _, s := goneAppAt(t, goneFolder)

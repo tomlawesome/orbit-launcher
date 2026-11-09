@@ -166,13 +166,29 @@ func WithChannel(cmd *exec.Cmd, channel string) {
 // folder when the one they were made in is gone (#1576).
 const FolderMovedEnv = "ORBIT_INSTALL_FOLDER_MOVED"
 
-// WithFolderMoved adds FolderMovedEnv=value to cmd's environment, never
-// its arguments. An empty value adds nothing.
+// WithFolderMoved sets FolderMovedEnv=value in cmd's environment, never
+// its arguments. Any FolderMovedEnv already there, such as one inherited
+// from the launcher's own environment, is removed first, so only the
+// person's choice on the gone-folder screen reaches install.sh. An empty
+// value leaves the variable unset.
 func WithFolderMoved(cmd *exec.Cmd, value string) {
-	if value == "" {
-		return
+	prefix := FolderMovedEnv + "="
+	env := cmd.Env
+	if env == nil {
+		// A nil Env means the whole launcher environment: spell it out
+		// so the inherited variable can be dropped from it.
+		env = os.Environ()
 	}
-	cmd.Env = append(cmd.Env, FolderMovedEnv+"="+value)
+	kept := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, prefix) {
+			kept = append(kept, kv)
+		}
+	}
+	cmd.Env = kept
+	if value != "" {
+		cmd.Env = append(cmd.Env, prefix+value)
+	}
 }
 
 // ConfigTreeDir is the configuration tree directory cmd hands install.sh,
