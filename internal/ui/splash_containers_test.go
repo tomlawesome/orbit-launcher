@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -365,13 +366,20 @@ func TestSplashDegraded_NoWordBeforeTheMessage(t *testing.T) {
 func TestSplashProbe_NoSeamSeesTheAppURL(t *testing.T) {
 	m, dir := probeModel(t, "")
 	m.appURL = "https://mail.example.test"
+	// The two seams run in parallel (probeHealthCmd), so seen is guarded.
+	var mu sync.Mutex
 	var seen []string
+	note := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, s)
+	}
 	m.healthProbe = func(_ context.Context, u string) deploy.HealthReason {
-		seen = append(seen, u)
+		note(u)
 		return deploy.HealthResponding
 	}
 	m.serviceStates = func(d string) ([]deploy.ServiceState, error) {
-		seen = append(seen, d)
+		note(d)
 		return allRunning(3), nil
 	}
 	m.probeHealthCmd()()
