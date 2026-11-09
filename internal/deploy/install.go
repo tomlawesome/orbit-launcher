@@ -162,6 +162,19 @@ func WithChannel(cmd *exec.Cmd, channel string) {
 	cmd.Env = append(cmd.Env, ChannelEnv+"="+channel)
 }
 
+// FolderMovedEnv asks install.sh to make the containers again in this
+// folder when the one they were made in is gone (#1576).
+const FolderMovedEnv = "ORBIT_INSTALL_FOLDER_MOVED"
+
+// WithFolderMoved adds FolderMovedEnv=value to cmd's environment, never
+// its arguments. An empty value adds nothing.
+func WithFolderMoved(cmd *exec.Cmd, value string) {
+	if value == "" {
+		return
+	}
+	cmd.Env = append(cmd.Env, FolderMovedEnv+"="+value)
+}
+
 // ConfigTreeDir is the configuration tree directory cmd hands install.sh,
 // or "" when it hands over none.
 func ConfigTreeDir(cmd *exec.Cmd) string {

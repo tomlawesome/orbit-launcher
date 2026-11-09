@@ -63,6 +63,11 @@ type UpdateModel struct {
 	// it is set, a running answer whose folder is still gone is no
 	// mismatch. It lives as long as this flow.
 	carriedOn bool
+	// recreate is set by "Run from this folder" (#1576): the engine run is
+	// asked, in its environment, to make the containers again here.
+	recreate bool
+	// leaveNote is "Move it back"'s line for AppModel (#1576).
+	leaveNote string
 
 	// left is Esc, Cancel or Menu on the flow's first screen: back to the
 	// main menu with nothing started (#210).
@@ -120,7 +125,8 @@ const updateOtherFolderBody = "Update here would act on that folder's Orbit, and
 // dropped: it agreed to the confirmation the refusal replaced, so a
 // carry-on needs a fresh one.
 func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
-	m.state, m.refusal, m.carriedOn, m.awaiting = updateStateOtherFolder, newFolderRefusal(mm), false, false
+	m.recreate = false
+	m.state, m.refusal, m.carriedOn, m.awaiting = updateStateOtherFolder, newRunHereRefusal(mm), false, false
 	return m
 }
 
@@ -128,13 +134,16 @@ func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
 // folder, to the confirmation and its install-date lookup. It writes,
 // relabels and asks Docker nothing itself.
 func (m UpdateModel) carryOn() (tea.Model, tea.Cmd) {
-	m.state, m.carriedOn = updateStateConfirm, true
+	m.state, m.carriedOn, m.recreate = updateStateConfirm, true, true
 	return m, m.Init()
 }
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
 // the person left on the first screen, otherwise the engine run's.
 func (m UpdateModel) Outcome() flowOutcome {
+	if m.leaveNote != "" {
+		return flowOutcome{LeaveNote: m.leaveNote}
+	}
 	if m.left {
 		return backToMenu
 	}
@@ -286,8 +295,12 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case updateStateOtherFolder:
-		var carry, leave bool
-		m.refusal, carry, leave = m.refusal.key(msg)
+		var carry, leave, back bool
+		m.refusal, carry, leave, back = m.refusal.key(msg)
+		if back {
+			m.leaveNote = moveBackNote(m.refusal.mismatch.Folder)
+			return m, tea.Quit
+		}
 		if carry {
 			return m.carryOn()
 		}
@@ -338,6 +351,9 @@ func (m UpdateModel) startRun() (tea.Model, tea.Cmd) {
 	m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
 	if target != "" && m.target.Pin {
 		m.run = m.run.withChannel(target)
+	}
+	if m.recreate {
+		m.run = m.run.withFolderMoved("recreate")
 	}
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)

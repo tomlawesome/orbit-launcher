@@ -330,7 +330,7 @@ func (m RemoveModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case removeStateOtherFolder:
 		var carry, leave bool
-		m.refusal, carry, leave = m.refusal.key(msg)
+		m.refusal, carry, leave, _ = m.refusal.key(msg)
 		if carry {
 			return m.carryOn()
 		}

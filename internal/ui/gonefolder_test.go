@@ -39,6 +39,11 @@ const (
 	goneCarryOnRow = "Carry on from this folder"
 	goneLine       = "That folder no longer exists."
 	goneCarryOn    = "Move it back there, or carry on from this folder."
+	// #1576 step 5: Update and Repair's own wording and rows.
+	goneBodyMade   = "That folder no longer exists, so Orbit's containers can't start."
+	goneBodyRun    = "Run from this folder: the containers are made again here. Your data is kept."
+	goneRunRow     = "Run from this folder"
+	goneMoveRow    = "Move it back"
 	goneOtherBuild = "That folder no longer exists, and this folder's .env-orbit names a different build from the one running, so it can't carry that Orbit on."
 	goneCorrect    = "Correct .env-orbit here, or move the folder back, then try again."
 
@@ -114,27 +119,48 @@ func goneApp(t *testing.T, differs bool) (AppModel, string, *goneCounters) {
 	return m, dir, c
 }
 
-// assertCarryOn checks the whole carry-on screen.
-func assertCarryOn(t *testing.T, m tea.Model) {
+// goneRows is the rows and body lines a flow's gone-folder screen shows:
+// Remove keeps the old ones, Update and Repair read as #1576 step 5 says.
+func goneRows(flow string) (rows, body []string) {
+	if flow == "Remove" {
+		return []string{goneCarryOnRow, "Cancel"}, []string{goneLine, goneCarryOn}
+	}
+	return []string{goneRunRow, goneMoveRow, "Cancel"}, []string{goneBodyMade, goneBodyRun}
+}
+
+// assertCarryOn checks the whole gone-folder screen of flow.
+func assertCarryOn(t *testing.T, m tea.Model, flow string) {
 	t.Helper()
 	s := screen(m)
 	flat := oneLine(s)
-	for _, want := range []string{"This Orbit was started from " + goneFolder, goneLine, goneCarryOn, refuseFaint} {
+	rows, body := goneRows(flow)
+	for _, want := range append([]string{"This Orbit was started from " + goneFolder, refuseFaint}, body...) {
 		if !strings.Contains(flat, want) {
-			t.Errorf("the screen lacks %q:\n%s", want, s)
+			t.Errorf("%s: the screen lacks %q:\n%s", flow, want, s)
+		}
+	}
+	if flow != "Remove" {
+		for _, old := range []string{goneCarryOn, goneCarryOnRow, "Carry on"} {
+			if strings.Contains(flat, old) {
+				t.Errorf("%s: the screen still says %q:\n%s", flow, old, s)
+			}
 		}
 	}
 	if strings.Contains(flat, refuseShared) {
 		t.Errorf("the screen still gives advice that cannot be followed:\n%s", s)
 	}
-	if got := screenLabels(s); !sameLabels(got, []string{goneCarryOnRow, "Cancel"}) || caretLabel(s) != goneCarryOnRow {
-		t.Errorf("rows = %q with the caret on %q, want Carry on from this folder and Cancel, caret on the first:\n%s", got, caretLabel(s), s)
+	if got := screenLabels(s); !sameLabels(got, rows) || caretLabel(s) != rows[0] {
+		t.Errorf("%s: rows = %q with the caret on %q, want %q, caret on the first:\n%s", flow, got, caretLabel(s), rows, s)
 	}
 	raw := m.View().Content
 	if !strings.Contains(raw, style.DegradedText.Render(style.SymbolMark)) {
 		t.Errorf("the mark is not amber")
 	}
-	if row := rawRowOf(t, m, goneLine); !strings.Contains(row, style.MutedText.Render(goneLine)) {
+	first := body[0]
+	if flow != "Remove" {
+		first = goneBodyMade // the row may hold the line wrapped; the prefix is enough
+	}
+	if row := rawRowOf(t, m, first); !strings.Contains(row, style.MutedText.Render(first)) {
 		t.Errorf("the first line is not muted: %q", row)
 	}
 	if row := rawRowOf(t, m, "nothing has been"); !strings.Contains(row, openingOf(style.Tagline)+"nothing has been") {
@@ -169,7 +195,7 @@ func TestGoneFolder_FlowsOpenOnTheCarryOnScreen(t *testing.T) {
 
 			m = openFlow(t, m, flow.label)
 
-			assertCarryOn(t, m)
+			assertCarryOn(t, m, flow.label)
 			if strings.Contains(screen(m), flow.wrong) {
 				t.Errorf("the flow's own screen (%q) is showing", flow.wrong)
 			}
@@ -274,7 +300,7 @@ func TestGoneFolder_CarryOnInUpdateLandsOnConfirmAndLooksUpTheDate(t *testing.T)
 	m = openFlow(t, m, "Update")
 	before, asked := snapshot(t, dir), c.asked.Load()
 
-	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Carry on from this folder
+	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Run from this folder
 	m = drive(t, m, cmd)
 
 	if m.state != appStateUpdate || !strings.Contains(screen(m), "Update Orbit") || strings.Contains(screen(m), "This Orbit was started from") {
@@ -321,7 +347,7 @@ func TestGoneFolder_CarryOnInRepairStartsTheDiagnosis(t *testing.T) {
 func openCarriedRemove(t *testing.T, m AppModel, sd *standDownCounter) (AppModel, removeRunningMsg) {
 	t.Helper()
 	m = openFlow(t, m, "Remove")
-	assertCarryOn(t, m)
+	assertCarryOn(t, m, "Remove")
 	m.remove.standDown = sd.fn
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	var held []removeRunningMsg
@@ -393,7 +419,7 @@ func TestGoneFolder_LateAnswerAfterCarryOn(t *testing.T) {
 		m, dir, _ := silentApp(t)
 		m = openFlow(t, m, "Update")
 		m, _ = updateAs(t, m, goneMsg(dir))
-		assertCarryOn(t, m)
+		assertCarryOn(t, m, "Update")
 		m, cmd := updateAs(t, m, key(tea.KeyEnter))
 		m = drive(t, m, cmd)
 		before := screen(m)
@@ -420,7 +446,7 @@ func TestGoneFolder_LateAnswerAfterCarryOn(t *testing.T) {
 		m, dir, c := silentApp(t)
 		m = openFlow(t, m, "Repair")
 		m, _ = updateAs(t, m, goneMsg(dir))
-		assertCarryOn(t, m)
+		assertCarryOn(t, m, "Repair")
 		m, cmd := updateAs(t, m, key(tea.KeyEnter))
 		m = drive(t, m, cmd)
 		before := screen(m)
@@ -436,7 +462,7 @@ func TestGoneFolder_LateAnswerAfterCarryOn(t *testing.T) {
 		m, dir, _ := silentApp(t)
 		m = openFlow(t, m, "Remove")
 		m, _ = updateAs(t, m, goneMsg(dir))
-		assertCarryOn(t, m)
+		assertCarryOn(t, m, "Remove")
 		m, cmd := updateAs(t, m, key(tea.KeyEnter))
 		m = drive(t, m, cmd)
 		before := screen(m)
@@ -459,7 +485,7 @@ func TestGoneFolder_LateGoneAnswerOpensTheCarryOnScreen(t *testing.T) {
 
 	m, _ = updateAs(t, m, goneMsg(dir))
 
-	assertCarryOn(t, m)
+	assertCarryOn(t, m, "Update")
 }
 
 // Carrying on is forgotten when the flow is left: the next time the
@@ -477,7 +503,7 @@ func TestGoneFolder_CarryOnIsForgottenWhenTheFlowIsLeft(t *testing.T) {
 
 	m = openFlow(t, m, "Update")
 
-	assertCarryOn(t, m)
+	assertCarryOn(t, m, "Update")
 }
 
 // --- Install -------------------------------------------------------------------
@@ -734,13 +760,18 @@ func TestGoneFolder_MenuGrammar(t *testing.T) {
 	for _, flow := range []string{"Update", "Repair", "Remove"} {
 		t.Run(flow+" carry on", func(t *testing.T) {
 			m := goneScreen(flow, false)(t)
-			if got := screenLabels(screen(m)); !sameLabels(got, []string{goneCarryOnRow, "Cancel"}) {
+			rows, _ := goneRows(flow)
+			if got := screenLabels(screen(m)); !sameLabels(got, rows) {
 				t.Fatalf("rows = %q", got)
 			}
-			// Up and Down wrap over the two rows; no other key acts.
+			// Up and Down wrap over the rows; no other key acts.
 			down, cmd := updateAs(t, m, key(tea.KeyDown))
-			if cmd != nil || caretLabel(screen(down)) != "Cancel" {
-				t.Errorf("Down: caret %q, cmd %v, want Cancel and no command", caretLabel(screen(down)), cmd != nil)
+			if cmd != nil || caretLabel(screen(down)) != rows[1] {
+				t.Errorf("Down: caret %q, cmd %v, want %q and no command", caretLabel(screen(down)), cmd != nil, rows[1])
+			}
+			up, cmd := updateAs(t, m, key(tea.KeyUp))
+			if cmd != nil || caretLabel(screen(up)) != rows[len(rows)-1] {
+				t.Errorf("Up: caret %q, cmd %v, want %q and no command", caretLabel(screen(up)), cmd != nil, rows[len(rows)-1])
 			}
 			for _, k := range []tea.KeyPressMsg{runeKey('x'), runeKey('q'), runeKey('1'), key(tea.KeyLeft), key(tea.KeyRight), key(tea.KeyTab)} {
 				after, cmd := updateAs(t, m, k)
@@ -775,7 +806,7 @@ func TestGoneFolder_LateOtherBuildAnswerAfterCarryOnRefuses(t *testing.T) {
 			m, dir, _ := silentApp(t)
 			m = openFlow(t, m, flow)
 			m, _ = updateAs(t, m, goneMsg(dir))
-			assertCarryOn(t, m)
+			assertCarryOn(t, m, flow)
 			m, cmd := updateAs(t, m, key(tea.KeyEnter))
 			m = drive(t, m, cmd)
 
