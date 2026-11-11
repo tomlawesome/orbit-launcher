@@ -49,9 +49,11 @@ and `docs/releasing.md`. Commit style: `CONTRIBUTING.md`.
 - Stages (#306): live runs by itself, blocking, on every MR into `preview`,
   and on an MR into `main` from any branch but `preview`, and nowhere else by
   default. On an MR into either from another branch (a hotfix) a person
-  starts it if the MR also edits the CI files (#313). Pushes to `dev`, `preview`, `main` and to a branch with no MR run
-  nothing (`main` only offers the release buttons); `preview` into `main`
-  runs a no-op. An MR into `dev` runs the checks, and live
+  starts it if the MR also edits the CI files (#313). A push to `dev` runs
+  only `gitleaks` and `private-details`; a push to `main` only offers the
+  release buttons; pushes to `preview` and to a branch with no MR run nothing.
+  An MR into `batch-a` or `batch-b` runs the static checks only. `preview`
+  into `main` runs a no-op. An MR into `dev` runs the checks, and live
   only on the MR label `run-live-matrix`, or `RUN_LIVE=true` on a
   hand-started pipeline. An MR into `dev` that moves the `UBUNTU_IMAGE`,
   `FEDORA_IMAGE`, `GO_VERSION` or `GO_SHA256` pin, or edits `.gitlab-ci.yml`,
