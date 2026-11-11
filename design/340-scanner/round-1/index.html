@@ -1,0 +1,137 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Scanner switch placement</title><style>
+:root{color-scheme:dark}
+body{background:#060b1c;color:#e7e9ee;margin:0;padding:32px 16px;
+ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+h1{font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:#d8b45a;text-align:center;font-weight:600}
+.sub{font-size:12px;color:#7c8699;max-width:78ch;margin:0 auto 32px;text-align:center;line-height:1.7}
+section{max-width:1400px;margin:0 auto 40px}
+h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#7c8699;margin:0 0 12px}
+.grid{display:flex;flex-wrap:wrap;gap:20px}
+figure{margin:0;overflow-x:auto;max-width:100%}
+.term{background:#05070d;border:1px solid #14203e;border-radius:8px;padding:10px 8px;width:fit-content}
+pre{margin:0;font-size:12px;line-height:15px;font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
+figcaption{font-size:11px;color:#7c8699;margin-top:6px;max-width:72ch;line-height:1.6}
+</style></head><body>
+<h1>Install · scanner on/off</h1>
+<p class=sub>#340 round 1 · 80-column terminal · everything except the new row is the launcher's current Install screen. Up/Down moves, Enter on the scanner flips it and stays on this screen; Enter on a profile installs.</p>
+<section aria-label='Fifth row in the table (recommended)'><h2>A · Fifth row in the table (recommended)</h2><div class=grid>
+<figure><div class=term><pre aria-label='Opens with the scanner on'>                                                         <span style="color:#4a5468">.</span>                      
+                                                                                
+                                                                                
+                                                                                
+                               <span style="color:#4a5468">.</span>                                                
+                                                                                
+                                                        <span style="color:#8fb8ff"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           
+                       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>               <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">⟡</span></span>                                        
+        <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                         <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                                             
+                          <span style="color:#e7e9ee;font-weight:700">Choose a deployment profile</span>               <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+              <span style="color:#e7e9ee">Orbit installs into /srv/containers/mail stack/orbit</span>              
+            <span style="color:#e7e9ee">production/with several/long directories/under the data</span>             
+                 <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>      <span style="color:#e7e9ee">volume/orbit</span>                                  
+                                                                                
+      <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">▸</span></span> <span style="color:#e7e9ee">Standard</span>   <span style="color:#e7e9ee">mail, documents, calendar</span>                   <span style="color:#e7e9ee">available</span>        
+        <span style="color:#7c8699">Documents</span>  <span style="color:#7c8699">adds text extraction from attachments</span>       <span style="color:#7c8699">+1 GB</span>            
+        <span style="color:#4a5468">Agent</span>      <span style="color:#4a5468">adds a local model for search &amp; suggestions</span> <span style="color:#4a5468">not yet</span>          
+        <span style="color:#4a5468">Full</span>       <span style="color:#4a5468">documents extraction and the local model</span>    <span style="color:#4a5468">not yet</span>          
+                                                                                
+        <span style="color:#7c8699">Scanner</span>    <span style="color:#7c8699">recommended: scans documents for viruses</span>    <span style="color:#7c8699">on</span>               
+                                                                                
+                             <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>     <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>                              <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+                                                                                
+             <span style="color:#cbd5e1"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>  <span style="color:#fb7185"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                  <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                                            
+                                                                                
+          <span style="color:#4a5468">.</span>                                                                     
+                                                              <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                 </pre></div><figcaption>Opens with the scanner on</figcaption></figure>
+<figure><div class=term><pre aria-label='Down four times, Enter: scanner off, the line underneath explains'>                                                         <span style="color:#4a5468">.</span>                      
+                                                                                
+                                                                                
+                                                                                
+                               <span style="color:#4a5468">.</span>                                                
+                                                                                
+                                                        <span style="color:#8fb8ff"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           
+                       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>               <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">⟡</span></span>                                        
+        <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                         <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                                             
+                          <span style="color:#e7e9ee;font-weight:700">Choose a deployment profile</span>               <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+              <span style="color:#e7e9ee">Orbit installs into /srv/containers/mail stack/orbit</span>              
+            <span style="color:#e7e9ee">production/with several/long directories/under the data</span>             
+                 <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>      <span style="color:#e7e9ee">volume/orbit</span>                                  
+                                                                                
+        <span style="color:#7c8699">Standard</span>   <span style="color:#7c8699">mail,</span><span style="color:#e7e9ee"> </span><span style="color:#7c8699">documents,</span><span style="color:#e7e9ee"> </span><span style="color:#7c8699">calendar</span>                   <span style="color:#7c8699">available</span>        
+        <span style="color:#7c8699">Documents</span>  <span style="color:#7c8699">adds text extraction from attachments</span>       <span style="color:#7c8699">+1 GB</span>            
+        <span style="color:#4a5468">Agent</span>      <span style="color:#4a5468">adds a local model for search &amp; suggestions</span> <span style="color:#4a5468">not yet</span>          
+        <span style="color:#4a5468">Full</span>       <span style="color:#4a5468">documents extraction and the local model</span>    <span style="color:#4a5468">not yet</span>          
+                                                                                
+      <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">▸</span></span> <span style="color:#e7e9ee">Scanner</span>    <span style="color:#e7e9ee">recommended: scans documents for viruses</span>    <span style="color:#e7e9ee">off</span>              
+                                                                                
+        <span style="color:#4a5468">Off: uploaded and mailed documents are not virus-scanned. To turn</span>       
+        <span style="color:#4a5468">it on later, run scripts/configure.sh --set-scanner on, then</span>            
+        <span style="color:#4a5468">Update.</span>                                                                 
+                                                                                
+                             <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>     <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>                              <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+                                                                                </pre></div><figcaption>Down four times, Enter: scanner off, the line underneath explains</figcaption></figure>
+</div></section>
+<section aria-label='Separate line under the table (the alternative)'><h2>B · Separate line under the table (the alternative)</h2><div class=grid>
+<figure><div class=term><pre aria-label='Opens with the scanner on'>                                                         <span style="color:#4a5468">.</span>                      
+                                                                                
+                                                                                
+                                                                                
+                               <span style="color:#4a5468">.</span>                                                
+                                                                                
+                                                        <span style="color:#8fb8ff"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           
+                       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>               <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">⟡</span></span>                                        
+        <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                         <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                                             
+                          <span style="color:#e7e9ee;font-weight:700">Choose a deployment profile</span>               <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+              <span style="color:#e7e9ee">Orbit installs into /srv/containers/mail stack/orbit</span>              
+            <span style="color:#e7e9ee">production/with several/long directories/under the data</span>             
+                 <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>      <span style="color:#e7e9ee">volume/orbit</span>                                  
+                                                                                
+      <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">▸</span></span> <span style="color:#e7e9ee">Standard</span>   <span style="color:#e7e9ee">mail, documents, calendar</span>                   <span style="color:#e7e9ee">available</span>        
+        <span style="color:#7c8699">Documents</span>  <span style="color:#7c8699">adds text extraction from attachments</span>       <span style="color:#7c8699">+1 GB</span>            
+        <span style="color:#4a5468">Agent</span>      <span style="color:#4a5468">adds a local model for search &amp; suggestions</span> <span style="color:#4a5468">not yet</span>          
+        <span style="color:#4a5468">Full</span>       <span style="color:#4a5468">documents extraction and the local model</span>    <span style="color:#4a5468">not yet</span>          
+                                                                                
+                                  <span style="color:#7c8699">Scanner: on</span>                                   
+                                                                                
+                             <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>     <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>                              <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+                                                                                
+             <span style="color:#cbd5e1"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>  <span style="color:#fb7185"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                  <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                                            
+                                                                                
+          <span style="color:#4a5468">.</span>                                                                     
+                                                              <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                 </pre></div><figcaption>Opens with the scanner on</figcaption></figure>
+<figure><div class=term><pre aria-label='Caret on the line, Enter: scanner off'>                                                         <span style="color:#4a5468">.</span>                      
+                                                                                
+                                                                                
+                                                                                
+                               <span style="color:#4a5468">.</span>                                                
+                                                                                
+                                                        <span style="color:#8fb8ff"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">●</span></span>           
+                       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>               <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">⟡</span></span>                                        
+        <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                         <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>                                             
+                          <span style="color:#e7e9ee;font-weight:700">Choose a deployment profile</span>               <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+              <span style="color:#e7e9ee">Orbit installs into /srv/containers/mail stack/orbit</span>              
+            <span style="color:#e7e9ee">production/with several/long directories/under the data</span>             
+                 <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>       <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>      <span style="color:#e7e9ee">volume/orbit</span>                                  
+                                                                                
+        <span style="color:#7c8699">Standard</span>   <span style="color:#7c8699">mail,</span><span style="color:#e7e9ee"> </span><span style="color:#7c8699">documents,</span><span style="color:#e7e9ee"> </span><span style="color:#7c8699">calendar</span>                   <span style="color:#7c8699">available</span>        
+        <span style="color:#7c8699">Documents</span>  <span style="color:#7c8699">adds text extraction from attachments</span>       <span style="color:#7c8699">+1 GB</span>            
+        <span style="color:#4a5468">Agent</span>      <span style="color:#4a5468">adds a local model for search &amp; suggestions</span> <span style="color:#4a5468">not yet</span>          
+        <span style="color:#4a5468">Full</span>       <span style="color:#4a5468">documents extraction and the local model</span>    <span style="color:#4a5468">not yet</span>          
+                                                                                
+                                <span style="color:#d8b45a"><span style="display:inline-block;width:1ch;text-align:center">▸</span></span> <span style="color:#e7e9ee">Scanner: off</span>                                  
+                                                                                
+        <span style="color:#4a5468">Off: uploaded and mailed documents are not virus-scanned. To turn</span>       
+        <span style="color:#4a5468">it on later, run scripts/configure.sh --set-scanner on, then</span>            
+        <span style="color:#4a5468">Update.</span>                                                                 
+                                                                                
+                             <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span> <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>     <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">✦</span></span>                              <span style="color:#4a5468"><span style="display:inline-block;width:1ch;text-align:center">·</span></span>           
+                                                                                
+                                                                                </pre></div><figcaption>Caret on the line, Enter: scanner off</figcaption></figure>
+</div></section>
+</body></html>
