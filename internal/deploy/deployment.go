@@ -52,6 +52,10 @@ const orbitImageFile = ".orbit-image"
 // one, keep orbit's scripts.
 const scriptsDir = "scripts"
 
+// ScanModeDisabled is the DOCUMENT_SCAN_MODE value for a virus scanner
+// that is off by choice (ai/orbit#1170).
+const ScanModeDisabled = "disabled"
+
 // Deployment describes a recognised existing Orbit install, read from its
 // .env-orbit file — see orbit's .env-orbit.example for the authoritative
 // format this parses a practical subset of.
@@ -66,6 +70,11 @@ type Deployment struct {
 	// publishes its app port on this machine (#341).
 	BindAddress string
 	Port        string
+
+	// ScanMode is DOCUMENT_SCAN_MODE as .env-orbit records it, empty when
+	// unset. ScanModeDisabled means the virus scanner is off by choice and
+	// orbit-clamav is never started (ai/orbit#1170, #345).
+	ScanMode string
 
 	// Project is the Compose project name, which prefixes the names of
 	// the deployment's volumes. The installer persists the name it used
@@ -187,6 +196,8 @@ func Detect(targetDir string) (*Deployment, error) {
 			d.BindAddress = value
 		case "ORBIT_PORT":
 			d.Port = value
+		case "DOCUMENT_SCAN_MODE":
+			d.ScanMode = value
 		case "ORBIT_IMAGE":
 			d.Image = value
 		case "COMPOSE_PROFILES":
