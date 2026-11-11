@@ -410,6 +410,9 @@ func (m UpdateModel) viewConfirm() string {
 	if image := m.deploymentImage(); image != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(endCut(visibleText(image), prose)))
 	}
+	if row := m.scannerRow(); row != "" {
+		fmt.Fprintln(&b, style.Tagline.Render(endCut(row, prose)))
+	}
 	fmt.Fprintln(&b)
 	// Each line wraps on its own, as Remove's do (#271), but at the
 	// screen's edge rather than proseWidth: the second line is 60 cells
@@ -424,6 +427,16 @@ func (m UpdateModel) viewConfirm() string {
 		b.WriteString(workingLine(m.frame, updateChecking, ""))
 	}
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// scannerRow is the read-only fact that the scanner is off, read from the
+// record (#340); empty while it is on, the common case. Nothing on Update
+// changes it: the engine keeps the deployment's own setting.
+func (m UpdateModel) scannerRow() string {
+	if m.deployment != nil && m.deployment.ScanMode == deploy.ScanModeDisabled {
+		return "virus scanner off by choice"
+	}
+	return ""
 }
 
 // shownVersion is a version as a screen shows it: escaped, since the

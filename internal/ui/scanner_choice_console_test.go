@@ -93,8 +93,10 @@ func TestScanner340_PlainNamesOnEveryConsoleLine(t *testing.T) {
 // Spec 13: a skipped state with another action, or none, stays literal.
 func TestScanner340_SkippedWithAnotherActionStaysLiteral(t *testing.T) {
 	for _, line := range []string{
+		// A line with no action never reaches the console: ParseEvent
+		// requires all six fields.
 		"phase=optional component=clamav state=skipped reason=optional-status action=continue",
-		"phase=optional component=clamav state=skipped reason=optional-status",
+		"phase=optional component=clamav state=skipped reason=optional-status action=retry",
 	} {
 		_, plain := scanner340Line(t, scanner340Parse(t, line))
 		if !strings.HasPrefix(plain, "✓") || !strings.Contains(plain, "skipped") || strings.Contains(plain, "by choice") {

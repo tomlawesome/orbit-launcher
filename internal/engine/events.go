@@ -84,11 +84,14 @@ const (
 	// deployment whose services are in place, for Repair; ActionAbort
 	// marks a failure no retry can clear, so the consumer stops rather
 	// than offer another attempt. ActionContinue is an optional
-	// service's ending that does not fail the run.
+	// service's ending that does not fail the run. ActionSkip marks a
+	// step the engine left out by choice (the scanner off, a profile
+	// without the reader).
 	ActionRetry    = "retry"
 	ActionRepair   = "repair"
 	ActionAbort    = "abort"
 	ActionContinue = "continue"
+	ActionSkip     = "skip"
 
 	// RecoveryHasCommand is the recovery= value saying a
 	// recovery-command line came just before the event.

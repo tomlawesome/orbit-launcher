@@ -185,7 +185,9 @@ func TestScanner340_NarrowLayout(t *testing.T) {
 			t.Errorf("50 columns, %s: no blank row before the Scanner entry:\n%s", state, screen(m))
 		}
 		var parts []string
-		for j := head + 1; j < len(rows) && !scanner340Blank(rows[j]); j++ {
+		// The entry is the block's last: stop once the adds text is read,
+		// so the sky row below it is never taken for more of it.
+		for j := head + 1; j < len(rows) && !scanner340Blank(rows[j]) && len(strings.Join(parts, " ")) < len(scanner340Adds); j++ {
 			parts = append(parts, strings.TrimSpace(string(rows[j])))
 		}
 		if got := strings.Join(parts, " "); got != scanner340Adds {
