@@ -69,6 +69,10 @@ type InstallModel struct {
 	// chooses a row and carried by the run and its retry.
 	requested string
 
+	// scannerOn is the virus-scanner row's state (#340): on at the start
+	// of every flow, flipped by Enter on the row, carried by the run.
+	scannerOn bool
+
 	// left is Esc or Cancel on the flow's first screen: back to the main
 	// menu with nothing started (#210).
 	left bool
@@ -206,6 +210,12 @@ func (r engineRun) withProfile(profile string) engineRun {
 	return r
 }
 
+// withScanner makes the run carry the virus-scanner choice.
+func (r engineRun) withScanner(scanner string) engineRun {
+	r.scanner = scanner
+	return r
+}
+
 // withChannel pins the run to a release (#336).
 func (r engineRun) withChannel(channel string) engineRun {
 	r.channel = channel
@@ -233,6 +243,7 @@ func NewInstallModel(targetDir, version string) InstallModel {
 		volume:      newMenu(installVolumeRows...),
 		memory:      memory,
 		memoryKnown: known,
+		scannerOn:   true,
 		collected:   &collectedConfig{},
 	}
 }
@@ -246,7 +257,37 @@ func NewInstallModel(targetDir, version string) InstallModel {
 const (
 	installStandard  = "Standard"
 	installDocuments = "Documents"
+	// installScanner is the fifth row (#340): a toggle, not a profile.
+	installScanner     = "Scanner"
+	installScannerAdds = "recommended: scans documents for viruses"
+	installScannerOn   = "on"
+	installScannerOff  = "off"
 )
+
+// scannerStatus is the scanner row's status word.
+func (m InstallModel) scannerStatus() string {
+	if m.scannerOn {
+		return installScannerOn
+	}
+	return installScannerOff
+}
+
+// scannerChoice is the value the run sends the engine.
+func (m InstallModel) scannerChoice() string {
+	if m.scannerOn {
+		return deploy.ScannerOn
+	}
+	return deploy.ScannerOff
+}
+
+// scannerReason is the consequence line under the table, only while the
+// scanner is off; the sentence is Orbit's own (.env-orbit.example).
+func (m InstallModel) scannerReason() string {
+	if m.scannerOn {
+		return ""
+	}
+	return "Off: uploaded and mailed documents are not virus-scanned. To turn it on later, run scripts/configure.sh --set-scanner on, then Update."
+}
 
 // installProfile is a row. profile is the name the engine is asked for
 // (deploy.ProfileEnv); empty means the row is not yet available.
@@ -274,7 +315,7 @@ func (m InstallModel) shortOfMemory(p installProfile) bool {
 	if p.profile == "" || p.profile == deploy.ProfileStandard {
 		return false
 	}
-	return m.memoryKnown && m.memory < deploy.ProfileNeed(p.profile)
+	return m.memoryKnown && m.memory < deploy.ProfileNeed(p.profile, m.scannerOn)
 }
 
 // status is the row's status column: "available" for Standard, the
@@ -290,7 +331,7 @@ func (m InstallModel) status(p installProfile) string {
 	case m.shortOfMemory(p):
 		return installNotEnough
 	}
-	extra := deploy.ProfileNeed(p.profile) - deploy.ProfileNeed(deploy.ProfileStandard)
+	extra := deploy.ProfileNeed(p.profile, m.scannerOn) - deploy.ProfileNeed(deploy.ProfileStandard, m.scannerOn)
 	return fmt.Sprintf("+%d GB", extra>>30)
 }
 
@@ -306,18 +347,18 @@ func (m InstallModel) memoryReason() string {
 	for _, p := range installProfileTable {
 		if m.shortOfMemory(p) {
 			return fmt.Sprintf("%s needs %d GB of memory in all and this machine has %d GB.",
-				p.name, deploy.ProfileNeed(p.profile)>>30, m.memory>>30)
+				p.name, deploy.ProfileNeed(p.profile, m.scannerOn)>>30, m.memory>>30)
 		}
 	}
 	return ""
 }
 
 var installProfiles = func() []string {
-	names := make([]string, len(installProfileTable))
-	for i, p := range installProfileTable {
-		names[i] = p.name
+	names := make([]string, 0, len(installProfileTable)+1)
+	for _, p := range installProfileTable {
+		names = append(names, p.name)
 	}
-	return names
+	return append(names, installScanner)
 }()
 
 // Table geometry at width >= installTableMin: two cells of caret column,
@@ -785,6 +826,10 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		// A move drops a waiting Enter: the row it chose is no longer
 		// the one under the cursor.
 		m.awaiting = ""
+	case chosen == installScanner:
+		// A toggle, not a choice that proceeds: it flips in place, never
+		// waits and never touches a waiting Enter.
+		m.scannerOn = !m.scannerOn
 	case m.shortOfMemory(m.rowNamed(chosen)):
 		// "not enough": the caret rests here but Enter does nothing, and
 		// the line under the table says why.
@@ -853,7 +898,7 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
-	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withScanner(m.scannerChoice()).withSeams(m.seams).withSend(m.send)
 	m.run.collected = m.collected
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
@@ -1002,14 +1047,19 @@ func (m InstallModel) viewProfile() string {
 	}
 	fmt.Fprintln(&b)
 	m.writeProfileTable(&b)
-	if reason := m.memoryReason(); reason != "" {
-		fmt.Fprintln(&b)
-		// Padded to the table's width, so the sky centres it with the
-		// table rather than on its own.
-		w := installTableW
-		if m.width < installTableMin {
-			w = measure(m.width, proseWidth)
+	// Padded to the table's width, so the sky centres each line with the
+	// table rather than on its own. The memory reason belongs to the
+	// profile rows above, so it comes first.
+	w := installTableW
+	if m.width < installTableMin {
+		w = measure(m.width, proseWidth)
+	}
+	for _, reason := range []string{m.memoryReason(), m.scannerReason()} {
+		if reason == "" {
+			continue
 		}
+		// The blank row is padded too, so the sky keeps off it.
+		fmt.Fprintln(&b, strings.Repeat(" ", w))
 		for _, row := range wrapWordsIn(reason, w-2, textArea(m.width)-2) {
 			fmt.Fprintln(&b, "  "+style.Tagline.Render(row)+strings.Repeat(" ", max(0, w-2-len([]rune(row)))))
 		}
@@ -1049,11 +1099,12 @@ func (m InstallModel) writeProfileTable(b *strings.Builder) {
 		}
 		return "  "
 	}
+	scannerIdx := len(installProfileTable)
 	rowStyle := func(i int, p installProfile) lipgloss.Style {
 		switch {
 		case i == m.profile.sel:
 			return style.Ink
-		case m.canChoose(p):
+		case i == scannerIdx, m.canChoose(p):
 			return style.MutedText
 		}
 		return style.Tagline
@@ -1068,15 +1119,27 @@ func (m InstallModel) writeProfileTable(b *strings.Builder) {
 				pad(st.Render(status), len(status), installAvailCol)
 			fmt.Fprintln(b, line)
 		}
+		st := rowStyle(scannerIdx, installProfile{})
+		status := m.scannerStatus()
+		fmt.Fprintln(b, pad("", 0, installTableW))
+		fmt.Fprintln(b, caret(m.profile.sel == scannerIdx)+
+			pad(st.Render(installScanner), len(installScanner), installNameCol)+" "+
+			pad(st.Render(installScannerAdds), len([]rune(installScannerAdds)), installAddsCol)+" "+
+			pad(st.Render(status), len(status), installAvailCol))
 		return
 	}
 	w := measure(m.width, proseWidth)
-	for i, p := range installProfileTable {
+	entries := append(append([]installProfile{}, installProfileTable...), installProfile{name: installScanner, adds: installScannerAdds})
+	for i, p := range entries {
 		if i > 0 {
 			fmt.Fprintln(b, pad("", 0, w))
 		}
 		st := rowStyle(i, p)
-		head := p.name + style.Separator + m.status(p)
+		status := m.status(p)
+		if i == scannerIdx {
+			status = m.scannerStatus()
+		}
+		head := p.name + style.Separator + status
 		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
 		for _, r := range wrapWordsIn(p.adds, w-2, textArea(m.width)-2) {
 			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
