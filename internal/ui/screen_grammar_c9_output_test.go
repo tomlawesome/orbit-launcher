@@ -91,6 +91,14 @@ func c9Screens(t *testing.T) map[string]string {
 		// install: the profile screen names the directory at proseWidth.
 		in := c9Size(t, NewInstallModel(c9LongDir, "v1"), w)
 		out["install_profile_"+tag] = in.View().Content
+		// #340: the same screen with the scanner row turned off (Down to
+		// the row, Enter), its consequence line under the table.
+		so := c9Size(t, NewInstallModel(c9LongDir, "v1"), w)
+		for i := 0; i < 4; i++ {
+			so, _ = updateAs(t, so, key(tea.KeyDown))
+		}
+		so, _ = updateAs(t, so, key(tea.KeyEnter))
+		out["install_profile_scanner_off_"+tag] = so.View().Content
 
 		// remove: not found (header wraps the directory), done (prose and
 		// the removal command), failed (error at errorWidth).
@@ -182,6 +190,13 @@ func c9Screens(t *testing.T) map[string]string {
 	up.installedAt = installedAt
 	up.state = updateStateConfirm
 	out["update_confirm"] = up.View().Content
+	// #340: the same confirmation for a deployment whose scanner is off.
+	offDeployment := *deployment
+	offDeployment.ScanMode = deploy.ScanModeDisabled
+	upOff := c9Size(t, NewUpdateModel(&offDeployment, offDeployment.TargetDir, "v1"), 80)
+	upOff.installedAt = installedAt
+	upOff.state = updateStateConfirm
+	out["update_confirm_scanner_off"] = upOff.View().Content
 
 	// the prompt session: label and input row in plain ink, a typed
 	// answer, a secret, and the not-yet-sized (width 0) form.

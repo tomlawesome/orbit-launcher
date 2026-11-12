@@ -212,18 +212,18 @@ func TestTwoRowConfirmScreensToggleWithEitherArrow(t *testing.T) {
 }
 
 // Passed already: Install's profile list wraps in both directions over
-// its three rows (the count must come from the menu, not a typed 3).
+// its five rows (the count must come from the menu, not a typed number).
 func TestInstallProfileMenuWrapsOverAllRows(t *testing.T) {
 	m := profileInstall(t)
 	seen := []string{}
-	for _, want := range []string{"▸ Documents", "▸ Agent", "▸ Full", "▸ Standard"} {
+	for _, want := range []string{"▸ Documents", "▸ Agent", "▸ Full", "▸ Scanner", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyDown))
 		if !strings.Contains(screen(m), want) {
 			t.Fatalf("Down did not reach %q (visited %v):\n%s", want, seen, screen(m))
 		}
 		seen = append(seen, want)
 	}
-	for _, want := range []string{"▸ Full", "▸ Agent", "▸ Documents", "▸ Standard"} {
+	for _, want := range []string{"▸ Scanner", "▸ Full", "▸ Agent", "▸ Documents", "▸ Standard"} {
 		m, _ = leavePress(t, m, key(tea.KeyUp))
 		if !strings.Contains(screen(m), want) {
 			t.Fatalf("Up did not reach %q:\n%s", want, screen(m))

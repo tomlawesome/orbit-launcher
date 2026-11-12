@@ -142,6 +142,11 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.
+- **A yes/no option is a row in its list** (owner, 2026-11-11, #340): it sits
+  under the choices, one blank row apart, with name, a short reason and its
+  state (`on`/`off`); Enter on it flips it in place. Its consequence, while
+  off, is one faint line under the table. Mock-up:
+  `design/340-scanner/round-1/` (direction A).
 - **No keybind hints, ever.** No navigation instructions anywhere; the
   screen teaches itself.
 - **The foot is one centred faint line per screen**: splash carries
@@ -173,6 +178,11 @@ Both one-shot, both skipped by `ORBIT_LAUNCHER_NO_ANIMATION`:
 - The **calendar-compass tick bar was rejected** ("conceptually cool,
   visually awkward in terminal"). The plain thin line stays.
 - Success/failure key off events plus exit codes, never scraped prose.
+- **Optional parts show by plain name** (owner, 2026-11-11, #340): `clamav`
+  is `scanner`, `tika` is `text extraction`, `ollama` is `local model`.
+  Every other component still shows as the engine names it. A step the
+  engine skips by choice (`state=skipped action=skip`) reads
+  `✓ <name> off by choice` in faint ink, not as pending.
 
 ### The install notice (v7)
 

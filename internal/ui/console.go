@@ -21,7 +21,8 @@ import (
 // word, and an elapsed clock. Everything shown is derived from engine
 // event stream v0 enums or is verbatim raw output; success and failure
 // are decided elsewhere, off events plus exit codes, never off prose
-// (orbit-launcher#73 guardrails).
+// (orbit-launcher#73 guardrails). The three optional parts show by plain
+// name (componentNames, #340); every other component is its token.
 
 // consolePhases is the engine's canonical phase order (orbit
 // docs/engine-events.md vocabulary) with the stage word each phase
@@ -207,6 +208,23 @@ func (c ConsoleModel) progressWord() string {
 	return "Contacting the engine"
 }
 
+// componentNames are the console's plain names for the three optional
+// parts (#340); every other component shows as its token. Console only:
+// the engine's tokens are untouched.
+var componentNames = map[string]string{
+	"clamav": "scanner",
+	"tika":   "text extraction",
+	"ollama": "local model",
+}
+
+// componentName is what the console shows for an event's component.
+func componentName(component string) string {
+	if name, ok := componentNames[component]; ok {
+		return name
+	}
+	return visibleText(component)
+}
+
 // entryLine renders one console entry to fit interior width w.
 func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	if !e.isEvent {
@@ -219,7 +237,8 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	case engine.StateCompleted, engine.StateHealthy:
 		glyph = style.SuccessText.Render(style.SymbolSuccess)
 	case engine.StateSkipped:
-		glyph = style.Tagline.Render(style.SymbolQueued)
+		// Done, faintly, by choice: not pending.
+		glyph = style.Tagline.Render(style.SymbolSuccess)
 	case engine.StateFailed:
 		glyph = style.ErrorText.Render(style.SymbolFailure)
 	case engine.StateBlocked:
@@ -239,7 +258,10 @@ func (c ConsoleModel) entryLine(e consoleEntry, latest bool) string {
 	if !known {
 		word = visibleText(ev.State)
 	}
-	line := glyph + " " + style.MutedText.Render(visibleText(ev.Component)) + " "
+	if ev.State == engine.StateSkipped && ev.Action == engine.ActionSkip {
+		word = "off by choice"
+	}
+	line := glyph + " " + style.MutedText.Render(componentName(ev.Component)) + " "
 	if known {
 		switch ev.State {
 		case engine.StateCompleted, engine.StateHealthy:

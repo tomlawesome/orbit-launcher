@@ -92,11 +92,15 @@ stages:
 
 # Test once, then promote what passed (#306): each pipeline runs only what an
 # earlier stage could not. A merge request into `dev` runs the checks; the one
-# into `preview` adds the live installs; the one into `main` adds nothing; the
-# push that lands any of them runs nothing, because merges need an up-to-date
-# branch (semi-linear history) and so land exactly what was tested. Only a push
-# to `main` creates a pipeline, for the release buttons. Each job's `rules:`
-# below picks its stage; this block decides whether a pipeline exists at all.
+# into `preview` adds the live installs; the one into `main` adds nothing. A
+# merge request into `batch-a` or `batch-b` runs only the static checks
+# (batch-intake), a chore/catchup-* one only the ancestry check. The push that
+# lands a merge runs nothing more than it must, because merges need an
+# up-to-date branch (semi-linear history) and so land exactly what was tested:
+# a push to `dev` runs only `gitleaks` and `private-details` (dev-landing), a
+# push to `main` makes a pipeline for the release buttons, and other pushes
+# make none. Each job's `rules:` below picks its stage; this block decides
+# whether a pipeline exists at all.
 workflow:
   rules:
     - !reference [.dev-landing, workflow_rules]
@@ -335,7 +339,8 @@ variables:
 # --- fast --------------------------------------------------------------------
 
 # The merge-request stage (#306): the checks that run on a merge request into
-# `dev`, and on a pipeline started by hand. Not on the promotions (`dev` into
+# `dev`, and on a pipeline started by hand. The static ones also run on a
+# merge request into `batch-a` or `batch-b` (.checks_rules). Not on the promotions (`dev` into
 # `preview`, `preview` into `main`), which carry exactly the code `dev`
 # passed. A merge request into `preview` or `main` from any other branch has
 # passed no earlier stage, so it is treated as one into `dev`: the checks
@@ -1749,7 +1754,7 @@ renovate:
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
   # and runs `go mod tidy` inside the job, which can pass the light lane's
   # 2 GB limit. Same choice as mikroview's renovate:run.
-  # A weekly maintenance run has nothing that could supersede it, and being
+  # A daily maintenance run has nothing that could supersede it, and being
   # cancelled part-way leaves half-written branches behind.
   interruptible: false
   # RENOVATE_TOKEN and GITHUB_COM_TOKEN are scoped to this environment, so
@@ -1769,7 +1774,7 @@ renovate:
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
     # Renovate reads a repository's own config from its default branch, which
-    # here is `dev` and carries renovate.json. The weekly schedule runs on
+    # here is `dev` and carries renovate.json. The daily schedule runs on
     # `dev` too, so the copy in this job's checkout is that same file, and
     # handing it over as global config changes nothing: the repository copy
     # merges over this one and they are identical.
