@@ -174,7 +174,18 @@ func TestFolderMoved_AnUpdateNotReachedThroughTheRowGetsNoVariable(t *testing.T)
 		if got := recordedLines(t, out, "var"); len(got) != 0 {
 			t.Errorf("Cancel started an engine run: %q", got)
 		}
-		_ = s
+
+		// The folder is back (a plain container now), so the next Update is a
+		// plain one and must not carry the signal from the screen Cancel closed.
+		m = started(t, runningAs(deploy.RunningApp{}, nil)(m))
+		if strings.Contains(screen(m), splashGoneRow) {
+			t.Fatalf("setup: the splash still shows the gone folder:\n%s", screen(m))
+		}
+		m = openFlow(t, m, "Update")
+		m = runUpdateToStopped(t, m, s)
+		if got := recordedLines(t, out, "var"); len(got) != 1 || got[0] != "<unset>" {
+			t.Errorf("the engine saw %s = %q, want one run with it unset", folderMovedEnv, got)
+		}
 	})
 }
 
