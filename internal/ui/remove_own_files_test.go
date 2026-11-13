@@ -43,11 +43,11 @@ func ownUIFolder(t *testing.T, dir string, manifest bool, extra ...string) {
 	files := append([]string{}, extra...)
 	if manifest {
 		files = append(files, ownUITodays...)
-		if err := os.WriteFile(filepath.Join(dir, ".orbit-files"), []byte(ownUIHeader+strings.Join(ownUITodays, "\n")+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
 	}
 	for _, f := range files {
+		if manifest && f == ".orbit-files" {
+			continue // written below, last, so the list is not overwritten
+		}
 		p := filepath.Join(dir, f)
 		if strings.HasSuffix(f, "/") {
 			if err := os.MkdirAll(p, 0o755); err != nil {
@@ -58,6 +58,11 @@ func ownUIFolder(t *testing.T, dir string, manifest bool, extra ...string) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if manifest {
+		if err := os.WriteFile(filepath.Join(dir, ".orbit-files"), []byte(ownUIHeader+strings.Join(ownUITodays, "\n")+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

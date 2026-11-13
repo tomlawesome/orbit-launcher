@@ -65,12 +65,10 @@ func ownTreeAt(t *testing.T, dir, manifest string, files ...string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if manifest != "" {
-		if err := os.WriteFile(filepath.Join(dir, ".orbit-files"), []byte(manifest), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for _, f := range files {
+		if manifest != "" && f == ".orbit-files" {
+			continue // written below, last, so the list is not overwritten
+		}
 		p := filepath.Join(dir, f)
 		if strings.HasSuffix(f, "/") {
 			if err := os.MkdirAll(p, 0o755); err != nil {
@@ -81,6 +79,11 @@ func ownTreeAt(t *testing.T, dir, manifest string, files ...string) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if manifest != "" {
+		if err := os.WriteFile(filepath.Join(dir, ".orbit-files"), []byte(manifest), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -293,7 +296,23 @@ func TestRemovalCommand_HostileNamesAreQuotedOrRefused(t *testing.T) {
 		"a b.sh", "semi;rm -rf ~", "$(touch pwned)", "it's.sh", "back`tick`", "glob*", "new\nline",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := ownTree(t, manifestOf("docker-compose.yml", name, ".orbit-files"), "docker-compose.yml")
+			if strings.Contains(name, "\n") {
+				// One path per line: the list reads "new" and "line", neither
+				// present, so neither is named and no raw newline reaches the command.
+				dir := ownTree(t, manifestOf("docker-compose.yml", name, ".orbit-files"), "docker-compose.yml")
+				own := mustOwn(t, dir)
+				cmd := mustRemovalCommand2(t, dir, own)
+				for _, w := range strings.Fields(cmd) {
+					if w == "new" || w == "line" || w == shellQuote("new") || w == shellQuote("line") {
+						t.Errorf("absent name %q is in the command:\n%s", w, cmd)
+					}
+				}
+				if strings.Contains(cmd, "\n") {
+					t.Errorf("a raw newline reached the command: %q", cmd)
+				}
+				return
+			}
+			dir := ownTree(t, manifestOf("docker-compose.yml", name, ".orbit-files"), "docker-compose.yml", name)
 			own := mustOwn(t, dir)
 			cmd := mustRemovalCommand2(t, dir, own)
 			if own.ManifestIgnored != nil {
