@@ -271,10 +271,19 @@ func TestRepairStartServices_LongDockerLineIsBounded(t *testing.T) {
 	long = strings.TrimSpace(long)[:500]
 	tail := []string{"Orbit repair: " + long}
 
+	// The rows the screen leaves (height less every other row less one)
+	// hold a 500-character line at 50x26, so all of it shows.
 	s := screen(ssFailedRun(t, 50, 26, tail))
 	ssAssertWidth(t, s, 50)
-	if !strings.Contains(s, "…") {
-		t.Errorf("a 500-character line at 50x26 should be kept behind a … row:\n%s", s)
+	if !strings.Contains(ssFlat(s), ssFlat(long)) || strings.Contains(s, "…") {
+		t.Errorf("a 500-character line fits at 50x26 and should show whole:\n%s", s)
+	}
+	// Where the words do not fit, they are kept behind one … row.
+	longer := strings.TrimSpace(strings.Repeat("word ", 400))
+	s = screen(ssFailedRun(t, 50, 26, []string{"Orbit repair: Docker said: " + longer}))
+	ssAssertWidth(t, s, 50)
+	if strings.Count(s, "…") != 1 {
+		t.Errorf("a line too long for 50x26 should be kept behind one … row:\n%s", s)
 	}
 	for _, want := range []string{"Diagnose again", "Menu", "Exit"} {
 		if !strings.Contains(s, want) {

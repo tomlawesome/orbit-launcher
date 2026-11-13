@@ -1050,10 +1050,13 @@ func (m RepairModel) viewExecuted() string {
 	fmt.Fprintln(&b)
 	m.menu.over(executedMenu).write(&b)
 	rest := b.String()
-	// Four rows stay clear: the footer row, one row of sky above and
-	// below the block, and the spec's own spare row (#256), so a long
-	// Docker line never crowds the menu off a short terminal.
-	room := max(1, m.height-strings.Count(head.String(), "\n")-strings.Count(rest, "\n")-4)
+	// Docker's words take the height less every other row less one
+	// (#256), so a long line never crowds the menu off a short terminal.
+	// Before the first window size, nothing is cut.
+	room := math.MaxInt
+	if m.height > 0 {
+		room = max(1, m.height-strings.Count(head.String(), "\n")-strings.Count(rest, "\n")-1)
+	}
 	var out strings.Builder
 	out.WriteString(head.String())
 	for _, row := range m.dockerRows(limit, room) {
