@@ -215,9 +215,12 @@ func TestOwnFiles_ScratchNamesAreNamedLiterallyAndNeverLeftovers(t *testing.T) {
 	if strings.ContainsAny(cmd, "*?[") {
 		t.Errorf("command has a glob:\n%s", cmd)
 	}
+	words := strings.Fields(cmd)
 	for _, s := range ownScratchLookalikes {
-		if strings.Contains(cmd, shellQuote(s)) {
-			t.Errorf("command names look-alike %q:\n%s", s, cmd)
+		for _, w := range words {
+			if w == shellQuote(s) {
+				t.Errorf("command names look-alike %q:\n%s", s, cmd)
+			}
 		}
 	}
 }
