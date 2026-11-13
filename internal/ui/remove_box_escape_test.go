@@ -183,7 +183,7 @@ func TestRemoveBox_D_CopyCommandWritesTheRawCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("folder %q: payload is not standard base64: %v", folder, err)
 		}
-		want, err := deploy.RemovalCommand(folder)
+		want, err := deploy.RemovalCommand(folder, deploy.Own{})
 		if err != nil {
 			t.Fatalf("RemovalCommand(%q): %v", folder, err)
 		}

@@ -44,14 +44,14 @@ func TestRemovalCommand_RefusesTheOwnersHomeWhateverHOMESays(t *testing.T) {
 	home := passwdHomeOrSkip(t)
 	t.Setenv("HOME", filepath.Join(t.TempDir(), "root"))
 	for _, dir := range []string{home, home + "/", home + "/."} {
-		words, err := RemovalCommandWords(dir)
+		words, err := RemovalCommandWords(dir, Own{})
 		if !errors.Is(err, ErrHomeFolder) {
 			t.Errorf("RemovalCommandWords(%q) error = %v, want ErrHomeFolder", dir, err)
 		}
 		if len(words) != 0 {
 			t.Errorf("RemovalCommandWords(%q) = %q alongside its refusal, want no words", dir, words)
 		}
-		cmd, err := RemovalCommand(dir)
+		cmd, err := RemovalCommand(dir, Own{})
 		if !errors.Is(err, ErrHomeFolder) {
 			t.Errorf("RemovalCommand(%q) error = %v, want ErrHomeFolder", dir, err)
 		}
@@ -69,7 +69,7 @@ func TestRemovalCommandWords_StillNamesAFolderThatIsNotTheOwnersHome(t *testing.
 		t.TempDir(),
 		filepath.Join(home, "orbit-launcher-test-does-not-exist"),
 	} {
-		words, err := RemovalCommandWords(dir)
+		words, err := RemovalCommandWords(dir, Own{})
 		if err != nil {
 			t.Errorf("RemovalCommandWords(%q): %v, want the words", dir, err)
 			continue
