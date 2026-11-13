@@ -353,6 +353,7 @@ func TestRepair_RealPTY_PlanRendersProposedActions(t *testing.T) {
 	skipArrival(t, console)
 	must("▸ Update")
 	send("\x1b[B")
+	send("\x1b[B") // Configure, then Repair
 	send("\r")
 
 	must("Repairs proposed")
@@ -389,6 +390,7 @@ func TestRepair_RealPTY_DiagnosisRendersFindings(t *testing.T) {
 
 	skipArrival(t, console)
 	must("▸ Update") // deployment detected preselects Update
+	send("\x1b[B")   // Configure
 	send("\x1b[B")   // Repair
 	send("\r")
 
@@ -436,6 +438,7 @@ func TestRepair_RealPTY_UnavailableOnLegacyOrbitLine(t *testing.T) {
 	skipArrival(t, console)
 	must("▸ Update")
 	send("\x1b[B")
+	send("\x1b[B") // Configure, then Repair
 	send("\r")
 
 	must("Diagnosis needs a newer Orbit")
@@ -488,6 +491,7 @@ func TestRepair_RealPTY_SafeExecutionLoop(t *testing.T) {
 	skipArrival(t, console)
 	must("▸ Update")
 	send("\x1b[B")
+	send("\x1b[B") // Configure, then Repair
 	send("\r")
 
 	// The plan proposes a safe fix; running it is the preselected act.

@@ -153,7 +153,7 @@ func TestAppModel_SelectingRepairRunsDiagnosisAndMenuReturnsToSplash(t *testing.
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	for i := 0; i < 2; i++ { // Install, Update, Repair
+	for i := 0; i < 3; i++ { // Install, Update, Configure, Repair
 		tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})

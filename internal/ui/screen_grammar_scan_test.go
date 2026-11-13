@@ -218,7 +218,7 @@ func callsIn(files map[string]*ast.File, name string) map[string]int {
 func TestScreenGrammar_FlowFilesUseTheHeaderHelpers(t *testing.T) {
 	_, files := wi9Parse(t)
 	stacked, inline := callsIn(files, "writeHeader"), callsIn(files, "writeInlineHeader")
-	for _, p := range []string{"install.go", "configcollect.go", "notice.go", "update.go", "enginerun.go", "remove.go", "repair.go"} {
+	for _, p := range []string{"install.go", "configcollect.go", "notice.go", "update.go", "configure.go", "enginerun.go", "remove.go", "repair.go"} {
 		if stacked[p]+inline[p] == 0 {
 			t.Errorf("%s calls neither writeHeader nor writeInlineHeader", p)
 		}
@@ -292,7 +292,7 @@ func TestScreenGrammar_SkyIsBuiltOnlyByNewSky(t *testing.T) {
 	}
 
 	calls := callsIn(files, "newSky")
-	for _, p := range []string{"repair.go", "install.go", "update.go", "success.go", "console.go", "splash.go", "remove.go"} {
+	for _, p := range []string{"repair.go", "install.go", "update.go", "configure.go", "success.go", "console.go", "splash.go", "remove.go"} {
 		if calls[p] == 0 {
 			t.Errorf("%s never calls newSky", p)
 		}
