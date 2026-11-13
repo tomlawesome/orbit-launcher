@@ -9,7 +9,7 @@
         [38;2;74;84;104m·[m                         [38;2;74;84;104m·[m                                             
                   [38;2;74;222;128m✓[m [38;2;231;233;238mrestore safe permissions[m[38;2;74;84;104m — absent or empty[m      [38;2;74;84;104m·[m           
                     [38;2;248;113;113m✗[m [38;2;231;233;238mrestart-service[m[38;2;74;84;104m — container-unhealthy[m                     
-                      [38;2;74;84;104m·[m [38;2;74;84;104mrotate-credentials[m[38;2;74;84;104m — secret-stale[m                       
+                      [38;2;74;84;104m·[m [38;2;74;84;104mrotate-credentials — secret-stale[m                       
                                                                                 
                  [38;2;74;84;104m·[m       [38;2;74;84;104m·[m [38;2;74;84;104m✦[m   [38;2;74;84;104m2 done · 1 failed[m                                
                                                                                 
