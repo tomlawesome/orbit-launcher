@@ -229,6 +229,15 @@ func (m UpdateModel) targetVersion() string {
 	return namedTargetVersion(m.targetKnown, m.targetErr, m.target)
 }
 
+// pinnedTo pins the run to the release the screen named, when the lookup
+// said the run must be (#336). Update and Configure share it.
+func (r engineRun) pinnedTo(version string, pin bool) engineRun {
+	if version != "" && pin {
+		return r.withChannel(version)
+	}
+	return r
+}
+
 // namedTargetVersion is targetVersion's rule, shared with Configure.
 func namedTargetVersion(known bool, err error, t release.Target) string {
 	if !known || err != nil {
@@ -366,9 +375,7 @@ func (m UpdateModel) startRun() (tea.Model, tea.Cmd) {
 		title += " — " + deploymentIdentity(m.deployment)
 	}
 	m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
-	if target != "" && m.target.Pin {
-		m.run = m.run.withChannel(target)
-	}
+	m.run = m.run.pinnedTo(target, m.target.Pin)
 	if m.recreate {
 		m.run = m.run.withFolderMoved("recreate")
 	}
