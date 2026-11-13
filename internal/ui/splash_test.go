@@ -36,7 +36,7 @@ func TestSplashModel_ArrowNavigationWraps(t *testing.T) {
 
 func TestSplashModel_EnterChoosesTheSelectedItemAndQuits(t *testing.T) {
 	m := settled(NewSplashModel())
-	m.menu.sel = 2 // Repair
+	m.menu.sel = menuRepair
 
 	updated, cmd := m.Update(key(tea.KeyEnter))
 	m = updated.(SplashModel)
@@ -105,10 +105,10 @@ func TestSplashModel_EnterAfterANumberKeyActs(t *testing.T) {
 
 // The health probe must not fight a caret the digit placed.
 func TestSplashModel_DegradedNeverMovesTheCaretAfterANumberKey(t *testing.T) {
-	m, _ := updateAs(t, seedDeployment(NewSplashModel()), runeKey('4'))
+	m, _ := updateAs(t, seedDeployment(NewSplashModel()), runeKey('5'))
 	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthNotResponding})
-	if m.menu.sel != 3 {
-		t.Errorf("selected = %d, want 3 — the probe moved the caret a digit had placed", m.menu.sel)
+	if m.menu.sel != 4 {
+		t.Errorf("selected = %d, want 4 — the probe moved the caret a digit had placed", m.menu.sel)
 	}
 }
 

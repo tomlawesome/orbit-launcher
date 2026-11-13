@@ -21,7 +21,7 @@
 
 <br />
 
-<img src="docs/images/launcher-menu.png" alt="The launcher's opening screen: a starfield, the Orbit mark, and the menu: Install, Update, Repair, Remove and Exit" width="92%" />
+<img src="docs/images/launcher-menu.png" alt="The launcher's opening screen: a starfield, the Orbit mark, and the menu: Install, Update, Configure, Repair, Remove and Exit" width="92%" />
 
 <br /><br />
 
@@ -115,20 +115,28 @@ Remove works in two steps, and the launcher runs only the first.
    `docker compose down`: it stops Orbit and removes its containers and
    network. It deletes no files, no data volumes and no images.
 2. **The removal command** (you decide whether to run it). The launcher
-   shows a command and offers to copy it, but never runs it. It is
-   `docker compose … down -v && sudo rm -rf <your Orbit folder>`. It
-   deletes the data volumes (the database, with its mail, and the documents and scanner volumes) and the whole folder:
-   configuration, secrets, backups and anything else you put there. It
+   shows a command and offers to copy it, but never runs it. It deletes
+   the data volumes (the database, with its mail, and the documents and
+   scanner volumes) and Orbit's own files, named one by one from the list
+   Orbit keeps in the folder, `.orbit-files`:
+   `(cd <your Orbit folder> && docker compose --env-file .env-orbit down -v && sudo rm -rf -- docker-compose.yml … .orbit-files && sudo rmdir -- config scripts) && sudo rmdir -- <your Orbit folder>`.
+   `rmdir` removes a folder only when it is empty, so `backups/`,
+   `orbit-install-backups/` and anything else you put there stay, and the
+   folder stays while they are in it. The screen names what is left. It
    cannot be undone. It leaves Docker images alone.
 
-If the folder is the root folder or your home folder, the launcher offers
-only the data-volume half and leaves the folder for you. Removing the data
-volumes matters: a database volume left behind makes a later install stop.
+If the folder is the root folder or your home folder, the command is the
+same but never removes the folder itself.
+
+A folder without `.orbit-files` (or with one the launcher refuses to read,
+which the screen says) gets the whole-folder command instead:
+`docker compose … down -v && sudo rm -rf <your Orbit folder>`, which also
+deletes backups and anything else there. For the root or home folder it
+offers only the data-volume half. Removing the data volumes matters: a
+database volume left behind makes a later install stop.
 
 Remove acts only on the Orbit found in the folder you start the launcher
-in. A change so that Remove deletes only Orbit's own files, and keeps
-everything else in the folder, is planned:
-issue #285 in the launcher's GitLab project.
+in.
 
 ## Upgrades and backups
 

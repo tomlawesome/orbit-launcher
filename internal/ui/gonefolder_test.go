@@ -747,7 +747,7 @@ func TestGoneFolder_SplashCaretRules(t *testing.T) {
 func TestGoneFolder_SplashDoesNotMoveAPlacedCaret(t *testing.T) {
 	dir := installedFolder(t)
 	m := started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding))
-	m, _ = updateAs(t, m, key(tea.KeyDown)) // Repair
+	m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyDown)) // Configure, then Repair
 
 	m = answer(t, m, dir, goneMismatch(false))
 

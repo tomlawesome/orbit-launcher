@@ -154,10 +154,10 @@ func TestSplashMaintenance_PreselectsUpdateLikeAlive(t *testing.T) {
 }
 
 func TestSplashMaintenance_ResultDoesNotMoveACaretTheUserPlaced(t *testing.T) {
-	m, _ := updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('4'))
+	m, _ := updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('5'))
 	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthMaintenance})
-	if m.menu.sel != 3 {
-		t.Errorf("selected = %d, want 3", m.menu.sel)
+	if m.menu.sel != 4 {
+		t.Errorf("selected = %d, want 4", m.menu.sel)
 	}
 	if !m.userNavigated {
 		t.Error("userNavigated was cleared by the result")

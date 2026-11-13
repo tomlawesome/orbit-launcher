@@ -94,12 +94,18 @@ func grammarScreens() []grammarScreen {
 		// Dead ends: one row, the back act.
 		{name: "Update not found", build: updateNotFound, rows: []string{"Menu"}},
 		{name: "Remove not found", build: removeNotFound, rows: []string{"Menu"}},
+		{name: "Configure not found", build: configureNotFound, rows: []string{"Menu"}},
+		{name: "Configure prepared", build: configurePrepared, rows: []string{"Menu"}},
+		{name: "Configure unsupported", build: configureUnsupported, rows: []string{"Menu"}},
 		{name: "Install profile unavailable", build: installUnavailableProfile,
 			rows: []string{"Back"}, escShows: "Choose a deployment profile"},
 		// Questions: Cancel declines and goes where Esc goes.
 		{name: "Install stale volume", build: staleInstall, rows: []string{"Continue anyway", "Cancel"}},
 		{name: "Update confirm", build: confirmUpdate, rows: []string{"Update Orbit", "Cancel"}},
 		{name: "Remove confirm", build: confirmRemove, rows: []string{"Stand down Orbit", "Cancel"}},
+		{name: "Configure confirm", build: configureConfirm,
+			rows: []string{"Change to Documents", "Cancel"}, escShows: "Choose a deployment profile"},
+		{name: "Configure profile", build: configureProfile},
 		{name: "Install profile", build: profileInstall},
 		// After-screens: the flow's actions, then Menu, then Exit.
 		{name: "Remove removed", build: removedScreen, rows: []string{"Copy command", "Menu", "Exit"}},
@@ -500,7 +506,8 @@ func TestMenuGrammar_AppEnterAfterADigitActs(t *testing.T) {
 	}{
 		{'1', appStateInstall},
 		{'2', appStateUpdate},
-		{'4', appStateRemove},
+		{'3', appStateConfigure},
+		{'5', appStateRemove},
 	}
 	for _, f := range flows {
 		t.Run(string(f.digit), func(t *testing.T) {
@@ -513,9 +520,9 @@ func TestMenuGrammar_AppEnterAfterADigitActs(t *testing.T) {
 		})
 	}
 	t.Run("Exit", func(t *testing.T) {
-		m, cmd := updateAs(t, leaveApp(t), runeKey('5'))
+		m, cmd := updateAs(t, leaveApp(t), runeKey('6'))
 		if isQuit(cmd) {
-			t.Fatal("5 quit the launcher; it only moves the caret to Exit")
+			t.Fatal("6 quit the launcher; it only moves the caret to Exit")
 		}
 		if _, cmd := updateAs(t, m, key(tea.KeyEnter)); !isQuit(cmd) {
 			t.Fatal("Enter on Exit did not quit")

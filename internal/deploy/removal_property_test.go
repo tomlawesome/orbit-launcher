@@ -17,7 +17,7 @@ import (
 // bundled-short forms, or the rm subcommand.
 func destructiveArgs(value string) bool {
 	switch value {
-	case "rm", "--volumes", "--volume":
+	case "rm", "rmdir", "--volumes", "--volume":
 		return true
 	}
 	// -v, or any bundle of short flags that holds it (-fv, -vf).
