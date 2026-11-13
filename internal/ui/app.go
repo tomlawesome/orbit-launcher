@@ -608,6 +608,10 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.configure.seams = m.flowSeams
 		m.configure.send = m.flowSend
 		m.configure.lookupInstalledAt = m.flowInstalledAt
+		m.configure.lookupTarget = m.lookupTarget
+		if otherFolder && deployment != nil {
+			m.configure = m.configure.refuseOtherFolder(mismatch)
+		}
 		m.state = appStateConfigure
 		return m, tea.Batch(sizeCmd, m.configure.Init())
 	default:

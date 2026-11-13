@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
+	"github.com/tomlawesome/orbit-launcher/internal/release"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/style"
 )
@@ -31,7 +32,13 @@ const (
 	// configureStateUnchanged: the run succeeded but the profile did not
 	// change (an Orbit release that predates profile changes on update).
 	configureStateUnchanged
+	// configureStateOtherFolder is the dead end for a deployment whose app
+	// container was started from another folder (#316, #334), as Update's.
+	configureStateOtherFolder
 )
+
+// configureOtherFolderBody is the refusal's first body line.
+const configureOtherFolderBody = "Configure here would act on that folder's Orbit, and Orbit's installer refuses it."
 
 // ConfigureModel is the Configure flow (#286): change an installed
 // deployment's profile. It draws the same profile table as Install, asks
@@ -60,6 +67,21 @@ type ConfigureModel struct {
 	kept      string
 
 	confirm menu // configureConfirmRows, the Change row first
+
+	// The other-folder refusal, as UpdateModel's: refusal is its screen,
+	// carriedOn the person's "Run from this folder", recreate the signal
+	// the run then sends, leaveNote "Move it back"'s line (#316, #334, #1576).
+	refusal   folderRefusal
+	carriedOn bool
+	recreate  bool
+	leaveNote string
+
+	// The release the confirm line names (#336): lookupTarget is Update's
+	// seam (nil: none); targetKnown is set once it has answered.
+	target       release.Target
+	targetErr    error
+	targetKnown  bool
+	lookupTarget func(context.Context) (release.Target, error)
 
 	// left is Esc, Cancel or Menu on a screen that started nothing: back
 	// to the main menu (#210).
@@ -107,6 +129,9 @@ func configureConfirmRows(to string) []string { return []string{"Change to " + t
 // the person left before anything ran, otherwise the engine run's. The
 // unchanged-profile screen is not a success, so it reports nothing.
 func (m ConfigureModel) Outcome() flowOutcome {
+	if m.leaveNote != "" {
+		return flowOutcome{LeaveNote: m.leaveNote}
+	}
 	if m.left {
 		return backToMenu
 	}
@@ -122,7 +147,22 @@ func (m ConfigureModel) Init() tea.Cmd {
 	if m.state != configureStateProfile {
 		return nil
 	}
-	return installedAtCmd(m.lookupInstalledAt, m.deployment)
+	return tea.Batch(installedAtCmd(m.lookupInstalledAt, m.deployment), targetLookupCmd(m.lookupTarget, m.targetKnown))
+}
+
+// refuseOtherFolder turns the flow into the screen that names the folder
+// the container was started from, as Update's does (#316, #334).
+func (m ConfigureModel) refuseOtherFolder(mm deploy.Mismatch) ConfigureModel {
+	m.recreate = false
+	m.state, m.refusal, m.carriedOn = configureStateOtherFolder, newRunHereRefusal(mm), false
+	return m
+}
+
+// carryOn is "Run from this folder": the profile screen, as from the
+// container's own folder; the run then asks the engine to recreate.
+func (m ConfigureModel) carryOn() (tea.Model, tea.Cmd) {
+	m.state, m.carriedOn, m.recreate = configureStateProfile, true, true
+	return m, m.Init()
 }
 
 // Update implements tea.Model.
@@ -145,6 +185,22 @@ func (m ConfigureModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// model's message, never the engine run's.
 	if at, ok := msg.(installedAtMsg); ok {
 		m.installedAt = at.at
+		return m, nil
+	}
+	if t, ok := msg.(targetMsg); ok {
+		m.target, m.targetErr, m.targetKnown = t.target, t.err, true
+		return m, nil
+	}
+
+	// The running check may answer after the flow has opened: as Update's,
+	// before the run starts another folder's container is the refusal.
+	if r, ok := msg.(runningResultMsg); ok {
+		switch m.state {
+		case configureStateProfile, configureStateConfirm, configureStateUnavailable:
+			if lateFolderRefusal(r, m.targetDir, m.carriedOn) {
+				m = m.refuseOtherFolder(r.mismatch)
+			}
+		}
 		return m, nil
 	}
 
@@ -205,6 +261,18 @@ func (m ConfigureModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.state = configureStateProfile
 		}
 		return m, nil
+	case configureStateOtherFolder:
+		var carry, leave, back bool
+		m.refusal, carry, leave, back = m.refusal.key(msg)
+		if back {
+			m.leaveNote = moveBackNote(m.refusal.mismatch.Folder)
+			return m, tea.Quit
+		}
+		if carry {
+			return m.carryOn()
+		}
+		m.left = leave
+		return m, nil
 	case configureStateProfile:
 		return m.handleProfileKey(msg)
 	case configureStateConfirm:
@@ -258,6 +326,9 @@ func (m ConfigureModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		m.state = configureStateRunning
 		title := "Configure — " + m.requestedRow()
 		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+		if m.recreate {
+			m.run = m.run.withFolderMoved("recreate")
+		}
 		var cmd tea.Cmd
 		m.run, cmd = m.run.start(m.width, m.height)
 		return m, cmd
@@ -303,6 +374,8 @@ func (m ConfigureModel) view() string {
 		return m.run.view(m.width, m.height)
 	case configureStateUnchanged:
 		return m.viewUnchanged()
+	case configureStateOtherFolder:
+		return m.refusal.view(m.star, m.width, m.height, configureOtherFolderBody)
 	}
 	return ""
 }
@@ -386,9 +459,14 @@ func (m ConfigureModel) viewConfirm() string {
 	writeWrappedIn(&b, style.MutedText, "It runs as an update inside the mission console, right here: Orbit restarts briefly on the latest Orbit release. Your settings and data are kept.", edge, textArea(m.width))
 	fmt.Fprintln(&b)
 	// Its own line (owner, 5a): a profile change is an update run, so it
-	// also moves Orbit to its newest release. No version: the launcher
-	// does not know the newest release before the run.
-	writeWrappedIn(&b, style.Ink, "This also updates Orbit to its newest release.", edge, textArea(m.width))
+	// also moves Orbit to its newest release. It names the version when
+	// Update's release lookup (#336) knows it, written as Update's confirm
+	// writes it; with the lookup failed or unanswered, it names none.
+	also := "This also updates Orbit to its newest release"
+	if v := namedTargetVersion(m.targetKnown, m.targetErr, m.target); v != "" {
+		also += ", " + shownVersion(v)
+	}
+	writeWrappedIn(&b, style.Ink, also+".", edge, textArea(m.width))
 	fmt.Fprintln(&b)
 	m.confirm.write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())

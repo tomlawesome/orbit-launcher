@@ -130,6 +130,16 @@ func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
 	return m
 }
 
+// lateFolderRefusal says whether a running answer that arrives after the
+// flow has opened turns its screen into the refusal (#316, #334): the
+// answer is for this folder and names another one, and a folder still
+// gone is no mismatch once the person carried on. Update and Configure
+// share it.
+func lateFolderRefusal(r runningResultMsg, targetDir string, carriedOn bool) bool {
+	return r.dir == targetDir && r.mismatch.Kind == deploy.MismatchFolder &&
+		!(carriedOn && r.mismatch.FolderGone && !r.mismatch.BuildDiffers)
+}
+
 // carryOn is the row (#334): the flow goes on as from the container's own
 // folder, to the confirmation and its install-date lookup. It writes,
 // relabels and asks Docker nothing itself.
@@ -168,9 +178,12 @@ type targetMsg struct {
 
 // targetCmd is the release lookup, nil with no seam or once answered.
 // The lookup bounds its own call (release.ResolveTarget).
-func (m UpdateModel) targetCmd() tea.Cmd {
-	lookup := m.lookupTarget
-	if lookup == nil || m.targetKnown {
+func (m UpdateModel) targetCmd() tea.Cmd { return targetLookupCmd(m.lookupTarget, m.targetKnown) }
+
+// targetLookupCmd is the release lookup as a command, shared with
+// Configure: nil with no seam or once answered.
+func targetLookupCmd(lookup func(context.Context) (release.Target, error), known bool) tea.Cmd {
+	if lookup == nil || known {
 		return nil
 	}
 	return func() tea.Msg {
@@ -213,10 +226,15 @@ func (m UpdateModel) answerTarget(t targetMsg) (tea.Model, tea.Cmd) {
 // targetVersion is the release the lookup named, "" while it has not
 // answered or could not say.
 func (m UpdateModel) targetVersion() string {
-	if !m.targetKnown || m.targetErr != nil {
+	return namedTargetVersion(m.targetKnown, m.targetErr, m.target)
+}
+
+// namedTargetVersion is targetVersion's rule, shared with Configure.
+func namedTargetVersion(known bool, err error, t release.Target) string {
+	if !known || err != nil {
 		return ""
 	}
-	return m.target.Version
+	return t.Version
 }
 
 // installedVersion is the deployment's recorded Orbit release, "" when
@@ -258,8 +276,7 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// that is back refuses (#334). An answer for another folder is not
 	// this flow's.
 	if r, ok := msg.(runningResultMsg); ok {
-		if m.state == updateStateConfirm && r.dir == m.targetDir && r.mismatch.Kind == deploy.MismatchFolder &&
-			!(m.carriedOn && r.mismatch.FolderGone && !r.mismatch.BuildDiffers) {
+		if m.state == updateStateConfirm && lateFolderRefusal(r, m.targetDir, m.carriedOn) {
 			m = m.refuseOtherFolder(r.mismatch)
 		}
 		return m, nil
