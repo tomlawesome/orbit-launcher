@@ -21,7 +21,7 @@
 
 <br />
 
-<img src="docs/images/launcher-menu.png" alt="The launcher's opening screen: a starfield, the Orbit mark, and the menu: Install, Update, Repair, Remove and Exit" width="92%" />
+<img src="docs/images/launcher-menu.png" alt="The launcher's opening screen: a starfield, the Orbit mark, and the menu: Install, Update, Configure, Repair, Remove and Exit" width="92%" />
 
 <br /><br />
 

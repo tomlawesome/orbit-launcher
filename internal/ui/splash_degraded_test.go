@@ -178,10 +178,10 @@ func TestSplashDegraded_ResultDoesNotMoveACaretTheUserPlaced(t *testing.T) {
 		t.Errorf("selected = %d, want 4", m.menu.sel)
 	}
 	// #341: nor does a fault with a ready answer.
-	m, _ = updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('4'))
+	m, _ = updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('5'))
 	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthResponding, faults: []deploy.ServiceFault{{Service: "orbit-clamav", Word: "unhealthy"}}})
-	if m.state != stateDegraded || m.menu.sel != 3 {
-		t.Errorf("state = %v, selected = %d, want degraded with the caret still on 3", m.state, m.menu.sel)
+	if m.state != stateDegraded || m.menu.sel != 4 {
+		t.Errorf("state = %v, selected = %d, want degraded with the caret still on 4", m.state, m.menu.sel)
 	}
 }
 
