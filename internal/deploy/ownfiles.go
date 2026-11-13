@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // FileList is the manifest Orbit writes into every deployment (from
@@ -32,6 +33,44 @@ const (
 // fileListComponent is one path component a FileList line may hold.
 var fileListComponent = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+// listingMax bounds how many entries OwnFiles reads from one folder. A
+// folder holding more is treated as one whose listing failed: the
+// list's names still stand, but what else is there is not claimed.
+const listingMax = 4096
+
+// scratchExact and scratchPrefixes are the runtime names Orbit's engine,
+// install.sh and the launcher leave in a deployment, fixed by contract
+// (install.sh rollback_walk_folder; the launcher's own .env-orbit.tmp-*):
+// the lock, a stale lock, staging and recovery folders, and the
+// half-written .env-orbit copies. They are matched literally against the
+// folder's listing, a prefix followed by at least one [A-Za-z0-9._-]
+// character, so the command names the actual entries, never a glob.
+var (
+	scratchExact    = map[string]bool{".orbit-engine.lock": true}
+	scratchPrefixes = []string{
+		".orbit-engine.lock.stale-",
+		".orbit-install-staging.",
+		".orbit-repair-recovery.",
+		EnvFile + ".installing.",
+		EnvFile + ".updating.",
+		EnvFile + ".migrating.",
+		EnvFile + stagingSuffix,
+	}
+)
+
+// isScratch reports whether a top-level entry name is a scratch name.
+func isScratch(name string) bool {
+	if scratchExact[name] {
+		return true
+	}
+	for _, p := range scratchPrefixes {
+		if rest, ok := strings.CutPrefix(name, p); ok && fileListComponent.MatchString(rest) {
+			return true
+		}
+	}
+	return false
+}
+
 // keptFolders are never Orbit's to delete, whatever a FileList says:
 // the backups and install.sh's rescued copies are the way back after a
 // command that deletes the data volumes (owner, 2026-10-22, 20a).
@@ -41,8 +80,13 @@ var keptFolders = map[string]bool{"backups": true, "orbit-install-backups": true
 // The zero Own means no usable FileList, which is the whole-folder
 // command.
 type Own struct {
+	// Listed is set when the folder's FileList was read and accepted:
+	// the command is then file by file even when nothing it names is
+	// present, and never the whole folder (owner, 2026-10-22, 20a).
+	Listed bool
 	// Names are the FileList's paths that are present, relative to the
-	// folder, in the list's order, without a trailing slash. None is
+	// folder, in the list's order, without a trailing slash, then the
+	// scratch names present at the top level, in listing order. None is
 	// reached through a symbolic link.
 	Names []string
 	// Leftovers are the entries in the folder that are not Orbit's,
@@ -53,49 +97,109 @@ type Own struct {
 	// ManifestIgnored is why a FileList that was there was refused
 	// whole; nil when there was none or it was accepted.
 	ManifestIgnored error
+	// ListingFailed is why the folder, or a folder holding Orbit's files,
+	// could not be listed in full (unreadable, or over listingMax
+	// entries). The list's names still stand; Leftovers is then empty,
+	// and nothing is claimed about what else is there.
+	ListingFailed error
 }
 
+// FileByFile reports whether own gives the file-by-file command: a list
+// was accepted, or names were given.
+func (own Own) FileByFile() bool { return own.Listed || len(own.Names) > 0 }
+
 // OwnFiles reads targetDir's FileList and the folder as it stands. It
-// only reads: nothing is changed. A missing FileList is the zero Own; a
-// FileList failing any check (RequireTrustedPath, size, line count, the
-// path pattern, never backups or orbit-install-backups) is ignored whole
-// and says why in ManifestIgnored, with no names. The only error is
-// ErrNoTargetDir.
+// only reads: nothing is changed. A folder without a FileList is the
+// zero Own, whatever the folder itself is. A FileList failing any check
+// (RequireTrustedPath, size, line count, the path pattern, never backups
+// or orbit-install-backups) is ignored whole and says why in
+// ManifestIgnored, with no names. The only error is ErrNoTargetDir.
 func OwnFiles(targetDir string) (Own, error) {
 	if targetDir == "" {
 		return Own{}, ErrNoTargetDir
 	}
-	lines, err := readFileList(targetDir)
-	if errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(targetDir, FileList)); errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: Lstat of the list's name in the operator's folder
 		return Own{}, nil
 	}
+	lines, err := readFileList(targetDir)
 	if err != nil {
 		return Own{ManifestIgnored: err}, nil
 	}
-	names := presentNames(targetDir, lines)
-	leftovers, err := leftoversOf(targetDir, names)
-	if err != nil {
-		return Own{ManifestIgnored: err}, nil
+	own := Own{Listed: true, Names: presentNames(targetDir, lines)}
+	top, err := listFolder(targetDir)
+	for _, e := range top { // what was read stands, even from a listing cut short
+		if isScratch(e.Name()) && !contains(own.Names, e.Name()) {
+			own.Names = append(own.Names, e.Name())
+		}
 	}
-	return Own{Names: names, Leftovers: leftovers}, nil
+	if err == nil {
+		own.Leftovers, err = leftoversOf(targetDir, top, own.Names)
+	}
+	if err != nil {
+		own.Leftovers, own.ListingFailed = nil, err
+	}
+	return own, nil
+}
+
+func contains(in []string, s string) bool {
+	for _, v := range in {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// listFolder lists dir, sorted, reading at most listingMax entries: a
+// folder holding more answers what was read and an error.
+func listFolder(dir string) ([]os.DirEntry, error) {
+	f, err := os.Open(dir) //nolint:gosec // G304: listing the operator's folder
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	entries, err := f.ReadDir(listingMax)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if len(entries) == listingMax {
+		if more, _ := f.ReadDir(1); len(more) > 0 {
+			return entries, fmt.Errorf("%s holds more than %d entries", dir, listingMax)
+		}
+	}
+	return entries, nil
 }
 
 // readFileList returns the FileList's path lines, slashes trimmed, in
-// order and without repeats, or why it is refused. A missing list is an
-// os.ErrNotExist error.
+// order and without repeats, or why it is refused. The file is opened
+// without following a link and checked again on the open descriptor, so
+// the trust check and the read are of the same file.
 func readFileList(dir string) ([]string, error) {
+	dir = filepath.Clean(dir)
+	path := filepath.Join(dir, FileList)
 	if err := RequireTrustedPath(dir, FileList); err != nil {
-		var untrusted *UntrustedPathError
-		if !errors.As(err, &untrusted) && errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
 		return nil, fmt.Errorf("%s: %w", FileList, err)
 	}
-	f, err := os.Open(filepath.Join(filepath.Clean(dir), FileList)) //nolint:gosec // G304: the trusted-path check above
+	checked, err := os.Lstat(path) //nolint:gosec // G703: the trusted-path check above
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", FileList, err)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // G304: the trusted-path check above
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", FileList, err)
 	}
 	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", FileList, err)
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(checked, opened) {
+		return nil, &UntrustedPathError{Path: path, Reason: "it changed while it was being checked"}
+	}
+	if err := checkModeAndOwner(path, opened, launcherEUID()); err != nil {
+		return nil, err
+	}
 	data, err := io.ReadAll(io.LimitReader(f, fileListMaxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", FileList, err)
@@ -184,10 +288,11 @@ func reachable(dir, name string) bool {
 	return true
 }
 
-// leftoversOf lists what in dir is not Orbit's: every entry that is not
-// a name, descending into a real directory that holds a name (config,
-// scripts) to find a foreign entry there. Sorted.
-func leftoversOf(dir string, names []string) ([]string, error) {
+// leftoversOf lists what in dir is not Orbit's, from its top-level
+// listing top: every entry that is not a name, descending into a real
+// directory that holds a name (config, scripts) to find a foreign entry
+// there. Sorted. A folder that cannot be listed in full is an error.
+func leftoversOf(dir string, top []os.DirEntry, names []string) ([]string, error) {
 	named := map[string]bool{}
 	holds := map[string]bool{} // directories with a name below them
 	for _, n := range names {
@@ -197,12 +302,8 @@ func leftoversOf(dir string, names []string) ([]string, error) {
 		}
 	}
 	var out []string
-	var walk func(rel string) error
-	walk = func(rel string) error {
-		entries, err := os.ReadDir(filepath.Join(dir, rel)) //nolint:gosec // G304: listing the operator's folder
-		if err != nil {
-			return err
-		}
+	var walk func(rel string, entries []os.DirEntry) error
+	walk = func(rel string, entries []os.DirEntry) error {
 		for _, e := range entries {
 			p := e.Name()
 			if rel != "" {
@@ -211,7 +312,11 @@ func leftoversOf(dir string, names []string) ([]string, error) {
 			switch {
 			case named[p]:
 			case holds[p] && e.IsDir() && e.Type()&os.ModeSymlink == 0:
-				if err := walk(p); err != nil {
+				inner, err := listFolder(filepath.Join(dir, p))
+				if err != nil {
+					return err
+				}
+				if err := walk(p, inner); err != nil {
 					return err
 				}
 			default:
@@ -220,7 +325,7 @@ func leftoversOf(dir string, names []string) ([]string, error) {
 		}
 		return nil
 	}
-	if err := walk(""); err != nil {
+	if err := walk("", top); err != nil {
 		return nil, err
 	}
 	sort.Strings(out)
@@ -268,15 +373,18 @@ func rmdirFolders(names []string) []string {
 //	 sudo rmdir -- <folder>
 //
 // One subshell, so every name is relative to the folder and nothing
-// after a failed cd runs; rmdir refuses a folder that is not empty and
+// after a failed cd runs; with no names present the rm is left out, and
+// with no names in a subfolder so is the first rmdir; rmdir refuses a folder that is not empty and
 // says so, which stops the chain. The root and home folders get no
 // final rmdir (owner, 2026-10-22, 21a).
 func ownRemovalWords(targetDir string, own Own) []string {
 	q := shellQuote(targetDir)
-	words := []string{"(cd", q, "&&", "docker", "compose", "--env-file", EnvFile, "down", "-v",
-		"&&", "sudo", "rm", "-rf", "--"}
-	for _, n := range own.Names {
-		words = append(words, shellQuote(n))
+	words := []string{"(cd", q, "&&", "docker", "compose", "--env-file", EnvFile, "down", "-v"}
+	if len(own.Names) > 0 {
+		words = append(words, "&&", "sudo", "rm", "-rf", "--")
+		for _, n := range own.Names {
+			words = append(words, shellQuote(n))
+		}
 	}
 	if dirs := rmdirFolders(own.Names); len(dirs) > 0 {
 		words = append(words, "&&", "sudo", "rmdir", "--")
