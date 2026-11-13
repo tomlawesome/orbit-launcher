@@ -147,6 +147,13 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   state (`on`/`off`); Enter on it flips it in place. Its consequence, while
   off, is one faint line under the table. Mock-up:
   `design/340-scanner/round-1/` (direction A).
+- **The gap before Remove is the one row the splash gives up** (2026-11-13,
+  #286): when the settled block would be taller than the body, that blank
+  row yields, and nothing else does. Every other row is a fact (#316,
+  #341) or a boundary (mark and wordmark, facts and menu); the gap is a
+  grouping. It fires only in the full-profile worst case at 80x26: the open
+  drawer with five missing services, the running-mismatch rows and the
+  update notice, with Configure's sixth menu row.
 - **No keybind hints, ever.** No navigation instructions anywhere; the
   screen teaches itself.
 - **The foot is one centred faint line per screen**: splash carries

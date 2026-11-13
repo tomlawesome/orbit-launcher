@@ -699,6 +699,34 @@ func (m SplashModel) view() string {
 // wordmark, identity tight beneath it, optional update notice, blank,
 // then the menu in the centred grammar.
 func (m SplashModel) centreBlockLines() []string {
+	lines := append(m.identityLines(), "")
+	gap := m.menuGapKept()
+	for i, item := range MainMenu {
+		if item.Gap && gap {
+			lines = append(lines, "")
+		}
+		lines = append(lines, menuRow(item.Label, i == m.menu.sel && !m.onStatusRow))
+	}
+	return lines
+}
+
+// menuGapKept says whether the menu keeps its blank row before Remove.
+// It is the one row the splash gives up, and only when the settled block
+// would otherwise be taller than the body (#286: the full-profile worst
+// case at 80x26, the open drawer with five missing services, the
+// running-mismatch rows and the update notice). Every other row is a
+// fact or a boundary; this one is a grouping.
+func (m SplashModel) menuGapKept() bool {
+	bodyHeight := m.height - 1
+	if bodyHeight <= 0 {
+		return true
+	}
+	return len(m.identityLines())+1+menuLineCount(true) <= bodyHeight
+}
+
+// identityLines are the settled centre block's rows above the menu:
+// mark, blank, wordmark, then the identity block.
+func (m SplashModel) identityLines() []string {
 	var lines []string
 
 	lines = append(lines, m.markStyle().Render(style.SymbolMark))
@@ -740,14 +768,6 @@ func (m SplashModel) centreBlockLines() []string {
 	if m.updateNotice != "" {
 		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
 		lines = append(lines, style.MutedText.Render("re-run Orbit's installer: curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash"))
-	}
-	lines = append(lines, "")
-
-	for i, item := range MainMenu {
-		if item.Gap {
-			lines = append(lines, "")
-		}
-		lines = append(lines, menuRow(item.Label, i == m.menu.sel && !m.onStatusRow))
 	}
 	return lines
 }
@@ -861,17 +881,18 @@ func (m SplashModel) viewIntro() string {
 		if settledTop < bodyHeight {
 			lines[settledTop] = m.markStyle().Render(style.SymbolMark)
 		}
-		identity := settledLines[3 : len(settledLines)-menuLineCount()-1]
+		gap := m.menuGapKept()
+		identity := settledLines[3 : len(settledLines)-menuLineCount(gap)-1]
 		for i, l := range identity {
 			if r := settledTop + 3 + i; r < bodyHeight {
 				lines[r] = l
 			}
 		}
-		menuTop := settledTop + len(settledLines) - menuLineCount()
+		menuTop := settledTop + len(settledLines) - menuLineCount(gap)
 		item := 0
 		for i, mi := range MainMenu {
 			r := menuTop + item
-			if mi.Gap {
+			if mi.Gap && gap {
 				item++
 				r++
 			}
@@ -923,11 +944,12 @@ func (m SplashModel) introWordmark(fade, s float64) string {
 	return b.String()
 }
 
-// menuLineCount is the menu's row count including its one gap line.
-func menuLineCount() int {
+// menuLineCount is the menu's row count, with its one gap line when gap
+// is set.
+func menuLineCount(gap bool) int {
 	n := 0
 	for _, item := range MainMenu {
-		if item.Gap {
+		if item.Gap && gap {
 			n++
 		}
 		n++
