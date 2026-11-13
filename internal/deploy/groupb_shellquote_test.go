@@ -135,7 +135,7 @@ func groupBEvalWords(t *testing.T, words []string) []string {
 func TestGroupB_W2_RemovalCommandForAnOddFolderIsFaithful(t *testing.T) {
 	for _, dir := range groupBOddWords {
 		dir = "/srv/" + strings.TrimPrefix(dir, "/") // no "//": the paths are joined cleanly
-		words, err := RemovalCommandWords(dir)
+		words, err := RemovalCommandWords(dir, Own{})
 		if err != nil {
 			t.Fatalf("RemovalCommandWords(%q): %v", dir, err)
 		}
@@ -144,7 +144,7 @@ func TestGroupB_W2_RemovalCommandForAnOddFolderIsFaithful(t *testing.T) {
 				t.Errorf("dir %q: word %q holds a non-printing character", dir, w)
 			}
 		}
-		line, err := RemovalCommand(dir)
+		line, err := RemovalCommand(dir, Own{})
 		if err != nil {
 			t.Fatalf("RemovalCommand(%q): %v", dir, err)
 		}
