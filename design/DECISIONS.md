@@ -139,6 +139,19 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   back by ai/orbit#1456), not a takeover. Order of the three Install
   pre-flights: the same-project clash, this, the stale volume. A check that
   cannot run, or finds two such containers, stays silent.
+- **Remove's stood-down tail** (#285; owner, 2026-10-22, 19a–21a, note
+  41988): with the deployment's `.orbit-files` read, the box offers Orbit's
+  files by name and `rmdir` for `config`, `scripts` and the folder; the
+  warning reads "this deletes all mail, documents and configuration — it
+  cannot be undone", then one muted line: "The folder is removed too:
+  nothing else is in it.", or "Left in place for you: a, b, c and N more —
+  the folder stays while they are in it." (backups and
+  orbit-install-backups are never in the command), or for the home or
+  root folder "Your home folder itself is never removed." / "The root
+  folder itself is never removed." A folder without the list keeps the
+  whole-folder screen; a list refused whole adds "Orbit's own file list
+  here could not be read." The confirm screen's full prose shows for a
+  home or root folder that has the list.
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.

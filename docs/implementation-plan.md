@@ -728,6 +728,9 @@ reversible), then a copy-pasteable, exact, irreversible removal command
 (never auto-executed).
 
 - Screens from `design/mockups.html` sections 09–11.
+- The command names Orbit's own files from the deployment's `.orbit-files`
+  and removes folders with `rmdir`, so backups and anything else stay
+  (#285); a folder without that list gets the whole-folder command.
 - Test asserts the app itself **never** invokes the destructive command —
   this is a property worth actively testing (grep the binary's actual
   `docker`/`exec` call sites in a unit test, not just trusting the design

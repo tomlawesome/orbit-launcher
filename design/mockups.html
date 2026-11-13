@@ -732,12 +732,14 @@
                 volumes are still on disk at <span style="color:var(--text)">/opt/orbit</span> —
                 nothing has been deleted.
               </div>
-              <div style="font-size:11px;color:var(--text-faint);margin:20px 0 8px;">To fully remove Orbit from this machine, copy and run</div>
+              <div style="font-size:11px;color:var(--text-faint);margin:20px 0 8px;">To remove Orbit from this machine, copy and run</div>
               <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg-panel);padding:12px 14px;font-size:12px;color:var(--text);margin-bottom:14px;">
-                docker compose -f /opt/orbit/docker-compose.yml down -v \<br/>
-                &nbsp;&nbsp;&amp;&amp; sudo rm -rf /opt/orbit
+                (cd /opt/orbit &amp;&amp; docker compose --env-file .env-orbit down -v \<br/>
+                &nbsp;&nbsp;&amp;&amp; sudo rm -rf -- docker-compose.yml … .orbit-files \<br/>
+                &nbsp;&nbsp;&amp;&amp; sudo rmdir -- config scripts) &amp;&amp; sudo rmdir -- /opt/orbit
               </div>
-              <div class="note" style="color:var(--error);">This deletes all mail, documents, and configuration. It cannot be undone.</div>
+              <div class="note" style="color:var(--error);">This deletes all mail, documents and configuration — it cannot be undone.</div>
+              <div class="note" style="color:var(--text-muted);font-size:13px;">Left in place for you: backups — the folder stays while they are in it.</div>
               <div class="actions"><span class="sel">▸ Copy command</span><span class="un">Exit</span></div>
             </div>
           </div>
