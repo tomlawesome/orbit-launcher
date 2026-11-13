@@ -386,6 +386,10 @@ func TestRemoveOwn_AnUnreadableFolderIsNotARefusedListOnScreen(t *testing.T) {
 			t.Errorf("screen shows %q for an unreadable config/:\n%s", not, screen(m))
 		}
 	}
+	// It cannot say the folder is empty, so it says what holds either way.
+	if !strings.Contains(flat, "The folder stays if anything else is still in it.") || strings.Contains(flat, "removed too") {
+		t.Errorf("an unreadable config/ should say the folder stays if anything else is in it:\n%s", screen(m))
+	}
 	copied := ownCopied(t, m, &clip)
 	if strings.Contains(copied, "rm -rf "+dir) || !strings.Contains(copied, "sudo rm -rf -- docker-compose.yml") {
 		t.Errorf("command is not the list's file-by-file one:\n%s", copied)
