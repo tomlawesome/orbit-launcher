@@ -61,8 +61,11 @@ type RepairModel struct {
 	// Execution evidence (orbit#261 slice 4): what ran, how it ended,
 	// with findings/diagnosis holding the post-execution re-diagnosis.
 	executeResults []engine.ExecuteResult
-	execSummary    *engine.ExecutionSummary
-	dangerous      *engine.Dangerous
+	// execStderr is the stderr tail of the safe run, kept for the Docker
+	// lines a failed start prints (#256).
+	execStderr  []string
+	execSummary *engine.ExecutionSummary
+	dangerous   *engine.Dangerous
 
 	// The dangerous rotation's machine-prompt session.
 	stdin io.WriteCloser
@@ -310,6 +313,7 @@ func defaultPrepareRotate(ctx context.Context, targetDir string) (*engine.Stream
 func (m *RepairModel) startExecution() {
 	m.findings, m.diagnosis = nil, nil
 	m.executeResults, m.execSummary = nil, nil
+	m.execStderr = nil
 	m.dangerous = nil
 	m.manualNotes = nil
 	m.stream, m.stdin = nil, nil
@@ -608,6 +612,7 @@ func (m RepairModel) handleDone(s engine.DoneMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state = repairExecuted
+		m.execStderr = s.StderrTail
 		m.menu = menu{}
 		return m, nil
 	}
@@ -676,7 +681,7 @@ func (m RepairModel) planMenu() []string {
 func (m RepairModel) planHasSafe() bool {
 	for _, p := range m.planActions {
 		switch p.Action {
-		case "fix-permissions", "restore-transaction", "restart-services", "restore-compose-file":
+		case "fix-permissions", "restore-transaction", "restart-services", "start-services", "restore-compose-file":
 			return true
 		}
 	}
@@ -992,6 +997,10 @@ func (m RepairModel) viewExecuted() string {
 	for _, e := range m.executeResults {
 		fmt.Fprintln(&b, executeLine(e))
 	}
+	// Everything below the execute rows is laid out into rest, so the
+	// Docker rows know the room the screen leaves them (#256).
+	head := b
+	b = strings.Builder{}
 	if len(m.executeResults) > 0 {
 		fmt.Fprintln(&b)
 	}
@@ -1040,7 +1049,43 @@ func (m RepairModel) viewExecuted() string {
 	}
 	fmt.Fprintln(&b)
 	m.menu.over(executedMenu).write(&b)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	rest := b.String()
+	// Four rows stay clear: the footer row, one row of sky above and
+	// below the block, and the spec's own spare row (#256), so a long
+	// Docker line never crowds the menu off a short terminal.
+	room := max(1, m.height-strings.Count(head.String(), "\n")-strings.Count(rest, "\n")-4)
+	var out strings.Builder
+	out.WriteString(head.String())
+	for _, row := range m.dockerRows(limit, room) {
+		fmt.Fprintln(&out, style.Tagline.Render(row))
+	}
+	out.WriteString(rest)
+	return skyBlock(m.star, m.width, m.height, out.String())
+}
+
+// dockerRows is what Docker said about a start that failed: the run's
+// stderr lines that begin "Orbit repair: Docker ", prefix removed, as
+// foreign text, bounded to room rows. Nothing when no execute row failed
+// or the tail holds no such line: no row is a guess (#256).
+func (m RepairModel) dockerRows(limit, room int) []string {
+	failed := false
+	for _, e := range m.executeResults {
+		failed = failed || e.Result == engine.ResultFailed
+	}
+	if !failed {
+		return nil
+	}
+	const prefix = "Orbit repair: "
+	var lines []string
+	for _, l := range m.execStderr {
+		if rest, ok := strings.CutPrefix(l, prefix); ok && strings.HasPrefix(rest, "Docker ") {
+			lines = append(lines, visibleLines(rest))
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return fitTail(lines, limit, textArea(m.width), room)
 }
 
 // executeLine renders one execution outcome in honest words.
@@ -1054,11 +1099,11 @@ func executeLine(e engine.ExecuteResult) string {
 	default:
 		glyph = style.Tagline.Render(style.SymbolQueued)
 	}
-	words := style.Ink.Render(actionWords(e.Action))
 	if e.Result == engine.ResultSkipped {
-		words = style.Tagline.Render(actionWords(e.Action))
+		// One faint run for the whole row (#256).
+		return glyph + " " + style.Tagline.Render(actionWords(e.Action)+" — "+classWords(e.Resolves))
 	}
-	return glyph + " " + words + style.Tagline.Render(" — "+classWords(e.Resolves))
+	return glyph + " " + style.Ink.Render(actionWords(e.Action)) + style.Tagline.Render(" — "+classWords(e.Resolves))
 }
 
 func (m RepairModel) viewUnavailable() string {
@@ -1406,6 +1451,8 @@ func actionWords(action string) string {
 		return "regenerate the secret"
 	case "restart-services":
 		return "restart Orbit's services"
+	case "start-services":
+		return "start Orbit's services"
 	case "restore-compose-file":
 		return "put back docker-compose.yml from this version's image"
 	case "manual":
@@ -1515,6 +1562,8 @@ func classWords(class string) string {
 	switch class {
 	case "not-orbit-directory":
 		return "no recognisable Orbit installation"
+	case "services-not-running":
+		return "a service isn't running"
 	case "managed-file-missing":
 		return "missing"
 	case "compose-file-restorable":
