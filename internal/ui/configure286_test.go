@@ -707,9 +707,8 @@ func TestConfigure286_ConfirmTellsThemItAlsoUpdatesOrbitOnItsOwnLine(t *testing.
 			if change := cfg286RowIndex(s, "Change to "+c.to); change < 0 || at >= change {
 				t.Errorf("the line (row %d) is not above the Change row (row %d):\n%s", at, change, s)
 			}
-			if v := cfg286VersionLike.FindString(s); v != "" {
-				t.Errorf("the screen shows a version-like %q the launcher cannot know:\n%s", v, s)
-			}
+			// No lookup is wired here, so the launcher knows no version.
+			cfg286NoUnknownVersion(t, s, "")
 		})
 	}
 }
