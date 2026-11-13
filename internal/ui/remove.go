@@ -128,7 +128,7 @@ func NewRemoveModel(d *deploy.Deployment) RemoveModel {
 	if d == nil {
 		m.state = removeStateNotFound
 	} else if own, err := deploy.OwnFiles(d.TargetDir); err == nil {
-		m.listed = len(own.Names) > 0
+		m.listed = own.FileByFile()
 	}
 	return m
 }
@@ -530,7 +530,7 @@ func (m RemoveModel) viewDone() string {
 	// Without it, the root or home folder gets only the data-volume
 	// half: "sudo rm -rf" there would delete far more than Orbit.
 	refused := m.refusedFolder()
-	ownFiles := len(m.own.Names) > 0
+	ownFiles := m.own.FileByFile()
 	switch {
 	case ownFiles:
 		writeWrappedIn(&b, style.Tagline, "to remove Orbit from this machine, copy and run", prose, textArea(m.width))
@@ -644,13 +644,18 @@ const leftoverRows = 3
 
 // ownFilesLine is the line under the file-by-file command's warning:
 // what happens to the folder itself (owner, 2026-10-22, 20a and 21a).
-// Up to three leftovers are named, then counted.
+// Up to three leftovers are named, then counted. When the folder could
+// not be listed in full, what else is there is not known, and the line
+// says only what rmdir does.
 func (m RemoveModel) ownFilesLine() string {
 	switch m.refusedFolder() {
 	case "the root folder":
 		return "The root folder itself is never removed."
 	case "your home folder":
 		return "Your home folder itself is never removed."
+	}
+	if m.own.ListingFailed != nil {
+		return "The folder stays if anything else is still in it."
 	}
 	left := m.own.Leftovers
 	if len(left) == 0 {

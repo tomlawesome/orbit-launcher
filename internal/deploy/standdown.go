@@ -143,10 +143,10 @@ func RemovalCommand(targetDir string, own Own) (string, error) {
 // already quoted, so a caller can lay the command out on several lines
 // without parsing it back.
 //
-// With own's Names (OwnFiles read the folder's .orbit-files) it deletes
-// those names only, then the folders holding them and the folder itself
+// With an accepted list (OwnFiles read the folder's .orbit-files) it
+// deletes own's names only, never the whole folder, then the folders holding them and the folder itself
 // with rmdir, which refuses a folder that is not empty: see
-// ownRemovalWords. With none (the zero Own) it is the whole-folder
+// ownRemovalWords. Without one (the zero Own) it is the whole-folder
 // command, "docker compose … down -v && sudo rm -rf <folder>", refused
 // for the root and home folders.
 //
@@ -160,7 +160,7 @@ func RemovalCommandWords(targetDir string, own Own) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(own.Names) > 0 {
+	if own.FileByFile() {
 		return ownRemovalWords(targetDir, own), nil
 	}
 	if err := refuseSharedFolder(targetDir); err != nil {

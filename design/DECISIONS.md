@@ -145,7 +145,8 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   warning reads "this deletes all mail, documents and configuration — it
   cannot be undone", then one muted line: "The folder is removed too:
   nothing else is in it.", or "Left in place for you: a, b, c and N more —
-  the folder stays while they are in it." (backups and
+  the folder stays while they are in it.", or, when the folder could not be
+  listed in full, "The folder stays if anything else is still in it." (backups and
   orbit-install-backups are never in the command), or for the home or
   root folder "Your home folder itself is never removed." / "The root
   folder itself is never removed." A folder without the list keeps the
