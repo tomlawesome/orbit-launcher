@@ -93,7 +93,10 @@ func NewConfigureModel(d *deploy.Deployment, targetDir, version string) Configur
 		m.state = configureStateUnsupported
 	default:
 		m.state = configureStateProfile
-		m.profileChoice = newCurrentProfileChoice(memory, known, current, true)
+		// The table never shows the scanner row, and its memory need counts
+		// the deployment's own scanner setting: Configure runs as an update,
+		// which never sends the scanner choice (#340).
+		m.profileChoice = newCurrentProfileChoice(memory, known, current, d.ScanMode != deploy.ScanModeDisabled)
 	}
 	return m
 }

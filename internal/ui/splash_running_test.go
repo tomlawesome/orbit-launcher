@@ -77,7 +77,7 @@ func inARow(t *testing.T, s string, texts ...string) int {
 
 // menuLabels is the main menu, whatever the check says: rows never hide
 // (#286).
-var menuLabels = []string{"Install", "Update", "Repair", "Remove", "Exit"}
+var menuLabels = []string{"Install", "Update", "Configure", "Repair", "Remove", "Exit"}
 
 func sameLabels(got, want []string) bool {
 	if len(got) != len(want) {
@@ -125,7 +125,7 @@ func TestSplashRunning_OtherFolderShowsThreeRowsAndPreselectsExit(t *testing.T) 
 func TestSplashRunning_OtherFolderDoesNotMoveACaretTheUserPlaced(t *testing.T) {
 	dir := installedFolder(t)
 	m := started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding))
-	m, _ = updateAs(t, m, key(tea.KeyDown)) // Repair
+	m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyDown)) // Configure, then Repair
 	if got := caretLabel(screen(m)); got != "Repair" {
 		t.Fatalf("setup: the caret is on %q, want Repair", got)
 	}
@@ -557,15 +557,17 @@ func TestSplashRunning_FootIsUnchangedByAMismatch(t *testing.T) {
 // The worst case at 80x26: degraded with the drawer open, the three
 // running-mismatch rows, one row per missing service (the empty Docker
 // answer, #341) and the update notice. The default profile expects three
-// services, a 23-row centre block; the full profile five, 25 rows, which
-// fills the 25-row body exactly, so any extra row pushes Exit off.
+// services, a 24-row centre block with Configure's menu row (#286); the
+// full profile five, 25 rows, which fills the 25-row body exactly, so any
+// extra row pushes Exit off. With Configure the full profile is 26 rows
+// and does not fit: left failing, a layout call for the owner (#286).
 func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		profile []string
 		block   int
 	}{
-		{"default profile", nil, 23},
+		{"default profile", nil, 24},
 		{"full profile", []string{"COMPOSE_PROFILES=full"}, 25},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -577,8 +579,8 @@ func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 			m = started(t, m)
 			m, _ = updateAs(t, m, updateAvailableMsg{version: "v9.9.9"})
 			m = answer(t, m, dir, buildMismatch("v0.3.0", "v1.2.0"))
-			m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp)) // Install, then the status row
-			m, _ = updateAs(t, m, key(tea.KeyRight))                              // open the drawer
+			m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp)) // Install, then the status row
+			m, _ = updateAs(t, m, key(tea.KeyRight))                                              // open the drawer
 
 			s := screen(m)
 			for _, want := range []string{"mail.example.com", "degraded", "not responding", "services", dir,
