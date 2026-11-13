@@ -317,3 +317,141 @@ func TestRemoveOwn_FailedStandDownScreenIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// Review fixes (owner 20a, note 41988): see also
+// deploy/own_files_review_test.go.
+
+func ownUIWithList(t *testing.T, dir string, listed []string, extra ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range extra {
+		p := filepath.Join(dir, f)
+		if strings.HasSuffix(f, "/") {
+			p = filepath.Join(p, "inside")
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".orbit-files"), []byte(ownUIHeader+strings.Join(listed, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An accepted list that names nothing present: backups survive, the
+// folder stays, never the whole-folder command or its warning.
+func TestRemoveOwn_AListNamingNothingPresentKeepsBackupsAndIsNotTheWholeFolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "orbit")
+	ownUIWithList(t, dir, []string{"docker-compose.yml"}, "backups/a.tar")
+	var clip bytes.Buffer
+	m := ownDone(t, dir, &clip, nil)
+	flat := ownFlat(m)
+	if strings.Contains(flat, "backups included") || strings.Contains(flat, "everything else in the folder") {
+		t.Errorf("the whole-folder warning is shown for an accepted list:\n%s", screen(m))
+	}
+	if !strings.Contains(flat, "Left in place for you: .orbit-files, backups") && !strings.Contains(flat, "Left in place for you: backups") {
+		t.Errorf("backups are not named as left in place:\n%s", screen(m))
+	}
+	copied := ownCopied(t, m, &clip)
+	if strings.Contains(copied, "rm -rf "+dir) || strings.Contains(copied, "rm -rf") {
+		t.Errorf("command deletes with rm -rf though nothing of Orbit's is present:\n%s", copied)
+	}
+	if !strings.HasSuffix(copied, "sudo rmdir -- "+dir) {
+		t.Errorf("command does not end with the rmdir tail:\n%s", copied)
+	}
+}
+
+// An unreadable config/ is not a refused list.
+func TestRemoveOwn_AnUnreadableFolderIsNotARefusedListOnScreen(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	dir := filepath.Join(t.TempDir(), "orbit")
+	ownUIFolder(t, dir, true)
+	cfg := filepath.Join(dir, "config")
+	if err := os.Chmod(cfg, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cfg, 0o755) })
+	var clip bytes.Buffer
+	m := ownDone(t, dir, &clip, nil)
+	flat := ownFlat(m)
+	for _, not := range []string{"could not be read", "backups included", "everything else in the folder", "Left in place"} {
+		if strings.Contains(flat, not) {
+			t.Errorf("screen shows %q for an unreadable config/:\n%s", not, screen(m))
+		}
+	}
+	copied := ownCopied(t, m, &clip)
+	if strings.Contains(copied, "rm -rf "+dir) || !strings.Contains(copied, "sudo rm -rf -- docker-compose.yml") {
+		t.Errorf("command is not the list's file-by-file one:\n%s", copied)
+	}
+}
+
+// No .orbit-files: today's screen even for a symlinked or world-writable folder.
+func TestRemoveOwn_NoListInASymlinkedOrWorldWritableFolderIsTodaysScreen(t *testing.T) {
+	mk := func(t *testing.T) string {
+		real := filepath.Join(t.TempDir(), "real")
+		ownUIFolder(t, real, false, "docker-compose.yml", ".env-orbit", "notes.txt")
+		return real
+	}
+	cases := map[string]func(t *testing.T) string{
+		"symlink": func(t *testing.T) string {
+			link := filepath.Join(t.TempDir(), "orbit-link")
+			if err := os.Symlink(mk(t), link); err != nil {
+				t.Fatal(err)
+			}
+			return link
+		},
+		"world-writable": func(t *testing.T) string {
+			d := mk(t)
+			if err := os.Chmod(d, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			return d
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := setup(t)
+			var clip bytes.Buffer
+			m := ownDone(t, dir, &clip, nil)
+			flat := ownFlat(m)
+			if strings.Contains(flat, "could not be read") || strings.Contains(flat, "Left in place") {
+				t.Errorf("screen differs from today's:\n%s", screen(m))
+			}
+			if !strings.Contains(flat, "and everything else in the folder, backups included") {
+				t.Errorf("today's warning is gone:\n%s", screen(m))
+			}
+			want, err := deploy.RemovalCommand(dir, deploy.Own{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if copied := ownCopied(t, m, &clip); copied != want {
+				t.Errorf("copied\n%s\nwant today's\n%s", copied, want)
+			}
+		})
+	}
+}
+
+// Scratch names are Orbit's: named in the command, never "left in place".
+func TestRemoveOwn_ScratchFilesAreRemovedNotLeftInPlace(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "orbit")
+	ownUIFolder(t, dir, true, ".orbit-engine.lock", ".orbit-install-staging.abc/", ".env-orbit.tmp-xyz")
+	var clip bytes.Buffer
+	m := ownDone(t, dir, &clip, nil)
+	flat := ownFlat(m)
+	if strings.Contains(flat, "Left in place") || !strings.Contains(flat, "The folder is removed too: nothing else is in it.") {
+		t.Errorf("scratch files are shown as left in place:\n%s", screen(m))
+	}
+	copied := ownCopied(t, m, &clip)
+	for _, s := range []string{".orbit-engine.lock", ".orbit-install-staging.abc", ".env-orbit.tmp-xyz"} {
+		if !strings.Contains(copied, " "+s) {
+			t.Errorf("command does not name %s:\n%s", s, copied)
+		}
+	}
+}
