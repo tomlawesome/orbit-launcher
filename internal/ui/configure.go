@@ -326,6 +326,7 @@ func (m ConfigureModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		m.state = configureStateRunning
 		title := "Configure — " + m.requestedRow()
 		m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+		m.run = m.run.pinnedTo(namedTargetVersion(m.targetKnown, m.targetErr, m.target), m.target.Pin)
 		if m.recreate {
 			m.run = m.run.withFolderMoved("recreate")
 		}
