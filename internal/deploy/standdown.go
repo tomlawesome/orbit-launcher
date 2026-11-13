@@ -114,23 +114,25 @@ func (e *StandDownTimeoutError) Unwrap() error { return e.Err }
 // launcher actually found (#205).
 var ErrNoTargetDir = errors.New("no deployment directory given")
 
-// ErrRootFolder and ErrHomeFolder refuse a removal command for a folder
-// that is plainly not Orbit's own: "sudo rm -rf" of it would delete far
-// more than the deployment.
+// ErrRootFolder and ErrHomeFolder refuse the whole-folder removal
+// command for a folder that is plainly not Orbit's own: "sudo rm -rf" of
+// it would delete far more than the deployment. A folder whose
+// .orbit-files was read gets the file-by-file command instead, without
+// the final rmdir of the folder (#285).
 var (
 	ErrRootFolder = errors.New("the deployment folder is the root folder")
 	ErrHomeFolder = errors.New("the deployment folder is the home folder")
 )
 
 // RemovalCommand returns the exact, copy-pasteable shell command that
-// fully and irreversibly removes an Orbit deployment — including its data
-// volumes and every file in targetDir. This package never executes it:
-// see removal_property_test.go, which asserts that as a real, checked
-// property, not just a comment someone could quietly invalidate later.
-// It is RemovalCommandWords joined by single spaces, so a screen built
-// from the words and a clipboard built from the line cannot disagree.
-func RemovalCommand(targetDir string) (string, error) {
-	words, err := RemovalCommandWords(targetDir)
+// irreversibly removes an Orbit deployment, its data volumes included.
+// This package never executes it: see removal_property_test.go, which
+// asserts that as a real, checked property, not just a comment someone
+// could quietly invalidate later. It is RemovalCommandWords joined by
+// single spaces, so a screen built from the words and a clipboard built
+// from the line cannot disagree.
+func RemovalCommand(targetDir string, own Own) (string, error) {
+	words, err := RemovalCommandWords(targetDir, own)
 	if err != nil {
 		return "", err
 	}
@@ -141,15 +143,25 @@ func RemovalCommand(targetDir string) (string, error) {
 // already quoted, so a caller can lay the command out on several lines
 // without parsing it back.
 //
+// With own's Names (OwnFiles read the folder's .orbit-files) it deletes
+// those names only, then the folders holding them and the folder itself
+// with rmdir, which refuses a folder that is not empty: see
+// ownRemovalWords. With none (the zero Own) it is the whole-folder
+// command, "docker compose … down -v && sudo rm -rf <folder>", refused
+// for the root and home folders.
+//
 // It passes --env-file for the same reason StandDown does: Compose never
 // auto-loads .env-orbit, so without it "down -v" cannot resolve the
 // compose file's variables. Paths are quoted because the line is pasted
 // into a shell, so a directory name with a space or quote must still
 // arrive as one argument.
-func RemovalCommandWords(targetDir string) ([]string, error) {
+func RemovalCommandWords(targetDir string, own Own) ([]string, error) {
 	words, err := VolumeRemovalCommandWords(targetDir)
 	if err != nil {
 		return nil, err
+	}
+	if len(own.Names) > 0 {
+		return ownRemovalWords(targetDir, own), nil
 	}
 	if err := refuseSharedFolder(targetDir); err != nil {
 		return nil, err
@@ -176,7 +188,8 @@ func VolumeRemovalCommandWords(targetDir string) ([]string, error) {
 // refuseSharedFolder returns ErrRootFolder or ErrHomeFolder when
 // targetDir is the root folder, or the home folder of the launcher's
 // session or of the folder's own account, whose "rm -rf" would delete
-// far more than Orbit. Compared after cleaning, so "//", "/." or
+// far more than Orbit, and which is never itself removed, not even by
+// rmdir. Compared after cleaning, so "//", "/." or
 // "home/../home" are caught too; the command still names targetDir as
 // found.
 func refuseSharedFolder(targetDir string) error {

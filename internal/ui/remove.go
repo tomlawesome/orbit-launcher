@@ -54,6 +54,16 @@ type RemoveModel struct {
 	standDownErr  error
 	copied        bool
 
+	// own is what deploy.OwnFiles read from the folder as the done screen
+	// was entered, after the stand-down: the box, Copy command and the
+	// lines under the box are all drawn from it, so they cannot disagree
+	// (#285). The zero Own (no .orbit-files) is the whole-folder command.
+	own deploy.Own
+	// listed is whether the folder had Orbit's own file list when the
+	// flow opened: the confirm screen then promises a removal command for
+	// the root and home folders too (#285). Read once, not on every frame.
+	listed bool
+
 	// frame is the working line's spinner frame, advanced on every tick.
 	frame int
 
@@ -117,6 +127,8 @@ func NewRemoveModel(d *deploy.Deployment) RemoveModel {
 	m := RemoveModel{deployment: d, confirm: newMenu(removeConfirmRows...)}
 	if d == nil {
 		m.state = removeStateNotFound
+	} else if own, err := deploy.OwnFiles(d.TargetDir); err == nil {
+		m.listed = len(own.Names) > 0
 	}
 	return m
 }
@@ -255,6 +267,7 @@ func (m RemoveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state = removeStateDone
 			m.after = newMenu(removeDoneRows...)
+			m.own, _ = deploy.OwnFiles(m.deployment.TargetDir) // its only error is no folder, which removalWords reports
 		}
 		if m.signalQuit {
 			return m.handleKey(ctrlCPress)
@@ -472,9 +485,9 @@ func (m RemoveModel) viewConfirm() string {
 		"by this step — they stay on disk, and the next screen",
 		"shows exactly how to remove them if you choose to.",
 	}
-	// The root or home folder gets no removal command, so nothing is
-	// promised for it.
-	if m.refusedFolder() != "" {
+	// The root or home folder without Orbit's own file list gets no
+	// removal of its files, so nothing is promised for it.
+	if !m.listed && m.refusedFolder() != "" {
 		prose = []string{prose[0], "by this step — they stay on disk."}
 	}
 	for _, line := range prose {
@@ -513,12 +526,17 @@ func (m RemoveModel) viewDone() string {
 	}
 	writeWrappedIn(&b, style.MutedText, "nothing has been deleted.", prose, textArea(m.width))
 	fmt.Fprintln(&b)
-	// For the root or home folder only the data-volume half is offered:
-	// "sudo rm -rf" there would delete far more than Orbit.
+	// With Orbit's own file list the command names those files (#285).
+	// Without it, the root or home folder gets only the data-volume
+	// half: "sudo rm -rf" there would delete far more than Orbit.
 	refused := m.refusedFolder()
-	if refused != "" {
+	ownFiles := len(m.own.Names) > 0
+	switch {
+	case ownFiles:
+		writeWrappedIn(&b, style.Tagline, "to remove Orbit from this machine, copy and run", prose, textArea(m.width))
+	case refused != "":
 		writeWrappedIn(&b, style.Tagline, "to remove Orbit's data volumes from this machine, copy and run", prose, textArea(m.width))
-	} else {
+	default:
 		writeWrappedIn(&b, style.Tagline, "to fully remove Orbit from this machine, copy and run", prose, textArea(m.width))
 	}
 
@@ -540,11 +558,22 @@ func (m RemoveModel) viewDone() string {
 	var tail strings.Builder
 	// errorWidth, not proseWidth: the box's caption reads at the box's measure.
 	wide := measure(m.width, errorWidth)
-	if refused != "" {
+	switch {
+	case ownFiles:
+		writeWrappedIn(&tail, style.DegradedText, "this deletes all mail, documents and configuration — it cannot be undone", wide, textArea(m.width))
+		for _, row := range wrapHard(m.ownFilesLine(), prose, m.width-4, leftoverRows) {
+			fmt.Fprintln(&tail, style.Tagline.Render(row))
+		}
+	case refused != "":
 		writeWrappedIn(&tail, style.DegradedText, "this deletes all mail and documents — it cannot be undone", wide, textArea(m.width))
 		writeWrappedIn(&tail, style.Tagline, "The folder itself is not removed: it is "+refused+", not a folder of Orbit's own. Orbit's files there stay for you to remove.", prose, textArea(m.width))
-	} else {
+	default:
 		writeWrappedIn(&tail, style.DegradedText, "this deletes all mail, documents and configuration, and everything else in the folder, backups included — it cannot be undone", wide, textArea(m.width))
+	}
+	// A .orbit-files that was there but refused whole: the command above
+	// is the one for a folder without it, and the screen says why.
+	if m.own.ManifestIgnored != nil {
+		writeWrappedIn(&tail, style.Tagline, removeListUnread, prose, textArea(m.width))
 	}
 	fmt.Fprintln(&tail)
 	// The copy row says so once it has copied; the menu's own label,
@@ -559,8 +588,8 @@ func (m RemoveModel) viewDone() string {
 	// the menu included, has its place: a long folder at a narrow width
 	// must never push Copy command, Menu and Exit off the screen. When
 	// the box is short, its end is kept, not its start: the end is the
-	// half that deletes everything (`&& sudo rm -rf '<folder>'`), the
-	// part that must read. One "…" row stands first for the rows dropped,
+	// half that deletes the files (`sudo rm -rf …` and its rmdir tail),
+	// the part that must read. One "…" row stands first for the rows dropped,
 	// as the stopped screen's installer block keeps its newest lines
 	// (fitTail); Copy command still carries the whole command (#277 L2).
 	room := max(m.height-strings.Count(b.String(), "\n")-strings.Count(tail.String(), "\n")-2, 1)
@@ -578,23 +607,25 @@ func (m RemoveModel) viewDone() string {
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
-// removalWords is the command the removed screen offers: the whole
-// removal, or only its data-volume half for a folder that is not
+// removalWords is the command the removed screen offers: Orbit's own
+// files by name when the folder's .orbit-files was read (#285), else the
+// whole removal, or only its data-volume half for a folder that is not
 // Orbit's own (refusedFolder). Compose removes only this project's
 // volumes, so that half is safe anywhere, and without it the leftover
 // database volume would block every later install.
 func (m RemoveModel) removalWords() ([]string, error) {
-	words, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	words, err := deploy.RemovalCommandWords(m.deployment.TargetDir, m.own)
 	if errors.Is(err, deploy.ErrRootFolder) || errors.Is(err, deploy.ErrHomeFolder) {
 		return deploy.VolumeRemovalCommandWords(m.deployment.TargetDir)
 	}
 	return words, err
 }
 
-// refusedFolder names the deployment folder when no removal command is
-// built for it ("the root folder", "your home folder"); empty otherwise.
+// refusedFolder names the deployment folder when it is the root or the
+// home folder ("the root folder", "your home folder"), which is never
+// itself removed; empty otherwise.
 func (m RemoveModel) refusedFolder() string {
-	_, err := deploy.RemovalCommandWords(m.deployment.TargetDir)
+	_, err := deploy.RemovalCommandWords(m.deployment.TargetDir, deploy.Own{})
 	switch {
 	case errors.Is(err, deploy.ErrRootFolder):
 		return "the root folder"
@@ -602,6 +633,34 @@ func (m RemoveModel) refusedFolder() string {
 		return "your home folder"
 	}
 	return ""
+}
+
+// removeListUnread is the line for a .orbit-files refused whole.
+const removeListUnread = "Orbit's own file list here could not be read."
+
+// leftoverRows is the most rows the line under the box takes, so many
+// odd leftover names never push the menu off the screen.
+const leftoverRows = 3
+
+// ownFilesLine is the line under the file-by-file command's warning:
+// what happens to the folder itself (owner, 2026-10-22, 20a and 21a).
+// Up to three leftovers are named, then counted.
+func (m RemoveModel) ownFilesLine() string {
+	switch m.refusedFolder() {
+	case "the root folder":
+		return "The root folder itself is never removed."
+	case "your home folder":
+		return "Your home folder itself is never removed."
+	}
+	left := m.own.Leftovers
+	if len(left) == 0 {
+		return "The folder is removed too: nothing else is in it."
+	}
+	named := strings.Join(left[:min(len(left), 3)], ", ")
+	if len(left) > 3 {
+		named += fmt.Sprintf(" and %d more", len(left)-3)
+	}
+	return "Left in place for you: " + named + " — the folder stays while they are in it."
 }
 
 func (m RemoveModel) viewFailed() string {
