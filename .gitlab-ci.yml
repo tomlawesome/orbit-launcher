@@ -92,11 +92,15 @@ stages:
 
 # Test once, then promote what passed (#306): each pipeline runs only what an
 # earlier stage could not. A merge request into `dev` runs the checks; the one
-# into `preview` adds the live installs; the one into `main` adds nothing; the
-# push that lands any of them runs nothing, because merges need an up-to-date
-# branch (semi-linear history) and so land exactly what was tested. Only a push
-# to `main` creates a pipeline, for the release buttons. Each job's `rules:`
-# below picks its stage; this block decides whether a pipeline exists at all.
+# into `preview` adds the live installs; the one into `main` adds nothing. A
+# merge request into `batch-a` or `batch-b` runs only the static checks
+# (batch-intake), a chore/catchup-* one only the ancestry check. The push that
+# lands a merge runs nothing more than it must, because merges need an
+# up-to-date branch (semi-linear history) and so land exactly what was tested:
+# a push to `dev` runs only `gitleaks` and `private-details` (dev-landing), a
+# push to `main` makes a pipeline for the release buttons, and other pushes
+# make none. Each job's `rules:` below picks its stage; this block decides
+# whether a pipeline exists at all.
 workflow:
   rules:
     - !reference [.dev-landing, workflow_rules]
@@ -126,11 +130,11 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.27.3-bookworm@sha256:32fa283222e2905d9fee971f60c842e5c815fdc036cf7ea599bf36bd7ca8f67f
+  GO_IMAGE: golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
-  GO_VERSION: "1.27.3"
-  GO_SHA256: 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+  GO_VERSION: "1.27.4"
+  GO_SHA256: 7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
   # Ships the exact Chromium that test/visual/package-lock.json's
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
@@ -173,16 +177,16 @@ variables:
   # Scanners (#322, #323). Their jobs below block the pipeline. Their
   # checksums come from the upstream checksums.txt of each release, except
   # zizmor's, which is our own: upstream publishes none, so the digest below
-  # is of the tarball as downloaded on 2026-11-02.
+  # is of the tarball as downloaded on 2026-11-13.
   # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
-  TRIVY_VERSION: "0.76.1"
-  TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+  TRIVY_VERSION: "0.76.2"
+  TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
   # renovate: datasource=github-releases depName=golangci/golangci-lint extractVersion=^v(?<version>.+)$
   GOLANGCI_LINT_VERSION: "2.15.0"
   GOLANGCI_LINT_SHA256: 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
   # renovate: datasource=github-releases depName=zizmorcore/zizmor extractVersion=^v(?<version>.+)$
-  ZIZMOR_VERSION: "1.31.1"
-  ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
+  ZIZMOR_VERSION: "1.32.0"
+  ZIZMOR_SHA256: bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
   # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
   ACTIONLINT_VERSION: "1.7.12"
   ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -335,7 +339,8 @@ variables:
 # --- fast --------------------------------------------------------------------
 
 # The merge-request stage (#306): the checks that run on a merge request into
-# `dev`, and on a pipeline started by hand. Not on the promotions (`dev` into
+# `dev`, and on a pipeline started by hand. The static ones also run on a
+# merge request into `batch-a` or `batch-b` (.checks_rules). Not on the promotions (`dev` into
 # `preview`, `preview` into `main`), which carry exactly the code `dev`
 # passed. A merge request into `preview` or `main` from any other branch has
 # passed no earlier stage, so it is treated as one into `dev`: the checks
@@ -610,9 +615,9 @@ private-details:
 # toolchain to type-check) uses $GO_IMAGE.
 
 # Trivy's vulnerability and licence databases are fetched at run time and
-# cached by GitLab, never committed. Trivy 0.76.1's checksums file was checked
+# cached by GitLab, never committed. Trivy 0.76.2's checksums file was checked
 # with cosign (its .sigstore.json bundle, identity aquasecurity/trivy on
-# GitHub Actions) when the pin was taken, on 2026-11-02. The gate blocks on
+# GitHub Actions) when the pin was taken, on 2026-11-13. The gate blocks on
 # every High and Critical finding; when one has no fix and blocks merges, the
 # way back is a dated entry in .trivyignore (its header says what each needs),
 # not --ignore-unfixed.
@@ -1749,7 +1754,7 @@ renovate:
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
   # and runs `go mod tidy` inside the job, which can pass the light lane's
   # 2 GB limit. Same choice as mikroview's renovate:run.
-  # A weekly maintenance run has nothing that could supersede it, and being
+  # A daily maintenance run has nothing that could supersede it, and being
   # cancelled part-way leaves half-written branches behind.
   interruptible: false
   # RENOVATE_TOKEN and GITHUB_COM_TOKEN are scoped to this environment, so
@@ -1769,7 +1774,7 @@ renovate:
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
     # Renovate reads a repository's own config from its default branch, which
-    # here is `dev` and carries renovate.json. The weekly schedule runs on
+    # here is `dev` and carries renovate.json. The daily schedule runs on
     # `dev` too, so the copy in this job's checkout is that same file, and
     # handing it over as global config changes nothing: the repository copy
     # merges over this one and they are identical.

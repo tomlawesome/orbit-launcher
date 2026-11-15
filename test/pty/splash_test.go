@@ -185,20 +185,20 @@ func TestSplash_RealPTY_RendersAndLeavesByTheExitRowNotEscape(t *testing.T) {
 		t.Fatalf("the menu stopped responding after Escape: %v", err)
 	}
 
-	// A digit only moves the caret (#228): 5 is the Exit row, and the
+	// A digit only moves the caret (#228): 6 is the Exit row, and the
 	// launcher must still be running with the caret on it. Up proves the
 	// menu is live; Enter on Exit then leaves.
-	console.send("5")
+	console.send("6")
 	if err := console.expectString("▸ Exit"); err != nil {
-		t.Fatalf("5 did not move the caret to Exit: %v", err)
+		t.Fatalf("6 did not move the caret to Exit: %v", err)
 	}
 	console.send("\x1b[A") // Up
 	if err := console.expectString("▸ Remove"); err != nil {
-		t.Fatalf("the launcher stopped responding after 5 (it must not quit): %v", err)
+		t.Fatalf("the launcher stopped responding after 6 (it must not quit): %v", err)
 	}
-	console.send("5")
+	console.send("6")
 	if err := console.expectString("▸ Exit"); err != nil {
-		t.Fatalf("5 did not move the caret back to Exit: %v", err)
+		t.Fatalf("6 did not move the caret back to Exit: %v", err)
 	}
 	console.send("\r") // Enter on Exit
 

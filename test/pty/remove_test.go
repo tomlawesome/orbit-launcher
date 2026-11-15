@@ -20,7 +20,7 @@ func TestApp_RealPTY_RemoveWithNoDeploymentStopsAtTheStart(t *testing.T) {
 		t.Fatalf("did not see the menu: %v", err)
 	}
 
-	for i := 0; i < 3; i++ { // Install, Update, Repair, Remove
+	for i := 0; i < 4; i++ { // Install, Update, Configure, Repair, Remove
 		console.send("\x1b[B")
 	}
 	if err := console.expectString("▸ Remove"); err != nil {

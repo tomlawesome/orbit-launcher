@@ -314,12 +314,13 @@ func ev(phase, component, state, reason, action string) engine.EventMsg {
 // rowLabels are every label a menu row carries on the screens the menu
 // grammar tests read (#228); screenLabels picks these out of a screen.
 var rowLabels = map[string]bool{
-	"Install": true, "Update": true, "Repair": true, "Remove": true,
+	"Install": true, "Update": true, "Configure": true, "Repair": true, "Remove": true,
+	"Change to Documents": true, "Change to Standard": true,
 	"Update Orbit": true, "Stand down Orbit": true,
 	"Continue anyway": true, "Open the guided installer": true,
 	"Install again": true, "Update again": true, "Open Repair": true,
 	"Get into Orbit": true, "Copy command": true, "Copy command · copied": true,
-	"Cancel": true, "Carry on from this folder": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
+	"Cancel": true, "Carry on from this folder": true, "Run from this folder": true, "Move it back": true, "Back": true, "Go back": true, "Menu": true, "Exit": true, "Terminal": true,
 }
 
 // screenRow is one screen line with the starfield, the caret and the

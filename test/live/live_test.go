@@ -1111,11 +1111,21 @@ func TestLive_InstallHealthyEndpointThenRemove(t *testing.T) {
 		assertMemoryDefaultsMatchLauncher(t, dir)
 	})
 
+	var removed bool
 	t.Run("Remove", func(t *testing.T) {
 		if !installed {
 			t.Skip("Install did not run or failed; nothing to remove")
 		}
 		removeAndAssertCleanup(t, binPath, dir, appURL)
+		removed = !t.Failed()
+	})
+
+	// The command Remove offered, run for real (#285).
+	t.Run("RemoveCommand", func(t *testing.T) {
+		if !removed {
+			t.Skip("Remove did not run or failed; no command was offered")
+		}
+		assertRemoveCommandOnRealDeployment(t, dir)
 	})
 }
 

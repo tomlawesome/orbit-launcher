@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -56,14 +55,12 @@ type InstallModel struct {
 	targetDir     string
 	version       string
 
-	profile menu // installProfiles
-	volume  menu // installVolumeRows
-
-	// memory is the machine's total memory as read when the flow
-	// began; memoryKnown is false when it could not be read, and then no
-	// row is ever "not enough" (#260).
-	memory      uint64
-	memoryKnown bool
+	// profileChoice is the profile table: its menu (installProfiles), the
+	// machine's memory as read when the flow began (#260), and the
+	// virus-scanner row's state (#340: on at the start of every flow,
+	// flipped by Enter on the row, carried by the run).
+	profileChoice
+	volume menu // installVolumeRows
 
 	// requested is the profile the run asks for, set when the person
 	// chooses a row and carried by the run and its retry.
@@ -206,9 +203,21 @@ func (r engineRun) withProfile(profile string) engineRun {
 	return r
 }
 
+// withScanner makes the run carry the virus-scanner choice.
+func (r engineRun) withScanner(scanner string) engineRun {
+	r.scanner = scanner
+	return r
+}
+
 // withChannel pins the run to a release (#336).
 func (r engineRun) withChannel(channel string) engineRun {
 	r.channel = channel
+	return r
+}
+
+// withFolderMoved asks the engine to make the containers again here (#1576).
+func (r engineRun) withFolderMoved(v string) engineRun {
+	r.folderMoved = v
 	return r
 }
 
@@ -221,109 +230,30 @@ func (r engineRun) withSeams(s engineRunSeams) engineRun {
 func NewInstallModel(targetDir, version string) InstallModel {
 	memory, known := deploy.HostMemory()
 	return InstallModel{
-		targetDir:   targetDir,
-		version:     version,
-		profile:     newMenu(installProfiles...),
-		volume:      newMenu(installVolumeRows...),
-		memory:      memory,
-		memoryKnown: known,
-		collected:   &collectedConfig{},
+		targetDir:     targetDir,
+		version:       version,
+		profileChoice: newProfileChoice(memory, known),
+		volume:        newMenu(installVolumeRows...),
+		collected:     &collectedConfig{},
 	}
 }
 
-// The profile screen's rows (#247). Standard and Documents (Orbit's
-// "processing" profile, #260) start a run; Agent and Full, which have
-// no profile name (they need a local model Orbit doesn't use yet), lead
-// to the honest dead end. The menu holds the names; the table draws the
-// rest, and the status column is worked out from the machine's memory
-// (installProfile.status).
-const (
-	installStandard  = "Standard"
-	installDocuments = "Documents"
-)
-
-// installProfile is a row. profile is the name the engine is asked for
-// (deploy.ProfileEnv); empty means the row is not yet available.
-type installProfile struct{ name, adds, profile string }
-
-var installProfileTable = []installProfile{
-	{installStandard, "mail, documents, calendar", deploy.ProfileStandard},
-	{installDocuments, "adds text extraction from attachments", deploy.ProfileDocuments},
-	{"Agent", "adds a local model for search & suggestions", ""},
-	{"Full", "documents extraction and the local model", ""},
-}
-
-// The status column's words.
-const (
-	installAvailable = "available"
-	installNotYet    = "not yet"
-	installNotEnough = "not enough"
-)
-
-// shortOfMemory is whether the machine is known to have less memory than
-// the row needs. Standard is never short (the launcher doesn't block the
-// baseline, as Orbit's installer doesn't), and a machine whose memory
-// could not be read is never short.
-func (m InstallModel) shortOfMemory(p installProfile) bool {
-	if p.profile == "" || p.profile == deploy.ProfileStandard {
-		return false
+// scannerChoice is the value the run sends the engine.
+func (m InstallModel) scannerChoice() string {
+	if m.scannerOn {
+		return deploy.ScannerOn
 	}
-	return m.memoryKnown && m.memory < deploy.ProfileNeed(p.profile)
+	return deploy.ScannerOff
 }
 
-// status is the row's status column: "available" for Standard, the
-// memory a profile adds over Standard ("+1 GB"), "not enough" when the
-// machine is short of what the profile needs in all, and "not yet" for
-// a row with no profile behind it.
-func (m InstallModel) status(p installProfile) string {
-	switch {
-	case p.profile == "":
-		return installNotYet
-	case p.profile == deploy.ProfileStandard:
-		return installAvailable
-	case m.shortOfMemory(p):
-		return installNotEnough
+// scannerReason is the consequence line under the table, only while the
+// scanner is off; the sentence is Orbit's own (.env-orbit.example).
+func (m InstallModel) scannerReason() string {
+	if m.scannerOn {
+		return ""
 	}
-	extra := deploy.ProfileNeed(p.profile) - deploy.ProfileNeed(deploy.ProfileStandard)
-	return fmt.Sprintf("+%d GB", extra>>30)
+	return "Off: uploaded and mailed documents are not virus-scanned. To turn it on later, run scripts/configure.sh --set-scanner on, then Update."
 }
-
-// canChoose is whether Enter on the row does anything: the baseline
-// always, a profile row unless the machine is short of memory.
-func (m InstallModel) canChoose(p installProfile) bool {
-	return p.profile != "" && !m.shortOfMemory(p)
-}
-
-// memoryReason is the one line under the table when a row is "not
-// enough"; empty when no row is. It names the first such row.
-func (m InstallModel) memoryReason() string {
-	for _, p := range installProfileTable {
-		if m.shortOfMemory(p) {
-			return fmt.Sprintf("%s needs %d GB of memory in all and this machine has %d GB.",
-				p.name, deploy.ProfileNeed(p.profile)>>30, m.memory>>30)
-		}
-	}
-	return ""
-}
-
-var installProfiles = func() []string {
-	names := make([]string, len(installProfileTable))
-	for i, p := range installProfileTable {
-		names[i] = p.name
-	}
-	return names
-}()
-
-// Table geometry at width >= installTableMin: two cells of caret column,
-// the name column, a space, the adds column, a space, the availability
-// column.
-const (
-	installNameCol  = 10
-	installAddsCol  = 43
-	installAvailCol = 10
-	installTableW   = 2 + installNameCol + 1 + installAddsCol + 1 + installAvailCol
-	installTableMin = installTableW + 1
-)
 
 var (
 	installVolumeRows = []string{"Continue anyway", "Cancel"}
@@ -779,6 +709,10 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		// A move drops a waiting Enter: the row it chose is no longer
 		// the one under the cursor.
 		m.awaiting = ""
+	case chosen == installScanner:
+		// A toggle, not a choice that proceeds: it flips in place, never
+		// waits and never touches a waiting Enter.
+		m.scannerOn = !m.scannerOn
 	case m.shortOfMemory(m.rowNamed(chosen)):
 		// "not enough": the caret rests here but Enter does nothing, and
 		// the line under the table says why.
@@ -791,16 +725,6 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		return m.chooseProfile(chosen)
 	}
 	return m, nil
-}
-
-// rowNamed is the table row called name; the zero row if none is.
-func (m InstallModel) rowNamed(name string) installProfile {
-	for _, p := range installProfileTable {
-		if p.name == name {
-			return p
-		}
-	}
-	return installProfile{}
 }
 
 // requestedRow is the name of the row whose profile the run asks for,
@@ -847,7 +771,7 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
-	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withScanner(m.scannerChoice()).withSeams(m.seams).withSend(m.send)
 	m.run.collected = m.collected
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
@@ -995,18 +919,15 @@ func (m InstallModel) viewProfile() string {
 		fmt.Fprintln(&b, style.Ink.Render(row))
 	}
 	fmt.Fprintln(&b)
-	m.writeProfileTable(&b)
-	if reason := m.memoryReason(); reason != "" {
-		fmt.Fprintln(&b)
-		// Padded to the table's width, so the sky centres it with the
-		// table rather than on its own.
-		w := installTableW
-		if m.width < installTableMin {
-			w = measure(m.width, proseWidth)
+	m.writeProfileTable(&b, m.width)
+	// The memory reason belongs to the profile rows above, so it comes
+	// first.
+	for _, reason := range []string{m.memoryReason(), m.scannerReason()} {
+		if reason == "" {
+			continue
 		}
-		for _, row := range wrapWordsIn(reason, w-2, textArea(m.width)-2) {
-			fmt.Fprintln(&b, "  "+style.Tagline.Render(row)+strings.Repeat(" ", max(0, w-2-len([]rune(row)))))
-		}
+		m.writeTableGap(&b, m.width)
+		m.writeUnderTable(&b, reason, m.width)
 	}
 	if m.awaiting != "" {
 		fmt.Fprintln(&b)
@@ -1016,64 +937,22 @@ func (m InstallModel) viewProfile() string {
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
+	return viewUnavailableProfile(m.star, m.width, m.height)
+}
+
+// viewUnavailableProfile is the dead end for Agent and Full, shared with
+// Configure (#286): it explains why nothing can happen, with one Back row.
+func viewUnavailableProfile(star starfield.Model, width, height int) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
 	fmt.Fprintln(&b, style.MutedText.Render("Agent and Full need a local model, which Orbit"))
 	fmt.Fprintln(&b, style.MutedText.Render("doesn't use yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return skyBlock(star, width, height, b.String())
 }
 
 // viewNotice is the development notice (#175, notice.go) over the sky.
 func (m InstallModel) viewNotice() string {
 	return skyBlock(m.star, m.width, m.height, m.notice.view(m.now(), m.noticeDur()))
-}
-
-// writeProfileTable draws the profile choice as a table at 68 columns and
-// over, and as two rows per profile below. Every row is padded to the
-// block's width so the sky's per-line centring keeps the block one unit.
-func (m InstallModel) writeProfileTable(b *strings.Builder) {
-	pad := func(styled string, used, w int) string {
-		return styled + strings.Repeat(" ", max(0, w-used))
-	}
-	caret := func(sel bool) string {
-		if sel {
-			return style.MenuCaret.Render(style.SymbolSelected) + " "
-		}
-		return "  "
-	}
-	rowStyle := func(i int, p installProfile) lipgloss.Style {
-		switch {
-		case i == m.profile.sel:
-			return style.Ink
-		case m.canChoose(p):
-			return style.MutedText
-		}
-		return style.Tagline
-	}
-	if m.width >= installTableMin {
-		for i, p := range installProfileTable {
-			st := rowStyle(i, p)
-			status := m.status(p)
-			line := caret(i == m.profile.sel) +
-				pad(st.Render(p.name), len(p.name), installNameCol) + " " +
-				pad(st.Render(p.adds), len([]rune(p.adds)), installAddsCol) + " " +
-				pad(st.Render(status), len(status), installAvailCol)
-			fmt.Fprintln(b, line)
-		}
-		return
-	}
-	w := measure(m.width, proseWidth)
-	for i, p := range installProfileTable {
-		if i > 0 {
-			fmt.Fprintln(b, pad("", 0, w))
-		}
-		st := rowStyle(i, p)
-		head := p.name + style.Separator + m.status(p)
-		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
-		for _, r := range wrapWordsIn(p.adds, w-2, textArea(m.width)-2) {
-			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
-		}
-	}
 }

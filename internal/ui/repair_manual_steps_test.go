@@ -325,6 +325,7 @@ var manualSubjects = map[string]string{
 	"container-foreign-owner":              "container",
 	"docker-unavailable":                   "docker",
 	"unrelated-resource-present":           "volume",
+	"services-not-running":                 "service",
 	"database-unreachable":                 "database",
 	"database-credential-unverifiable":     "password",
 }

@@ -20,6 +20,7 @@ const (
 	appStateRepair
 	appStateInstall
 	appStateUpdate
+	appStateConfigure
 	appStateSuccess
 )
 
@@ -42,6 +43,7 @@ type AppModel struct {
 	// never kept between sessions.
 	collected *collectedConfig
 	update    UpdateModel
+	configure ConfigureModel
 	success   SuccessModel
 
 	// Configuration remembered so a refreshed splash (after a flow
@@ -112,6 +114,8 @@ type AppModel struct {
 	// exitNote is a Ctrl-C stop's last word, kept for main to print
 	// once the screen has closed (ExitNote).
 	exitNote string
+	// leaveNote is "Move it back"'s line (#1576).
+	leaveNote string
 	// signalStop is the signal that quit an Update past its commit
 	// (SignalStop).
 	signalStop os.Signal
@@ -416,6 +420,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.update.Update(msg)
 		m.update = updated.(UpdateModel)
 		return m.watchOutcome(m.update.Outcome(), cmd)
+	case appStateConfigure:
+		updated, cmd := m.configure.Update(msg)
+		m.configure = updated.(ConfigureModel)
+		return m.watchOutcome(m.configure.Outcome(), cmd)
 	case appStateSuccess:
 		updated, cmd := m.success.Update(msg)
 		m.success = updated.(SuccessModel)
@@ -428,6 +436,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // it finished undoing its work; empty otherwise.
 func (m AppModel) ExitNote() string { return m.exitNote }
 
+// LeaveNote is the one line "Move it back" leaves for main to print after
+// the screen closes; the operator chose to leave, so main exits 0 (#1576).
+func (m AppModel) LeaveNote() string { return m.leaveNote }
+
 // SignalStop is the signal that quit an Update past its commit, nil if
 // none did. main turns SIGTERM and SIGHUP into a stderr line and exit 128
 // plus the signal number (#304).
@@ -439,6 +451,10 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 	// Before the Done check: a stop quits without ever setting Done.
 	if o.ExitNote != "" {
 		m.exitNote = o.ExitNote
+	}
+	if o.LeaveNote != "" {
+		m.leaveNote = o.LeaveNote
+		return m, tea.Quit
 	}
 	if o.SignalStop != nil {
 		m.signalStop = o.SignalStop
@@ -584,6 +600,20 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = appStateUpdate
 		return m, tea.Batch(sizeCmd, m.update.Init())
+	case "Configure":
+		dir := m.resolvedTargetDir()
+		deployment, err := deploy.Detect(dir)
+		m.configure = NewConfigureModel(deployment, dir, m.version)
+		m.configure.detectErr = err
+		m.configure.seams = m.flowSeams
+		m.configure.send = m.flowSend
+		m.configure.lookupInstalledAt = m.flowInstalledAt
+		m.configure.lookupTarget = m.lookupTarget
+		if otherFolder && deployment != nil {
+			m.configure = m.configure.refuseOtherFolder(mismatch)
+		}
+		m.state = appStateConfigure
+		return m, tea.Batch(sizeCmd, m.configure.Init())
 	default:
 		return m, tea.Quit
 	}
@@ -612,6 +642,8 @@ func (m AppModel) screen() tea.View {
 		return m.install.View()
 	case appStateUpdate:
 		return m.update.View()
+	case appStateConfigure:
+		return m.configure.View()
 	case appStateSuccess:
 		return m.success.View()
 	}
