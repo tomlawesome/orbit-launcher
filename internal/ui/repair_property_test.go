@@ -44,6 +44,7 @@ var repairAllowedUses = map[string]bool{"os.Stdout": true}
 var repairAllowedCalls = map[string]bool{
 	"deploy.RepairCommand":     true,
 	"deploy.ServiceStates":     true,
+	"deploy.ServiceFaults":     true, // compares two lists in memory (#341)
 	"deploy.Detect":            true,
 	"deploy.ChownCommandWords": true,
 	"deploy.CheckFolderName":   true, // the path string only (#277 W3)

@@ -40,8 +40,8 @@ func TestGroupB_W1_RedirectIsNeverFollowed(t *testing.T) {
 		got := ProbeHealth(context.Background(), first.URL)
 		first.Close()
 		second.Close()
-		if got != HealthResponding {
-			t.Errorf("redirect %d: ProbeHealth = %q, want responding (the redirect itself is an answer)", code, got)
+		if got != HealthUnexpectedAnswer {
+			t.Errorf("redirect %d: ProbeHealth = %q, want %q (a redirect is not Orbit's health answer, #341)", code, got, HealthUnexpectedAnswer)
 		}
 		if n := hits.Load(); n != 0 {
 			t.Errorf("redirect %d: the redirect target saw %d request(s), want none", code, n)
@@ -70,8 +70,8 @@ func TestGroupB_W1_NoCredentialsAreSent(t *testing.T) {
 	u.User = url.UserPassword("user", "pw")
 	got := ProbeHealth(context.Background(), u.String())
 
-	if got != HealthResponding {
-		t.Errorf("ProbeHealth with user:pw@ = %q, want responding (a 401 is an answer)", got)
+	if got != HealthUnexpectedAnswer {
+		t.Errorf("ProbeHealth with user:pw@ = %q, want %q (a 401 is not Orbit's health answer, #341)", got, HealthUnexpectedAnswer)
 	}
 	mu.Lock()
 	defer mu.Unlock()

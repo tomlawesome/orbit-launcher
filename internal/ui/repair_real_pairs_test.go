@@ -50,12 +50,15 @@ var realPlanPairs = []realPlanPair{
 	{"container-foreign-owner", "manual"},
 	{"docker-unavailable", "manual"},
 	{"unrelated-resource-present", "manual"},
+	{"services-not-running", "start-services"},
+	{"services-not-running", "manual"},
 	{"database-unreachable", "manual"},
 	{"database-credential-unverifiable", "manual"},
 }
 
-// orbitClassOrder is Orbit's repair.sh class_order at dev e697be42 (unchanged
-// at preview 77ddc612, the channel the live suite installs), in
+// orbitClassOrder is Orbit's repair.sh class_order at preview 48b3971f (the
+// scanner-configuration-mismatch, folder-moved and folder-elsewhere classes
+// it added have no launcher words yet), in
 // its order, with each class's plan action from the same file's
 // action_for_class map (manual where the map has no entry).
 // secret-missing has no entry: resolve_secret_missing_action picks
@@ -81,6 +84,7 @@ var orbitClassOrder = []realPlanPair{
 	{"volume-retained-without-credentials", "rotate-database-credential"},
 	{"document-volume-retained-without-key", "manual"},
 	{"unrelated-resource-present", "manual"},
+	{"services-not-running", "start-services|manual"},
 	{"database-unreachable", "manual"},
 	{"database-credential-mismatch", "rotate-database-credential"},
 	{"database-credential-unverifiable", "manual"},

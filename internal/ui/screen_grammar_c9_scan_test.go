@@ -159,7 +159,7 @@ func TestScreenGrammarC9_InkSitesUseStyleInk(t *testing.T) {
 	}
 	// Minimum uses: how many hand-built sites each file had.
 	for path, min := range map[string]int{
-		"install.go": 1, "promptsession.go": 2, "remove.go": 1, "update.go": 1, "notice.go": 1, "repair.go": 3,
+		"install.go": 1, "promptsession.go": 2, "remove.go": 1, "update.go": 1, "configure.go": 1, "notice.go": 1, "repair.go": 3,
 	} {
 		if files[path] == nil {
 			t.Errorf("%s not found", path)

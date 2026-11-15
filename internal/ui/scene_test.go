@@ -88,10 +88,11 @@ func TestSkyBlock_KeepsCentreBlocksVerticalRhythm(t *testing.T) {
 func TestFlowModels_ResizeArmsNoTickChain(t *testing.T) {
 	d := &deploy.Deployment{TargetDir: "/opt/orbit", AppURL: "https://mail.example.com"}
 	models := map[string]tea.Model{
-		"remove":  NewRemoveModel(d),
-		"repair":  NewRepairModel("/opt/orbit", "v0.1.0"),
-		"install": NewInstallModel("/opt/orbit", "v0.1.0"),
-		"update":  NewUpdateModel(d, "/opt/orbit", "v0.1.0"),
+		"remove":    NewRemoveModel(d),
+		"repair":    NewRepairModel("/opt/orbit", "v0.1.0"),
+		"install":   NewInstallModel("/opt/orbit", "v0.1.0"),
+		"update":    NewUpdateModel(d, "/opt/orbit", "v0.1.0"),
+		"configure": NewConfigureModel(d, "/opt/orbit", "v0.1.0"),
 	}
 
 	for name, m := range models {
@@ -119,6 +120,7 @@ func TestFlowModels_TickBeforeFirstResize(t *testing.T) {
 		NewRepairModel("/opt/orbit", "v0.1.0"),
 		NewInstallModel("/opt/orbit", "v0.1.0"),
 		NewUpdateModel(d, "/opt/orbit", "v0.1.0"),
+		NewConfigureModel(d, "/opt/orbit", "v0.1.0"),
 	} {
 		updated, _ := m.Update(tickMsg{})
 		_ = updated.View()

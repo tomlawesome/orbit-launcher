@@ -118,6 +118,7 @@ func (m RepairModel) gotServices(msg repairServicesMsg) RepairModel {
 
 // expectedServices are the services the deployment's profiles call for,
 // in fixed order. With no record at all it is the base three; a record
+// with the scanner off leaves out orbit-clamav (#345); a record
 // that cannot be read returns the error, never a guessed list (#338).
 func expectedServices(dir string) ([]string, error) {
 	out := []string{"orbit-db", "orbit-app", "orbit-clamav"}
@@ -127,6 +128,9 @@ func expectedServices(dir string) ([]string, error) {
 	}
 	if d == nil {
 		return out, nil
+	}
+	if d.ScanMode == deploy.ScanModeDisabled {
+		out = out[:2] // the scanner is off by choice: no orbit-clamav (#345)
 	}
 	has := func(names ...string) bool {
 		for _, p := range d.Profiles {
@@ -154,29 +158,19 @@ type serviceRow struct {
 }
 
 func serviceRows(expected []string, have []deploy.ServiceState) []serviceRow {
+	faults := deploy.ServiceFaults(expected, have)
 	rows := make([]serviceRow, 0, len(expected))
 	for _, name := range expected {
-		var found *deploy.ServiceState
-		for i := range have {
-			if have[i].Service == name {
-				found = &have[i]
-				break
+		r := serviceRow{name: name, glyph: style.SymbolSuccess, word: deploy.ContainerRunning, running: true}
+		for _, f := range faults {
+			if f.Service != name {
+				continue
 			}
-		}
-		r := serviceRow{name: name}
-		switch {
-		case found == nil:
-			r.glyph, r.word = style.SymbolFailure, "missing"
-		case found.State == deploy.ContainerRunning && found.Health == deploy.HealthUnhealthy:
-			r.glyph, r.word = style.SymbolWarn, deploy.HealthUnhealthy
-		case found.State == deploy.ContainerRunning && found.Health == deploy.HealthStarting:
-			r.glyph, r.word = style.SymbolWarn, deploy.HealthStarting
-		case found.Running():
-			r.glyph, r.word, r.running = style.SymbolSuccess, deploy.ContainerRunning, true
-		case found.State == deploy.ContainerRestarting:
-			r.glyph, r.word = style.SymbolWarn, deploy.ContainerRestarting
-		default:
-			r.glyph, r.word = style.SymbolWarn, "stopped"
+			r.glyph, r.word, r.running = style.SymbolWarn, f.Word, false
+			if f.Word == deploy.FaultMissing {
+				r.glyph = style.SymbolFailure
+			}
+			break
 		}
 		rows = append(rows, r)
 	}

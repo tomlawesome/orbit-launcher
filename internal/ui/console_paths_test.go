@@ -31,7 +31,7 @@ func TestConsole_EachStateHasItsGlyphAndWords(t *testing.T) {
 	c = c.observeRaw("legacy prose line")
 	rows := strings.Join(consoleRows(c, 80, 26), "\n")
 	for _, want := range []string{
-		"· image skipped",
+		"✓ image off by choice",
 		"✗ database blocked — volume-ownership",
 		// Not the newest entry, so it waits quietly instead of spinning.
 		"· migrations waiting",

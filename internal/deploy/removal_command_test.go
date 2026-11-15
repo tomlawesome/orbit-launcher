@@ -15,7 +15,7 @@ import (
 // the test's story; an error there is a test failure.
 func mustRemovalCommand(t *testing.T, dir string) string {
 	t.Helper()
-	cmd, err := RemovalCommand(dir)
+	cmd, err := RemovalCommand(dir, Own{})
 	if err != nil {
 		t.Fatalf("RemovalCommand(%q): %v", dir, err)
 	}
@@ -23,7 +23,7 @@ func mustRemovalCommand(t *testing.T, dir string) string {
 }
 
 func TestRemovalCommand_RefusesAnEmptyDirectory(t *testing.T) {
-	cmd, err := RemovalCommand("")
+	cmd, err := RemovalCommand("", Own{})
 	if err == nil {
 		t.Fatalf("RemovalCommand(\"\") = %q with no error, want an error and no command", cmd)
 	}
@@ -33,7 +33,7 @@ func TestRemovalCommand_RefusesAnEmptyDirectory(t *testing.T) {
 }
 
 func TestRemovalCommandWords_RefusesAnEmptyDirectory(t *testing.T) {
-	words, err := RemovalCommandWords("")
+	words, err := RemovalCommandWords("", Own{})
 	if err == nil {
 		t.Fatalf("RemovalCommandWords(\"\") = %q with no error, want an error and no words", words)
 	}
@@ -45,7 +45,7 @@ func TestRemovalCommandWords_RefusesAnEmptyDirectory(t *testing.T) {
 // The command is its words joined by single spaces, nothing more.
 func TestRemovalCommand_IsItsWordsJoined(t *testing.T) {
 	for _, dir := range []string{"/opt/orbit", "/srv/containers/mail/orbit-production", "/mnt/My Drive/orbit", "/opt/tom's orbit"} {
-		words, err := RemovalCommandWords(dir)
+		words, err := RemovalCommandWords(dir, Own{})
 		if err != nil {
 			t.Fatalf("RemovalCommandWords(%q): %v", dir, err)
 		}
@@ -59,7 +59,7 @@ func TestRemovalCommand_IsItsWordsJoined(t *testing.T) {
 // a quote in it is one word, in the places the command names it.
 func TestRemovalCommandWords_QuoteTheDirectoryAsOneWord(t *testing.T) {
 	for _, dir := range []string{"/opt/orbit", "/mnt/My Drive/orbit", "/opt/tom's orbit"} {
-		words, err := RemovalCommandWords(dir)
+		words, err := RemovalCommandWords(dir, Own{})
 		if err != nil {
 			t.Fatalf("RemovalCommandWords(%q): %v", dir, err)
 		}

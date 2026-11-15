@@ -89,7 +89,8 @@ func startApp(stdout, stderr io.Writer) int {
 		app = app.WithTargetLookup(release.ResolveTarget)
 	}
 	app = app.WithVersion(release.DisplayVersion(release.Version))
-	// The health probe hits only the user's own deployment (its APP_URL),
+	// The health probe hits only the user's own deployment, at its
+	// published port on this machine (deploy.LocalHealthURL, #341),
 	// resolving the splash's alive/degraded state; the env gate mirrors
 	// ORBIT_LAUNCHER_NO_UPDATE_CHECK so tests stay offline-deterministic.
 	var probe func(context.Context, string) deploy.HealthReason
@@ -163,9 +164,8 @@ func startApp(stdout, stderr io.Writer) int {
 	// non-empty note means a stop outlived its grace: say so and exit 1.
 	// A clean stop prints nothing and exits 0 (decision 20a).
 	if app, ok := final.(ui.AppModel); ok {
-		if note := app.ExitNote(); note != "" {
-			fmt.Fprintln(stderr, "\norbit-launcher:", note)
-			return 1
+		if code := reportExit(stderr, app); code != 0 {
+			return code
 		}
 		// SIGTERM or SIGHUP quit an Update that had already started
 		// applying and left it to finish: say so, and exit as a shell
@@ -231,4 +231,22 @@ func watchSignals(sigs <-chan os.Signal, send func(tea.Msg)) (stop func(), inter
 		<-done
 	}
 	return stop, func() bool { return interrupts.Load() > 0 }
+}
+
+// reportExit prints what the closed screen left for stderr and says the
+// exit code it implies: an exit note is a failure (exit 1, and wins); a
+// leave note is the operator's own choice ("Move it back", #1576), printed
+// as is, exit 0; neither prints nothing.
+func reportExit(w io.Writer, m interface {
+	ExitNote() string
+	LeaveNote() string
+}) int {
+	if note := m.ExitNote(); note != "" {
+		fmt.Fprintln(w, "\norbit-launcher:", note)
+		return 1
+	}
+	if note := m.LeaveNote(); note != "" {
+		fmt.Fprintln(w, note)
+	}
+	return 0
 }

@@ -96,7 +96,7 @@ func TestAppModel_WithServicesReaderAfterTheStatusProbeIsWhatTheSplashCounts(t *
 		t.Fatal("the splash has no probe")
 	}
 	msg, ok := cmd().(healthResultMsg)
-	if !ok || !msg.counted || msg.running != 2 {
+	if !ok || !msg.asked || !msg.counted || msg.running != 2 {
 		t.Fatalf("probe = %+v, want the reader's count (2 running, counted)", msg)
 	}
 }

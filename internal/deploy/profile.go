@@ -23,6 +23,18 @@ const (
 	ProfileDocuments = "processing"
 )
 
+// ScannerEnv names the variable that tells install.sh whether a fresh
+// install keeps the virus scanner. It rides in the environment only,
+// and is never sent empty: the engine refuses any value but the two
+// below, before it writes anything.
+const ScannerEnv = "ORBIT_INSTALL_SCANNER"
+
+// The two values the engine accepts for ScannerEnv.
+const (
+	ScannerOn  = "on"
+	ScannerOff = "off"
+)
+
 const gigabyte = uint64(1) << 30
 
 // MemoryDefaults is each container's memory limit as Orbit ships it:
@@ -35,23 +47,57 @@ var MemoryDefaults = map[string]uint64{
 	"TIKA_MEMORY_LIMIT":   1 * gigabyte, // the attachment reader (Documents)
 }
 
-// ProfileNeed is the memory a machine needs to run profile: Standard is
-// Orbit plus the scanner (6 GB); Documents adds the reader (7 GB). An
-// unknown profile needs nothing.
-func ProfileNeed(profile string) uint64 {
-	standard := MemoryDefaults["ORBIT_MEMORY_LIMIT"] + MemoryDefaults["CLAMAV_MEMORY_LIMIT"]
+// ProfileNeed is the memory a machine needs to run profile: Orbit
+// itself, plus the scanner only when scannerOn, plus the reader for
+// Documents. Standard is 6 GB with the scanner and 2 GB without;
+// Documents is 7 GB and 3 GB. A caller holding a deployment passes
+// d.ScanMode != ScanModeDisabled. An unknown profile needs nothing.
+func ProfileNeed(profile string, scannerOn bool) uint64 {
+	need := MemoryDefaults["ORBIT_MEMORY_LIMIT"]
+	if scannerOn {
+		need += MemoryDefaults["CLAMAV_MEMORY_LIMIT"]
+	}
 	switch profile {
 	case ProfileStandard:
-		return standard
+		return need
 	case ProfileDocuments:
-		return standard + MemoryDefaults["TIKA_MEMORY_LIMIT"]
+		return need + MemoryDefaults["TIKA_MEMORY_LIMIT"]
 	}
 	return 0
 }
 
+// WithScanner adds ScannerEnv=scanner to cmd's environment, after the
+// person's own. An empty scanner adds nothing: an update never sends one.
+func WithScanner(cmd *exec.Cmd, scanner string) {
+	if scanner == "" {
+		return
+	}
+	cmd.Env = append(cmd.Env, ScannerEnv+"="+scanner)
+}
+
+// CurrentProfile is the profile an installed deployment runs, read from
+// the COMPOSE_PROFILES list Detect has cleaned and split: no profiles is
+// Standard, exactly "processing" is Documents. ok is false for anything
+// else (a local model, a mix, a duplicate, another case or an unknown
+// entry), which the launcher cannot change. Detect drops empty entries,
+// so "processing," reads as Documents and "," as Standard.
+func CurrentProfile(d *Deployment) (profile string, ok bool) {
+	if d == nil {
+		return "", false
+	}
+	switch {
+	case len(d.Profiles) == 0:
+		return ProfileStandard, true
+	case len(d.Profiles) == 1 && d.Profiles[0] == ProfileDocuments:
+		return ProfileDocuments, true
+	}
+	return "", false
+}
+
 // WithProfile adds ProfileEnv=profile to cmd's environment, after
 // whatever the person's own environment holds so it wins. An empty
-// profile adds nothing: an update never sends one.
+// profile adds nothing: an Update run sends none, while Install and
+// Configure (a profile change, which also runs as an update) name theirs.
 func WithProfile(cmd *exec.Cmd, profile string) {
 	if profile == "" {
 		return

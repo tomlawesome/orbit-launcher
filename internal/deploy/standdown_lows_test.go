@@ -49,14 +49,14 @@ func TestRemovalCommand_RefusesTheRootAndTheHomeDirectory(t *testing.T) {
 	const home = "/home/someone"
 	t.Setenv("HOME", home)
 	for _, dir := range []string{"/", "//", "/.", home, home + "/", home + "/.", "/home/someone/../someone"} {
-		cmd, err := RemovalCommand(dir)
+		cmd, err := RemovalCommand(dir, Own{})
 		if err == nil {
 			t.Errorf("RemovalCommand(%q) = %q with no error, want a refusal", dir, cmd)
 		}
 		if cmd != "" {
 			t.Errorf("RemovalCommand(%q) returned %q alongside its error, want no command", dir, cmd)
 		}
-		words, werr := RemovalCommandWords(dir)
+		words, werr := RemovalCommandWords(dir, Own{})
 		if werr == nil || len(words) != 0 {
 			t.Errorf("RemovalCommandWords(%q) = %q, %v; want a refusal and no words", dir, words, werr)
 		}
@@ -68,7 +68,7 @@ func TestRemovalCommand_RefusesTheRootAndTheHomeDirectory(t *testing.T) {
 func TestRemovalCommand_StillNamesADedicatedFolder(t *testing.T) {
 	t.Setenv("HOME", "/home/someone")
 	for _, dir := range []string{"/home/someone/orbit", "/home/someone2", "/opt/orbit"} {
-		if _, err := RemovalCommand(dir); err != nil {
+		if _, err := RemovalCommand(dir, Own{}); err != nil {
 			t.Errorf("RemovalCommand(%q): %v, want a command for a dedicated folder", dir, err)
 		}
 	}
