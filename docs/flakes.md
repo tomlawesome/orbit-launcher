@@ -30,3 +30,7 @@ delete the heading.
 ## test/pty tests time out waiting for the first screen (host)
 
 - 2026-11-05 · a8813d7 · local, full `go test ./...` at load average 79 · several test/pty tests timed out waiting 10 s for the first screen; the package passed alone and the full run passed on the same code. Test names not kept
+
+## TestConsole_RealPTY_QuittingDuringTheConfigurationImportLeavesNothingInTMPDIR (test/pty) (host)
+
+- 2026-11-15 · 242f721 · pipeline 4205 / fast job 51278 · the package hit go test's 10-minute limit with this test still copying secrets (8m23s in; its SIGTERM subtest 4m49s) while both live legs ran on the same runner; the retry 51331 passed. The batch did not touch the import code
