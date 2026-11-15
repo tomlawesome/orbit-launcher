@@ -17,5 +17,9 @@ lacked, so no catch-up was needed.
 - One Low at Fix-when now: a test that stopped before the step it was named
   for. Fixed in the test (!291), fix review clean in one round.
 - Four Lows (Fix-when next) and the Notes are on #351.
+- The full pipeline on the batch-to-dev MR (!293) then failed two checks
+  (#352): staticcheck on three unused test values, fixed in the test; and
+  the splash screenshot, which predated Configure, re-baselined with the
+  owner's approval. The marker below covers both.
 
-Audited-through: 2ce8d44c75ea71526e5f62bd35f286ee6e1555a3
+Audited-through: 32100b6791939bb4ac738253f1075ee24b0e4fa3

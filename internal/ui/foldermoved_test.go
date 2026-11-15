@@ -104,7 +104,7 @@ func TestFolderMoved_RunFromThisFolderInUpdateSendsTheVariableInTheEnvironmentOn
 	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Run from this folder
 	m = drive(t, m, cmd)
 
-	m = runUpdateToStopped(t, m, s)
+	_ = runUpdateToStopped(t, m, s)
 
 	if got := recordedLines(t, out, "var"); len(got) != 1 || got[0] != "recreate" {
 		t.Errorf("the engine saw %s = %q, want exactly one run with %q", folderMovedEnv, got, "recreate")
@@ -126,7 +126,7 @@ func TestFolderMoved_TheVariableIsKeptForARetry(t *testing.T) {
 
 	m = moveCaretTo(t, m, updateAgain)
 	m, cmd = updateAs(t, m, key(tea.KeyEnter))
-	m = driveUntil(t, m, cmd, func(tm tea.Model) bool {
+	_ = driveUntil(t, m, cmd, func(tm tea.Model) bool {
 		return len(recordedLines(t, out, "var")) >= 2 && strings.Contains(screen(tm), updateAgain)
 	}, &sink{msgs: s.msgs, first: true})
 
@@ -198,7 +198,7 @@ func TestFolderMoved_MoveItBackStartsNoRunAndWritesNothing(t *testing.T) {
 			m = moveCaretTo(t, m, goneMoveRow)
 			before := snapshot(t, dir)
 
-			m, cmd := updateAs(t, m, key(tea.KeyEnter))
+			_, cmd := updateAs(t, m, key(tea.KeyEnter))
 			quit := false
 			for _, msg := range answersOf(cmd) {
 				if _, ok := msg.(tea.QuitMsg); ok {
