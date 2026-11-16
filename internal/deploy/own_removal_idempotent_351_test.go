@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const guardedDown = "{ [ ! -e .env-orbit ] || docker compose --env-file .env-orbit down -v; }"
+const guardedDown = "{ test ! -e .env-orbit || docker compose --env-file .env-orbit down -v; }"
 
 func TestRemovalCommand351_ComposeStepIsGuardedByEnvOrbitInsideTheSubshell(t *testing.T) {
 	dir := standardTree(t)
