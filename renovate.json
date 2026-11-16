@@ -4,7 +4,7 @@
   "description": [
     "Renovate for the GitLab lane on gitlab.tomlawson.io (ai/orbit-launcher), taking over from the retired .github/dependabot.yml (#140 step 4). Same cadence and the same grouping the Dependabot file had, so nothing about what gets watched changes with the host.",
     "GitHub Actions is watched from here too, matching the actions entry the retired .github/dependabot.yml carried (including the image in a workflow's `container:` key), plus the .gitlab-ci.yml job images and the pipeline's own digest pins, which Dependabot never watched because .gitlab-ci.yml did not exist when it was written.",
-    "This file is read two ways: as the repository config Renovate finds on the repository's default branch, and as the global config the renovate job in .gitlab-ci.yml points RENOVATE_CONFIG_FILE at. On GitLab the default branch is `dev`, which carries this file, and the weekly schedule runs on `dev` too, so both readings resolve to this same copy and the repository one merges over the global one -- see the job's comment.",
+    "This file is read two ways: as the repository config Renovate finds on the repository's default branch, and as the global config the renovate job in .gitlab-ci.yml points RENOVATE_CONFIG_FILE at. On GitLab the default branch is `dev`, which carries this file, and the daily renovate job runs on `dev` too, so both readings resolve to this same copy and the repository one merges over the global one -- see the job's comment.",
     "The dependency dashboard is off (owner, 2026-09-10). It is a bot-written issue with no acceptance criteria that never reaches a done state, so it cannot sit in a milestone that reports as finished, and it is stale between runs. Turning it off changes nothing about what Renovate watches or raises: the merge requests still arrive. ai/orbit turned it off on 2026-09-08 and ai/mikroview on 2026-09-10, for the same reason; this matches them.",
     "npm is enabled only for test/visual/package.json's @playwright/test (#179): that is the only package.json in the repo, so this does not widen what gets watched beyond it. ignorePaths is config:recommended's list minus `**/test/**`, which hid that file from Renovate altogether (found by a dry-run rehearsal, 2026-10-05). Before this, Renovate could move PLAYWRIGHT_IMAGE without ever touching the lockfile, which is what #161 found broken; test/supplychain/pins_test.go now also checks the two agree.",
     "A release is proposed only once it is 3 days old, so a bad or hijacked release has time to be caught and pulled first; hijacked releases have been pulled within hours (owner, 2026-10-28). The renovate job runs daily: security fixes are exempt from the age and the schedule (Renovate's vulnerabilityAlerts default sets minimumReleaseAge to null and schedule to any time), so they arrive within a day; ordinary updates are proposed only in the Monday window, and updateNotScheduled false keeps the daily runs from re-pushing their branches outside it.",
@@ -53,12 +53,21 @@
       "depNameTemplate": "go"
     },
     {
-      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead, and git-refs pins need the manager below instead.",
+      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead; git-refs pins and the github-release-attachments pins need the managers below instead. BATS, GITLEAKS and TTYD have a *_SHA256 too but stay on github-releases here, because their checksums are copied elsewhere and move by hand (#347).",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>go|github-releases|github-tags) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z0-9_]+_VERSION:\\s+\"?(?<currentValue>[^\\s\"]+)\"?"
       ]
+    },
+    {
+      "description": "Tool versions that sit directly above their own *_SHA256 in .gitlab-ci.yml's variables block (#347): TRIVY, GOLANGCI_LINT, ZIZMOR and ACTIONLINT. The github-release-attachments datasource reads the release's checksum file, or hashes the asset when there is none (zizmor), so Renovate moves currentDigest with currentValue and the download check passes on its merge request. The manager above leaves these blocks alone because its datasource list does not name github-release-attachments.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-release-attachments depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z0-9_]+_VERSION:\\s+\"?(?<currentValue>[^\\s\"]+)\"?\\s+[A-Z0-9_]+_SHA256:\\s+(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "github-release-attachments"
     },
     {
       "description": "A tool pinned to a commit on a branch rather than a release -- STATICCHECK_VERSION today (#202) -- read as a digest on that branch, so a newer commit is proposed until the pin moves back to a release (#328).",
@@ -71,7 +80,7 @@
     }
   ],
   "vulnerabilityAlerts": {
-    "description": "Security fixes do not wait for Monday. GitLab CE has no dependency-alert API for Renovate to read, so osvVulnerabilityAlerts above is what supplies the advisories, from the OSV database, and this is what lets a fix land outside the weekly window.",
+    "description": "Security fixes do not wait for Monday. GitLab CE has no dependency-alert API for Renovate to read, so osvVulnerabilityAlerts above is what supplies the advisories, from the OSV database, and this is what lets a fix land outside the Monday window.",
     "enabled": true,
     "schedule": ["at any time"]
   },
@@ -97,7 +106,7 @@
     {
       "description": "CI tool pins from the two annotation managers (#328) get their own group, so a tool bump is not filed as an image bump. Majors are left out so a major tool release comes in its own merge request. Listed after the image group above so this grouping wins for them.",
       "matchManagers": ["custom.regex"],
-      "matchDatasources": ["go", "github-releases", "github-tags", "git-refs"],
+      "matchDatasources": ["go", "github-releases", "github-release-attachments", "github-tags", "git-refs"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "ci tools"
     },
@@ -108,6 +117,12 @@
       "groupName": "playwright"
     },
     {
+      "description": "No digest-only updates for the Playwright image (#347). Each pin of it would otherwise get two upgrades in the playwright branch, a version update and a digest refresh of the current tag; Renovate logs an upgrade collision and the image stayed behind while @playwright/test moved (!281). A version update brings its own digest. The cost: a rebuilt image under the same tag is not picked up, so the image moves only with a Playwright version, which is how the lockstep rule wants it.",
+      "matchPackageNames": ["mcr.microsoft.com/playwright"],
+      "matchUpdateTypes": ["digest"],
+      "enabled": false
+    },
+    {
       "description": "GO_IMAGE, GO_VERSION and go.mod's `go` line must move together or staticcheck breaks on the newer toolchain's export data, the way #161 found it. GO_SHA256 and STATICCHECK_VERSION cannot be derived by Renovate -- a checksum and a separate project's release -- so test/supplychain/pins_test.go (#179) checks those by hand and names them in its failure message. The gomod manager and rangeStrategy bump bring go.mod's `go` line into the group; Renovate leaves it alone otherwise. Listed after the image group above so this grouping wins for these packages.",
       "matchManagers": ["custom.regex", "gomod"],
       "matchPackageNames": ["golang", "go"],
@@ -115,7 +130,7 @@
       "rangeStrategy": "bump"
     },
     {
-      "description": "Renovate's own image, which the gitlabci manager finds in the renovate job. 44.63.0 and 44.64.0 (both released 2026-09-04) do not start: they ship an `apk` datasource that imports `tar`, and `tar` is absent from the image's node_modules, so the container dies before it reads any configuration. Only those two are excluded, so the next working release is offered as usual. Nothing runs this job outside the weekly schedule, so a bump is only proven by the next scheduled run: if that run fails at start-up, revert the bump and add the version here.",
+      "description": "Renovate's own image, which the gitlabci manager finds in the renovate job. 44.63.0 and 44.64.0 (both released 2026-09-04) do not start: they ship an `apk` datasource that imports `tar`, and `tar` is absent from the image's node_modules, so the container dies before it reads any configuration. Only those two are excluded, so the next working release is offered as usual. Nothing runs this job outside its daily schedule, so a bump is only proven by the next scheduled run: if that run fails at start-up, revert the bump and add the version here.",
       "matchPackageNames": ["renovate/renovate"],
       "allowedVersions": "!/^44\\.6[34]\\.0$/"
     }

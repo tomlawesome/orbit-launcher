@@ -58,8 +58,8 @@ var realPlanPairs = []realPlanPair{
 
 // orbitClassOrder is Orbit's repair.sh class_order at preview 48b3971f (the
 // scanner-configuration-mismatch, folder-moved and folder-elsewhere classes
-// it added have no launcher words yet), in
-// its order, with each class's plan action from the same file's
+// it added are not listed here; their words are pinned in repair_348_test.go),
+// in its order, with each class's plan action from the same file's
 // action_for_class map (manual where the map has no entry).
 // secret-missing has no entry: resolve_secret_missing_action picks
 // regenerate-secret or manual, so both appear in realPlanPairs.
