@@ -82,6 +82,28 @@ func ciPinBlocks(t *testing.T) (file string, withSHA []checksumBlock, noSHA []ch
 	return file, withSHA, noSHA
 }
 
+// checksumExcluded are the blocks that keep datasource=github-releases and
+// the general annotation manager (#347 item 1): BATS downloads the source
+// archive, and GITLEAKS and TTYD are copied into the GitHub workflows.
+var checksumExcluded = map[string]bool{"BATS": true, "GITLEAKS": true, "TTYD": true}
+
+func isChecksumManager(m renovateManager) bool {
+	return m.DatasourceTemplate == "github-release-attachments" ||
+		strings.Contains(strings.Join(m.MatchStrings, "\n"), "github-release-attachments")
+}
+
+func overlapsVersionLine(t *testing.T, file string, m renovateManager, b checksumBlock) bool {
+	t.Helper()
+	for _, re := range compileMatchStrings(t, m) {
+		for _, loc := range re.FindAllStringIndex(file, -1) {
+			if loc[0] < b.verEnd && loc[1] > b.verStart {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func renovateManagers(t *testing.T) []renovateManager {
 	t.Helper()
 	var cfg struct {
@@ -114,8 +136,27 @@ func TestChecksumPinsCarryAttachmentsAnnotation(t *testing.T) {
 		t.Fatal("found no *_VERSION followed by a *_SHA256 in .gitlab-ci.yml; the parser is broken or the pins moved")
 	}
 	for _, b := range withSHA {
+		if checksumExcluded[b.prefix] {
+			if !strings.Contains(b.annotation, "datasource=github-releases ") && !strings.HasSuffix(b.annotation, "datasource=github-releases") {
+				t.Errorf("%s_VERSION must keep datasource=github-releases (excluded in #347 item 1) but the line above it is %q", b.prefix, b.annotation)
+			}
+			continue
+		}
 		if !strings.Contains(b.annotation, "datasource=github-release-attachments") {
 			t.Errorf("%s_VERSION is followed by %s_SHA256 but the line above it is %q, not a `# renovate: datasource=github-release-attachments depName=<owner/repo>` annotation (#347)", b.prefix, b.prefix, b.annotation)
+		}
+	}
+}
+
+func TestChecksumExclusionsAreRealBlocks(t *testing.T) {
+	_, withSHA, _ := ciPinBlocks(t)
+	seen := map[string]bool{}
+	for _, b := range withSHA {
+		seen[b.prefix] = true
+	}
+	for p := range checksumExcluded {
+		if !seen[p] {
+			t.Errorf("%s is listed as excluded but is not a *_VERSION directly above *_SHA256 in .gitlab-ci.yml", p)
 		}
 	}
 }
@@ -124,6 +165,9 @@ func TestRenovateReadsChecksumPinBlocks(t *testing.T) {
 	file, withSHA, _ := ciPinBlocks(t)
 	managers := renovateManagers(t)
 	for _, b := range withSHA {
+		if checksumExcluded[b.prefix] {
+			continue
+		}
 		found := false
 		var why string
 		for _, m := range managers {
@@ -164,22 +208,29 @@ func TestChecksumPinsAreProposedOnce(t *testing.T) {
 	file, withSHA, _ := ciPinBlocks(t)
 	managers := renovateManagers(t)
 	for _, b := range withSHA {
-		var hits []string
+		var checksum, other []string
 		for i, m := range managers {
-			if m.DatasourceTemplate == "github-release-attachments" || strings.Contains(strings.Join(m.MatchStrings, "\n"), "github-release-attachments") {
-				continue // the checksum manager itself
+			if !overlapsVersionLine(t, file, m, b) {
+				continue
 			}
-			for _, re := range compileMatchStrings(t, m) {
-				for _, loc := range re.FindAllStringIndex(file, -1) {
-					if loc[0] < b.verEnd && loc[1] > b.verStart {
-						hits = append(hits, "customManagers["+strconv.Itoa(i)+"] "+firstWords(m.Description))
-						break
-					}
-				}
+			name := "customManagers[" + strconv.Itoa(i) + "] " + firstWords(m.Description)
+			if isChecksumManager(m) {
+				checksum = append(checksum, name)
+			} else {
+				other = append(other, name)
 			}
 		}
-		if len(hits) > 0 {
-			t.Errorf("%s_VERSION line is also matched by another manager, so the pin is proposed twice: %v (#347)", b.prefix, hits)
+		if checksumExcluded[b.prefix] {
+			if len(checksum) > 0 {
+				t.Errorf("%s_VERSION is excluded from the checksum manager (#347) but is read by %v", b.prefix, checksum)
+			}
+			if len(other) == 0 {
+				t.Errorf("%s_VERSION is excluded from the checksum manager but no other manager reads it, so it would go unwatched", b.prefix)
+			}
+			continue
+		}
+		if len(other) > 0 {
+			t.Errorf("%s_VERSION line is also matched by another manager, so the pin is proposed twice: %v (#347)", b.prefix, other)
 		}
 	}
 }
