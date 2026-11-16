@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const guardedDown = "[ ! -e .env-orbit ] || docker compose --env-file .env-orbit down -v"
+const guardedDown = "{ [ ! -e .env-orbit ] || docker compose --env-file .env-orbit down -v; }"
 
 func TestRemovalCommand351_ComposeStepIsGuardedByEnvOrbitInsideTheSubshell(t *testing.T) {
 	dir := standardTree(t)
@@ -90,5 +90,25 @@ func TestRemovalCommand351_SecondPasteWithoutEnvOrbitStillRemovesTheRest(t *test
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("second run left %s behind", dir)
+	}
+}
+
+// A failed cd (folder missing) runs nothing after it: neither docker nor sudo.
+func TestRemovalCommand351_FailedCdRunsNeitherDockerNorSudo(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "ran.log")
+	path := pathWith(t, map[string]string{
+		"docker": `echo docker >> ` + log + "\n",
+		"sudo":   `echo sudo >> ` + log + "\n" + `exec "$@"` + "\n",
+	})
+	dir := standardTree(t)
+	cmd := mustRemovalCommand2(t, dir, mustOwn(t, dir))
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := runRemoval351(t, cmd, path); err == nil {
+		t.Errorf("the command succeeded for a folder that is not there")
+	}
+	if b, err := os.ReadFile(log); err == nil {
+		t.Errorf("after a failed cd these ran: %q", b)
 	}
 }

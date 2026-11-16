@@ -356,7 +356,7 @@ func TestRemovalCommand_TodaysOrbitIsFileByFileThenRmdir(t *testing.T) {
 	dir := standardTree(t)
 	got := mustRemovalCommand2(t, dir, mustOwn(t, dir))
 	q := shellQuote(dir)
-	want := "(cd " + q + " && [ ! -e .env-orbit ] || docker compose --env-file .env-orbit down -v && sudo rm -rf -- " +
+	want := "(cd " + q + " && { [ ! -e .env-orbit ] || docker compose --env-file .env-orbit down -v; } && sudo rm -rf -- " +
 		"docker-compose.yml docker-compose.mail.yml docker-compose.kek-rotation.yml .env-orbit.example " +
 		"config/tika-config.json scripts/backup.sh scripts/configure.sh scripts/end-maintenance.sh " +
 		"scripts/export-recovery-bundle.sh scripts/import-recovery-bundle.sh scripts/installer-ui.sh " +
