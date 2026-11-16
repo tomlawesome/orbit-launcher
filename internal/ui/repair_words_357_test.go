@@ -31,6 +31,11 @@ func TestRepair357_ClassWords(t *testing.T) {
 		if !strings.Contains(got, c.want) || strings.Contains(got, c.class) {
 			t.Errorf("finding %s/%s reads %q, want words %q and no raw class", c.class, c.target, got, c.want)
 		}
+		if c.class == "restore-unfinished" {
+			if !strings.Contains(got, "backup restore") {
+				t.Errorf("finding restore-unfinished/restore reads %q, want target words %q", got, "backup restore")
+			}
+		}
 	}
 }
 
@@ -41,8 +46,8 @@ func TestRepair357_ActionWords(t *testing.T) {
 }
 
 func TestRepair357_TargetWordsRestore(t *testing.T) {
-	if got := targetWords("restore"); got != "restore" {
-		t.Errorf("targetWords(restore) = %q, want %q", got, "restore")
+	if got := targetWords("restore"); got != "backup restore" {
+		t.Errorf("targetWords(restore) = %q, want %q", got, "backup restore")
 	}
 }
 
