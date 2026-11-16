@@ -53,12 +53,21 @@
       "depNameTemplate": "go"
     },
     {
-      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead, and git-refs pins need the manager below instead.",
+      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead; git-refs pins and the github-release-attachments pins need the managers below instead. BATS, GITLEAKS and TTYD have a *_SHA256 too but stay on github-releases here, because their checksums are copied elsewhere and move by hand (#347).",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>go|github-releases|github-tags) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z0-9_]+_VERSION:\\s+\"?(?<currentValue>[^\\s\"]+)\"?"
       ]
+    },
+    {
+      "description": "Tool versions that sit directly above their own *_SHA256 in .gitlab-ci.yml's variables block (#347): TRIVY, GOLANGCI_LINT, ZIZMOR and ACTIONLINT. The github-release-attachments datasource reads the release's checksum file, or hashes the asset when there is none (zizmor), so Renovate moves currentDigest with currentValue and the download check passes on its merge request. The manager above leaves these blocks alone because its datasource list does not name github-release-attachments.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-release-attachments depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z0-9_]+_VERSION:\\s+\"?(?<currentValue>[^\\s\"]+)\"?\\s+[A-Z0-9_]+_SHA256:\\s+(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "github-release-attachments"
     },
     {
       "description": "A tool pinned to a commit on a branch rather than a release -- STATICCHECK_VERSION today (#202) -- read as a digest on that branch, so a newer commit is proposed until the pin moves back to a release (#328).",
@@ -97,7 +106,7 @@
     {
       "description": "CI tool pins from the two annotation managers (#328) get their own group, so a tool bump is not filed as an image bump. Majors are left out so a major tool release comes in its own merge request. Listed after the image group above so this grouping wins for them.",
       "matchManagers": ["custom.regex"],
-      "matchDatasources": ["go", "github-releases", "github-tags", "git-refs"],
+      "matchDatasources": ["go", "github-releases", "github-release-attachments", "github-tags", "git-refs"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "ci tools"
     },
