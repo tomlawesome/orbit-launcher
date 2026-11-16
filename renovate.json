@@ -117,6 +117,12 @@
       "groupName": "playwright"
     },
     {
+      "description": "No digest-only updates for the Playwright image (#347). Each pin of it would otherwise get two upgrades in the playwright branch, a version update and a digest refresh of the current tag; Renovate logs an upgrade collision and the image stayed behind while @playwright/test moved (!281). A version update brings its own digest, so nothing is lost.",
+      "matchPackageNames": ["mcr.microsoft.com/playwright"],
+      "matchUpdateTypes": ["digest"],
+      "enabled": false
+    },
+    {
       "description": "GO_IMAGE, GO_VERSION and go.mod's `go` line must move together or staticcheck breaks on the newer toolchain's export data, the way #161 found it. GO_SHA256 and STATICCHECK_VERSION cannot be derived by Renovate -- a checksum and a separate project's release -- so test/supplychain/pins_test.go (#179) checks those by hand and names them in its failure message. The gomod manager and rangeStrategy bump bring go.mod's `go` line into the group; Renovate leaves it alone otherwise. Listed after the image group above so this grouping wins for these packages.",
       "matchManagers": ["custom.regex", "gomod"],
       "matchPackageNames": ["golang", "go"],
