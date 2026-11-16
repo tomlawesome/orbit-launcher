@@ -681,7 +681,7 @@ func (m RepairModel) planMenu() []string {
 func (m RepairModel) planHasSafe() bool {
 	for _, p := range m.planActions {
 		switch p.Action {
-		case "fix-permissions", "restore-transaction", "restart-services", "start-services", "restore-compose-file":
+		case "fix-permissions", "restore-transaction", "restart-services", "start-services", "recreate-services", "restore-compose-file":
 			return true
 		}
 	}
@@ -1456,6 +1456,8 @@ func actionWords(action string) string {
 		return "restart Orbit's services"
 	case "start-services":
 		return "start Orbit's services"
+	case "recreate-services":
+		return "recreate Orbit's containers from this folder"
 	case "restore-compose-file":
 		return "put back docker-compose.yml from this version's image"
 	case "manual":
@@ -1567,6 +1569,12 @@ func classWords(class string) string {
 		return "no recognisable Orbit installation"
 	case "services-not-running":
 		return "a service isn't running"
+	case "folder-moved":
+		return "containers were created from a folder that no longer exists"
+	case "folder-elsewhere":
+		return "containers were created from another folder that still exists"
+	case "scanner-configuration-mismatch":
+		return "scanner setting and compose files disagree"
 	case "managed-file-missing":
 		return "missing"
 	case "compose-file-restorable":
