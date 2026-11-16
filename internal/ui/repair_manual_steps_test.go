@@ -328,6 +328,9 @@ var manualSubjects = map[string]string{
 	"services-not-running":                 "service",
 	"database-unreachable":                 "database",
 	"database-credential-unverifiable":     "password",
+	"restore-unfinished":                   "restore",
+	"service-restarting":                   "service",
+	"database-volume-missing":              "database",
 }
 
 // TestPlanLine_EveryRealManualPairNamesWhatItIsAbout (v0.4.2 audit A5):
