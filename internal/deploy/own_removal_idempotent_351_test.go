@@ -22,7 +22,7 @@ func TestRemovalCommand351_ComposeStepIsGuardedByEnvOrbitInsideTheSubshell(t *te
 		t.Errorf("command does not start with the guarded compose step\n got: %s\nwant prefix: %s", got, want)
 	}
 	// The rest of the chain is unchanged.
-	if !strings.Contains(got, " && sudo rmdir -- config scripts) && sudo rmdir -- "+q) {
+	if !strings.Contains(got, " && { test ! -d config || sudo rmdir -- config; } && { test ! -d scripts || sudo rmdir -- scripts; }) && sudo rmdir -- "+q) {
 		t.Errorf("the rmdir tail changed:\n%s", got)
 	}
 	if strings.Count(got, "docker compose") != 1 {

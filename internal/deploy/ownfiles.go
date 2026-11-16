@@ -370,16 +370,19 @@ func rmdirFolders(names []string) []string {
 //
 //	(cd <folder> &&
 //	 { test ! -e .env-orbit || docker compose --env-file .env-orbit down -v; } &&
-//	 sudo rm -rf -- <names> && sudo rmdir -- config scripts) &&
+//	 sudo rm -rf -- <names> &&
+//	 { test ! -d config || sudo rmdir -- config; } &&
+//	 { test ! -d scripts || sudo rmdir -- scripts; }) &&
 //	 sudo rmdir -- <folder>
 //
 // One subshell, so every name is relative to the folder and nothing
 // after a failed cd runs. The compose step is skipped once .env-orbit is
-// gone, so the command can be pasted again after it stopped part way; the
-// braces make it one step, so the || cannot let the rm run after a failed
-// cd; with no names present the rm is left out, and
-// with no names in a subfolder so is the first rmdir; rmdir refuses a folder that is not empty and
-// says so, which stops the chain. The root and home folders get no
+// gone, and each subfolder's rmdir once that folder is gone, so the
+// command can be pasted again after it stopped part way (#353); the
+// braces make each guarded step one step, so the || cannot let a later
+// step run after a failed cd; with no names present the rm is left out,
+// and with no names in a subfolder so are the subfolder steps; rmdir
+// refuses a folder that is not empty and says so, which stops the chain. The root and home folders get no
 // final rmdir (owner, 2026-10-22, 21a).
 func ownRemovalWords(targetDir string, own Own) []string {
 	q := shellQuote(targetDir)
@@ -391,11 +394,9 @@ func ownRemovalWords(targetDir string, own Own) []string {
 			words = append(words, shellQuote(n))
 		}
 	}
-	if dirs := rmdirFolders(own.Names); len(dirs) > 0 {
-		words = append(words, "&&", "sudo", "rmdir", "--")
-		for _, d := range dirs {
-			words = append(words, shellQuote(d))
-		}
+	for _, d := range rmdirFolders(own.Names) {
+		qd := shellQuote(d)
+		words = append(words, "&&", "{", "test", "!", "-d", qd, "||", "sudo", "rmdir", "--", qd+";", "}")
 	}
 	words[len(words)-1] += ")"
 	if refuseSharedFolder(targetDir) == nil {

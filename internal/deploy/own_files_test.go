@@ -361,7 +361,7 @@ func TestRemovalCommand_TodaysOrbitIsFileByFileThenRmdir(t *testing.T) {
 		"config/tika-config.json scripts/backup.sh scripts/configure.sh scripts/end-maintenance.sh " +
 		"scripts/export-recovery-bundle.sh scripts/import-recovery-bundle.sh scripts/installer-ui.sh " +
 		"scripts/repair.sh scripts/restore.sh .env-orbit .orbit-secrets .orbit-files " +
-		"&& sudo rmdir -- config scripts) && sudo rmdir -- " + q
+		"&& { test ! -d config || sudo rmdir -- config; } && { test ! -d scripts || sudo rmdir -- scripts; }) && sudo rmdir -- " + q
 	if got != want {
 		t.Errorf("command\n got: %s\nwant: %s", got, want)
 	}
@@ -420,7 +420,7 @@ func TestRemovalCommand_HomeFolderGetsFileByFileAndNoFolderRmdir(t *testing.T) {
 	if !strings.Contains(cmd, "sudo rm -rf -- docker-compose.yml") {
 		t.Errorf("not file by file:\n%s", cmd)
 	}
-	if !strings.HasSuffix(cmd, "sudo rmdir -- config scripts)") {
+	if !strings.HasSuffix(cmd, "{ test ! -d scripts || sudo rmdir -- scripts; })") {
 		t.Errorf("a home folder's command must end after the config and scripts rmdir, with no folder rmdir:\n%s", cmd)
 	}
 	if strings.Contains(cmd, "rmdir -- "+shellQuote(home)) {
