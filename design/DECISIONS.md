@@ -237,3 +237,4 @@ shipped (owner, 2026-10-21, #195).
   (owner): mockups are never published on Pages; they are served only from
   the local design container — see AGENTS.md.*
 - Owner review happens against cell-truth renders only.
+- The launcher-update command lives on Update's confirm screen, in a copyable box shown only when a newer launcher is known; the splash notice only points to it (#349).

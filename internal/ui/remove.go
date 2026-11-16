@@ -596,15 +596,21 @@ func (m RemoveModel) viewDone() string {
 	if len(lines) > room {
 		lines = append([]string{"  …"}, lines[len(lines)-(room-1):]...)
 	}
+	writeCommandBox(&b, lines)
+	b.WriteString(tail.String())
+	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// writeCommandBox draws wrapped command lines in the console's box, as
+// Remove's done screen and Update's launcher row show a command to copy.
+func writeCommandBox(b *strings.Builder, lines []string) {
 	boxW := 0
 	for _, l := range lines {
 		boxW = max(boxW, lipgloss.Width(l))
 	}
 	for _, l := range drawBox(lipgloss.NewStyle().Foreground(style.Border), boxW+4, lines) {
-		fmt.Fprintln(&b, l)
+		fmt.Fprintln(b, l)
 	}
-	b.WriteString(tail.String())
-	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
 // removalWords is the command the removed screen offers: Orbit's own
