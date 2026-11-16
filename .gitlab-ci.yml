@@ -162,17 +162,22 @@ variables:
   # renovate: datasource=go depName=github.com/google/go-licenses/v2
   GO_LICENSES_VERSION: v2.0.1
   # Every *_VERSION pin carries a `# renovate:` line, read by renovate.json's
-  # annotation managers (#328). Renovate moves each *_SHA256 with its version
+  # annotation managers (#328). Renovate moves the *_SHA256 for TRIVY,
+  # GOLANGCI_LINT, ZIZMOR and ACTIONLINT with their versions
   # (github-release-attachments reads the release's checksum file, or hashes
-  # the asset when there is none, e.g. zizmor), so a download-check mismatch
-  # on a Renovate merge request is now a real failure.
-  # renovate: datasource=github-release-attachments depName=bats-core/bats-core extractVersion=^v(?<version>.+)$
+  # the asset when there is none, e.g. zizmor). BATS (a source archive, not a
+  # release attachment), GITLEAKS and TTYD (copied into the GitHub workflows,
+  # and gitleaks into .github/supply-chain-policy.json, which test/supplychain
+  # checks) stay on github-releases: Renovate's merge request for them still
+  # fails the download check until a person moves the checksum and every copy
+  # in the same merge request.
+  # renovate: datasource=github-releases depName=bats-core/bats-core extractVersion=^v(?<version>.+)$
   BATS_VERSION: "1.14.0"
   BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
-  # renovate: datasource=github-release-attachments depName=tsl0922/ttyd
+  # renovate: datasource=github-releases depName=tsl0922/ttyd
   TTYD_VERSION: "1.7.7"
   TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
-  # renovate: datasource=github-release-attachments depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
+  # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   # Scanners (#322, #323). Their jobs below block the pipeline. Their
@@ -1714,7 +1719,9 @@ promoted:
 #                      requests; a `read_api` token can look and never write.
 #   GITHUB_COM_TOKEN   A github.com fine-grained personal access token with no
 #                      permissions granted at all -- public read only.
-#                      Renovate uses it for changelogs and release notes.
+#                      Renovate uses it for changelogs and release notes,
+#                      and to read release assets and checksum files for
+#                      the github-release-attachments pins (#347).
 #                      Without it the unauthenticated github.com API
 #                      rate-limits partway through a run and merge requests
 #                      arrive with their release notes missing.

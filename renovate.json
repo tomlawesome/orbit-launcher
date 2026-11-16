@@ -53,7 +53,7 @@
       "depNameTemplate": "go"
     },
     {
-      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead; git-refs pins and the pins with a *_SHA256 (github-release-attachments) need the managers below instead.",
+      "description": "Tool versions pinned in .gitlab-ci.yml's variables block (#328): each *_VERSION carries a `# renovate: datasource=... depName=...` line directly above it, and test/supplychain/ci_tool_pins_watched_test.go fails when one does not. The datasource list is spelled out because Renovate's regex engine has no look-ahead; git-refs pins and the github-release-attachments pins need the managers below instead. BATS, GITLEAKS and TTYD have a *_SHA256 too but stay on github-releases here, because their checksums are copied elsewhere and move by hand (#347).",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": [
@@ -61,7 +61,7 @@
       ]
     },
     {
-      "description": "Tool versions that sit directly above their own *_SHA256 in .gitlab-ci.yml's variables block (#347): BATS, TTYD, GITLEAKS, TRIVY, GOLANGCI_LINT, ZIZMOR and ACTIONLINT. The github-release-attachments datasource reads the release's checksum file, or hashes the asset when there is none (zizmor), so Renovate moves currentDigest with currentValue and the download check passes on its merge request. The manager above leaves these blocks alone because its datasource list does not name github-release-attachments.",
+      "description": "Tool versions that sit directly above their own *_SHA256 in .gitlab-ci.yml's variables block (#347): TRIVY, GOLANGCI_LINT, ZIZMOR and ACTIONLINT. The github-release-attachments datasource reads the release's checksum file, or hashes the asset when there is none (zizmor), so Renovate moves currentDigest with currentValue and the download check passes on its merge request. The manager above leaves these blocks alone because its datasource list does not name github-release-attachments.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": [
