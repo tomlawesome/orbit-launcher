@@ -61,7 +61,7 @@ func TestRepair348_ClassWordsOnPlanScreen(t *testing.T) {
 }
 
 func TestRepair348_ClassWordsInFindingRows(t *testing.T) {
-	// Targets as Orbit's repair.sh emits them at 48b3971f.
+	// Targets as Orbit's repair.sh emits them at 0d522cec.
 	for _, c := range []struct{ class, target, sev, want string }{
 		{"folder-moved", "deployment", "fail", w348Moved},
 		{"folder-elsewhere", "deployment", "fail", w348Elsewhr},
