@@ -1559,7 +1559,7 @@ func targetWords(target string) string {
 	case "application":
 		return "application"
 	case "restore":
-		return "restore"
+		return "backup restore"
 	default:
 		// The engine's value as given, escaped: it is drawn on screen.
 		return visibleText(target)
