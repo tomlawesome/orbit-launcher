@@ -80,8 +80,8 @@ func TestServicesReaderNil_TheSplashDoesNotCount(t *testing.T) {
 			if !ok {
 				t.Fatal("the probe did not produce a healthResultMsg")
 			}
-			if got.counted {
-				t.Errorf("the splash counted services with no reader: %+v", got)
+			if got.counted || got.asked {
+				t.Errorf("the splash counted or asked services with no reader: %+v", got)
 			}
 			if got.reason != deploy.HealthNotResponding {
 				t.Errorf("reason = %q, want not responding", got.reason)

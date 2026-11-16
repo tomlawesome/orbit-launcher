@@ -58,11 +58,24 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   maintenance `#facc15` yellow, degraded `#fb923c` deep amber ("up but
   wrong" — never red, red means stopped/failed). A status word is never a
   guess: unknown health renders the FQDN with no word at all.
-- Status vocabulary: **dormant / alive / maintenance / degraded**. Fixed.
+- Status vocabulary: **dormant / alive / maintenance / degraded / can't tell**. Fixed.
   `maintenance` is Orbit's own health answer saying it is closed to users
   (owner, 2026-10-28, #302 answer 11): up and healthy, closed on purpose,
   so it is neither alive nor degraded. Beneath it, one faint line:
   `closed to users`. No status row or drawer; those stay degraded-only.
+  `can't tell` is either half of the check missing with no fault seen
+  (Docker could not be read, or no health address could be worked out;
+  owner, 2026-11-08, #341 answer 2: "we should say that we can't tell"):
+  faint word under the FQDN, gold mark, one faint line per missing half
+  (`containers couldn't be checked`, `health address couldn't be worked out`),
+  no status row or drawer, caret unmoved. An HTTP failure over unreadable
+  Docker is still degraded: a seen fault outranks an unknown.
+- The word is decided from the containers themselves (#341): Docker's
+  health of the profile's expected containers plus Orbit's own answer at
+  its published port on this machine (`ORBIT_BIND_ADDRESS`/`ORBIT_PORT`),
+  worst component wins. The public address is never checked or mentioned
+  (owner, 2026-11-08, #341 answer 3b): external access is the user's to
+  resolve.
 
 ## Layout grammar
 
@@ -96,8 +109,18 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   where Esc goes, the menu). Carrying on is consent, not a write: the flow
   goes on exactly as from the container's own folder (Update's confirm,
   Repair's diagnosis, Remove's confirm and its own running check), and the
-  row writes, relabels and asks Docker nothing; Compose restamps the label
-  on the next Update. While carried on, an answer whose folder is still
+  row writes, relabels and asks Docker nothing itself; Compose restamps
+  the label on the next Update. #1576 (owner answers 43a and 44c) changes
+  Update and Repair: the body says the containers can't start and, on
+  `Run from this folder`, are made again here with the data kept; the rows
+  are `Run from this folder`, `Move it back` and `Cancel`. In Update the
+  engine run is then asked, in its environment only
+  (`ORBIT_INSTALL_FOLDER_MOVED=recreate`, kept for a retry), to make the
+  containers again; in Repair repair.sh finds the moved folder itself.
+  `Move it back` leaves the launcher, prints one stderr line naming the old
+  path (escaped as on screen) and no command, and exits 0; Orbit never
+  moves the folder. Remove keeps the screen and row above.
+  While carried on, an answer whose folder is still
   gone with the same build is no mismatch; one whose folder is back, or
   whose build differs, refuses as above. With
   another build the screen is a dead end that says so. Install never
@@ -116,9 +139,35 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   back by ai/orbit#1456), not a takeover. Order of the three Install
   pre-flights: the same-project clash, this, the stale volume. A check that
   cannot run, or finds two such containers, stays silent.
+- **Remove's stood-down tail** (#285; owner, 2026-10-22, 19a–21a, note
+  41988): with the deployment's `.orbit-files` read, the box offers Orbit's
+  files by name and `rmdir` for `config`, `scripts` and the folder; the
+  warning reads "this deletes all mail, documents and configuration — it
+  cannot be undone", then one muted line: "The folder is removed too:
+  nothing else is in it.", or "Left in place for you: a, b, c and N more —
+  the folder stays while they are in it.", or, when the folder could not be
+  listed in full, "The folder stays if anything else is still in it." (backups and
+  orbit-install-backups are never in the command), or for the home or
+  root folder "Your home folder itself is never removed." / "The root
+  folder itself is never removed." A folder without the list keeps the
+  whole-folder screen; a list refused whole adds "Orbit's own file list
+  here could not be read." The confirm screen's full prose shows for a
+  home or root folder that has the list.
 - **Menu items centre individually** on the screen axis; the caret rides two
   cells left of the selected label (`menuRow`). Not a common left edge —
   that was tried and reversed by owner correction.
+- **A yes/no option is a row in its list** (owner, 2026-11-11, #340): it sits
+  under the choices, one blank row apart, with name, a short reason and its
+  state (`on`/`off`); Enter on it flips it in place. Its consequence, while
+  off, is one faint line under the table. Mock-up:
+  `design/340-scanner/round-1/` (direction A).
+- **The gap before Remove is the one row the splash gives up** (2026-11-13,
+  #286): when the settled block would be taller than the body, that blank
+  row yields, and nothing else does. Every other row is a fact (#316,
+  #341) or a boundary (mark and wordmark, facts and menu); the gap is a
+  grouping. It fires only in the full-profile worst case at 80x26: the open
+  drawer with five missing services, the running-mismatch rows and the
+  update notice, with Configure's sixth menu row.
 - **No keybind hints, ever.** No navigation instructions anywhere; the
   screen teaches itself.
 - **The foot is one centred faint line per screen**: splash carries
@@ -150,6 +199,11 @@ Both one-shot, both skipped by `ORBIT_LAUNCHER_NO_ANIMATION`:
 - The **calendar-compass tick bar was rejected** ("conceptually cool,
   visually awkward in terminal"). The plain thin line stays.
 - Success/failure key off events plus exit codes, never scraped prose.
+- **Optional parts show by plain name** (owner, 2026-11-11, #340): `clamav`
+  is `scanner`, `tika` is `text extraction`, `ollama` is `local model`.
+  Every other component still shows as the engine names it. A step the
+  engine skips by choice (`state=skipped action=skip`) reads
+  `✓ <name> off by choice` in faint ink, not as pending.
 
 ### The install notice (v7)
 
@@ -183,3 +237,4 @@ shipped (owner, 2026-10-21, #195).
   (owner): mockups are never published on Pages; they are served only from
   the local design container — see AGENTS.md.*
 - Owner review happens against cell-truth renders only.
+- The launcher-update command lives on Update's confirm screen, in a copyable box shown only when a newer launcher is known; the splash notice only points to it (#349).

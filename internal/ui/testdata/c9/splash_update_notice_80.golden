@@ -9,15 +9,15 @@
         [38;2;74;84;104m·[m                          [1;38;2;231;233;238mO R B I T[m                                    
                                     [38;2;74;84;104mdormant[m                         [38;2;74;84;104m·[m           
                             [38;2;240;180;41mupdate available: v9.9.9[m                            
-[38;2;124;134;153mre-run Orbit's installer: curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash[m
+        [38;2;124;134;153mre-run Orbit's installer to get it · the command is under Update[m        
                                                                                 
                  [38;2;74;84;104m·[m       [38;2;74;84;104m·[m [38;2;74;84;104m✦[m      [38;2;216;180;90m▸[m [38;2;231;233;238mInstall[m                                     
                                      [38;2;124;134;153mUpdate[m                                     
-                  [38;2;74;84;104m✦[m                  [38;2;124;134;153mRepair[m                                     
+                  [38;2;74;84;104m✦[m                [38;2;124;134;153mConfigure[m                                    
+                                     [38;2;124;134;153mRepair[m                                     
                                                                                 
-                                     [38;2;124;134;153mRemove[m                                     
-                            [38;2;74;84;104m.[m         [38;2;124;134;153mExit[m                                      
-                                                                                
+                            [38;2;74;84;104m.[m        [38;2;124;134;153mRemove[m                                     
+                                      [38;2;124;134;153mExit[m                                      
                              [38;2;74;84;104m·[m [38;2;74;84;104m✦[m     [38;2;74;84;104m✦[m                              [38;2;74;84;104m·[m           
                                                                                 
                                                                                 

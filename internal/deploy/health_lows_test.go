@@ -28,7 +28,7 @@ func TestProbeHealth_OnlyHTTPAndHTTPSAreProbed(t *testing.T) {
 // The scheme rule is not a blanket refusal: http and https still probe.
 func TestProbeHealth_HTTPStillProbed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	}))
 	defer srv.Close()
 	if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {

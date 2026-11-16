@@ -1,8 +1,9 @@
 # Trivy findings accepted for now. The trivy job still blocks on every High
 # and Critical finding not listed here.
-# Each entry needs: a CVE id, a one-line reason, an issue link and an expiry
-# date, as comment lines directly above the id. Trivy does not read the
-# expiry; each release audit removes entries past it.
+# Each entry needs: a CVE id with an exp: date on the same line, and a
+# one-line reason and an issue link as comment lines directly above it.
+# Trivy stops ignoring an entry after its exp: date, so the job blocks on
+# that finding again without anyone having to remember it.
 # Example (not active):
-#   # Reason: no fixed version exists. Issue: <link>. Expires: 2026-12-31.
-#   CVE-0000-00000
+#   # Reason: no fixed version exists. Issue: <link>.
+#   CVE-0000-00000 exp:2026-12-31

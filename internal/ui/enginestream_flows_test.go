@@ -149,7 +149,7 @@ func repairViaApp(t *testing.T, prepare prepareRepairFunc) (*AppModel, *flowLoop
 	m := NewAppModelNoAnimation().WithSender(queue.Send).WithoutVolumeCheck()
 	m.targetDir = t.TempDir()
 	m.flowSeams = engineRunSeams{prepareRepair: prepare}
-	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}, key(tea.KeyDown), key(tea.KeyDown)) // Install, Update, Repair
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}, key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyDown)) // Install, Update, Configure, Repair
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}) // a flow draws nothing until sized
 	if s := screen(m); !strings.Contains(s, "reading the deployment") {

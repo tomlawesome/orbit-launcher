@@ -20,6 +20,7 @@ const (
 	appStateRepair
 	appStateInstall
 	appStateUpdate
+	appStateConfigure
 	appStateSuccess
 )
 
@@ -42,6 +43,7 @@ type AppModel struct {
 	// never kept between sessions.
 	collected *collectedConfig
 	update    UpdateModel
+	configure ConfigureModel
 	success   SuccessModel
 
 	// Configuration remembered so a refreshed splash (after a flow
@@ -51,7 +53,7 @@ type AppModel struct {
 	// lookupTarget is the Update confirm's release lookup (#336); nil
 	// asks nothing (see WithTargetLookup).
 	lookupTarget  func(context.Context) (release.Target, error)
-	healthProbe   func(ctx context.Context, appURL string) deploy.HealthReason
+	healthProbe   func(ctx context.Context, healthURL string) deploy.HealthReason
 	detectOnStart bool
 
 	// targetDir is where an existing deployment, if any, would be found.
@@ -112,6 +114,8 @@ type AppModel struct {
 	// exitNote is a Ctrl-C stop's last word, kept for main to print
 	// once the screen has closed (ExitNote).
 	exitNote string
+	// leaveNote is "Move it back"'s line (#1576).
+	leaveNote string
 	// signalStop is the signal that quit an Update past its commit
 	// (SignalStop).
 	signalStop os.Signal
@@ -174,7 +178,7 @@ func (m AppModel) WithVersion(v string) AppModel {
 // splash's Init (see SplashModel.probeHealthCmd); nil leaves the state
 // at "deployment exists, health unknown", which renders as the FQDN
 // with no status word.
-func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL string) deploy.HealthReason) AppModel {
+func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, healthURL string) deploy.HealthReason) AppModel {
 	m.healthProbe = probe
 	m.detectOnStart = true
 	m.splash = m.applyDeployment(m.splash)
@@ -182,7 +186,8 @@ func (m AppModel) WithDeploymentStatus(probe func(ctx context.Context, appURL st
 }
 
 // WithServicesReader supplies how the services are read, for Repair's
-// services block and the splash's count, in place of the real `docker
+// services block and the splash's container half of the health check
+// (faults and count), in place of the real `docker
 // compose ps` (#277): tests pass a fake, so no app-level test depends on
 // the machine's Docker. Nil reads nothing: the splash does not count and
 // Repair shows no services block, whichever order this and
@@ -288,6 +293,9 @@ func (m AppModel) applyDeployment(s SplashModel) SplashModel {
 	}
 	s.fqdn = deploymentIdentity(d)
 	s.appURL = d.AppURL
+	// An address that cannot be worked out leaves localURL empty, which
+	// the probe command reports as could-not-check (#341).
+	s.localURL, _ = deploy.LocalHealthURL(d)
 	s.orbitVersion = d.Version
 	s.state = stateUnknown
 	s.menu.sel = menuUpdate // a deployment's most likely next act
@@ -335,7 +343,7 @@ func (m AppModel) refreshSplash() (AppModel, tea.Cmd) {
 	if s.checkForUpdate != nil {
 		cmds = append(cmds, s.checkForUpdateCmd())
 	}
-	if s.healthProbe != nil && s.appURL != "" {
+	if s.healthProbe != nil {
 		cmds = append(cmds, s.probeHealthCmd())
 	}
 	if cmd := s.checkRunningCmd(); cmd != nil {
@@ -412,6 +420,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.update.Update(msg)
 		m.update = updated.(UpdateModel)
 		return m.watchOutcome(m.update.Outcome(), cmd)
+	case appStateConfigure:
+		updated, cmd := m.configure.Update(msg)
+		m.configure = updated.(ConfigureModel)
+		return m.watchOutcome(m.configure.Outcome(), cmd)
 	case appStateSuccess:
 		updated, cmd := m.success.Update(msg)
 		m.success = updated.(SuccessModel)
@@ -424,6 +436,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // it finished undoing its work; empty otherwise.
 func (m AppModel) ExitNote() string { return m.exitNote }
 
+// LeaveNote is the one line "Move it back" leaves for main to print after
+// the screen closes; the operator chose to leave, so main exits 0 (#1576).
+func (m AppModel) LeaveNote() string { return m.leaveNote }
+
 // SignalStop is the signal that quit an Update past its commit, nil if
 // none did. main turns SIGTERM and SIGHUP into a stderr line and exit 128
 // plus the signal number (#304).
@@ -435,6 +451,10 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 	// Before the Done check: a stop quits without ever setting Done.
 	if o.ExitNote != "" {
 		m.exitNote = o.ExitNote
+	}
+	if o.LeaveNote != "" {
+		m.leaveNote = o.LeaveNote
+		return m, tea.Quit
 	}
 	if o.SignalStop != nil {
 		m.signalStop = o.SignalStop
@@ -569,7 +589,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "Update":
 		dir := m.resolvedTargetDir()
 		deployment, err := deploy.Detect(dir)
-		m.update = NewUpdateModel(deployment, dir, m.version)
+		m.update = NewUpdateModel(deployment, dir, m.version).withLauncherUpdate(m.splash.updateNotice)
 		m.update.detectErr = err
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend
@@ -580,6 +600,20 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = appStateUpdate
 		return m, tea.Batch(sizeCmd, m.update.Init())
+	case "Configure":
+		dir := m.resolvedTargetDir()
+		deployment, err := deploy.Detect(dir)
+		m.configure = NewConfigureModel(deployment, dir, m.version)
+		m.configure.detectErr = err
+		m.configure.seams = m.flowSeams
+		m.configure.send = m.flowSend
+		m.configure.lookupInstalledAt = m.flowInstalledAt
+		m.configure.lookupTarget = m.lookupTarget
+		if otherFolder && deployment != nil {
+			m.configure = m.configure.refuseOtherFolder(mismatch)
+		}
+		m.state = appStateConfigure
+		return m, tea.Batch(sizeCmd, m.configure.Init())
 	default:
 		return m, tea.Quit
 	}
@@ -608,6 +642,8 @@ func (m AppModel) screen() tea.View {
 		return m.install.View()
 	case appStateUpdate:
 		return m.update.View()
+	case appStateConfigure:
+		return m.configure.View()
 	case appStateSuccess:
 		return m.success.View()
 	}

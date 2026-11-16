@@ -33,7 +33,7 @@ import (
 // says was found; an error there is a test failure.
 func removalLine(t *testing.T, dir string) string {
 	t.Helper()
-	cmd, err := deploy.RemovalCommand(dir)
+	cmd, err := deploy.RemovalCommand(dir, deploy.Own{})
 	if err != nil {
 		t.Fatalf("RemovalCommand(%q): %v", dir, err)
 	}
@@ -43,7 +43,7 @@ func removalLine(t *testing.T, dir string) string {
 // removalWords is deploy.RemovalCommandWords, likewise.
 func removalWords(t *testing.T, dir string) []string {
 	t.Helper()
-	words, err := deploy.RemovalCommandWords(dir)
+	words, err := deploy.RemovalCommandWords(dir, deploy.Own{})
 	if err != nil {
 		t.Fatalf("RemovalCommandWords(%q): %v", dir, err)
 	}

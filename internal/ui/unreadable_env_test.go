@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -89,6 +90,31 @@ func TestAppModel_UpdateOnAnUnreadableEnvSaysItCouldNotReadIt(t *testing.T) {
 		t.Error("UpdateModel.detectErr is nil; the app dropped deploy.Detect's error")
 	}
 	assertUnreadableScreen(t, screen(m), dir)
+}
+
+// #338 A-R4: Install reaches the same screen from the menu, without a
+// Docker call, instead of going on to the profile screen.
+func TestAppModel_InstallOnAnUnreadableEnvSaysItCouldNotReadIt(t *testing.T) {
+	dir := unreadableEnvDir(t)
+	var asked atomic.Int32
+	m := NewAppModelNoAnimation().WithoutVolumeCheck().WithRunningReader(
+		func(context.Context, *deploy.Deployment) (deploy.RunningApp, error) {
+			asked.Add(1)
+			return deploy.RunningApp{Found: true, Image: recordedImage, Folder: goneFolder, State: "running"}, nil
+		})
+	m.targetDir = dir
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, cmd := updateAs(t, m, key(tea.KeyEnter)) // Install is the first row
+	m = drive(t, m, cmd)
+
+	s := screen(m)
+	assertUnreadableScreen(t, s, dir)
+	if strings.Contains(oneLine(s), profileTitle) {
+		t.Errorf("the profile screen was reached past an unreadable record:\n%s", s)
+	}
+	if n := asked.Load(); n != 0 {
+		t.Errorf("Docker was asked %d times, want 0", n)
+	}
 }
 
 // The wording holds at every width the c9 goldens use.

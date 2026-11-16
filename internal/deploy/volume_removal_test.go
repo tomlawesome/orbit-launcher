@@ -59,7 +59,7 @@ func TestRemovalCommandWords_IsTheVolumeHalfThenTheFolderRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full, err := RemovalCommandWords(dir)
+	full, err := RemovalCommandWords(dir, Own{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,14 +84,14 @@ func TestRemovalCommand_RefusesASymlinkedHomeFolder(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("HOME", c.home)
-			words, err := RemovalCommandWords(c.dir)
+			words, err := RemovalCommandWords(c.dir, Own{})
 			if !errors.Is(err, ErrHomeFolder) {
 				t.Errorf("RemovalCommandWords(%q) error = %v, want ErrHomeFolder", c.dir, err)
 			}
 			if len(words) != 0 {
 				t.Errorf("RemovalCommandWords(%q) = %q alongside its refusal, want no words", c.dir, words)
 			}
-			cmd, err := RemovalCommand(c.dir)
+			cmd, err := RemovalCommand(c.dir, Own{})
 			if !errors.Is(err, ErrHomeFolder) {
 				t.Errorf("RemovalCommand(%q) error = %v, want ErrHomeFolder", c.dir, err)
 			}
@@ -112,7 +112,7 @@ func TestRemovalCommandWords_StillNamesAFolderInsideASymlinkedHome(t *testing.T)
 	}
 	t.Setenv("HOME", real)
 	dir := filepath.Join(link, "orbit")
-	words, err := RemovalCommandWords(dir)
+	words, err := RemovalCommandWords(dir, Own{})
 	if err != nil {
 		t.Fatalf("RemovalCommandWords(%q): %v, want a command for a folder inside home", dir, err)
 	}

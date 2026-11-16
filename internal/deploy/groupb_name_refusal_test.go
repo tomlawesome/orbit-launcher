@@ -214,7 +214,7 @@ func TestGroupB_W3_RemoveStillBuildsItsCommandForTheSameFolder(t *testing.T) {
 		t.Run(n.label, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), n.name)
 
-			words, err := RemovalCommandWords(dir)
+			words, err := RemovalCommandWords(dir, Own{})
 			if err != nil {
 				t.Fatalf("RemovalCommandWords: %v", err)
 			}
@@ -224,7 +224,7 @@ func TestGroupB_W3_RemoveStillBuildsItsCommandForTheSameFolder(t *testing.T) {
 			if tail := words[len(words)-5 : len(words)-1]; strings.Join(tail, " ") != "&& sudo rm -rf" {
 				t.Errorf("the command does not end in the folder's removal: %q", words)
 			}
-			if _, err := RemovalCommand(dir); err != nil {
+			if _, err := RemovalCommand(dir, Own{}); err != nil {
 				t.Errorf("RemovalCommand: %v", err)
 			}
 			if _, err := VolumeRemovalCommandWords(dir); err != nil {
