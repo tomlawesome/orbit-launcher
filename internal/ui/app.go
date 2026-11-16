@@ -589,7 +589,7 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "Update":
 		dir := m.resolvedTargetDir()
 		deployment, err := deploy.Detect(dir)
-		m.update = NewUpdateModel(deployment, dir, m.version)
+		m.update = NewUpdateModel(deployment, dir, m.version).withLauncherUpdate(m.splash.updateNotice)
 		m.update.detectErr = err
 		m.update.seams = m.flowSeams
 		m.update.send = m.flowSend

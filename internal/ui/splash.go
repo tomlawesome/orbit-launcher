@@ -767,7 +767,7 @@ func (m SplashModel) identityLines() []string {
 	lines = append(lines, m.folderLines()...)
 	if m.updateNotice != "" {
 		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
-		lines = append(lines, style.MutedText.Render("re-run Orbit's installer: curl -fsSL https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh | bash"))
+		lines = append(lines, style.MutedText.Render("re-run Orbit's installer to get it"+style.Separator+"the command is under Update"))
 	}
 	return lines
 }

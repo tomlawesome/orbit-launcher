@@ -53,6 +53,8 @@ type ConfigureModel struct {
 	deployment    *deploy.Deployment
 	detectErr     error // deploy.Detect's error for targetDir; see RemoveModel
 	state         configureState
+	// opening is the state NewConfigureModel picked; carryOn returns to it.
+	opening configureState
 
 	profileChoice // the table; current is the deployment's own profile
 
@@ -103,6 +105,7 @@ type ConfigureModel struct {
 // deployment. A nil deployment means nothing is here; a deployment
 // without a Compose file is only prepared; a profile the launcher cannot
 // change (deploy.CurrentProfile) is a dead end, each with its own words.
+// The state it picks is remembered in opening, for "Run from this folder".
 func NewConfigureModel(d *deploy.Deployment, targetDir, version string) ConfigureModel {
 	memory, known := deploy.HostMemory()
 	m := ConfigureModel{deployment: d, targetDir: targetDir, version: version}
@@ -120,6 +123,7 @@ func NewConfigureModel(d *deploy.Deployment, targetDir, version string) Configur
 		// which never sends the scanner choice (#340).
 		m.profileChoice = newCurrentProfileChoice(memory, known, current, d.ScanMode != deploy.ScanModeDisabled)
 	}
+	m.opening = m.state
 	return m
 }
 
@@ -158,10 +162,12 @@ func (m ConfigureModel) refuseOtherFolder(mm deploy.Mismatch) ConfigureModel {
 	return m
 }
 
-// carryOn is "Run from this folder": the profile screen, as from the
-// container's own folder; the run then asks the engine to recreate.
+// carryOn is "Run from this folder": the screen NewConfigureModel picked,
+// as from the container's own folder. Only the profile screen goes on to
+// a run, which asks the engine to recreate; Init then starts its lookups.
 func (m ConfigureModel) carryOn() (tea.Model, tea.Cmd) {
-	m.state, m.carriedOn, m.recreate = configureStateProfile, true, true
+	m.state, m.carriedOn = m.opening, true
+	m.recreate = m.opening == configureStateProfile
 	return m, m.Init()
 }
 

@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -54,7 +56,15 @@ type UpdateModel struct {
 	deployment    *deploy.Deployment
 	detectErr     error // deploy.Detect's error for targetDir; see RemoveModel
 	state         updateState
-	confirm       menu // updateConfirmRows
+	confirm       menu // updateConfirmRows, or launcherConfirmRows with launcherVersion
+
+	// launcherVersion is the newer launcher the splash's check found, ""
+	// when none is known (#349): the confirm screen then shows the
+	// installer command in a copyable box. clipboard and copied are as
+	// RemoveModel's.
+	launcherVersion string
+	clipboard       io.Writer
+	copied          bool
 
 	// refusal is updateStateOtherFolder's screen: the folder the app
 	// container was started from and its rows (#316, #334).
@@ -111,6 +121,31 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 }
 
 var updateConfirmRows = []string{"Update Orbit", "Cancel"}
+
+// launcherConfirmRows add Copy command when a newer launcher is known.
+var launcherConfirmRows = []string{"Update Orbit", removeCopy, "Cancel"}
+
+// launcherInstallURL is Orbit's launcher installer, the one place it is
+// written (#349).
+const launcherInstallURL = "https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh"
+
+// launcherInstallWords is the command that updates the launcher.
+func launcherInstallWords() []string {
+	return []string{"curl", "-fsSL", launcherInstallURL, "|", "bash"}
+}
+
+// withLauncherUpdate hands the flow the newer launcher version the splash
+// knows, which adds the installer command to the confirm screen (#349).
+func (m UpdateModel) withLauncherUpdate(version string) UpdateModel {
+	if version != "" {
+		m.launcherVersion = version
+		m.confirm = newMenu(launcherConfirmRows...)
+	}
+	return m
+}
+
+// launcherKnown says the confirm screen offers the launcher's command.
+func (m UpdateModel) launcherKnown() bool { return m.launcherVersion != "" }
 
 // deadEndRows are a dead end's one row, Update's and Remove's not-found
 // screens: back to the main menu (#228).
@@ -345,6 +380,13 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	switch {
 	case back, chosen == "Cancel":
 		m.left, m.awaiting = true, false
+	case chosen == removeCopy && m.launcherKnown():
+		m.awaiting, m.copied = false, true
+		w := io.Writer(os.Stdout)
+		if m.clipboard != nil {
+			w = m.clipboard
+		}
+		return m, copyToClipboard(w, strings.Join(launcherInstallWords(), " "))
 	case chosen == "":
 		m.awaiting = false // a caret move drops a held Enter, as on Remove
 	case chosen == "Update Orbit":
@@ -445,7 +487,17 @@ func (m UpdateModel) viewConfirm() string {
 	writeWrappedIn(&b, style.MutedText, "The update runs inside the mission console, right here.", edge, textArea(m.width))
 	writeWrappedIn(&b, style.MutedText, "Your existing configuration is preserved. Nothing is deleted.", edge, textArea(m.width))
 	fmt.Fprintln(&b)
-	m.confirm.write(&b)
+	if m.launcherKnown() {
+		// Wrapped and boxed as Remove's done screen is (#271, #277).
+		writeWrappedIn(&b, style.Tagline, "to update the launcher as well, copy and run", measure(m.width, proseWidth), textArea(m.width))
+		writeCommandBox(&b, wrapShellCommand(launcherInstallWords(), m.width-8))
+		fmt.Fprintln(&b)
+	}
+	confirm := m.confirm
+	if m.copied {
+		confirm = confirm.over([]string{updateConfirmRows[0], removeCopy + style.Separator + "copied", "Cancel"})
+	}
+	confirm.write(&b)
 	if m.awaiting {
 		fmt.Fprintln(&b)
 		b.WriteString(workingLine(m.frame, updateChecking, ""))
