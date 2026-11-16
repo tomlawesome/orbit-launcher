@@ -16,22 +16,25 @@ import (
 
 const noticeSecondRow349 = "re-run Orbit's installer to get it · the command is under Update"
 
+// withNotice349 hands m the splash's update notice for v9.9.9.
+func withNotice349(t *testing.T, m AppModel) AppModel {
+	t.Helper()
+	m, _ = updateAs(t, m, updateAvailableMsg{version: "v9.9.9"})
+	return m
+}
+
 // noticeStates349 builds, at 80x26, every splash state the splash tests
 // build, each with the update notice set.
 func noticeStates349(t *testing.T) map[string]AppModel {
 	t.Helper()
 	states := map[string]AppModel{}
-	notice := func(m AppModel) AppModel {
-		m, _ = updateAs(t, m, updateAvailableMsg{version: "v9.9.9"})
-		return m
-	}
 	// Nothing installed here.
-	states["nothing installed"] = notice(started(t, folderApp(t, shortTempDir(t), 80, 26, deploy.HealthResponding)))
+	states["nothing installed"] = withNotice349(t, started(t, folderApp(t, shortTempDir(t), 80, 26, deploy.HealthResponding)))
 	// Installed, each health answer.
 	dir := installedFolder(t, "ORBIT_CONFIG_APPLIED_VERSION=v1.2.0")
-	states["alive"] = notice(started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding)))
+	states["alive"] = withNotice349(t, started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding)))
 	for _, r := range allReasons {
-		m := notice(started(t, folderApp(t, dir, 80, 26, r.reason)))
+		m := withNotice349(t, started(t, folderApp(t, dir, 80, 26, r.reason)))
 		states["degraded "+r.name] = m
 		d, _ := updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp))
 		d, _ = updateAs(t, d, key(tea.KeyRight))
@@ -42,8 +45,8 @@ func noticeStates349(t *testing.T) map[string]AppModel {
 		"another folder": folderMismatch(otherProduction),
 		"another build":  buildMismatch("v0.3.0", "v1.2.0"),
 	} {
-		states["alive, "+name] = answer(t, notice(started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding))), dir, mm)
-		states["degraded, "+name] = answer(t, notice(started(t, folderApp(t, dir, 80, 26, deploy.HealthNotResponding))), dir, mm)
+		states["alive, "+name] = answer(t, withNotice349(t, started(t, folderApp(t, dir, 80, 26, deploy.HealthResponding))), dir, mm)
+		states["degraded, "+name] = answer(t, withNotice349(t, started(t, folderApp(t, dir, 80, 26, deploy.HealthNotResponding))), dir, mm)
 	}
 	// The #341 worst case: drawer open, five faults (full profile) or
 	// three (default), the build-mismatch rows.
@@ -52,7 +55,7 @@ func noticeStates349(t *testing.T) map[string]AppModel {
 		m := folderApp(t, d, 80, 26, deploy.HealthNotResponding, func(m AppModel) AppModel {
 			return m.WithServicesReader(func(string) ([]deploy.ServiceState, error) { return nil, nil })
 		})
-		m = notice(started(t, m))
+		m = withNotice349(t, started(t, m))
 		m = answer(t, m, d, buildMismatch("v0.3.0", "v1.2.0"))
 		m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp))
 		m, _ = updateAs(t, m, key(tea.KeyRight))
