@@ -162,32 +162,33 @@ variables:
   # renovate: datasource=go depName=github.com/google/go-licenses/v2
   GO_LICENSES_VERSION: v2.0.1
   # Every *_VERSION pin carries a `# renovate:` line, read by renovate.json's
-  # annotation manager (#328). Renovate cannot work out a download's checksum,
-  # so its merge request for a pin with a *_SHA256 fails the download check:
-  # that is expected. Put the new release's checksum in the same merge request.
-  # renovate: datasource=github-releases depName=bats-core/bats-core extractVersion=^v(?<version>.+)$
+  # annotation managers (#328). Renovate moves each *_SHA256 with its version
+  # (github-release-attachments reads the release's checksum file, or hashes
+  # the asset when there is none, e.g. zizmor), so a download-check mismatch
+  # on a Renovate merge request is now a real failure.
+  # renovate: datasource=github-release-attachments depName=bats-core/bats-core extractVersion=^v(?<version>.+)$
   BATS_VERSION: "1.14.0"
   BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
-  # renovate: datasource=github-releases depName=tsl0922/ttyd
+  # renovate: datasource=github-release-attachments depName=tsl0922/ttyd
   TTYD_VERSION: "1.7.7"
   TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
-  # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
+  # renovate: datasource=github-release-attachments depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   # Scanners (#322, #323). Their jobs below block the pipeline. Their
   # checksums come from the upstream checksums.txt of each release, except
   # zizmor's, which is our own: upstream publishes none, so the digest below
   # is of the tarball as downloaded on 2026-11-13.
-  # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
+  # renovate: datasource=github-release-attachments depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
   TRIVY_VERSION: "0.76.2"
   TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
-  # renovate: datasource=github-releases depName=golangci/golangci-lint extractVersion=^v(?<version>.+)$
+  # renovate: datasource=github-release-attachments depName=golangci/golangci-lint extractVersion=^v(?<version>.+)$
   GOLANGCI_LINT_VERSION: "2.15.0"
   GOLANGCI_LINT_SHA256: 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
-  # renovate: datasource=github-releases depName=zizmorcore/zizmor extractVersion=^v(?<version>.+)$
+  # renovate: datasource=github-release-attachments depName=zizmorcore/zizmor extractVersion=^v(?<version>.+)$
   ZIZMOR_VERSION: "1.32.0"
   ZIZMOR_SHA256: bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
-  # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
+  # renovate: datasource=github-release-attachments depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
   ACTIONLINT_VERSION: "1.7.12"
   ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
   # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
