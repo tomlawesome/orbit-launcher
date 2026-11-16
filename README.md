@@ -119,7 +119,9 @@ Remove works in two steps, and the launcher runs only the first.
    the data volumes (the database, with its mail, and the documents and
    scanner volumes) and Orbit's own files, named one by one from the list
    Orbit keeps in the folder, `.orbit-files`:
-   `(cd <your Orbit folder> && docker compose --env-file .env-orbit down -v && sudo rm -rf -- docker-compose.yml … .orbit-files && sudo rmdir -- config scripts) && sudo rmdir -- <your Orbit folder>`.
+   `(cd <your Orbit folder> && { test ! -e .env-orbit || docker compose --env-file .env-orbit down -v; } && sudo rm -rf -- docker-compose.yml … .orbit-files && sudo rmdir -- config scripts) && sudo rmdir -- <your Orbit folder>`.
+   If it stops part way, you can run it again: once `.env-orbit` is gone it
+   skips `docker compose` and goes on with the rest.
    `rmdir` removes a folder only when it is empty, so `backups/`,
    `orbit-install-backups/` and anything else you put there stay, and the
    folder stays while they are in it. The screen names what is left. It
