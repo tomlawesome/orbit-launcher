@@ -117,7 +117,7 @@
       "groupName": "playwright"
     },
     {
-      "description": "No digest-only updates for the Playwright image (#347). Each pin of it would otherwise get two upgrades in the playwright branch, a version update and a digest refresh of the current tag; Renovate logs an upgrade collision and the image stayed behind while @playwright/test moved (!281). A version update brings its own digest, so nothing is lost.",
+      "description": "No digest-only updates for the Playwright image (#347). Each pin of it would otherwise get two upgrades in the playwright branch, a version update and a digest refresh of the current tag; Renovate logs an upgrade collision and the image stayed behind while @playwright/test moved (!281). A version update brings its own digest. The cost: a rebuilt image under the same tag is not picked up, so the image moves only with a Playwright version, which is how the lockstep rule wants it.",
       "matchPackageNames": ["mcr.microsoft.com/playwright"],
       "matchUpdateTypes": ["digest"],
       "enabled": false
