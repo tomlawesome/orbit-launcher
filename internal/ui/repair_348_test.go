@@ -25,14 +25,14 @@ func w348Plan(t *testing.T, line string) string {
 }
 
 func TestRepair348_RecreateServicesOffersTheSafeBatch(t *testing.T) {
-	s := w348Plan(t, "plan action=recreate-services resolves=folder-moved mutation=service-start backup=not-required")
+	s := w348Plan(t, "plan action=recreate-services resolves=folder-moved mutation=containers backup=not-required")
 	if !strings.Contains(s, "Run the safe repairs") {
 		t.Errorf("a plan whose only action is recreate-services lacks the Run the safe repairs row:\n%s", s)
 	}
 }
 
 func TestRepair348_RecreateServicesShowsItsWords(t *testing.T) {
-	s := w348Plan(t, "plan action=recreate-services resolves=folder-moved mutation=service-start backup=not-required")
+	s := w348Plan(t, "plan action=recreate-services resolves=folder-moved mutation=containers backup=not-required")
 	if !strings.Contains(ssFlat(s), w348Recreate) {
 		t.Errorf("no %q on the plan screen:\n%s", w348Recreate, s)
 	}
@@ -50,7 +50,7 @@ func TestRepair348_ClassWordsOnPlanScreen(t *testing.T) {
 		{"folder-elsewhere", w348Elsewhr},
 		{"scanner-configuration-mismatch", w348Scanner},
 	} {
-		s := w348Plan(t, "plan action=recreate-services resolves="+c.class+" mutation=service-start backup=not-required")
+		s := w348Plan(t, "plan action=recreate-services resolves="+c.class+" mutation=containers backup=not-required")
 		if !strings.Contains(ssFlat(s), c.want) {
 			t.Errorf("%s: plan screen lacks %q:\n%s", c.class, c.want, s)
 		}
@@ -61,13 +61,14 @@ func TestRepair348_ClassWordsOnPlanScreen(t *testing.T) {
 }
 
 func TestRepair348_ClassWordsInFindingRows(t *testing.T) {
-	for _, c := range []struct{ class, sev, want string }{
-		{"folder-moved", "fail", w348Moved},
-		{"folder-elsewhere", "fail", w348Elsewhr},
-		{"scanner-configuration-mismatch", "fail", w348Scanner},
-		{"scanner-configuration-mismatch", "info", w348Scanner},
+	// Targets as Orbit's repair.sh emits them at 48b3971f.
+	for _, c := range []struct{ class, target, sev, want string }{
+		{"folder-moved", "deployment", "fail", w348Moved},
+		{"folder-elsewhere", "deployment", "fail", w348Elsewhr},
+		{"scanner-configuration-mismatch", "configuration", "fail", w348Scanner},
+		{"scanner-configuration-mismatch", "configuration", "info", w348Scanner},
 	} {
-		got := ansi.Strip(findingLine(engine.Finding{Class: c.class, Target: "container", Severity: c.sev}))
+		got := ansi.Strip(findingLine(engine.Finding{Class: c.class, Target: c.target, Severity: c.sev}))
 		if !strings.Contains(got, c.want) {
 			t.Errorf("%s/%s: finding row %q lacks %q", c.class, c.sev, got, c.want)
 		}
@@ -99,7 +100,7 @@ func ssFailedRun348(t *testing.T) RepairModel {
 	return ssExecuted(t, 120, 30, []string{
 		"execute action=recreate-services resolves=folder-moved result=failed",
 		"execution result=failed done=0 failed=1",
-		"finding class=folder-moved target=container severity=fail",
+		"finding class=folder-moved target=deployment severity=fail",
 		"finding class=scanner-configuration-mismatch target=configuration severity=info",
 		"diagnosis result=failed checked=20 skipped=0",
 	}, nil, 4)
