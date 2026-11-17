@@ -681,7 +681,7 @@ func (m RepairModel) planMenu() []string {
 func (m RepairModel) planHasSafe() bool {
 	for _, p := range m.planActions {
 		switch p.Action {
-		case "fix-permissions", "restore-transaction", "restart-services", "start-services", "recreate-services", "restore-compose-file":
+		case "fix-permissions", "restore-transaction", "restart-services", "start-services", "recreate-services", "restore-compose-file", "retire-smtp-lines":
 			return true
 		}
 	}

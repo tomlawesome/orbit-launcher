@@ -471,6 +471,9 @@ func (m AppModel) watchOutcome(o flowOutcome, cmd tea.Cmd) (tea.Model, tea.Cmd) 
 			// starting; an update fails on them instead.
 			m.success.serviceNotes = m.install.run.ServiceNotes
 		}
+		if o.MailRetired {
+			m.success.serviceNotes = append(m.success.serviceNotes, mailRetiredNote)
+		}
 		m.state = appStateSuccess
 		sizeCmd := func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 		// Not Init: the sky's ticks already run, carried over from the
