@@ -790,7 +790,8 @@ gitleaks:
   image:
     <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-  # Five minutes at most on the landing push (ai/agent-infra#113).
+  # Five minutes at most, on every pipeline that runs it, not only the
+  # landing push (ai/agent-infra#113).
   timeout: 5m
   variables:
     GIT_DEPTH: 0
