@@ -63,8 +63,10 @@ type UpdateModel struct {
 	// installer command in a copyable box. clipboard and copied are as
 	// RemoveModel's.
 	launcherVersion string
-	clipboard       io.Writer
-	copied          bool
+	// dead is the dead end screens' caret (#354).
+	dead      menu
+	clipboard io.Writer
+	copied    bool
 
 	// refusal is updateStateOtherFolder's screen: the folder the app
 	// container was started from and its rows (#316, #334).
@@ -147,6 +149,56 @@ func (m UpdateModel) withLauncherUpdate(version string) UpdateModel {
 // launcherKnown says the confirm screen offers the launcher's command.
 func (m UpdateModel) launcherKnown() bool { return m.launcherVersion != "" }
 
+// launcherDeadEndLine leads the command on Update's dead ends (#354); the
+// confirm screen words it its own way.
+const launcherDeadEndLine = "to update the launcher, copy and run"
+
+// writeLauncherOffer is the block Update's dead ends carry when a newer
+// launcher is known: the faint line, the command box, a blank row (#354).
+func writeLauncherOffer(b *strings.Builder, width int) {
+	writeWrappedIn(b, style.Tagline, launcherDeadEndLine, measure(width, proseWidth), textArea(width))
+	writeCommandBox(b, wrapShellCommand(launcherInstallWords(), width-8))
+	fmt.Fprintln(b)
+}
+
+// copiedRows is rows with Copy command reading as copied.
+func copiedRows(rows []string) []string {
+	out := append([]string{}, rows...)
+	for i, r := range out {
+		if r == removeCopy {
+			out[i] = removeCopy + style.Separator + "copied"
+		}
+	}
+	return out
+}
+
+// launcherDeadEndRows are a dead end's rows when a newer launcher is known.
+var launcherDeadEndRows = []string{removeCopy, "Menu"}
+
+// deadEnd is the dead end screens' rows, with their caret (#354).
+func (m UpdateModel) deadEnd() menu {
+	rows := deadEndRows
+	if m.launcherKnown() {
+		rows = launcherDeadEndRows
+	}
+	d := m.dead.over(rows)
+	if m.copied {
+		d = d.over(copiedRows(rows))
+	}
+	return d
+}
+
+// copyLauncher is the Copy command row: the installer command to the
+// clipboard and the row reading copied; nothing else changes.
+func (m UpdateModel) copyLauncher() (UpdateModel, tea.Cmd) {
+	m.awaiting, m.copied = false, true
+	w := io.Writer(os.Stdout)
+	if m.clipboard != nil {
+		w = m.clipboard
+	}
+	return m, copyToClipboard(w, strings.Join(launcherInstallWords(), " "))
+}
+
 // deadEndRows are a dead end's one row, Update's and Remove's not-found
 // screens: back to the main menu (#228).
 var deadEndRows = []string{"Menu"}
@@ -162,6 +214,9 @@ const updateOtherFolderBody = "Update here would act on that folder's Orbit, and
 func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
 	m.recreate = false
 	m.state, m.refusal, m.carriedOn, m.awaiting = updateStateOtherFolder, newRunHereRefusal(mm), false, false
+	if m.launcherKnown() {
+		m.refusal = m.refusal.withLauncher()
+	}
 	return m
 }
 
@@ -351,13 +406,25 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case updateStateNotFound, updateStateNewer, updateStateCurrent:
 		// The dead end: its one row and Esc both go back to the menu,
 		// and no other key does anything (#228).
-		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
+		var chosen string
+		var back bool
+		m.dead, chosen, back = m.deadEnd().onScreen(msg)
+		switch {
+		case back || chosen == "Menu":
 			m.left = true
+		case chosen == removeCopy && m.launcherKnown():
+			return m.copyLauncher()
 		}
 		return m, nil
 	case updateStateOtherFolder:
-		var carry, leave, back bool
-		m.refusal, carry, leave, back = m.refusal.key(msg)
+		var copy, carry, leave, back bool
+		if m.launcherKnown() {
+			m.refusal = m.refusal.withLauncher()
+		}
+		m.refusal, copy, carry, leave, back = m.refusal.press(msg)
+		if copy {
+			return m.copyLauncher()
+		}
 		if back {
 			m.leaveNote = moveBackNote(m.refusal.mismatch.Folder)
 			return m, tea.Quit
@@ -381,12 +448,7 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case back, chosen == "Cancel":
 		m.left, m.awaiting = true, false
 	case chosen == removeCopy && m.launcherKnown():
-		m.awaiting, m.copied = false, true
-		w := io.Writer(os.Stdout)
-		if m.clipboard != nil {
-			w = m.clipboard
-		}
-		return m, copyToClipboard(w, strings.Join(launcherInstallWords(), " "))
+		return m.copyLauncher()
 	case chosen == "":
 		m.awaiting = false // a caret move drops a held Enter, as on Remove
 	case chosen == "Update Orbit":
@@ -442,6 +504,9 @@ func (m UpdateModel) view() string {
 	case updateStateRunning:
 		return m.run.view(m.width, m.height)
 	case updateStateOtherFolder:
+		if m.launcherKnown() {
+			m.refusal = m.refusal.withLauncher()
+		}
 		return m.refusal.view(m.star, m.width, m.height, updateOtherFolderBody)
 	case updateStateNewer:
 		return m.viewNewer()
@@ -457,9 +522,9 @@ func (m UpdateModel) view() string {
 
 func (m UpdateModel) viewNotFound() string {
 	if m.detectErr != nil {
-		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.detectErr)
+		return viewUnreadableDeploymentOffering(m.star, m.width, m.height, m.targetDir, m.detectErr, m.deadEnd(), m.launcherKnown())
 	}
-	return viewNoDeployment(m.star, m.width, m.height, m.targetDir,
+	return viewNoDeploymentOffering(m.star, m.width, m.height, m.targetDir, m.deadEnd(), m.launcherKnown(),
 		"There's nothing to update in this directory —",
 		"Install is the way to get into Orbit first.")
 }
@@ -585,7 +650,10 @@ func (m UpdateModel) viewDeadEnd(title string, rows ...string) string {
 	}
 	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, limit, edge)
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
+	if m.launcherKnown() {
+		writeLauncherOffer(&b, m.width)
+	}
+	m.deadEnd().write(&b)
 	return skyBlock(m.star, m.width, m.height, b.String())
 }
 
