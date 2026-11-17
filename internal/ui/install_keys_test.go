@@ -15,12 +15,12 @@ import (
 func TestInstallModel_ProfileArrowsWrapAndShowTheSelection(t *testing.T) {
 	m, _ := newTestInstallModel(engineRunSeams{})
 	m, _ = updateAs(t, m, key(tea.KeyUp))
-	if m.profile.sel != 3 || !strings.Contains(screen(m), "▸ Full") {
-		t.Fatalf("Up from Standard should wrap to Full (sel=%d):\n%s", m.profile.sel, screen(m))
+	if m.profile.sel != 4 || !strings.Contains(screen(m), "▸ Scanner") {
+		t.Fatalf("Up from Standard should wrap to Scanner (sel=%d):\n%s", m.profile.sel, screen(m))
 	}
 	m, _ = updateAs(t, m, key(tea.KeyDown))
 	if m.profile.sel != 0 || !strings.Contains(screen(m), "▸ Standard") {
-		t.Fatalf("Down from Full should wrap to Standard (sel=%d)", m.profile.sel)
+		t.Fatalf("Down from Scanner should wrap to Standard (sel=%d)", m.profile.sel)
 	}
 	m, cmd := updateAs(t, m, runeKey('j'))
 	if cmd != nil || m.profile.sel != 0 || m.state != installStateProfile {

@@ -208,7 +208,7 @@ func TestAppModel_ReturnToMenuReprobesAndRechecksAndStaysFrozen(t *testing.T) {
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// Repair, then its Menu row.
-	m, _ = updateAs(t, m, key(tea.KeyDown)) // Update is preselected; Repair is next
+	m, _ = updateAs(t, m, key(tea.KeyDown), key(tea.KeyDown)) // Update is preselected; Configure, then Repair
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	m = drive(t, m, cmd)
 	m = appDrainStream(t, m, queue)

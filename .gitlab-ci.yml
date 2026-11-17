@@ -61,9 +61,30 @@ include:
   - project: ai/agent-infra
     ref: c93bc8e78bf5807b8f2c2f5d7c13784f4a54746d  # private-details/v3
     file: scripts/private-details/ci-template.yml
+  # Batch branches (ai/agent-infra#114, decision 66a). Pinned to the commit
+  # each tag names, as above. catchup-check: a chore/catchup-* merge request
+  # into batch-a or batch-b runs one small job. batch-intake: any other merge
+  # request into a batch branch runs the static checks only; the full pipeline
+  # runs once, on the batch-to-dev merge request (decision 60a).
+  - project: ai/agent-infra
+    ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
+    file: scripts/catchup-check/ci-template.yml
+  - project: ai/agent-infra
+    ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1
+    file: scripts/batch-intake/ci-template.yml
+  # A push to dev (ai/agent-infra#113, owner decision 2026-11-05) runs only the
+  # fast checks, five minutes at most: the secret scan (`gitleaks`) and
+  # `private-details`. Every other job starts its rules with the snippet's
+  # job_rule. Pinned to the commit the tag names, as above.
+  - project: ai/agent-infra
+    ref: 1dca70057bd93f68ded22c6b159f315c987c1663  # dev-landing/v1
+    file: scripts/dev-landing/ci-template.yml
 
 stages:
   - classify
+  # catchup-check's job runs here (the snippet names stage `test`). Second, so
+  # flake-check stays in the first stage.
+  - test
   - fast
   - acceptance
   - release
@@ -71,13 +92,20 @@ stages:
 
 # Test once, then promote what passed (#306): each pipeline runs only what an
 # earlier stage could not. A merge request into `dev` runs the checks; the one
-# into `preview` adds the live installs; the one into `main` adds nothing; the
-# push that lands any of them runs nothing, because merges need an up-to-date
-# branch (semi-linear history) and so land exactly what was tested. Only a push
-# to `main` creates a pipeline, for the release buttons. Each job's `rules:`
-# below picks its stage; this block decides whether a pipeline exists at all.
+# into `preview` adds the live installs; the one into `main` adds nothing. A
+# merge request into `batch-a` or `batch-b` runs only the static checks
+# (batch-intake), a chore/catchup-* one only the ancestry check. The push that
+# lands a merge runs nothing more than it must, because merges need an
+# up-to-date branch (semi-linear history) and so land exactly what was tested:
+# a push to `dev` runs only `gitleaks` and `private-details` (dev-landing), a
+# push to `main` makes a pipeline for the release buttons, and other pushes
+# make none. Each job's `rules:` below picks its stage; this block decides
+# whether a pipeline exists at all.
 workflow:
   rules:
+    - !reference [.dev-landing, workflow_rules]
+    - !reference [.catchup-check, workflow_rules]
+    - !reference [.batch-intake, workflow_rules]
     # Tags publish nothing here: Orbit builds and ships a pinned tag (#171).
     - if: $CI_COMMIT_TAG
       when: never
@@ -102,11 +130,11 @@ default:
 variables:
   # go.mod's toolchain, pinned to the image index digest the way Orbit pins its
   # images: a moving tag would silently change what the gate ran on.
-  GO_IMAGE: golang:1.27.3-bookworm@sha256:32fa283222e2905d9fee971f60c842e5c815fdc036cf7ea599bf36bd7ca8f67f
+  GO_IMAGE: golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
   # The same Go build as a tarball, for the two jobs whose image is chosen by
   # something other than Go (a browser, a Docker daemon).
-  GO_VERSION: "1.27.3"
-  GO_SHA256: 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+  GO_VERSION: "1.27.4"
+  GO_SHA256: 7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
   # Ships the exact Chromium that test/visual/package-lock.json's
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
@@ -134,9 +162,15 @@ variables:
   # renovate: datasource=go depName=github.com/google/go-licenses/v2
   GO_LICENSES_VERSION: v2.0.1
   # Every *_VERSION pin carries a `# renovate:` line, read by renovate.json's
-  # annotation manager (#328). Renovate cannot work out a download's checksum,
-  # so its merge request for a pin with a *_SHA256 fails the download check:
-  # that is expected. Put the new release's checksum in the same merge request.
+  # annotation managers (#328). Renovate moves the *_SHA256 for TRIVY,
+  # GOLANGCI_LINT, ZIZMOR and ACTIONLINT with their versions
+  # (github-release-attachments reads the release's checksum file, or hashes
+  # the asset when there is none, e.g. zizmor). BATS (a source archive, not a
+  # release attachment), GITLEAKS and TTYD (copied into the GitHub workflows,
+  # and gitleaks into .github/supply-chain-policy.json, which test/supplychain
+  # checks) stay on github-releases: Renovate's merge request for them still
+  # fails the download check until a person moves the checksum and every copy
+  # in the same merge request.
   # renovate: datasource=github-releases depName=bats-core/bats-core extractVersion=^v(?<version>.+)$
   BATS_VERSION: "1.14.0"
   BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
@@ -149,18 +183,20 @@ variables:
   # Scanners (#322, #323). Their jobs below block the pipeline. Their
   # checksums come from the upstream checksums.txt of each release, except
   # zizmor's, which is our own: upstream publishes none, so the digest below
-  # is of the tarball as downloaded on 2026-11-02.
-  # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
-  TRIVY_VERSION: "0.76.1"
-  TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
-  # renovate: datasource=github-releases depName=golangci/golangci-lint extractVersion=^v(?<version>.+)$
-  GOLANGCI_LINT_VERSION: "2.15.0"
+  # is of the tarball as downloaded on 2026-11-13.
+  # Each *_VERSION here is the release tag, v included, because Renovate's
+  # checksum lookup asks GitHub for that tag (#356).
+  # renovate: datasource=github-release-attachments depName=aquasecurity/trivy
+  TRIVY_VERSION: "v0.76.2"
+  TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+  # renovate: datasource=github-release-attachments depName=golangci/golangci-lint
+  GOLANGCI_LINT_VERSION: "v2.15.0"
   GOLANGCI_LINT_SHA256: 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
-  # renovate: datasource=github-releases depName=zizmorcore/zizmor extractVersion=^v(?<version>.+)$
-  ZIZMOR_VERSION: "1.31.1"
-  ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
-  # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
-  ACTIONLINT_VERSION: "1.7.12"
+  # renovate: datasource=github-release-attachments depName=zizmorcore/zizmor
+  ZIZMOR_VERSION: "v1.32.0"
+  ZIZMOR_SHA256: bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
+  # renovate: datasource=github-release-attachments depName=rhysd/actionlint
+  ACTIONLINT_VERSION: "v1.7.12"
   ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
   # Where the live test's install.sh comes from (#140 decision 2): ai/orbit on
   # this GitLab, not the GitHub mirror, at the branch and commit
@@ -311,12 +347,38 @@ variables:
 # --- fast --------------------------------------------------------------------
 
 # The merge-request stage (#306): the checks that run on a merge request into
-# `dev`, and on a pipeline started by hand. Not on the promotions (`dev` into
+# `dev`, and on a pipeline started by hand. The static ones also run on a
+# merge request into `batch-a` or `batch-b` (.checks_rules). Not on the promotions (`dev` into
 # `preview`, `preview` into `main`), which carry exactly the code `dev`
 # passed. A merge request into `preview` or `main` from any other branch has
 # passed no earlier stage, so it is treated as one into `dev`: the checks
 # here, and the live installs, which nothing later would run (#313).
 .checks_rules: &checks_rules
+  - !reference [.dev-landing, job_rule]
+  - !reference [.catchup-check, job_rule]
+  # The static checks also run on a merge request into a batch branch
+  # (ai/agent-infra#114): this rule matches it, and the jobs that build or
+  # test carry heavy_checks_rules instead, which stops at batch-intake.
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
+  - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+
+# The same rules for a job that builds or tests: skipped on a merge request
+# into a batch branch, where only the static checks run (batch-intake).
+.heavy_checks_rules: &heavy_checks_rules
+  - !reference [.dev-landing, job_rule]
+  - !reference [.catchup-check, job_rule]
+  - !reference [.batch-intake, job_rule]
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
+  - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+
+# The rules of the two fast checks: the same as .checks_rules, with the
+# snippet's check rule first so they also run on the push that lands on dev
+# (ai/agent-infra#113). Each also sets `timeout: 5m`, the snippet's value.
+.fast_checks_rules: &fast_checks_rules
+  - !reference [.dev-landing-check, rules]
+  - !reference [.catchup-check, job_rule]
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
   - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
 
@@ -402,7 +464,7 @@ flake-check:
 
 fast:
   stage: fast
-  rules: *checks_rules
+  rules: *heavy_checks_rules
   image:
     <<: *pull_if_not_present
     name: $GO_IMAGE
@@ -532,7 +594,8 @@ deps:
 # carries a pin Renovate watches (an ai/agent-infra issue).
 private-details:
   stage: fast
-  rules: *checks_rules
+  rules: *fast_checks_rules
+  timeout: 5m
   needs: []
   tags: [light]
   image:
@@ -560,9 +623,9 @@ private-details:
 # toolchain to type-check) uses $GO_IMAGE.
 
 # Trivy's vulnerability and licence databases are fetched at run time and
-# cached by GitLab, never committed. Trivy 0.76.1's checksums file was checked
+# cached by GitLab, never committed. Trivy 0.76.2's checksums file was checked
 # with cosign (its .sigstore.json bundle, identity aquasecurity/trivy on
-# GitHub Actions) when the pin was taken, on 2026-11-02. The gate blocks on
+# GitHub Actions) when the pin was taken, on 2026-11-13. The gate blocks on
 # every High and Critical finding; when one has no fix and blocks merges, the
 # way back is a dated entry in .trivyignore (its header says what each needs),
 # not --ignore-unfixed.
@@ -594,9 +657,9 @@ trivy:
     - *docs_only_skip
     - |
       set -euo pipefail
-      tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+      tarball="trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz"
       bash scripts/ci/fetch-verified.sh \
-        "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}" \
+        "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/${tarball}" \
         "${TRIVY_SHA256}" "/tmp/${tarball}"
       mkdir -p /tmp/bin
       tar -xzf "/tmp/${tarball}" -C /tmp/bin trivy
@@ -643,9 +706,9 @@ golangci-lint:
     - *docs_only_skip
     - |
       set -euo pipefail
-      tarball="golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
+      tarball="golangci-lint-${GOLANGCI_LINT_VERSION#v}-linux-amd64.tar.gz"
       bash scripts/ci/fetch-verified.sh \
-        "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/${tarball}" \
+        "https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_LINT_VERSION}/${tarball}" \
         "${GOLANGCI_LINT_SHA256}" "/tmp/${tarball}"
       mkdir -p /tmp/bin /tmp/glint
       tar -xzf "/tmp/${tarball}" -C /tmp/glint --strip-components=1
@@ -687,13 +750,13 @@ workflow-lint:
       mkdir -p /tmp/bin /tmp/zizmor /tmp/actionlint reports
       ztar="zizmor-x86_64-unknown-linux-gnu.tar.gz"
       bash scripts/ci/fetch-verified.sh \
-        "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${ztar}" \
+        "https://github.com/zizmorcore/zizmor/releases/download/${ZIZMOR_VERSION}/${ztar}" \
         "${ZIZMOR_SHA256}" "/tmp/${ztar}"
       tar -xzf "/tmp/${ztar}" -C /tmp/zizmor
       cp "$(find /tmp/zizmor -type f -name zizmor | head -n 1)" /tmp/bin/zizmor
-      atar="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+      atar="actionlint_${ACTIONLINT_VERSION#v}_linux_amd64.tar.gz"
       bash scripts/ci/fetch-verified.sh \
-        "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${atar}" \
+        "https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_VERSION}/${atar}" \
         "${ACTIONLINT_SHA256}" "/tmp/${atar}"
       tar -xzf "/tmp/${atar}" -C /tmp/actionlint actionlint
       cp /tmp/actionlint/actionlint /tmp/bin/actionlint
@@ -718,7 +781,7 @@ workflow-lint:
 # the build log; the log names the file and rule, never the value.
 gitleaks:
   stage: fast
-  rules: *checks_rules
+  rules: *fast_checks_rules
   # Starts immediately rather than queueing behind `classify`: this one is
   # never skipped, so it has nothing to learn from the verdict, and a secret
   # is the finding you want soonest.
@@ -727,7 +790,8 @@ gitleaks:
   image:
     <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-  timeout: 10m
+  # Five minutes at most on the landing push (ai/agent-infra#113).
+  timeout: 5m
   variables:
     GIT_DEPTH: 0
   before_script:
@@ -768,6 +832,9 @@ visual:
   timeout: 15m
   needs: []
   rules:
+    - !reference [.dev-landing, job_rule]
+    - !reference [.catchup-check, job_rule]
+    - !reference [.batch-intake, job_rule]
     - if: $CI_PIPELINE_SOURCE == "web"
     # The Go tarball and ttyd come in through the checked-download script, so
     # a change to it alone is a change to what this job runs on (#216).
@@ -913,6 +980,9 @@ live-prepare:
       optional: true
   # The legs' five routes, the change route manual and blocking as theirs (#304).
   rules:
+    - !reference [.dev-landing, job_rule]
+    - !reference [.catchup-check, job_rule]
+    - !reference [.batch-intake, job_rule]
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "dev"
@@ -1384,6 +1454,9 @@ live-prepare:
     - job: live-prepare
       artifacts: true
   rules:
+    - !reference [.dev-landing, job_rule]
+    - !reference [.catchup-check, job_rule]
+    - !reference [.batch-intake, job_rule]
     - if: $RUN_LIVE == "true"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-live-matrix(,|$)/
     # The promotion into `preview` (#306): the one place the live installs
@@ -1615,6 +1688,7 @@ promoted:
     name: $UBUNTU_IMAGE
   timeout: 2m
   rules:
+    - !reference [.dev-landing, job_rule]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "preview"
   script:
     - echo "nothing to run here (#306); the checks ran on dev's merge request and the live installs on the merge request into preview"
@@ -1647,7 +1721,9 @@ promoted:
 #                      requests; a `read_api` token can look and never write.
 #   GITHUB_COM_TOKEN   A github.com fine-grained personal access token with no
 #                      permissions granted at all -- public read only.
-#                      Renovate uses it for changelogs and release notes.
+#                      Renovate uses it for changelogs and release notes,
+#                      and to read release assets and checksum files for
+#                      the github-release-attachments pins (#347).
 #                      Without it the unauthenticated github.com API
 #                      rate-limits partway through a run and merge requests
 #                      arrive with their release notes missing.
@@ -1688,7 +1764,7 @@ renovate:
   # Stays on the big lane: a gomod/gomodTidy update installs a Go toolchain
   # and runs `go mod tidy` inside the job, which can pass the light lane's
   # 2 GB limit. Same choice as mikroview's renovate:run.
-  # A weekly maintenance run has nothing that could supersede it, and being
+  # A daily maintenance run has nothing that could supersede it, and being
   # cancelled part-way leaves half-written branches behind.
   interruptible: false
   # RENOVATE_TOKEN and GITHUB_COM_TOKEN are scoped to this environment, so
@@ -1697,6 +1773,7 @@ renovate:
     name: renovate
     action: prepare
   rules:
+    - !reference [.dev-landing, job_rule]
     - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE == "true"
   variables:
     # The checkout exists only so RENOVATE_CONFIG_FILE below has a file to
@@ -1707,7 +1784,7 @@ renovate:
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
     # Renovate reads a repository's own config from its default branch, which
-    # here is `dev` and carries renovate.json. The weekly schedule runs on
+    # here is `dev` and carries renovate.json. The daily schedule runs on
     # `dev` too, so the copy in this job's checkout is that same file, and
     # handing it over as global config changes nothing: the repository copy
     # merges over this one and they are identical.
@@ -1762,6 +1839,7 @@ renovate:
     name: $GO_IMAGE
   interruptible: false
   rules:
+    - !reference [.dev-landing, job_rule]
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
       when: manual
       # A manual job is allow_failure by default; forcing it false would
@@ -1799,6 +1877,7 @@ renovate:
     name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
   interruptible: false
   rules:
+    - !reference [.dev-landing, job_rule]
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
   resource_group: release
   cache: []

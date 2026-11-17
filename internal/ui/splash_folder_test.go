@@ -185,8 +185,8 @@ func TestSplashFolder_UnreadableShowsIt(t *testing.T) {
 func TestSplashFolder_DegradedShowsItBeneathTheDrawer(t *testing.T) {
 	dir := installedFolder(t)
 	m := started(t, folderApp(t, dir, 80, 26, deploy.HealthNotResponding))
-	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp)) // Install, then the status row
-	m, _ = updateAs(t, m, key(tea.KeyRight))                              // open the drawer
+	m, _ = updateAs(t, m, key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp), key(tea.KeyUp)) // Install, then the status row
+	m, _ = updateAs(t, m, key(tea.KeyRight))                                              // open the drawer
 
 	s := screen(m)
 	word, reason, folder := lineIndex(s, "degraded"), lineIndex(s, "not responding"), lineIndex(s, dir)

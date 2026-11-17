@@ -99,37 +99,41 @@ func TestRepairServices_ASlowReaderNeverHoldsTheScreen(t *testing.T) {
 	}
 }
 
-// When the health probe says the deployment is healthy, the splash's
-// status does not wait for a slow services reader.
-func TestSplashProbe_HealthyDoesNotWaitForTheServicesReader(t *testing.T) {
-	m, _ := probeModel(t, "full")
+// Replaced 2026-11-08 (#341 revised, replacing #277's "a healthy answer
+// never waits on docker compose ps"): the word needs both halves, so a
+// ready answer waits for the services reader and lands once it answers.
+func TestSplashProbe_HealthyWaitsForTheServicesReader(t *testing.T) {
+	m, _ := probeModel(t, "")
 	m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthResponding }
+	release := make(chan struct{})
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) {
-		time.Sleep(readerSlow)
-		return nil, nil
+		<-release
+		return allRunning(3), nil
 	}
 	cmd := m.probeHealthCmd()
 	if cmd == nil {
 		t.Fatal("probeHealthCmd returned nil")
 	}
 	got := make(chan tea.Msg, 1)
-	start := time.Now()
 	go func() { got <- cmd() }()
+	select {
+	case msg := <-got:
+		t.Fatalf("the answer landed before the services reader answered: %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
 	var msg tea.Msg
 	select {
 	case msg = <-got:
 	case <-time.After(readerPrompt):
-		t.Fatalf("the healthy probe's answer was still waiting after %v on a %v services reader", readerPrompt, readerSlow)
-	}
-	if took := time.Since(start); took > readerPrompt {
-		t.Errorf("the healthy probe took %v", took)
+		t.Fatal("the answer did not land after the services reader answered")
 	}
 	res, ok := msg.(healthResultMsg)
 	if !ok {
 		t.Fatalf("probe produced %#v, want a healthResultMsg", msg)
 	}
-	if res.reason != deploy.HealthResponding {
-		t.Errorf("reason = %q, want responding", res.reason)
+	if res.reason != deploy.HealthResponding || !res.asked || !res.counted || res.running != 3 || res.expected != 3 {
+		t.Errorf("message = %+v, want ready, asked, 3 of 3 counted", res)
 	}
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 26}, msg)
 	if !strings.Contains(screen(m), "alive") {
@@ -142,8 +146,9 @@ func TestSplashProbe_DegradedStillCountsServices(t *testing.T) {
 	m, _ := probeModel(t, "")
 	m.healthProbe = func(context.Context, string) deploy.HealthReason { return deploy.HealthNotResponding }
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) { return up("orbit-db", "orbit-app"), nil }
-	want := healthResultMsg{reason: deploy.HealthNotResponding, running: 2, expected: 3, counted: true}
-	if got := m.probeHealthCmd()(); got != want {
+	want := healthResultMsg{reason: deploy.HealthNotResponding, running: 2, expected: 3, counted: true, asked: true,
+		faults: []deploy.ServiceFault{{Service: "orbit-clamav", Word: deploy.FaultMissing}}}
+	if got := m.probeHealthCmd()(); !sameHealthMsg(got, want) {
 		t.Errorf("message = %+v, want %+v", got, want)
 	}
 }
@@ -299,8 +304,9 @@ func TestAppModel_WithServicesReaderIsWhatTheSplashCounts(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("the splash has no probe")
 	}
-	want := healthResultMsg{reason: deploy.HealthNotResponding, running: 2, expected: 3, counted: true}
-	if got := cmd(); got != want {
+	want := healthResultMsg{reason: deploy.HealthNotResponding, running: 2, expected: 3, counted: true, asked: true,
+		faults: []deploy.ServiceFault{{Service: "orbit-app", Word: "restarting"}}}
+	if got := cmd(); !sameHealthMsg(got, want) {
 		t.Errorf("probe message = %+v, want %+v", got, want)
 	}
 	if got := reader.folders(); len(got) != 1 || got[0] != dir {

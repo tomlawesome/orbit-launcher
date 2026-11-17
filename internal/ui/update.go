@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -54,7 +56,15 @@ type UpdateModel struct {
 	deployment    *deploy.Deployment
 	detectErr     error // deploy.Detect's error for targetDir; see RemoveModel
 	state         updateState
-	confirm       menu // updateConfirmRows
+	confirm       menu // updateConfirmRows, or launcherConfirmRows with launcherVersion
+
+	// launcherVersion is the newer launcher the splash's check found, ""
+	// when none is known (#349): the confirm screen then shows the
+	// installer command in a copyable box. clipboard and copied are as
+	// RemoveModel's.
+	launcherVersion string
+	clipboard       io.Writer
+	copied          bool
 
 	// refusal is updateStateOtherFolder's screen: the folder the app
 	// container was started from and its rows (#316, #334).
@@ -63,6 +73,11 @@ type UpdateModel struct {
 	// it is set, a running answer whose folder is still gone is no
 	// mismatch. It lives as long as this flow.
 	carriedOn bool
+	// recreate is set by "Run from this folder" (#1576): the engine run is
+	// asked, in its environment, to make the containers again here.
+	recreate bool
+	// leaveNote is "Move it back"'s line for AppModel (#1576).
+	leaveNote string
 
 	// left is Esc, Cancel or Menu on the flow's first screen: back to the
 	// main menu with nothing started (#210).
@@ -107,6 +122,31 @@ func NewUpdateModel(d *deploy.Deployment, targetDir, version string) UpdateModel
 
 var updateConfirmRows = []string{"Update Orbit", "Cancel"}
 
+// launcherConfirmRows add Copy command when a newer launcher is known.
+var launcherConfirmRows = []string{"Update Orbit", removeCopy, "Cancel"}
+
+// launcherInstallURL is Orbit's launcher installer, the one place it is
+// written (#349).
+const launcherInstallURL = "https://raw.githubusercontent.com/tomlawesome/orbit/main/scripts/get-orbit.sh"
+
+// launcherInstallWords is the command that updates the launcher.
+func launcherInstallWords() []string {
+	return []string{"curl", "-fsSL", launcherInstallURL, "|", "bash"}
+}
+
+// withLauncherUpdate hands the flow the newer launcher version the splash
+// knows, which adds the installer command to the confirm screen (#349).
+func (m UpdateModel) withLauncherUpdate(version string) UpdateModel {
+	if version != "" {
+		m.launcherVersion = version
+		m.confirm = newMenu(launcherConfirmRows...)
+	}
+	return m
+}
+
+// launcherKnown says the confirm screen offers the launcher's command.
+func (m UpdateModel) launcherKnown() bool { return m.launcherVersion != "" }
+
 // deadEndRows are a dead end's one row, Update's and Remove's not-found
 // screens: back to the main menu (#228).
 var deadEndRows = []string{"Menu"}
@@ -120,21 +160,35 @@ const updateOtherFolderBody = "Update here would act on that folder's Orbit, and
 // dropped: it agreed to the confirmation the refusal replaced, so a
 // carry-on needs a fresh one.
 func (m UpdateModel) refuseOtherFolder(mm deploy.Mismatch) UpdateModel {
-	m.state, m.refusal, m.carriedOn, m.awaiting = updateStateOtherFolder, newFolderRefusal(mm), false, false
+	m.recreate = false
+	m.state, m.refusal, m.carriedOn, m.awaiting = updateStateOtherFolder, newRunHereRefusal(mm), false, false
 	return m
+}
+
+// lateFolderRefusal says whether a running answer that arrives after the
+// flow has opened turns its screen into the refusal (#316, #334): the
+// answer is for this folder and names another one, and a folder still
+// gone is no mismatch once the person carried on. Update and Configure
+// share it.
+func lateFolderRefusal(r runningResultMsg, targetDir string, carriedOn bool) bool {
+	return r.dir == targetDir && r.mismatch.Kind == deploy.MismatchFolder &&
+		!(carriedOn && r.mismatch.FolderGone && !r.mismatch.BuildDiffers)
 }
 
 // carryOn is the row (#334): the flow goes on as from the container's own
 // folder, to the confirmation and its install-date lookup. It writes,
 // relabels and asks Docker nothing itself.
 func (m UpdateModel) carryOn() (tea.Model, tea.Cmd) {
-	m.state, m.carriedOn = updateStateConfirm, true
+	m.state, m.carriedOn, m.recreate = updateStateConfirm, true, true
 	return m, m.Init()
 }
 
 // Outcome surfaces the flow's result to AppModel: back to the menu when
 // the person left on the first screen, otherwise the engine run's.
 func (m UpdateModel) Outcome() flowOutcome {
+	if m.leaveNote != "" {
+		return flowOutcome{LeaveNote: m.leaveNote}
+	}
 	if m.left {
 		return backToMenu
 	}
@@ -159,9 +213,12 @@ type targetMsg struct {
 
 // targetCmd is the release lookup, nil with no seam or once answered.
 // The lookup bounds its own call (release.ResolveTarget).
-func (m UpdateModel) targetCmd() tea.Cmd {
-	lookup := m.lookupTarget
-	if lookup == nil || m.targetKnown {
+func (m UpdateModel) targetCmd() tea.Cmd { return targetLookupCmd(m.lookupTarget, m.targetKnown) }
+
+// targetLookupCmd is the release lookup as a command, shared with
+// Configure: nil with no seam or once answered.
+func targetLookupCmd(lookup func(context.Context) (release.Target, error), known bool) tea.Cmd {
+	if lookup == nil || known {
 		return nil
 	}
 	return func() tea.Msg {
@@ -204,10 +261,24 @@ func (m UpdateModel) answerTarget(t targetMsg) (tea.Model, tea.Cmd) {
 // targetVersion is the release the lookup named, "" while it has not
 // answered or could not say.
 func (m UpdateModel) targetVersion() string {
-	if !m.targetKnown || m.targetErr != nil {
+	return namedTargetVersion(m.targetKnown, m.targetErr, m.target)
+}
+
+// pinnedTo pins the run to the release the screen named, when the lookup
+// said the run must be (#336). Update and Configure share it.
+func (r engineRun) pinnedTo(version string, pin bool) engineRun {
+	if version != "" && pin {
+		return r.withChannel(version)
+	}
+	return r
+}
+
+// namedTargetVersion is targetVersion's rule, shared with Configure.
+func namedTargetVersion(known bool, err error, t release.Target) string {
+	if !known || err != nil {
 		return ""
 	}
-	return m.target.Version
+	return t.Version
 }
 
 // installedVersion is the deployment's recorded Orbit release, "" when
@@ -249,8 +320,7 @@ func (m UpdateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// that is back refuses (#334). An answer for another folder is not
 	// this flow's.
 	if r, ok := msg.(runningResultMsg); ok {
-		if m.state == updateStateConfirm && r.dir == m.targetDir && r.mismatch.Kind == deploy.MismatchFolder &&
-			!(m.carriedOn && r.mismatch.FolderGone && !r.mismatch.BuildDiffers) {
+		if m.state == updateStateConfirm && lateFolderRefusal(r, m.targetDir, m.carriedOn) {
 			m = m.refuseOtherFolder(r.mismatch)
 		}
 		return m, nil
@@ -286,8 +356,12 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case updateStateOtherFolder:
-		var carry, leave bool
-		m.refusal, carry, leave = m.refusal.key(msg)
+		var carry, leave, back bool
+		m.refusal, carry, leave, back = m.refusal.key(msg)
+		if back {
+			m.leaveNote = moveBackNote(m.refusal.mismatch.Folder)
+			return m, tea.Quit
+		}
 		if carry {
 			return m.carryOn()
 		}
@@ -306,6 +380,13 @@ func (m UpdateModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	switch {
 	case back, chosen == "Cancel":
 		m.left, m.awaiting = true, false
+	case chosen == removeCopy && m.launcherKnown():
+		m.awaiting, m.copied = false, true
+		w := io.Writer(os.Stdout)
+		if m.clipboard != nil {
+			w = m.clipboard
+		}
+		return m, copyToClipboard(w, strings.Join(launcherInstallWords(), " "))
 	case chosen == "":
 		m.awaiting = false // a caret move drops a held Enter, as on Remove
 	case chosen == "Update Orbit":
@@ -336,8 +417,9 @@ func (m UpdateModel) startRun() (tea.Model, tea.Cmd) {
 		title += " — " + deploymentIdentity(m.deployment)
 	}
 	m.run = newEngineRun(deploy.ActionUpdate, m.targetDir, title, m.version).withSeams(m.seams).withSend(m.send)
-	if target != "" && m.target.Pin {
-		m.run = m.run.withChannel(target)
+	m.run = m.run.pinnedTo(target, m.target.Pin)
+	if m.recreate {
+		m.run = m.run.withFolderMoved("recreate")
 	}
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
@@ -394,6 +476,9 @@ func (m UpdateModel) viewConfirm() string {
 	if image := m.deploymentImage(); image != "" {
 		fmt.Fprintln(&b, style.Tagline.Render(endCut(visibleText(image), prose)))
 	}
+	if row := m.scannerRow(); row != "" {
+		fmt.Fprintln(&b, style.Tagline.Render(endCut(row, prose)))
+	}
 	fmt.Fprintln(&b)
 	// Each line wraps on its own, as Remove's do (#271), but at the
 	// screen's edge rather than proseWidth: the second line is 60 cells
@@ -402,12 +487,32 @@ func (m UpdateModel) viewConfirm() string {
 	writeWrappedIn(&b, style.MutedText, "The update runs inside the mission console, right here.", edge, textArea(m.width))
 	writeWrappedIn(&b, style.MutedText, "Your existing configuration is preserved. Nothing is deleted.", edge, textArea(m.width))
 	fmt.Fprintln(&b)
-	m.confirm.write(&b)
+	if m.launcherKnown() {
+		// Wrapped and boxed as Remove's done screen is (#271, #277).
+		writeWrappedIn(&b, style.Tagline, "to update the launcher as well, copy and run", measure(m.width, proseWidth), textArea(m.width))
+		writeCommandBox(&b, wrapShellCommand(launcherInstallWords(), m.width-8))
+		fmt.Fprintln(&b)
+	}
+	confirm := m.confirm
+	if m.copied {
+		confirm = confirm.over([]string{updateConfirmRows[0], removeCopy + style.Separator + "copied", "Cancel"})
+	}
+	confirm.write(&b)
 	if m.awaiting {
 		fmt.Fprintln(&b)
 		b.WriteString(workingLine(m.frame, updateChecking, ""))
 	}
 	return skyBlock(m.star, m.width, m.height, b.String())
+}
+
+// scannerRow is the read-only fact that the scanner is off, read from the
+// record (#340); empty while it is on, the common case. Nothing on Update
+// changes it: the engine keeps the deployment's own setting.
+func (m UpdateModel) scannerRow() string {
+	if m.deployment != nil && m.deployment.ScanMode == deploy.ScanModeDisabled {
+		return "virus scanner off by choice"
+	}
+	return ""
 }
 
 // shownVersion is a version as a screen shows it: escaped, since the

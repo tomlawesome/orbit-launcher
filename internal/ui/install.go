@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/tomlawesome/orbit-launcher/internal/deploy"
 	"github.com/tomlawesome/orbit-launcher/internal/ui/starfield"
@@ -29,6 +28,10 @@ const (
 	// installStateOtherProject is the advisory for a machine with an Orbit
 	// under another Compose project (#321).
 	installStateOtherProject
+	// installStateUnreadable is the dead end for a .env-orbit here that
+	// exists but cannot be read (#338 A-R4): Update's and Remove's
+	// unreadable screen (#238).
+	installStateUnreadable
 )
 
 // InstallModel is the Install flow: profile choice, the development
@@ -52,14 +55,12 @@ type InstallModel struct {
 	targetDir     string
 	version       string
 
-	profile menu // installProfiles
-	volume  menu // installVolumeRows
-
-	// memory is the machine's total memory as read when the flow
-	// began; memoryKnown is false when it could not be read, and then no
-	// row is ever "not enough" (#260).
-	memory      uint64
-	memoryKnown bool
+	// profileChoice is the profile table: its menu (installProfiles), the
+	// machine's memory as read when the flow began (#260), and the
+	// virus-scanner row's state (#340: on at the start of every flow,
+	// flipped by Enter on the row, carried by the run).
+	profileChoice
+	volume menu // installVolumeRows
 
 	// requested is the profile the run asks for, set when the person
 	// chooses a row and carried by the run and its retry.
@@ -104,12 +105,18 @@ type InstallModel struct {
 
 	// otherFolder is the folder the app container was started from, in
 	// installStateOtherFolder. otherGone says it no longer exists (#334);
-	// then recordHere says this folder holds a record, and otherProject
-	// is the Compose project the clash check used.
+	// then recordHere says this folder holds a record, otherBuild that
+	// the record names a different build from the running one (#338
+	// A-F8), and otherProject is the Compose project the clash check used.
 	otherFolder  string
 	otherGone    bool
 	recordHere   bool
+	otherBuild   bool
 	otherProject string
+
+	// recordErr is the clash check's error reading this folder's
+	// .env-orbit, shown in installStateUnreadable (#338 A-R4).
+	recordErr error
 
 	// otherRead asks Docker for an Orbit app container under a Compose
 	// project other than this install's (#321), with the project an
@@ -196,9 +203,21 @@ func (r engineRun) withProfile(profile string) engineRun {
 	return r
 }
 
+// withScanner makes the run carry the virus-scanner choice.
+func (r engineRun) withScanner(scanner string) engineRun {
+	r.scanner = scanner
+	return r
+}
+
 // withChannel pins the run to a release (#336).
 func (r engineRun) withChannel(channel string) engineRun {
 	r.channel = channel
+	return r
+}
+
+// withFolderMoved asks the engine to make the containers again here (#1576).
+func (r engineRun) withFolderMoved(v string) engineRun {
+	r.folderMoved = v
 	return r
 }
 
@@ -211,109 +230,30 @@ func (r engineRun) withSeams(s engineRunSeams) engineRun {
 func NewInstallModel(targetDir, version string) InstallModel {
 	memory, known := deploy.HostMemory()
 	return InstallModel{
-		targetDir:   targetDir,
-		version:     version,
-		profile:     newMenu(installProfiles...),
-		volume:      newMenu(installVolumeRows...),
-		memory:      memory,
-		memoryKnown: known,
-		collected:   &collectedConfig{},
+		targetDir:     targetDir,
+		version:       version,
+		profileChoice: newProfileChoice(memory, known),
+		volume:        newMenu(installVolumeRows...),
+		collected:     &collectedConfig{},
 	}
 }
 
-// The profile screen's rows (#247). Standard and Documents (Orbit's
-// "processing" profile, #260) start a run; Agent and Full, which have
-// no profile name (they need a local model Orbit doesn't use yet), lead
-// to the honest dead end. The menu holds the names; the table draws the
-// rest, and the status column is worked out from the machine's memory
-// (installProfile.status).
-const (
-	installStandard  = "Standard"
-	installDocuments = "Documents"
-)
-
-// installProfile is a row. profile is the name the engine is asked for
-// (deploy.ProfileEnv); empty means the row is not yet available.
-type installProfile struct{ name, adds, profile string }
-
-var installProfileTable = []installProfile{
-	{installStandard, "mail, documents, calendar", deploy.ProfileStandard},
-	{installDocuments, "adds text extraction from attachments", deploy.ProfileDocuments},
-	{"Agent", "adds a local model for search & suggestions", ""},
-	{"Full", "documents extraction and the local model", ""},
-}
-
-// The status column's words.
-const (
-	installAvailable = "available"
-	installNotYet    = "not yet"
-	installNotEnough = "not enough"
-)
-
-// shortOfMemory is whether the machine is known to have less memory than
-// the row needs. Standard is never short (the launcher doesn't block the
-// baseline, as Orbit's installer doesn't), and a machine whose memory
-// could not be read is never short.
-func (m InstallModel) shortOfMemory(p installProfile) bool {
-	if p.profile == "" || p.profile == deploy.ProfileStandard {
-		return false
+// scannerChoice is the value the run sends the engine.
+func (m InstallModel) scannerChoice() string {
+	if m.scannerOn {
+		return deploy.ScannerOn
 	}
-	return m.memoryKnown && m.memory < deploy.ProfileNeed(p.profile)
+	return deploy.ScannerOff
 }
 
-// status is the row's status column: "available" for Standard, the
-// memory a profile adds over Standard ("+1 GB"), "not enough" when the
-// machine is short of what the profile needs in all, and "not yet" for
-// a row with no profile behind it.
-func (m InstallModel) status(p installProfile) string {
-	switch {
-	case p.profile == "":
-		return installNotYet
-	case p.profile == deploy.ProfileStandard:
-		return installAvailable
-	case m.shortOfMemory(p):
-		return installNotEnough
+// scannerReason is the consequence line under the table, only while the
+// scanner is off; the sentence is Orbit's own (.env-orbit.example).
+func (m InstallModel) scannerReason() string {
+	if m.scannerOn {
+		return ""
 	}
-	extra := deploy.ProfileNeed(p.profile) - deploy.ProfileNeed(deploy.ProfileStandard)
-	return fmt.Sprintf("+%d GB", extra>>30)
+	return "Off: uploaded and mailed documents are not virus-scanned. To turn it on later, run scripts/configure.sh --set-scanner on, then Update."
 }
-
-// canChoose is whether Enter on the row does anything: the baseline
-// always, a profile row unless the machine is short of memory.
-func (m InstallModel) canChoose(p installProfile) bool {
-	return p.profile != "" && !m.shortOfMemory(p)
-}
-
-// memoryReason is the one line under the table when a row is "not
-// enough"; empty when no row is. It names the first such row.
-func (m InstallModel) memoryReason() string {
-	for _, p := range installProfileTable {
-		if m.shortOfMemory(p) {
-			return fmt.Sprintf("%s needs %d GB of memory in all and this machine has %d GB.",
-				p.name, deploy.ProfileNeed(p.profile)>>30, m.memory>>30)
-		}
-	}
-	return ""
-}
-
-var installProfiles = func() []string {
-	names := make([]string, len(installProfileTable))
-	for i, p := range installProfileTable {
-		names[i] = p.name
-	}
-	return names
-}()
-
-// Table geometry at width >= installTableMin: two cells of caret column,
-// the name column, a space, the adds column, a space, the availability
-// column.
-const (
-	installNameCol  = 10
-	installAddsCol  = 43
-	installAvailCol = 10
-	installTableW   = 2 + installNameCol + 1 + installAddsCol + 1 + installAvailCol
-	installTableMin = installTableW + 1
-)
 
 var (
 	installVolumeRows = []string{"Continue anyway", "Cancel"}
@@ -328,14 +268,19 @@ var (
 const installOtherFolderBody = "Install here would take over that folder's Orbit."
 
 // otherFolderLines are the refusal's body (#318). With the folder gone
-// Install never offers to carry on (#334): with this folder's record
-// here, that is Update's, Repair's or Remove's to do; without it the
-// settings and secrets went with the folder, and the one followable step
-// is stopping that Orbit by its project name. The name is the one the
-// clash check used, InstallTarget's, already held to projectNamePattern,
-// so it is printed as it is.
+// Install never offers to carry on (#334). With this folder's record here
+// and the running build, that is Update's, Repair's or Remove's to do;
+// with a record naming another build, Install says what those three say,
+// in their words and by their predicate, canCarryOn (#338 A-F8): correct
+// the record first. Without a record the settings and secrets went with
+// the folder, and the one followable step is stopping that Orbit by its
+// project name. The name is the one the clash check used, InstallTarget's,
+// already held to projectNamePattern, so it is printed as it is.
 func (m InstallModel) otherFolderLines() []string {
+	mm := deploy.Mismatch{Kind: deploy.MismatchFolder, Folder: m.otherFolder, FolderGone: m.otherGone, BuildDiffers: m.otherBuild}
 	switch {
+	case m.otherGone && m.recordHere && !canCarryOn(mm):
+		return []string{folderGoneOtherBuild, folderGoneOtherBuildFix}
 	case m.otherGone && m.recordHere:
 		return []string{installRecordHereLine, installRecordHereAdvice}
 	case m.otherGone:
@@ -379,12 +324,16 @@ type staleVolumesMsg struct{ volumes []deploy.DatabaseVolume }
 // loop (#318): the folder the project's app container was started from,
 // empty when there is no clash or the check could not run. With a clash,
 // gone says that folder no longer exists, recordHere that this folder
-// holds a deployment record, and project is the Compose project the
-// check used (#334).
+// holds a deployment record, buildDiffers that the record names another
+// build than the running one, and project is the Compose project the
+// check used (#334, #338 A-F8). recordErr is the error reading this
+// folder's .env-orbit, when it exists but cannot be read (#338 A-R4); the
+// check then asks Docker nothing.
 type installClashMsg struct {
-	dir, otherFolder string
-	gone, recordHere bool
-	project          string
+	dir, otherFolder               string
+	gone, recordHere, buildDiffers bool
+	project                        string
+	recordErr                      error
 }
 
 // installOtherProjectMsg carries the other-project check's answer back
@@ -424,10 +373,13 @@ func (m InstallModel) Init() tea.Cmd {
 
 // checkClashCmd asks Docker whether the app container of the Compose
 // project an install here would use was started from another folder
-// (#318), or returns nil when there is nothing to ask (no reader). A
-// check that cannot run answers "no clash": an unreadable record, a
-// Docker that does not answer, output that does not parse, two app
-// containers.
+// (#318), or returns nil when there is nothing to ask (no reader). It
+// reads .env-orbit once, for the project to ask about and whether a record
+// is here. A record that exists but cannot be read is answered as itself,
+// recordErr, before any Docker call (#338 A-R4): without it the project is
+// not known, and it must stop the install rather than pass for "no clash".
+// A check that cannot run otherwise answers "no clash": a Docker that does
+// not answer, output that does not parse, two app containers.
 //
 // The command waits at most deploy.RunningAppTimeout, the limit the read
 // puts on itself, with the reader on a goroutine of its own (the
@@ -440,9 +392,9 @@ func (m InstallModel) checkClashCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		target, err := deploy.InstallTarget(dir)
+		target, hasRecord, err := deploy.InstallTargetRecord(dir)
 		if err != nil {
-			return installClashMsg{dir: dir}
+			return installClashMsg{dir: dir, recordErr: err}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -461,12 +413,10 @@ func (m InstallModel) checkClashCmd() tea.Cmd {
 				return installClashMsg{dir: dir}
 			}
 			if c := deploy.CompareRunning(target, dir, a.app); c.Kind == deploy.MismatchFolder {
-				msg := installClashMsg{dir: dir, otherFolder: c.Folder, gone: c.FolderGone, project: target.Project}
-				if c.FolderGone {
-					d, _ := deploy.Detect(dir)
-					msg.recordHere = d != nil
+				return installClashMsg{
+					dir: dir, otherFolder: c.Folder, project: target.Project,
+					gone: c.FolderGone, recordHere: c.FolderGone && hasRecord, buildDiffers: c.BuildDiffers,
 				}
-				return msg
 			}
 		case <-time.After(deploy.RunningAppTimeout):
 		}
@@ -612,9 +562,19 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// volume: "Continue anyway" there would lead straight to the
 		// takeover. In any other state (the notice, the run) the answer
 		// is ignored, as the volume finding is.
-		if clash.otherFolder != "" && (m.state == installStateProfile || m.state == installStateStaleVolume || m.state == installStateOtherProject) {
+		// An unreadable record stops the install the same way, on its own
+		// screen (#338 A-R4).
+		interruptible := m.state == installStateProfile || m.state == installStateStaleVolume || m.state == installStateOtherProject
+		if clash.recordErr != nil && interruptible {
+			m.recordErr = clash.recordErr
+			m.state = installStateUnreadable
+			m.awaiting = ""
+			return m, nil
+		}
+		if clash.otherFolder != "" && interruptible {
 			m.otherFolder, m.otherGone = clash.otherFolder, clash.gone
-			m.recordHere, m.otherProject = clash.recordHere, clash.project
+			m.recordHere, m.otherBuild = clash.recordHere, clash.buildDiffers
+			m.otherProject = clash.project
 			m.state = installStateOtherFolder
 			m.awaiting = ""
 			return m, nil
@@ -668,8 +628,8 @@ func (m InstallModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleStaleVolumeKey(msg)
 	case installStateOtherProject:
 		return m.handleOtherProjectKey(msg)
-	case installStateOtherFolder:
-		// The dead end: its one row and Esc both go back to the menu.
+	case installStateOtherFolder, installStateUnreadable:
+		// The dead ends: the one row and Esc both go back to the menu.
 		// Nothing was started, so there is nothing to stop.
 		if _, chosen, back := newMenu(deadEndRows...).onScreen(msg); back || chosen == "Menu" {
 			m.left = true
@@ -704,6 +664,10 @@ func (m InstallModel) handleStaleVolumeKey(msg tea.KeyPressMsg) (tea.Model, tea.
 	switch {
 	case chosen == "Continue anyway":
 		m.state = installStateProfile
+		// Read and passed: a later other-project advisory's Continue
+		// anyway must not bring it back (#338 A-R3). The finding arrives
+		// once, so nothing else needs it.
+		m.staleVolumes = nil
 	case back, chosen == "Cancel":
 		m.left = true
 	}
@@ -745,6 +709,10 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		// A move drops a waiting Enter: the row it chose is no longer
 		// the one under the cursor.
 		m.awaiting = ""
+	case chosen == installScanner:
+		// A toggle, not a choice that proceeds: it flips in place, never
+		// waits and never touches a waiting Enter.
+		m.scannerOn = !m.scannerOn
 	case m.shortOfMemory(m.rowNamed(chosen)):
 		// "not enough": the caret rests here but Enter does nothing, and
 		// the line under the table says why.
@@ -757,16 +725,6 @@ func (m InstallModel) handleProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		return m.chooseProfile(chosen)
 	}
 	return m, nil
-}
-
-// rowNamed is the table row called name; the zero row if none is.
-func (m InstallModel) rowNamed(name string) installProfile {
-	for _, p := range installProfileTable {
-		if p.name == name {
-			return p
-		}
-	}
-	return installProfile{}
 }
 
 // requestedRow is the name of the row whose profile the run asks for,
@@ -813,7 +771,7 @@ func (m InstallModel) handleNoticeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 // startRun builds and starts the engine run.
 func (m InstallModel) startRun() (InstallModel, tea.Cmd) {
-	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withSeams(m.seams).withSend(m.send)
+	m.run = newEngineRun(deploy.ActionInstall, m.targetDir, "Install — "+m.requestedRow(), m.version).withProfile(m.requested).withScanner(m.scannerChoice()).withSeams(m.seams).withSend(m.send)
 	m.run.collected = m.collected
 	var cmd tea.Cmd
 	m.run, cmd = m.run.start(m.width, m.height)
@@ -862,6 +820,8 @@ func (m InstallModel) view() string {
 		return m.viewOtherProject()
 	case installStateOtherFolder:
 		return viewOtherFolder(m.star, m.width, m.height, installOtherFolderLead, m.otherFolder, m.otherFolderLines(), newMenu(deadEndRows...), m.otherGone)
+	case installStateUnreadable:
+		return viewUnreadableDeployment(m.star, m.width, m.height, m.targetDir, m.recordErr)
 	case installStateProfile:
 		return m.viewProfile()
 	case installStateUnavailableProfile:
@@ -959,18 +919,15 @@ func (m InstallModel) viewProfile() string {
 		fmt.Fprintln(&b, style.Ink.Render(row))
 	}
 	fmt.Fprintln(&b)
-	m.writeProfileTable(&b)
-	if reason := m.memoryReason(); reason != "" {
-		fmt.Fprintln(&b)
-		// Padded to the table's width, so the sky centres it with the
-		// table rather than on its own.
-		w := installTableW
-		if m.width < installTableMin {
-			w = measure(m.width, proseWidth)
+	m.writeProfileTable(&b, m.width)
+	// The memory reason belongs to the profile rows above, so it comes
+	// first.
+	for _, reason := range []string{m.memoryReason(), m.scannerReason()} {
+		if reason == "" {
+			continue
 		}
-		for _, row := range wrapWordsIn(reason, w-2, textArea(m.width)-2) {
-			fmt.Fprintln(&b, "  "+style.Tagline.Render(row)+strings.Repeat(" ", max(0, w-2-len([]rune(row)))))
-		}
+		m.writeTableGap(&b, m.width)
+		m.writeUnderTable(&b, reason, m.width)
 	}
 	if m.awaiting != "" {
 		fmt.Fprintln(&b)
@@ -980,64 +937,22 @@ func (m InstallModel) viewProfile() string {
 }
 
 func (m InstallModel) viewUnavailableProfile() string {
+	return viewUnavailableProfile(m.star, m.width, m.height)
+}
+
+// viewUnavailableProfile is the dead end for Agent and Full, shared with
+// Configure (#286): it explains why nothing can happen, with one Back row.
+func viewUnavailableProfile(star starfield.Model, width, height int) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark), "This profile isn't available yet")
 	fmt.Fprintln(&b, style.MutedText.Render("Agent and Full need a local model, which Orbit"))
 	fmt.Fprintln(&b, style.MutedText.Render("doesn't use yet."))
 	fmt.Fprintln(&b)
 	writeStackedMenu(&b, installUnavailableRows, 0)
-	return skyBlock(m.star, m.width, m.height, b.String())
+	return skyBlock(star, width, height, b.String())
 }
 
 // viewNotice is the development notice (#175, notice.go) over the sky.
 func (m InstallModel) viewNotice() string {
 	return skyBlock(m.star, m.width, m.height, m.notice.view(m.now(), m.noticeDur()))
-}
-
-// writeProfileTable draws the profile choice as a table at 68 columns and
-// over, and as two rows per profile below. Every row is padded to the
-// block's width so the sky's per-line centring keeps the block one unit.
-func (m InstallModel) writeProfileTable(b *strings.Builder) {
-	pad := func(styled string, used, w int) string {
-		return styled + strings.Repeat(" ", max(0, w-used))
-	}
-	caret := func(sel bool) string {
-		if sel {
-			return style.MenuCaret.Render(style.SymbolSelected) + " "
-		}
-		return "  "
-	}
-	rowStyle := func(i int, p installProfile) lipgloss.Style {
-		switch {
-		case i == m.profile.sel:
-			return style.Ink
-		case m.canChoose(p):
-			return style.MutedText
-		}
-		return style.Tagline
-	}
-	if m.width >= installTableMin {
-		for i, p := range installProfileTable {
-			st := rowStyle(i, p)
-			status := m.status(p)
-			line := caret(i == m.profile.sel) +
-				pad(st.Render(p.name), len(p.name), installNameCol) + " " +
-				pad(st.Render(p.adds), len([]rune(p.adds)), installAddsCol) + " " +
-				pad(st.Render(status), len(status), installAvailCol)
-			fmt.Fprintln(b, line)
-		}
-		return
-	}
-	w := measure(m.width, proseWidth)
-	for i, p := range installProfileTable {
-		if i > 0 {
-			fmt.Fprintln(b, pad("", 0, w))
-		}
-		st := rowStyle(i, p)
-		head := p.name + style.Separator + m.status(p)
-		fmt.Fprintln(b, pad(caret(i == m.profile.sel)+st.Render(head), 2+len([]rune(head)), w))
-		for _, r := range wrapWordsIn(p.adds, w-2, textArea(m.width)-2) {
-			fmt.Fprintln(b, pad("  "+st.Render(r), 2+len([]rune(r)), w))
-		}
-	}
 }

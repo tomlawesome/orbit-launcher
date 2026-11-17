@@ -50,18 +50,26 @@ var realPlanPairs = []realPlanPair{
 	{"container-foreign-owner", "manual"},
 	{"docker-unavailable", "manual"},
 	{"unrelated-resource-present", "manual"},
+	{"services-not-running", "start-services"},
+	{"services-not-running", "manual"},
 	{"database-unreachable", "manual"},
 	{"database-credential-unverifiable", "manual"},
+	{"restore-unfinished", "manual"},
+	{"service-restarting", "manual"},
+	{"database-volume-missing", "manual"},
+	{"smtp-lines-retirable", "retire-smtp-lines"},
 }
 
-// orbitClassOrder is Orbit's repair.sh class_order at dev e697be42 (unchanged
-// at preview 77ddc612, the channel the live suite installs), in
-// its order, with each class's plan action from the same file's
+// orbitClassOrder is Orbit's repair.sh class_order at preview 0d522cec (the
+// scanner-configuration-mismatch, folder-moved and folder-elsewhere classes
+// it added are not listed here; their words are pinned in repair_348_test.go),
+// in its order, with each class's plan action from the same file's
 // action_for_class map (manual where the map has no entry).
 // secret-missing has no entry: resolve_secret_missing_action picks
 // regenerate-secret or manual, so both appear in realPlanPairs.
 var orbitClassOrder = []realPlanPair{
 	{"not-orbit-directory", "manual"},
+	{"restore-unfinished", "manual"},
 	{"managed-file-missing", "manual"},
 	{"compose-file-restorable", "restore-compose-file"},
 	{"managed-file-symlink", "manual"},
@@ -81,6 +89,9 @@ var orbitClassOrder = []realPlanPair{
 	{"volume-retained-without-credentials", "rotate-database-credential"},
 	{"document-volume-retained-without-key", "manual"},
 	{"unrelated-resource-present", "manual"},
+	{"service-restarting", "manual"},
+	{"database-volume-missing", "manual"},
+	{"services-not-running", "start-services|manual"},
 	{"database-unreachable", "manual"},
 	{"database-credential-mismatch", "rotate-database-credential"},
 	{"database-credential-unverifiable", "manual"},
@@ -89,6 +100,7 @@ var orbitClassOrder = []realPlanPair{
 	{"application-unhealthy", "restart-services"},
 	{"database-schema-mismatch", "manual"},
 	{"migration-failed", "manual"},
+	{"smtp-lines-retirable", "retire-smtp-lines"},
 }
 
 // TestRealPlanPairs_HoldEveryClassInOrbitsClassOrder (v0.4.2 audit A2):
@@ -123,9 +135,10 @@ func TestRealPlanPairs_HoldEveryClassInOrbitsClassOrder(t *testing.T) {
 }
 
 // realBackup is the backup value Orbit sends with an action: required
-// only for restore-transaction and rotate-database-credential.
+// only for restore-transaction, rotate-database-credential and
+// retire-smtp-lines.
 func realBackup(action string) string {
-	if action == "restore-transaction" || action == "rotate-database-credential" {
+	if action == "restore-transaction" || action == "rotate-database-credential" || action == "retire-smtp-lines" {
 		return "required"
 	}
 	return "not-required"
@@ -139,6 +152,8 @@ func realMutation(action string) string {
 		return "none"
 	case "rotate-database-credential":
 		return "credential-rotation"
+	case "retire-smtp-lines":
+		return "secret-deletion"
 	default:
 		return "reversible"
 	}

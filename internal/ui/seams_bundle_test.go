@@ -154,7 +154,7 @@ func TestAppHandsRotateSeamToRepair(t *testing.T) {
 	m := NewAppModelNoAnimation().WithSender(queue.Send).WithoutVolumeCheck()
 	m.targetDir = t.TempDir()
 	m.flowSeams = seams
-	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}, key(tea.KeyDown), key(tea.KeyDown)) // Install, Update, Repair
+	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30}, key(tea.KeyDown), key(tea.KeyDown), key(tea.KeyDown)) // Install, Update, Configure, Repair
 	m, cmd := updateAs(t, m, key(tea.KeyEnter))
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30})
 	app := &m

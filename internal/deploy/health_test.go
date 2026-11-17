@@ -11,13 +11,15 @@ import (
 	"time"
 )
 
-func TestProbeHealth_RespondingOnAnyNonServerErrorStatus(t *testing.T) {
+// #341: the probe asks the URL it is given, and only Orbit's own JSON
+// status counts as an answer; any other 2xx-4xx is a stranger on the port.
+func TestProbeHealth_UnexpectedAnswerOnAnyNonOrbitStatus(t *testing.T) {
 	for _, code := range []int{200, 302, 401, 404} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(code)
 		}))
-		if got := ProbeHealth(context.Background(), srv.URL); got != HealthResponding {
-			t.Errorf("status %d = %q, want responding (the app answered)", code, got)
+		if got := ProbeHealth(context.Background(), srv.URL); got != HealthUnexpectedAnswer {
+			t.Errorf("status %d without Orbit's JSON = %q, want %q", code, got, HealthUnexpectedAnswer)
 		}
 		srv.Close()
 	}

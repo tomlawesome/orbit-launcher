@@ -154,17 +154,19 @@ func TestSplashMaintenance_PreselectsUpdateLikeAlive(t *testing.T) {
 }
 
 func TestSplashMaintenance_ResultDoesNotMoveACaretTheUserPlaced(t *testing.T) {
-	m, _ := updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('4'))
+	m, _ := updateAs(t, seedDeployment(NewSplashModel()), tea.WindowSizeMsg{Width: 80, Height: 26}, runeKey('5'))
 	m, _ = updateAs(t, m, healthResultMsg{reason: deploy.HealthMaintenance})
-	if m.menu.sel != 3 {
-		t.Errorf("selected = %d, want 3", m.menu.sel)
+	if m.menu.sel != 4 {
+		t.Errorf("selected = %d, want 4", m.menu.sel)
 	}
 	if !m.userNavigated {
 		t.Error("userNavigated was cleared by the result")
 	}
 }
 
-func TestSplashMaintenance_ServiceStatesAreNotChecked(t *testing.T) {
+// #341: the services are read on a maintenance answer too, and the
+// state is still maintenance when every expected container runs.
+func TestSplashMaintenance_ServiceStatesAreChecked(t *testing.T) {
 	m, _ := probeModel(t, "full")
 	var probes, serviceCalls int
 	m.healthProbe = func(context.Context, string) deploy.HealthReason {
@@ -173,20 +175,20 @@ func TestSplashMaintenance_ServiceStatesAreNotChecked(t *testing.T) {
 	}
 	m.serviceStates = func(string) ([]deploy.ServiceState, error) {
 		serviceCalls++
-		return nil, nil
+		return allRunning(5), nil
 	}
 	msg, ok := m.probeHealthCmd()().(healthResultMsg)
 	if !ok {
 		t.Fatal("not a healthResultMsg")
 	}
-	if probes != 1 {
-		t.Errorf("health probe ran %d times, want 1", probes)
+	if probes != 1 || serviceCalls != 1 {
+		t.Errorf("health probe ran %d times, services read %d times, want 1 and 1", probes, serviceCalls)
 	}
-	if serviceCalls != 0 {
-		t.Errorf("service states asked %d times, want 0 for maintenance", serviceCalls)
+	if msg.reason != deploy.HealthMaintenance || !msg.counted || len(msg.faults) != 0 {
+		t.Errorf("message = %+v, want maintenance, counted, no faults", msg)
 	}
-	if msg.reason != deploy.HealthMaintenance || msg.counted {
-		t.Errorf("message = %+v, want maintenance and not counted", msg)
+	if got := degradedSplash(t, msg).state; got != stateMaintenance {
+		t.Errorf("state = %v, want maintenance", got)
 	}
 }
 

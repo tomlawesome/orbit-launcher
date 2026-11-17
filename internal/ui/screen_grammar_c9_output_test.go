@@ -91,6 +91,14 @@ func c9Screens(t *testing.T) map[string]string {
 		// install: the profile screen names the directory at proseWidth.
 		in := c9Size(t, NewInstallModel(c9LongDir, "v1"), w)
 		out["install_profile_"+tag] = in.View().Content
+		// #340: the same screen with the scanner row turned off (Down to
+		// the row, Enter), its consequence line under the table.
+		so := c9Size(t, NewInstallModel(c9LongDir, "v1"), w)
+		for i := 0; i < 4; i++ {
+			so, _ = updateAs(t, so, key(tea.KeyDown))
+		}
+		so, _ = updateAs(t, so, key(tea.KeyEnter))
+		out["install_profile_scanner_off_"+tag] = so.View().Content
 
 		// remove: not found (header wraps the directory), done (prose and
 		// the removal command), failed (error at errorWidth).
@@ -104,6 +112,13 @@ func c9Screens(t *testing.T) map[string]string {
 		ur.targetDir = c9LongDir
 		ur.detectErr = &fs.PathError{Op: "open", Path: c9LongDir + "/" + deploy.EnvFile, Err: syscall.EACCES}
 		out["remove_unreadable_"+tag] = ur.View().Content
+
+		// Install shows the same screen for an unreadable record here
+		// (#338 A-R4), reached through the clash check on a real folder
+		// whose .env-orbit cannot be read; #338 added the screen and
+		// recorded install_unreadable_*, which must keep rendering byte
+		// for byte like the rest.
+		out["install_unreadable_"+tag] = c9InstallUnreadable(t, w)
 
 		rm := c9Size(t, NewRemoveModel(deployment), w)
 		rm.installedAt = installedAt
@@ -175,6 +190,13 @@ func c9Screens(t *testing.T) map[string]string {
 	up.installedAt = installedAt
 	up.state = updateStateConfirm
 	out["update_confirm"] = up.View().Content
+	// #340: the same confirmation for a deployment whose scanner is off.
+	offDeployment := *deployment
+	offDeployment.ScanMode = deploy.ScanModeDisabled
+	upOff := c9Size(t, NewUpdateModel(&offDeployment, offDeployment.TargetDir, "v1"), 80)
+	upOff.installedAt = installedAt
+	upOff.state = updateStateConfirm
+	out["update_confirm_scanner_off"] = upOff.View().Content
 
 	// the prompt session: label and input row in plain ink, a typed
 	// answer, a secret, and the not-yet-sized (width 0) form.
@@ -651,4 +673,40 @@ func firstRowDiff(want, got string) string {
 		}
 	}
 	return "the screens differ only in a way no row shows"
+}
+
+// c9InstallUnreadable is Install's screen at width w for a record here
+// that cannot be read (#338 A-R4): the clash check runs on a real folder
+// whose .env-orbit is a directory, so the words are the OS's own. The
+// golden names the folder c9UnreadableDir, but each call makes its own
+// folder with a name of exactly that length and puts c9UnreadableDir back
+// in the output: the screen wraps the same, and no two runs on the shared
+// host, under any account, touch the same path.
+const c9UnreadableDir = "/tmp/orbit-c9-install-unreadable"
+
+func c9InstallUnreadable(t *testing.T, w int) string {
+	t.Helper()
+	prefix := "/tmp/orbit-c9-"
+	digits := len(c9UnreadableDir) - len(prefix)
+	var dir string
+	for n := time.Now().UnixNano(); ; n++ {
+		dir = fmt.Sprintf("%s%0*d", prefix, digits, uint64(n)%1_000_000_000_000_000_000)
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			t.Fatal(err)
+		}
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	if len(dir) != len(c9UnreadableDir) {
+		t.Fatalf("folder %q is not %d characters long", dir, len(c9UnreadableDir))
+	}
+	if err := os.Mkdir(filepath.Join(dir, deploy.EnvFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m, vol, clash := clashInstall(t, dir, startedFrom(goneFolder))
+	m, _ = updateAs(t, m, vol, clash)
+	return strings.ReplaceAll(c9Size(t, m, w).View().Content, dir, c9UnreadableDir)
 }
