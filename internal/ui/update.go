@@ -175,15 +175,21 @@ func copiedRows(rows []string) []string {
 // launcherDeadEndRows are a dead end's rows when a newer launcher is known.
 var launcherDeadEndRows = []string{removeCopy, "Menu"}
 
-// deadEnd is the dead end screens' rows, with their caret (#354).
-func (m UpdateModel) deadEnd() menu {
+// deadEndKeys is the dead end screens' rows with their caret, as keys
+// read them: plain labels, so Copy command matches after a copy (#354).
+func (m UpdateModel) deadEndKeys() menu {
 	rows := deadEndRows
 	if m.launcherKnown() {
 		rows = launcherDeadEndRows
 	}
-	d := m.dead.over(rows)
+	return m.dead.over(rows)
+}
+
+// deadEnd is the same rows as drawn: Copy command reads copied once used.
+func (m UpdateModel) deadEnd() menu {
+	d := m.deadEndKeys()
 	if m.copied {
-		d = d.over(copiedRows(rows))
+		d = d.over(copiedRows(d.items))
 	}
 	return d
 }
@@ -408,7 +414,7 @@ func (m UpdateModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// and no other key does anything (#228).
 		var chosen string
 		var back bool
-		m.dead, chosen, back = m.deadEnd().onScreen(msg)
+		m.dead, chosen, back = m.deadEndKeys().onScreen(msg)
 		switch {
 		case back || chosen == "Menu":
 			m.left = true
