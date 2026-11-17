@@ -1,0 +1,6 @@
+https://mail.example.com
+alive
+
+Outgoing mail: the old SMTP mail lines were removed; Orbit keeps mail
+settings itself now.
+
