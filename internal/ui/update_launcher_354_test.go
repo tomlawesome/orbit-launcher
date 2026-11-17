@@ -349,3 +349,47 @@ func TestUpdateLauncher354_At50ColumnsEveryRowFitsAndTheBoxReadsBack(t *testing.
 		})
 	}
 }
+
+// Copy command copies every time it is pressed, not only the first: after
+// the first copy the row reads "Copy command · copied", and a second Enter
+// on it writes the command again and leaves the label as it was.
+func TestUpdateLauncher354_CopyCommandCopiesAgainAfterTheFirstCopy(t *testing.T) {
+	cases := []scenario354{}
+	for _, sc := range scenarios354() {
+		if sc.direct {
+			cases = append(cases, sc)
+		}
+	}
+	cases = append(cases, scenario354{name: "confirm screen, direct", direct: true,
+		build: func(t *testing.T, w int, n bool, buf *bytes.Buffer, called *bool) tea.Model {
+			m, _ := newTestUpdateModel(testDeployment(), refusingSeams(called))
+			return direct354(t, m, w, n, buf)
+		}})
+	for _, sc := range cases {
+		t.Run(sc.name, func(t *testing.T) {
+			m, buf, _ := build354(t, sc, 80, true)
+			m = moveCaretTo(t, m, "Copy command")
+			var cmd tea.Cmd
+			m, cmd = updateAs(t, m, key(tea.KeyEnter))
+			if cmd == nil {
+				t.Fatal("the first Enter on Copy command ran nothing")
+			}
+			cmd()
+			if !strings.Contains(screen(m), "Copy command · copied") {
+				t.Fatalf("after the first copy the row does not read copied:\n%s", screen(m))
+			}
+			m = moveCaretTo(t, m, "Copy command · copied")
+			m, cmd = updateAs(t, m, key(tea.KeyEnter))
+			if cmd == nil {
+				t.Fatalf("the second Enter on %q ran nothing:\n%s", "Copy command · copied", screen(m))
+			}
+			cmd()
+			if got := strings.Count(buf.String(), "\x1b]52;c;"); got != 2 {
+				t.Errorf("the clipboard writer received %d writes, want 2: %q", got, buf.String())
+			}
+			if !strings.Contains(screen(m), "Copy command · copied") {
+				t.Errorf("after the second copy the row does not read copied:\n%s", screen(m))
+			}
+		})
+	}
+}
