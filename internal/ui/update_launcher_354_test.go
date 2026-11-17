@@ -180,8 +180,13 @@ func assertBlock354(t *testing.T, s, after string, rows []string) {
 	if got := screenLabels(s); !sameLabels(got, rows) {
 		t.Errorf("rows = %q, want %q:\n%s", got, rows, s)
 	}
-	if first := idx(rows[0]); first >= 0 && first < bottom {
-		t.Errorf("the rows start above the box:\n%s", s)
+	// Search from the faint line down: a body line above the block may
+	// begin with the same words as a row ("Run from this folder: ...").
+	for i := line; i < len(lines) && i <= bottom; i++ {
+		if strings.Contains(lines[i], rows[0]) {
+			t.Errorf("the rows start above the box:\n%s", s)
+			break
+		}
 	}
 }
 
