@@ -61,7 +61,7 @@
       ]
     },
     {
-      "description": "Tool versions that sit directly above their own *_SHA256 in .gitlab-ci.yml's variables block (#347): TRIVY, GOLANGCI_LINT, ZIZMOR and ACTIONLINT. The github-release-attachments datasource reads the release's checksum file, or hashes the asset when there is none (zizmor), so Renovate moves currentDigest with currentValue and the download check passes on its merge request. The manager above leaves these blocks alone because its datasource list does not name github-release-attachments.",
+      "description": "Tool versions that sit directly above their own *_SHA256 in .gitlab-ci.yml's variables block (#347): TRIVY, GOLANGCI_LINT, ZIZMOR and ACTIONLINT. The github-release-attachments datasource reads the release's checksum file, or hashes the asset when there is none (zizmor), so Renovate moves currentDigest with currentValue and the download check passes on its merge request. The datasource uses the pinned value as the release tag, so these four pins hold the tag itself, leading v included, and carry no extractVersion (#356). The manager above leaves these blocks alone because its datasource list does not name github-release-attachments.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": [

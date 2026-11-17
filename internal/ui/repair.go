@@ -1458,6 +1458,8 @@ func actionWords(action string) string {
 		return "start Orbit's services"
 	case "recreate-services":
 		return "recreate Orbit's containers from this folder"
+	case "retire-smtp-lines":
+		return "remove the old SMTP mail lines (Orbit keeps a backup)"
 	case "restore-compose-file":
 		return "put back docker-compose.yml from this version's image"
 	case "manual":
@@ -1556,6 +1558,8 @@ func targetWords(target string) string {
 		return "database"
 	case "application":
 		return "application"
+	case "restore":
+		return "backup restore"
 	default:
 		// The engine's value as given, escaped: it is drawn on screen.
 		return visibleText(target)
@@ -1569,6 +1573,14 @@ func classWords(class string) string {
 		return "no recognisable Orbit installation"
 	case "services-not-running":
 		return "a service isn't running"
+	case "restore-unfinished":
+		return "a restore didn't finish"
+	case "service-restarting":
+		return "a service keeps restarting"
+	case "database-volume-missing":
+		return "the database volume is missing"
+	case "smtp-lines-retirable":
+		return "old SMTP mail lines are left over; Orbit keeps mail settings itself now"
 	case "folder-moved":
 		return "containers were created from a folder that no longer exists"
 	case "folder-elsewhere":
