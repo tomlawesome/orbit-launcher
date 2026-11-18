@@ -204,6 +204,7 @@ func TestRenovateGroupsPlaywrightAcrossHosts(t *testing.T) {
 			MatchManagers     []string `json:"matchManagers"`
 			MatchPackageNames []string `json:"matchPackageNames"`
 			GroupName         string   `json:"groupName"`
+			RangeStrategy     string   `json:"rangeStrategy"`
 		} `json:"packageRules"`
 	}
 	if err := json.Unmarshal([]byte(readRepoFile(t, "renovate.json")), &cfg); err != nil {
@@ -241,6 +242,13 @@ func TestRenovateGroupsPlaywrightAcrossHosts(t *testing.T) {
 			"groups the Playwright image and @playwright/test into one merge request.")
 	}
 	rule := cfg.PackageRules[group]
+
+	if rule.RangeStrategy != "bump" {
+		t.Errorf("renovate.json's playwright packageRule has rangeStrategy %q. Add \"rangeStrategy\": \"bump\" "+
+			"so a Playwright release rewrites test/visual/package.json's @playwright/test range along with the "+
+			"lockfile; with the default strategy a caret range that already allows the new version gets only a "+
+			"lockfile update, and TestPlaywrightPinsAgree then fails on Renovate's merge request.", rule.RangeStrategy)
+	}
 
 	want := map[string]bool{"custom.regex": true, "npm": true, "github-actions": true}
 	got := map[string]bool{}
