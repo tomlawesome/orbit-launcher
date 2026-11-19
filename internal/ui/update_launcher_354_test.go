@@ -254,8 +254,11 @@ func TestUpdateLauncher354_CopyCommandWritesTheCommandAndChangesNothingElse(t *t
 				t.Errorf("the screen is %d lines, was %d:\n%s", len(sl), len(bl), s)
 			}
 			for i := 0; i < len(bl) && i < len(sl); i++ {
-				if strings.Contains(bl[i], "Copy command") != strings.Contains(sl[i], "Copy command") ||
-					(!strings.Contains(bl[i], "Copy command") && bl[i] != sl[i]) {
+				// The Copy command row re-centres over the star dots as its label grows,
+				// so it is compared word by word with the dots left out.
+				same := bl[i] == sl[i] || (strings.Contains(bl[i], "Copy command") &&
+					rowWords354(strings.Replace(sl[i], " · copied", "", 1)) == rowWords354(bl[i]))
+				if !same {
 					t.Errorf("line %d changed beyond the copied label: %q became %q", i, bl[i], sl[i])
 				}
 			}
@@ -399,4 +402,15 @@ func TestUpdateLauncher354_CopyCommandCopiesAgainAfterTheFirstCopy(t *testing.T)
 			}
 		})
 	}
+}
+
+// rowWords354 is a row's words without the background star dots.
+func rowWords354(line string) string {
+	var w []string
+	for _, f := range strings.Fields(line) {
+		if f != "·" {
+			w = append(w, f)
+		}
+	}
+	return strings.Join(w, " ")
 }
