@@ -63,11 +63,13 @@ include:
     file: scripts/private-details/ci-template.yml
   # Batch branches (ai/agent-infra#114, decision 66a). Pinned to the commit
   # each tag names, as above. catchup-check: a chore/catchup-* merge request
-  # into batch-a or batch-b runs one small job. batch-intake: any other merge
+  # into batch-a or batch-b runs catchup-check plus the two scans (gitleaks,
+  # private-details), because catchup-check proves only that dev's tip is in
+  # the branch, not that the branch adds nothing else (ai/agent-infra#156). batch-intake: any other merge
   # request into a batch branch runs the static checks only; the full pipeline
   # runs once, on the batch-to-dev merge request (decision 60a).
   - project: ai/agent-infra
-    ref: 03499313d89b421212af02db3735662397eebfb3  # catchup-check/v2
+    ref: 020e31a597c87e790e8121b7bb13729120aa3405  # catchup-check/v3
     file: scripts/catchup-check/ci-template.yml
   - project: ai/agent-infra
     ref: 063b5b95a96b139b0a858bb009466456a19e5674  # batch-intake/v1
@@ -94,7 +96,7 @@ stages:
 # earlier stage could not. A merge request into `dev` runs the checks; the one
 # into `preview` adds the live installs; the one into `main` adds nothing. A
 # merge request into `batch-a` or `batch-b` runs only the static checks
-# (batch-intake), a chore/catchup-* one only the ancestry check. The push that
+# (batch-intake), a chore/catchup-* one the ancestry check and the two scans (#343). The push that
 # lands a merge runs nothing more than it must, because merges need an
 # up-to-date branch (semi-linear history) and so land exactly what was tested:
 # a push to `dev` runs only `gitleaks` and `private-details` (dev-landing), a
@@ -139,7 +141,7 @@ variables:
   # @playwright/test expects, so no browser download happens in the job. Noble
   # is the same Ubuntu release GitHub's ubuntu-latest runs, which is where the
   # committed screenshot baselines were taken.
-  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
@@ -374,10 +376,12 @@ variables:
 
 # The rules of the two fast checks: the same as .checks_rules, with the
 # snippet's check rule first so they also run on the push that lands on dev
-# (ai/agent-infra#113). Each also sets `timeout: 5m`, the snippet's value.
+# (ai/agent-infra#113), and without the catch-up skip, so a catch-up merge
+# request runs catchup-check plus these two scans: catchup-check proves only
+# that dev's tip is in the branch, not that the branch adds nothing else
+# (ai/agent-infra#156, #343). Each also sets `timeout: 5m`, the snippet's value.
 .fast_checks_rules: &fast_checks_rules
   - !reference [.dev-landing-check, rules]
-  - !reference [.catchup-check, job_rule]
   - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-a" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "batch-b")
   - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -790,7 +794,8 @@ gitleaks:
   image:
     <<: *pull_if_not_present
     name: $UBUNTU_IMAGE
-  # Five minutes at most on the landing push (ai/agent-infra#113).
+  # Five minutes at most, on every pipeline that runs it, not only the
+  # landing push (ai/agent-infra#113).
   timeout: 5m
   variables:
     GIT_DEPTH: 0
