@@ -248,22 +248,6 @@ func (l *realLookups) targetRef() (string, error) {
 	return ref, nil
 }
 
-// remoteRefs lists "name -> commit" for the refs ls-remote returns.
-func (l *realLookups) remoteRefs(args ...string) (map[string]string, error) {
-	out, err := l.gitOut(append([]string{"ls-remote"}, args...)...)
-	if err != nil {
-		return nil, err
-	}
-	refs := map[string]string{}
-	for _, line := range strings.Split(out, "\n") {
-		sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if ok {
-			refs[name] = sha
-		}
-	}
-	return refs, nil
-}
-
 // remoteTags lists the remote's tags from the fetched snapshot. No snapshot
 // at all means nothing was fetched, which is an error, never "no tags".
 func (l *realLookups) remoteTags() (map[string]bool, error) {
