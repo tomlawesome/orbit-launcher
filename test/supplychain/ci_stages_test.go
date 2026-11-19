@@ -813,9 +813,11 @@ func TestCIStages_AMergeRequestIntoABatchBranchRunsOnlyTheStaticChecks(t *testin
 	}
 }
 
-// A catch-up merge request creates a pipeline, and none of this file's jobs
-// is in it: the snippet's own catchup-check job is the only one.
-func TestCIStages_ACatchUpMergeRequestRunsNoJobOfThisFile(t *testing.T) {
+// A catch-up merge request creates a pipeline in which only the two scans of
+// this file run, beside the snippet's own catchup-check job: catchup-check
+// proves only that dev's tip is in the branch, not that the branch adds
+// nothing else (#343, ai/agent-infra#156).
+func TestCIStages_ACatchUpMergeRequestRunsOnlyTheTwoScans(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
 	for _, target := range []string{"batch-a", "batch-b"} {
 		for _, changes := range []bool{true, false} {
@@ -823,8 +825,9 @@ func TestCIStages_ACatchUpMergeRequestRunsNoJobOfThisFile(t *testing.T) {
 			if jobs == nil {
 				t.Fatalf("a catch-up merge request into %s must create a pipeline for catchup-check to run in", target)
 			}
-			if len(jobs) != 0 {
-				t.Errorf("a catch-up merge request into %s must run none of this file's jobs; it runs %v", target, jobNames(jobs))
+			assertPresent(t, jobs, "gitleaks", "private-details")
+			if len(jobs) != 2 {
+				t.Errorf("a catch-up merge request into %s must run only the two scans of this file; it runs %v", target, jobNames(jobs))
 			}
 		}
 	}

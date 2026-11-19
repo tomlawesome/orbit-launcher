@@ -2741,10 +2741,16 @@ var changedBy114 = []struct {
 	old, new string
 }{
 	{ // the static checks: skipped on a catch-up, run on a batch merge request
-		jobs: []string{"classify", "deps", "gitleaks"},
+		jobs: []string{"classify", "deps"},
 		key:  "rules",
 		old:  `[` + devRuleStart114,
 		new:  `[` + catchupJobRef114 + `, ` + batchStaticRule114 + `, ` + devRuleStart114,
+	},
+	{ // gitleaks runs on a catch-up too (#343, ai/agent-infra#156): no skip reference
+		jobs: []string{"gitleaks"},
+		key:  "rules",
+		old:  `[` + devRuleStart114,
+		new:  `[` + batchStaticRule114 + `, ` + devRuleStart114,
 	},
 	{ // the build and test job: skipped on both
 		jobs: []string{"fast"},
@@ -2795,8 +2801,8 @@ var changedBy113 = []struct {
 	{ // the fast check: runs on the landing push
 		jobs: []string{"gitleaks"},
 		key:  "rules",
-		old:  `[` + catchupJobRef114,
-		new:  `[` + devLandingCheckRef113 + `, ` + catchupJobRef114,
+		old:  `[` + batchStaticRule114,
+		new:  `[` + devLandingCheckRef113 + `, ` + batchStaticRule114,
 	},
 	{ // five minutes at most
 		jobs: []string{"gitleaks"},

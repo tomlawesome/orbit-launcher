@@ -142,7 +142,7 @@ func expectedServices(dir string) ([]string, error) {
 		}
 		return false
 	}
-	if has("processing", "full") {
+	if has(deploy.ProfileDocuments, "full") {
 		out = append(out, "orbit-tika")
 	}
 	if has("ai", "full") {
