@@ -128,10 +128,12 @@ var addedBy303 = []string{"live-prepare"}
 // step).
 var addedBy183 = []string{"live-fedora"}
 
-// What #306 adds on purpose: the one cheap job a merge request into main
-// runs, so "pipelines must succeed" has a pipeline to pass when the
-// promotion into main otherwise runs nothing (ci_stages_test.go checks it).
-var addedBy306 = []string{"promoted"}
+// What #306 added on purpose, as #359 changed it: the one cheap job a merge
+// request into main runs, so "pipelines must succeed" has a pipeline to pass
+// when the promotion into main otherwise runs nothing. #359 replaces #306's
+// `promoted` with `release_readiness`, which does the same and checks the
+// release (release_readiness_ci_test.go, ci_stages_test.go).
+var addedBy306 = []string{"release_readiness"}
 
 // What #310 adds on purpose: flake-check, the blocking job that runs the
 // shared flake check from ai/agent-infra on docs/flakes.md in the first stage
