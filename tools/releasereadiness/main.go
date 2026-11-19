@@ -1,10 +1,12 @@
 // Command releasereadiness checks a promotion before its merge request is
 // opened (#359, after ai/orbit#1860):
 //
-//	go run ./tools/releasereadiness -target preview|main [-remote <name>]
+//	go run ./tools/releasereadiness -target preview|main [-remote <name>] [-no-fetch]
 //
 // It runs on the source branch's checkout (dev for -target preview, preview
-// for -target main), with the target fetched as <remote>/<target>. It prints
+// for -target main), with the target fetched as <remote>/<target>. It first
+// fetches the remote's tags into refs/remote-tags/<remote>/ unless -no-fetch
+// says an earlier fetch did (CI, whose origin is anonymous by then). It prints
 // ok or FAIL per check and exits 0 when ready, 1 when not, 2 on a usage
 // error. The checks are in readiness; docs/releasing.md lists them.
 //
@@ -63,8 +65,12 @@ func realCheck(target, remote string) readiness.Report {
 	if githubRepo.MatchString(repo) {
 		cfg.OrbitRepoURL = "https://github.com/" + repo + ".git"
 	}
-	return readiness.Run(target, ".", newLookups(cfg))
+	return readiness.Run(target, ".", prepareLookups(cfg, !noFetch))
 }
+
+// noFetch is the -no-fetch flag: the remote's tags were fetched already (CI
+// fetches them before it drops the job's credentials).
+var noFetch bool
 
 // run is main with its inputs passed in: the arguments, the function that
 // runs the checks for a target and remote, and the two output streams.
@@ -73,6 +79,7 @@ func run(args []string, check func(target, remote string) readiness.Report, stdo
 	code := cli.Run("releasereadiness", args, stderr, func(fs *flag.FlagSet) func() error {
 		target := fs.String("target", "", "the branch the promotion merges into: preview or main (required)")
 		remote := fs.String("remote", "origin", "the git remote that holds the target and the tags")
+		fs.BoolVar(&noFetch, "no-fetch", false, "do not fetch the remote's tags first; read the copy an earlier fetch made")
 		return func() error {
 			switch {
 			case fs.NArg() > 0:

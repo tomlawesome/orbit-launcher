@@ -100,7 +100,11 @@ The exit code is 0 when ready, 1 when not, 2 on a usage error. A check that
 cannot read what it needs fails with "could not check: ...".
 
 The version is the newest `## [X.Y.Z] - YYYY-MM-DD` heading in
-`CHANGELOG.md` on the source branch.
+`CHANGELOG.md` on the source branch. The tag checks read the remote's tags
+from `refs/remote-tags/<remote>/`, which the tool fetches first; in CI the
+job fetches them before it drops its credentials and runs the tool with
+`-no-fetch`. If they could not be fetched, those checks fail with "could
+not check".
 
 Into `preview` (from `dev`):
 

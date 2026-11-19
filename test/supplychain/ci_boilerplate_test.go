@@ -2136,7 +2136,7 @@ var changedBy359 = []struct {
 		new: `set -eu
 version="${RELEASE_TAG#v}"
 if [ ! -f CHANGELOG.md ]; then
-  echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on dev (docs/releasing.md) and promote again" >&2
+  echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
   exit 1
 fi
 awk -v v="$version" '
@@ -2145,7 +2145,7 @@ awk -v v="$version" '
   on { print }
 ' CHANGELOG.md > release-notes.md
 if ! grep -q '[^[:space:]]' release-notes.md; then
-  echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on dev (docs/releasing.md) and promote again" >&2
+  echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
   exit 1
 fi
 cat release-notes.md
@@ -2531,10 +2531,11 @@ func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
 			case gitInstall.MatchString(l):
 				installed = true
 			case l == unsetLine, prologue[l], pkgInstall.MatchString(l):
-			case job == "release_readiness" && strings.HasPrefix(l, "git fetch --quiet --force --tags origin "):
-				// #359: the target branch is fetched with the job token
-				// still in origin's URL, then dropped; git fetch runs the
-				// image's git, none of the branch's code.
+			case job == "release_readiness" && strings.HasPrefix(l, "git fetch --quiet --force --prune --no-tags origin "):
+				// #359: the target branch and the remote's tags are
+				// fetched with the job token still in origin's URL, then
+				// it is dropped; git fetch runs the image's git, none of
+				// the branch's code.
 			default:
 				t.Errorf("job %q runs %q before the credential drop; only package installs may (#303)", job, l)
 			}

@@ -45,9 +45,48 @@ const (
 )
 
 type realLookups struct {
-	cfg  lookupConfig
-	http *http.Client
+	cfg      lookupConfig
+	http     *http.Client
+	fetchErr error
 }
+
+// prepareLookups is newLookups plus, when fetch is set, the fetch of the
+// remote's tags into the snapshot the tag checks read. A failed fetch is
+// kept and fails only those checks. CI fetches before it drops the job's
+// credentials and passes -no-fetch (fetch false), because by then origin
+// is anonymous and the project refuses anonymous reads.
+func prepareLookups(cfg lookupConfig, fetch bool) *realLookups {
+	l := newLookups(cfg)
+	if fetch {
+		l.fetchErr = l.fetchTags()
+	}
+	return l
+}
+
+// tagSnapshot is where the remote's tags are copied: its own namespace, so a
+// tag made only in this checkout never counts as the remote's.
+func tagSnapshot(remote string) string { return "refs/remote-tags/" + remote + "/" }
+
+// tagFetchCommand is the fetch that writes the snapshot, as a person types it.
+func tagFetchCommand(remote string) string {
+	return fmt.Sprintf("git fetch --force --prune %s '+refs/tags/*:%s*'", remote, tagSnapshot(remote))
+}
+
+func (l *realLookups) fetchTags() error {
+	_, err := l.git("", []string{"fetch", "--quiet", "--force", "--prune", "--no-tags", l.cfg.Remote, "+refs/tags/*:" + tagSnapshot(l.cfg.Remote) + "*"})
+	if err != nil {
+		return fmt.Errorf("could not fetch the tags from %s (%v); run %s and then the tool with -no-fetch", l.cfg.Remote, err, tagFetchCommand(l.cfg.Remote))
+	}
+	// A remote with no tags leaves the snapshot empty; the marker says the
+	// fetch happened, so that reads as "no tags", not "never fetched".
+	if _, err := l.git("", []string{"update-ref", fetchedMarker(l.cfg.Remote), l.cfg.Source}); err != nil {
+		return fmt.Errorf("could not record the tag fetch: %v", err)
+	}
+	return nil
+}
+
+// fetchedMarker is the ref the tool's own tag fetch leaves behind.
+func fetchedMarker(remote string) string { return "refs/remote-tags-fetched/" + remote }
 
 func newLookups(cfg lookupConfig) *realLookups {
 	if cfg.GitBin == "" {
@@ -225,28 +264,53 @@ func (l *realLookups) remoteRefs(args ...string) (map[string]string, error) {
 	return refs, nil
 }
 
-// Tags lists the remote's tags, so a stale local tag list cannot pick the
-// version.
+// remoteTags lists the remote's tags from the fetched snapshot. No snapshot
+// at all means nothing was fetched, which is an error, never "no tags".
+func (l *realLookups) remoteTags() (map[string]bool, error) {
+	if l.fetchErr != nil {
+		return nil, l.fetchErr
+	}
+	ns := tagSnapshot(l.cfg.Remote)
+	out, err := l.gitOut("for-each-ref", "--format=%(refname)", ns)
+	if err != nil {
+		return nil, err
+	}
+	tags := map[string]bool{}
+	for _, ref := range strings.Fields(out) {
+		tags[strings.TrimPrefix(ref, ns)] = true
+	}
+	if len(tags) == 0 && !l.fetchedBefore() {
+		return nil, fmt.Errorf("the remote's tags were never fetched into this checkout: run %s, or run the tool without -no-fetch", tagFetchCommand(l.cfg.Remote))
+	}
+	return tags, nil
+}
+
+func (l *realLookups) fetchedBefore() bool {
+	r, err := l.git("", []string{"rev-parse", "--verify", "--quiet", fetchedMarker(l.cfg.Remote)}, 1)
+	return err == nil && r.code == 0
+}
+
+// Tags lists the remote's tags, from the snapshot, so neither a stale nor a
+// local-only tag can pick the version.
 func (l *realLookups) Tags() ([]string, error) {
-	refs, err := l.remoteRefs("--tags", "--refs", l.cfg.Remote)
+	set, err := l.remoteTags()
 	if err != nil {
 		return nil, err
 	}
 	var tags []string
-	for name := range refs {
-		tags = append(tags, strings.TrimPrefix(name, "refs/tags/"))
+	for t := range set {
+		tags = append(tags, t)
 	}
 	sort.Strings(tags)
 	return tags, nil
 }
 
 func (l *realLookups) RemoteTagExists(tag string) (bool, error) {
-	refs, err := l.remoteRefs("--tags", "--refs", l.cfg.Remote, "refs/tags/"+tag)
+	set, err := l.remoteTags()
 	if err != nil {
 		return false, err
 	}
-	_, ok := refs["refs/tags/"+tag]
-	return ok, nil
+	return set[tag], nil
 }
 
 func (l *realLookups) SourceFile(path string) (string, bool, error) {

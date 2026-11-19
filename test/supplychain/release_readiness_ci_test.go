@@ -8,6 +8,7 @@ package supplychain
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -272,4 +273,33 @@ func TestReleaseReadiness_LivePrepareNeedsItOptionally(t *testing.T) {
 		}
 	}
 	t.Errorf("live-prepare must list `%s` in needs:", rrJob)
+}
+
+// Review of 9500af3: the credential drop leaves origin anonymous, so the
+// job fetches the remote's tags before it, and tells the tool not to fetch.
+func TestReleaseReadiness_FetchesTheTagsBeforeTheDropAndRunsWithNoFetch(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	eff, err := doc.effectiveJob(rrJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(eff.Script, "\n")
+	fetch, drop, tool := -1, -1, -1
+	for i, l := range lines {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "git fetch") && strings.Contains(l, "refs/tags/*:refs/remote-tags/origin/*") && strings.Contains(l, "--force"):
+			fetch = i
+		case strings.HasPrefix(l, "git remote set-url origin"):
+			drop = i
+		case strings.HasPrefix(l, "go run ./tools/releasereadiness"):
+			tool = i
+			if !strings.Contains(l, "-no-fetch") {
+				t.Errorf("the tool must run with -no-fetch after the drop: %q", l)
+			}
+		}
+	}
+	if fetch < 0 || drop < 0 || tool < 0 || !(fetch < drop && drop < tool) {
+		t.Errorf("want the tag fetch, then the credential drop, then the tool; got lines %d, %d, %d in:\n%s", fetch, drop, tool, eff.Script)
+	}
 }

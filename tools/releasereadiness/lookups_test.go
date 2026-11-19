@@ -407,7 +407,7 @@ func TestLookups_AuditIgnoresMergeCommitsAndAuditsBeforeTheRange(t *testing.T) {
 func TestLookups_TagFreeReadsTheRemoteNotTheLocalTags(t *testing.T) {
 	f := newFixture(t)
 	f.git("tag", "v0.4.8") // local only
-	l := f.lookups("main")
+	l := prepareLookups(f.cfg("main"), true)
 	if got, err := l.RemoteTagExists("v0.4.8"); err != nil || got {
 		t.Errorf("a local-only tag: got %v, %v; want false (the remote has none)", got, err)
 	}
@@ -416,6 +416,8 @@ func TestLookups_TagFreeReadsTheRemoteNotTheLocalTags(t *testing.T) {
 	sh(t, filepath.Dir(other), nil, "clone", "-q", f.remote, other)
 	sh(t, other, nil, "tag", "v0.4.7")
 	sh(t, other, nil, "push", "-q", "origin", "v0.4.7")
+	// The tool fetches the remote's tags before the checks (review of 9500af3).
+	l = prepareLookups(f.cfg("main"), true)
 	if got, err := l.RemoteTagExists("v0.4.7"); err != nil || !got {
 		t.Errorf("a remote-only tag: got %v, %v; want true", got, err)
 	}
@@ -530,5 +532,75 @@ func TestLookups_ErrorsNameTheCallWithoutHeaderQueryOrBodyText(t *testing.T) {
 	}
 	if !strings.Contains(msg, "362") || !strings.Contains(msg, "500") {
 		t.Errorf("error %q must name the call (issue 362) and the status", msg)
+	}
+}
+
+// ---- tags come from a fetched snapshot (review of 9500af3) ------------------
+
+// In CI the credential drop leaves origin anonymous before the tool runs, so
+// the tag checks must read what a fetch made earlier wrote, not ls-remote.
+func TestLookups_TagsAreReadFromTheFetchedSnapshotWithNoFetch(t *testing.T) {
+	f := newFixture(t)
+	f.git("tag", "v0.4.8") // local only: never on the remote
+	other := filepath.Join(t.TempDir(), "other")
+	sh(t, filepath.Dir(other), nil, "clone", "-q", f.remote, other)
+	sh(t, other, nil, "tag", "v0.4.6")
+	sh(t, other, nil, "push", "-q", "origin", "v0.4.6")
+
+	if err := prepareLookups(f.cfg("main"), true).fetchErr; err != nil {
+		t.Fatalf("the fetch failed: %v", err)
+	}
+	// The remote goes away, as origin's credentials do in CI; -no-fetch.
+	if err := os.RemoveAll(f.remote); err != nil {
+		t.Fatal(err)
+	}
+	l := prepareLookups(f.cfg("main"), false)
+	if got, err := l.RemoteTagExists("v0.4.6"); err != nil || !got {
+		t.Errorf("v0.4.6 is on the remote and was fetched: got %v, %v; want true", got, err)
+	}
+	if got, err := l.RemoteTagExists("v0.4.8"); err != nil || got {
+		t.Errorf("v0.4.8 is local only: got %v, %v; want false", got, err)
+	}
+	tags, err := l.Tags()
+	if err != nil || strings.Join(tags, ",") != "v0.4.6" {
+		t.Errorf("Tags = %v, %v; want only the remote's v0.4.6", tags, err)
+	}
+}
+
+const tagChangelog = "# Changelog\n\n## [Unreleased]\n\n## [0.4.7] - 2026-11-20\n\n### Fixed\n\n- A fix.\n"
+
+func TestLookups_NothingFetchedMakesTheTagChecksCouldNotCheck(t *testing.T) {
+	f := newFixture(t)
+	f.write("CHANGELOG.md", tagChangelog)
+	f.commit("changelog")
+	f.git("tag", "v0.4.6") // local tags are not the remote's
+	rep := readiness.Run("preview", f.dir, prepareLookups(f.cfg("preview"), false))
+	for _, id := range []string{"tag-free", "version"} {
+		for _, r := range rep.Results {
+			if r.ID != id {
+				continue
+			}
+			if r.OK || !strings.Contains(r.Message, "could not check") || !strings.Contains(r.Message, "fetch") {
+				t.Errorf("%s with nothing fetched: ok=%v %q; want FAIL could not check, naming the fetch", id, r.OK, r.Message)
+			}
+		}
+	}
+}
+
+func TestLookups_AFailedFetchFailsOnlyTheTagChecks(t *testing.T) {
+	f := newFixture(t)
+	f.write("CHANGELOG.md", tagChangelog)
+	f.commit("changelog")
+	cfg := f.cfg("main")
+	cfg.Remote = "nowhere"
+	l := prepareLookups(cfg, true)
+	if l.fetchErr == nil {
+		t.Fatal("fetching from a remote that does not exist must fail")
+	}
+	if _, err := l.RemoteTagExists("v0.4.7"); err == nil || !strings.Contains(err.Error(), "fetch") {
+		t.Errorf("RemoteTagExists after a failed fetch: %v; want an error naming the fetch", err)
+	}
+	if _, found, err := l.SourceFile("CHANGELOG.md"); err != nil || !found {
+		t.Errorf("a failed tag fetch must not stop the other lookups: %v %v", found, err)
 	}
 }

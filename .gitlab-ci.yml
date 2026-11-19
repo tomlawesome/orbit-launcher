@@ -459,9 +459,13 @@ classify:
 # issues with RELEASE_READINESS_TOKEN when the owner adds it as a masked CI/CD
 # variable; without it that half fails and says to check the issue by hand.
 # Full history: the audit and record checks walk target..source and read the
-# last commit that touched the record. The target is fetched while the job
-# token is still in origin's URL, then every credential is dropped before
-# the branch's own code (the tool) runs.
+# last commit that touched the record. The target branch and the remote's
+# tags (into refs/remote-tags/origin/, which the tag checks read) are fetched
+# while the job token is still in origin's URL; then the job's credentials
+# are dropped before the branch's own code (the tool) runs, so origin is
+# anonymous and the tool runs with -no-fetch. RELEASE_READINESS_TOKEN is not
+# dropped, because the tool reads issues with it; the git commands it runs
+# get a narrow environment that never holds it.
 release_readiness:
   stage: classify
   needs: []
@@ -477,10 +481,10 @@ release_readiness:
   variables:
     GIT_DEPTH: 0
   before_script:
-    - git fetch --quiet --force --tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+    - git fetch --quiet --force --prune --no-tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}" "+refs/tags/*:refs/remote-tags/origin/*"
     - *drop_job_credentials
   script:
-    - go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin
+    - go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
 
 # The shared flake check (#310; agent-infra scripts/flake-check/). It makes
 # the flake rule in docs/flakes.md act: it fails the pipeline when a flake has
@@ -1925,7 +1929,7 @@ renovate:
       set -eu
       version="${RELEASE_TAG#v}"
       if [ ! -f CHANGELOG.md ]; then
-        echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on dev (docs/releasing.md) and promote again" >&2
+        echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
         exit 1
       fi
       awk -v v="$version" '
@@ -1934,7 +1938,7 @@ renovate:
         on { print }
       ' CHANGELOG.md > release-notes.md
       if ! grep -q '[^[:space:]]' release-notes.md; then
-        echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on dev (docs/releasing.md) and promote again" >&2
+        echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
         exit 1
       fi
       cat release-notes.md
