@@ -233,8 +233,8 @@ func TestUpdateLauncher354_CopyCommandWritesTheCommandAndChangesNothingElse(t *t
 		}
 		t.Run(sc.name, func(t *testing.T) {
 			m, buf, called := build354(t, sc, 80, true)
-			before := screen(m)
 			m = moveCaretTo(t, m, "Copy command")
+			before := screen(m)
 			beforeState := m
 			m, cmd := updateAs(t, m, key(tea.KeyEnter))
 			if cmd == nil {
@@ -248,9 +248,16 @@ func TestUpdateLauncher354_CopyCommandWritesTheCommandAndChangesNothingElse(t *t
 			if !strings.Contains(s, "Copy command · copied") {
 				t.Errorf("the row does not read %q:\n%s", "Copy command · copied", s)
 			}
-			if strings.ReplaceAll(s, " · copied", "") != strings.ReplaceAll(before, " · copied", "") &&
-				len(screenLabels(s)) != len(sc.rows) {
-				t.Errorf("the screen changed beyond the copied label:\n%s", s)
+			// before is taken after the caret move: every line but the Copy command row must be identical.
+			bl, sl := strings.Split(before, "\n"), strings.Split(s, "\n")
+			if len(bl) != len(sl) {
+				t.Errorf("the screen is %d lines, was %d:\n%s", len(sl), len(bl), s)
+			}
+			for i := 0; i < len(bl) && i < len(sl); i++ {
+				if strings.Contains(bl[i], "Copy command") != strings.Contains(sl[i], "Copy command") ||
+					(!strings.Contains(bl[i], "Copy command") && bl[i] != sl[i]) {
+					t.Errorf("line %d changed beyond the copied label: %q became %q", i, bl[i], sl[i])
+				}
 			}
 			if um, ok := m.(UpdateModel); ok {
 				if um.state != beforeState.(UpdateModel).state {
