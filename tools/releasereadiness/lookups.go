@@ -169,7 +169,7 @@ func (l *realLookups) git(stdin string, args []string, ok ...int) (gitResult, er
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.GitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, l.cfg.GitBin, args...)
+	cmd := exec.CommandContext(ctx, l.cfg.GitBin, args...) //nolint:gosec // G204: the git binary with argument lists this tool builds itself; no shell.
 	cmd.Dir = l.cfg.Dir
 	cmd.Env = childEnv()
 	// A child that outlives git holds the pipes open; stop waiting for it.
