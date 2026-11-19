@@ -111,10 +111,11 @@
       "groupName": "ci tools"
     },
     {
-      "description": "PLAYWRIGHT_IMAGE and @playwright/test must move together or the gate breaks the way #161 found it: the image is chosen so no browser download happens in the `visual` job, which only holds while the image and the lockfile name the same Playwright release. test/supplychain/pins_test.go (#179) now checks the two agree; this makes Renovate propose them as one merge request instead of two. github-actions is listed because GitHub's visual job types the same image into its `container:` key, and test/supplychain fails unless both copies move in the one merge request. Listed after the image group and the github-actions group above so this grouping wins for these packages.",
+      "description": "PLAYWRIGHT_IMAGE and @playwright/test must move together or the gate breaks the way #161 found it: the image is chosen so no browser download happens in the `visual` job, which only holds while the image and the lockfile name the same Playwright release. test/supplychain/pins_test.go (#179) now checks the two agree; this makes Renovate propose them as one merge request instead of two. rangeStrategy bump makes it rewrite package.json's caret range too: with the default, a range that already allows the new release gets only a lockfile update, which split them on !281 (#360). github-actions is listed because GitHub's visual job types the same image into its `container:` key, and test/supplychain fails unless both copies move in the one merge request. Listed after the image group and the github-actions group above so this grouping wins for these packages.",
       "matchManagers": ["custom.regex", "npm", "github-actions"],
       "matchPackageNames": ["mcr.microsoft.com/playwright", "@playwright/test"],
-      "groupName": "playwright"
+      "groupName": "playwright",
+      "rangeStrategy": "bump"
     },
     {
       "description": "No digest-only updates for the Playwright image (#347). Each pin of it would otherwise get two upgrades in the playwright branch, a version update and a digest refresh of the current tag; Renovate logs an upgrade collision and the image stayed behind while @playwright/test moved (!281). A version update brings its own digest. The cost: a rebuilt image under the same tag is not picked up, so the image moves only with a Playwright version, which is how the lockstep rule wants it.",
