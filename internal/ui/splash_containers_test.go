@@ -336,8 +336,8 @@ func TestSplashDegraded_WorstDrawerKeepsTheMenuOnScreen(t *testing.T) {
 			t.Errorf("drawer lacks %q:\n%s", f.Service+" "+f.Word, s)
 		}
 	}
-	if got := len(strings.Split(strings.TrimRight(s, "\n"), "\n")); got > 26 {
-		t.Errorf("screen is %d rows, want at most 26", got)
+	if got := len(strings.Split(strings.TrimRight(s, "\n"), "\n")); got > 24 {
+		t.Errorf("screen is %d rows, want at most 24", got)
 	}
 }
 

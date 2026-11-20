@@ -77,6 +77,12 @@ func nextFrame(frame int) int { return (frame + 1) % len(style.SpinnerFrames) }
 // directory is untrusted text, so wrapHard escapes it for the terminal:
 // a CR or LF in it would otherwise forge a row.
 func viewNoDeployment(star starfield.Model, width, height int, dir string, body ...string) string {
+	return viewNoDeploymentOffering(star, width, height, dir, newMenu(deadEndRows...), false, body...)
+}
+
+// viewNoDeploymentOffering is viewNoDeployment with the rows given and,
+// when offer is set, the launcher's update command above them (#354).
+func viewNoDeploymentOffering(star starfield.Model, width, height int, dir string, rows menu, offer bool, body ...string) string {
 	var b strings.Builder
 	writeHeader(&b, style.AccentText.Render(style.SymbolMark),
 		wrapHard("No Orbit deployment found in "+dir, measure(width, proseWidth), width-4, folderRows)...)
@@ -84,7 +90,10 @@ func viewNoDeployment(star starfield.Model, width, height int, dir string, body 
 		writeWrappedIn(&b, style.MutedText, line, measure(width, proseWidth), textArea(width))
 	}
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
+	if offer {
+		writeLauncherOffer(&b, width)
+	}
+	rows.write(&b)
 	return skyBlock(star, width, height, b.String())
 }
 
@@ -164,6 +173,25 @@ type folderRefusal struct {
 	// runHere is Update and Repair's wording and rows (#1576); Remove keeps
 	// the carry-on screen.
 	runHere bool
+	// launcher is Update's offer of the launcher's update command above
+	// the rows, with Copy command among them; copied is its label (#354).
+	launcher, copied bool
+}
+
+// withLauncher adds Copy command before the last row and the offer's
+// block above the rows (#354). Idempotent.
+func (r folderRefusal) withLauncher() folderRefusal {
+	if r.launcher {
+		return r
+	}
+	r.launcher = true
+	n := len(r.rows.items)
+	items := append(append(append([]string{}, r.rows.items[:n-1]...), removeCopy), r.rows.items[n-1])
+	if r.rows.sel >= n-1 {
+		r.rows.sel++
+	}
+	r.rows.items = items
+	return r
 }
 
 func newFolderRefusal(mm deploy.Mismatch) folderRefusal {
@@ -186,18 +214,27 @@ func newRunHereRefusal(mm deploy.Mismatch) folderRefusal {
 // key is the screen's keys: carryOn is the row, leave is Esc, Cancel or
 // Menu. No other key does anything (#228).
 func (r folderRefusal) key(msg tea.KeyPressMsg) (next folderRefusal, carryOn, leave, moveBack bool) {
+	next, _, carryOn, leave, moveBack = r.press(msg)
+	return next, carryOn, leave, moveBack
+}
+
+// press is key with Copy command surfaced too (#354).
+func (r folderRefusal) press(msg tea.KeyPressMsg) (next folderRefusal, copy, carryOn, leave, moveBack bool) {
 	var chosen string
 	var back bool
 	r.rows, chosen, back = r.rows.onScreen(msg)
 	switch {
 	case back, chosen == "Menu", chosen == "Cancel":
-		return r, false, true, false
+		return r, false, false, true, false
 	case chosen == carryOnRow, chosen == runHereRow:
-		return r, true, false, false
+		return r, false, true, false, false
 	case chosen == moveBackRow:
-		return r, false, false, true
+		return r, false, false, false, true
+	case chosen == removeCopy && r.launcher:
+		r.copied = true
+		return r, true, false, false, false
 	}
-	return r, false, false, false
+	return r, false, false, false, false
 }
 
 // view is the screen for a flow whose own body line is body: the
@@ -214,12 +251,16 @@ func (r folderRefusal) view(star starfield.Model, width, height int, body string
 	case r.mismatch.FolderGone:
 		lines = []string{folderGoneOtherBuild, folderGoneOtherBuildFix}
 	}
+	rows := r.rows
+	if r.copied {
+		rows = rows.over(copiedRows(rows.items))
+	}
 	if r.runHere {
 		// Update and Repair's run-from-here line is 76 cells: wrapped at
 		// errorWidth its last word would sit alone on a row (#1576).
-		return viewOtherFolderAt(star, width, height, otherFolderLead, r.mismatch.Folder, lines, r.rows, true, runHereWidth)
+		return viewOtherFolderOffering(star, width, height, otherFolderLead, r.mismatch.Folder, lines, rows, true, runHereWidth, r.launcher)
 	}
-	return viewOtherFolder(star, width, height, otherFolderLead, r.mismatch.Folder, lines, r.rows, r.mismatch.FolderGone)
+	return viewOtherFolderOffering(star, width, height, otherFolderLead, r.mismatch.Folder, lines, rows, r.mismatch.FolderGone, 0, r.launcher)
 }
 
 // viewOtherFolder is the screen Update, Repair, Remove and Install open
@@ -240,6 +281,12 @@ func viewOtherFolder(star starfield.Model, width, height int, lead, otherFolder 
 // viewOtherFolderAt is viewOtherFolder with a gone folder's lines wrapped
 // at goneWidth when that is set, else at errorWidth.
 func viewOtherFolderAt(star starfield.Model, width, height int, lead, otherFolder string, lines []string, rows menu, gone bool, goneWidth int) string {
+	return viewOtherFolderOffering(star, width, height, lead, otherFolder, lines, rows, gone, goneWidth, false)
+}
+
+// viewOtherFolderOffering is viewOtherFolderAt with, when offer is set,
+// the launcher's update command between the promise and the rows (#354).
+func viewOtherFolderOffering(star starfield.Model, width, height int, lead, otherFolder string, lines []string, rows menu, gone bool, goneWidth int, offer bool) string {
 	var b strings.Builder
 	writeHeader(&b, style.DegradedText.Render(style.SymbolMark),
 		wrapHard(lead+otherFolder, measure(width, errorWidth), width-4, folderRows)...)
@@ -258,6 +305,9 @@ func viewOtherFolderAt(star starfield.Model, width, height int, lead, otherFolde
 	// would sit alone on a row.
 	writeWrappedIn(&b, style.Tagline, otherFolderUntouched, measure(width, errorWidth), textArea(width))
 	fmt.Fprintln(&b)
+	if offer {
+		writeLauncherOffer(&b, width)
+	}
 	rows.write(&b)
 	return skyBlock(star, width, height, b.String())
 }
@@ -275,6 +325,13 @@ const unreadableEnvAdvice = "Check the error above, the file type and the permis
 // shows Docker's, one line of advice for every cause in muted text, then
 // the dead end's one row.
 func viewUnreadableDeployment(star starfield.Model, width, height int, dir string, err error) string {
+	return viewUnreadableDeploymentOffering(star, width, height, dir, err, newMenu(deadEndRows...), false)
+}
+
+// viewUnreadableDeploymentOffering is viewUnreadableDeployment with the
+// rows given and, when offer is set, the launcher's update command above
+// them (#354).
+func viewUnreadableDeploymentOffering(star starfield.Model, width, height int, dir string, err error, rows menu, offer bool) string {
 	var b strings.Builder
 	glyph := style.ErrorText.Render(style.SymbolFailure)
 	// The glyph and its space take two cells off the title's measure.
@@ -292,7 +349,10 @@ func viewUnreadableDeployment(star starfield.Model, width, height int, dir strin
 	}
 	writeWrappedIn(&b, style.MutedText, unreadableEnvAdvice, measure(width, errorWidth), textArea(width))
 	fmt.Fprintln(&b)
-	writeStackedMenu(&b, deadEndRows, 0)
+	if offer {
+		writeLauncherOffer(&b, width)
+	}
+	rows.write(&b)
 	return skyBlock(star, width, height, b.String())
 }
 

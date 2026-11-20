@@ -118,6 +118,9 @@ type flowOutcome struct {
 	SignalStop os.Signal
 	// LeaveNote is printed by main after the screen closes, exit 0 (#1576).
 	LeaveNote string
+	// MailRetired asks the success screen for the fixed outgoing-mail
+	// note (#339).
+	MailRetired bool
 }
 
 // backToMenu is leaving a flow for the main menu before anything has
@@ -141,8 +144,18 @@ func outcomeOf(r engineRun) flowOutcome {
 		Elapsed:     r.Elapsed,
 		ExitNote:    r.exitNote,
 		SignalStop:  r.signalStop,
+
+		MailRetired: r.Succeeded && r.mailRetired,
 	}
 }
+
+// mailLinePrefix starts the engine's completion line saying it retired the
+// old SMTP mail lines. Only the prefix is read; the engine's text after it
+// is never shown (#339).
+const mailLinePrefix = "Outgoing mail:"
+
+// mailRetiredNote is the one fixed line the launcher shows for it.
+const mailRetiredNote = "Outgoing mail: the old SMTP mail lines were removed; Orbit keeps mail settings itself now."
 
 // serviceLabels are the names install.sh's completion lines give the
 // optional services (its optional_service_not_ready labels), by the
@@ -296,9 +309,11 @@ type engineRun struct {
 	// optionalStillWaiting; completed is the success event seen, after
 	// which completion holds the stdout lines that may name them (a few:
 	// one per service is what the installer prints).
-	waiting       map[string]bool
-	completed     bool
-	completion    []string
+	waiting    map[string]bool
+	completed  bool
+	completion []string
+	// mailRetired is set when a completion line starts mailLinePrefix.
+	mailRetired   bool
 	configRefused bool
 	lastFailed    *engine.Event
 	stderrTail    []string
@@ -757,6 +772,9 @@ func (r engineRun) handleStream(msg any) (engineRun, tea.Cmd) {
 		r.pendingCommand = ""
 		if command, ok := engine.RecoveryCommand(m.Text); ok && !m.Truncated {
 			r.pendingCommand = command
+		}
+		if r.completed && strings.HasPrefix(m.Text, mailLinePrefix) {
+			r.mailRetired = true
 		}
 		if r.completed && len(r.completion) < 2*len(serviceLabels) && serviceLine(m.Text) {
 			r.completion = append(r.completion, m.Text)

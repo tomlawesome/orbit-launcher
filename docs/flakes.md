@@ -30,6 +30,7 @@ delete the heading.
 ## test/pty tests time out waiting for the first screen (host)
 
 - 2026-11-05 · a8813d7 · local, full `go test ./...` at load average 79 · several test/pty tests timed out waiting 10 s for the first screen; the package passed alone and the full run passed on the same code. Test names not kept
+- 2026-11-17 · bdac406 · local, full `go test ./...` · two runs had test/pty tests time out (e.g. TestConsole_RealPTY_ClosingTheTerminalMidInstallLetsTheInstallerRollBack); the pty package then passed in about 188 s on the same code, as on an unchanged checkout
 
 ## TestConsole_RealPTY_QuittingDuringTheConfigurationImportLeavesNothingInTMPDIR (test/pty) (host)
 

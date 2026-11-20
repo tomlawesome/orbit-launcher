@@ -18,8 +18,9 @@ const (
 	NoAnimationEnv = "ORBIT_LAUNCHER_NO_ANIMATION"
 	// NoUpdateCheckEnv skips the check for a newer launcher release.
 	NoUpdateCheckEnv = "ORBIT_LAUNCHER_NO_UPDATE_CHECK"
-	// NoHealthProbeEnv skips probing the detected deployment's local
-	// health address (LocalHealthURL).
+	// NoHealthProbeEnv skips the splash's whole status check: the
+	// detected deployment's local health address (LocalHealthURL) and
+	// the container check, so the splash shows no status word at all.
 	NoHealthProbeEnv = "ORBIT_LAUNCHER_NO_HEALTH_PROBE"
 	// NoVolumeCheckEnv skips Install's stale-database-volume pre-flight
 	// (#105).
