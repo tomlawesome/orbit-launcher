@@ -120,8 +120,11 @@ Into `preview` (from `dev`):
   `docs/releases/`, `CHANGELOG.md` and `.agents/reviews/`; and each audit
   issue whose `Audited-through:` commit is in that range is closed. Reading
   issues needs a token that can read this project's issues, in the
-  `RELEASE_READINESS_TOKEN` CI/CD variable (masked) or, locally, the
-  environment with `CI_API_V4_URL` and `CI_PROJECT_ID`. Without it that half
+  `RELEASE_READINESS_TOKEN` CI/CD variable or, locally, the environment
+  with `CI_API_V4_URL` and `CI_PROJECT_ID`. Make it a project access token
+  with the Reporter role, only the `read_api` scope and an expiry date, and
+  save it masked and protected, so only pipelines on protected branches
+  (the promotions among them) receive it. Without it that half
   fails with "check by hand that audit issue #N is closed".
 - `orbit-pin`: `orbit/pin.json` names the tip of its Orbit branch, read from
   Orbit's public GitHub mirror (`ORBIT_GITHUB_REPO`, default
@@ -136,8 +139,10 @@ Into `main` (from `preview`): `tag-free`, `changelog`, `audit` (over
 - `main-tree-equals-preview`: `main` is contained in `preview` and the
   merge leaves exactly `preview`'s files (otherwise merge the `main` ->
   `preview` back-merge first).
-- `button`: always passes; it names the release button, **release:patch**
-  or **release:minor**, that gives the `CHANGELOG.md` version.
+- `button`: names the release button, **release:patch** or
+  **release:minor**, that gives the `CHANGELOG.md` version, and fails when
+  neither does (tags moved since the preview promotion, for example by a
+  hotfix).
 
 ### The signed release record
 
@@ -209,8 +214,9 @@ Tags are made by a CI button, never by hand.
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. The release body is the
    version's `CHANGELOG.md` section; the job stops before tagging if
-   `CHANGELOG.md` has no `## [<version>] - YYYY-MM-DD` section with
-   entries. GitLab's push mirror carries the
+   `CHANGELOG.md` has no `## [<version>] - ` section or that section is
+   blank. It does not check the date or that the section lists entries:
+   `release_readiness` checks those on a promotion. GitLab's push mirror carries the
    tag to GitHub. Tagging jobs run one at a time, so a second press
    on the same commit stops: "already tagged" after the other button, or
    "already exists on the remote" after the same button again. It stops at

@@ -475,8 +475,10 @@ func stepProblems(steps []Step, n int) []string {
 	return out
 }
 
-// button names the release button to press on main after the merge. It is
-// informational and always passes.
+// button names the release button to press on main after the merge. It
+// fails when neither button gives the CHANGELOG version (tags moved since
+// the preview promotion, for example by a hotfix): the release job would
+// then find no CHANGELOG section and stop after main took the merge.
 func (c *checker) button() (bool, string) {
 	if c.clVersion == "" {
 		return true, "cannot tell which release button to press until CHANGELOG.md names the version"
@@ -492,7 +494,7 @@ func (c *checker) button() (bool, string) {
 	case m:
 		return true, "after the merge press release:minor (" + m + ")"
 	}
-	return true, fmt.Sprintf("neither button gives %s (release:patch gives %s, release:minor %s)", c.clVersion, p, m)
+	return false, fmt.Sprintf("neither button gives %s (release:patch gives %s, release:minor %s): add a CHANGELOG section for one of them on preview first", c.clVersion, p, m)
 }
 
 // secretName is an environment variable whose value must never be printed.

@@ -480,6 +480,14 @@ func TestButton_NamesPatchForAPatchVersionAndMinorForAMinorVersion(t *testing.T)
 	}
 }
 
+func TestButton_FailsWhenTheChangelogVersionIsNeitherWhatPatchNorMinorWouldGive(t *testing.T) {
+	s := newStub()
+	s.tags = []string{"v0.4.6", "v0.4.7"}
+	// CHANGELOG's newest heading is 0.4.7, which is already tagged; the
+	// buttons would give 0.4.8 (patch) or 0.5.0 (minor).
+	wantFail(t, run(t, "main", s), "button", "0.4.8", "0.5.0")
+}
+
 func TestNoMessageContainsATokenValueFromTheEnvironment(t *testing.T) {
 	const secret = "placeholder-secret-one"
 	const other = "placeholder-secret-two"

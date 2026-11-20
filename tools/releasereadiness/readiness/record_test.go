@@ -99,6 +99,32 @@ func TestRecord_PlaceholderOrEmptyEvidenceIsAProblemAndNotCounted(t *testing.T) 
 	}
 }
 
+func TestRecord_PlaceholderWithTrailingPunctuationIsRefusedLikeTheBareWord(t *testing.T) {
+	for _, ev := range []string{"todo.", "TODO.", "tbd!", "n/a;", "none.", "todo,"} {
+		for _, status := range []string{"done", "not-needed"} {
+			r := ParseRecord(rec("version: v0.4.7", "step 1: "+status+": "+ev))
+			if len(r.Steps) != 0 {
+				t.Errorf("step 1: %s: %q must not be counted; got %+v", status, ev, r.Steps)
+			}
+			if len(r.Problems) == 0 {
+				t.Errorf("step 1: %s: %q must be a problem", status, ev)
+			}
+		}
+	}
+}
+
+func TestRecord_ARealValueWithATrailingFullStopIsStillAccepted(t *testing.T) {
+	for _, status := range []string{"done", "not-needed"} {
+		r := ParseRecord(rec("version: v0.4.7", "step 1: "+status+": https://example.com/job/1."))
+		if len(r.Steps) != 1 {
+			t.Errorf("%s with a real value and a full stop must count; got %+v", status, r.Steps)
+		}
+		if len(r.Problems) != 0 {
+			t.Errorf("%s with a real value and a full stop must not be a problem; got %v", status, r.Problems)
+		}
+	}
+}
+
 func TestRecord_AnUnknownStatusIsAProblemAndNotCounted(t *testing.T) {
 	r := ParseRecord(rec("version: v0.4.7", "step 1: finished: https://x/1", "step 2: skipped"))
 	if len(r.Steps) != 0 {

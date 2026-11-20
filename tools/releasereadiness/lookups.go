@@ -496,7 +496,7 @@ func (l *realLookups) UncoveredCommits() ([]readiness.Commit, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"-c", "core.quotePath=false", "log", "--no-merges", "--format=%x00%H", "--name-only", l.cfg.Source, "^" + ref}
+	args := []string{"-c", "core.quotePath=false", "log", "--no-merges", "--no-renames", "--format=%x00%H", "--name-only", l.cfg.Source, "^" + ref}
 	for _, rec := range recs {
 		for _, c := range rec.through {
 			args = append(args, "^"+c)

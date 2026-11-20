@@ -110,7 +110,9 @@ func parseStatus(n int, rest string) (Step, error) {
 	case "after-merge":
 		return Step{N: n, Status: status}, nil
 	case "done", "not-needed":
-		if evidence == "" || placeholder.MatchString(evidence) {
+		// Trailing punctuation does not make a placeholder evidence ("todo.").
+		bare := strings.TrimRight(evidence, ".!?,;: ")
+		if bare == "" || placeholder.MatchString(bare) {
 			what := "a link or job id"
 			if status == "not-needed" {
 				what = "the owner's decision"

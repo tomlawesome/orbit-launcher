@@ -19,6 +19,6 @@ Releases before v0.4.7 are described on their GitLab release pages only.
 ### Fixed
 
 - When the start screen says a newer launcher is out and points to Update,
-  Update now shows the launcher's update command, with Copy, on every screen,
-  including when nothing is installed in this folder or Orbit runs from
-  another folder. (#354)
+  Update now shows the launcher's update command, with Copy, on its confirm
+  screen and on every screen where it cannot go on, including when nothing
+  is installed in this folder or Orbit runs from another folder. (#354)
