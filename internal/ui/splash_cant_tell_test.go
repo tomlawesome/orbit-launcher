@@ -303,8 +303,8 @@ func TestSplashCantTell_BothLinesKeepTheMenuOnScreen(t *testing.T) {
 			t.Errorf("screen lacks %q:\n%s", text, s)
 		}
 	}
-	if got := len(strings.Split(strings.TrimRight(s, "\n"), "\n")); got > 26 {
-		t.Errorf("screen is %d rows, want at most 26", got)
+	if got := len(strings.Split(strings.TrimRight(s, "\n"), "\n")); got > 24 {
+		t.Errorf("screen is %d rows, want at most 24", got)
 	}
 	if rows := lineIndex(s, "/opt/orbit") - lineIndex(s, "mail.example.com") + 1; rows > 9 {
 		t.Errorf("identity block takes %d rows, want at most 9:\n%s", rows, s)
