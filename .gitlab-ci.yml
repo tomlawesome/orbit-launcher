@@ -439,6 +439,53 @@ classify:
       dotenv: classify.env
     expire_in: 1 day
 
+# The two promotions and nothing else (#359): dev -> preview and preview ->
+# main. A hotfix merge request into preview or main from another branch, and
+# the back-merges, are not promotions.
+.promotion_mr: &promotion_mr
+  if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "dev" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview") || ($CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"))
+
+# Release readiness (#359, after ai/orbit#1860): the first job of every
+# promotion, and nothing else in the pipeline starts before it passes
+# (live-prepare needs it; the legs need live-prepare). It checks the version,
+# the tag, CHANGELOG.md, the branches' ancestry, the audits, Orbit's pin and
+# the signed release record (docs/releasing.md, "Release readiness and the
+# signed release record"); the same command runs locally before the merge
+# request is opened. It replaces #306's `promoted`, which only gave preview ->
+# main a pipeline for "pipelines must succeed".
+#
+# No environment (decision C1): Orbit's pin is read from the public GitHub
+# mirror with no token (C2). The audit check's issue-closed half reads
+# issues with RELEASE_READINESS_TOKEN when the owner adds it as a masked CI/CD
+# variable; without it that half fails and says to check the issue by hand.
+# Full history: the audit and record checks walk target..source and read the
+# last commit that touched the record. The target branch and the remote's
+# tags (into refs/remote-tags/origin/, which the tag checks read) are fetched
+# while the job token is still in origin's URL; then the job's credentials
+# are dropped before the branch's own code (the tool) runs, so origin is
+# anonymous and the tool runs with -no-fetch. RELEASE_READINESS_TOKEN is not
+# dropped, because the tool reads issues with it; the git commands it runs
+# get a narrow environment that never holds it.
+release_readiness:
+  stage: classify
+  needs: []
+  tags: [light]
+  image:
+    <<: *pull_if_not_present
+    name: $GO_IMAGE
+  extends: .go_cache
+  timeout: 10m
+  rules:
+    - !reference [.dev-landing, job_rule]
+    - *promotion_mr
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - git fetch --quiet --force --prune --no-tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}" "+refs/tags/*:refs/remote-tags/origin/*"
+    - *drop_job_credentials
+  script:
+    - go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
+
 # The shared flake check (#310; agent-infra scripts/flake-check/). It makes
 # the flake rule in docs/flakes.md act: it fails the pipeline when a flake has
 # three sightings and no issue link, is still in the merge gate (not listed in
@@ -982,6 +1029,11 @@ live-prepare:
     # As the legs: `optional` so a pipeline without `classify` still builds.
     - job: classify
       artifacts: true
+      optional: true
+    # On a promotion, nothing live starts before the readiness check has
+    # passed (#359); the legs need this job, so they wait too. Optional:
+    # every other pipeline has no release_readiness.
+    - job: release_readiness
       optional: true
   # The legs' five routes, the change route manual and blocking as theirs (#304).
   rules:
@@ -1680,24 +1732,6 @@ live-fedora:
 
 # --- promotion into main -----------------------------------------------------
 
-# A merge request from `preview` into `main` carries code that already passed
-# `dev`'s checks and `preview`'s live installs, so it runs nothing new (#306).
-# GitLab's "pipelines must succeed" needs a pipeline to pass, and a pipeline
-# needs a job: this is that job. It tests nothing.
-promoted:
-  stage: fast
-  needs: []
-  tags: [light]
-  image:
-    <<: *pull_if_not_present
-    name: $UBUNTU_IMAGE
-  timeout: 2m
-  rules:
-    - !reference [.dev-landing, job_rule]
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "preview"
-  script:
-    - echo "nothing to run here (#306); the checks ran on dev's merge request and the live installs on the merge request into preview"
-
 # --- maintenance ---------------------------------------------------------
 
 # Renovate, taking over from Dependabot for this host (#140 step 4). It runs
@@ -1888,17 +1922,34 @@ renovate:
   cache: []
   script:
     - sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
+    # The release body is the version's CHANGELOG.md section (#359, C4),
+    # its lines up to the next `## ` heading. No section, no release: the
+    # job stops before release-cli writes the tag.
+    - |
+      set -eu
+      version="${RELEASE_TAG#v}"
+      if [ ! -f CHANGELOG.md ]; then
+        echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+        exit 1
+      fi
+      awk -v v="$version" '
+        index($0, "## [" v "] - ") == 1 { on = 1; next }
+        on && /^## / { exit }
+        on { print }
+      ' CHANGELOG.md > release-notes.md
+      if ! grep -q '[^[:space:]]' release-notes.md; then
+        echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+        exit 1
+      fi
+      cat release-notes.md
     - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
   release:
     tag_name: $RELEASE_TAG
     tag_message: $RELEASE_TAG
     ref: $CI_COMMIT_SHA
     name: orbit-launcher $RELEASE_TAG
-    description: |
-      orbit-launcher $RELEASE_TAG, a source revision for Orbit to pin.
-
-      This repo publishes no binaries (#171): Orbit builds, signs and ships
-      the launcher alongside itself.
+    # A path relative to the project directory: release-cli reads the file.
+    description: ./release-notes.md
 
 release:patch:
   extends: .release_version

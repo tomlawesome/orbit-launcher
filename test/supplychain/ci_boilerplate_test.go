@@ -128,10 +128,12 @@ var addedBy303 = []string{"live-prepare"}
 // step).
 var addedBy183 = []string{"live-fedora"}
 
-// What #306 adds on purpose: the one cheap job a merge request into main
-// runs, so "pipelines must succeed" has a pipeline to pass when the
-// promotion into main otherwise runs nothing (ci_stages_test.go checks it).
-var addedBy306 = []string{"promoted"}
+// What #306 added on purpose, as #359 changed it: the one cheap job a merge
+// request into main runs, so "pipelines must succeed" has a pipeline to pass
+// when the promotion into main otherwise runs nothing. #359 replaces #306's
+// `promoted` with `release_readiness`, which does the same and checks the
+// release (release_readiness_ci_test.go, ci_stages_test.go).
+var addedBy306 = []string{"release_readiness"}
 
 // What #310 adds on purpose: flake-check, the blocking job that runs the
 // shared flake check from ai/agent-infra on docs/flakes.md in the first stage
@@ -2119,11 +2121,49 @@ bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
 	},
 }
 
+// What #359 changes on purpose in the GitLab release (decision C4): the
+// release body is the version's CHANGELOG.md section, written to
+// release-notes.md before release-cli runs; no section stops the job.
+// Applies after #113.
+var changedBy359 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		old:  `echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
+		new: `set -eu
+version="${RELEASE_TAG#v}"
+if [ ! -f CHANGELOG.md ]; then
+  echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+  exit 1
+fi
+awk -v v="$version" '
+  index($0, "## [" v "] - ") == 1 { on = 1; next }
+  on && /^## / { exit }
+  on { print }
+' CHANGELOG.md > release-notes.md
+if ! grep -q '[^[:space:]]' release-notes.md; then
+  echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+  exit 1
+fi
+cat release-notes.md
+echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
+	},
+	{
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		key:  "release",
+		old:  `"description": "orbit-launcher $RELEASE_TAG, a source revision for Orbit to pin.\n\nThis repo publishes no binaries (#171): Orbit builds, signs and ships\nthe launcher alongside itself."`,
+		new:  `"description": "./release-notes.md"`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
 // applyChangedOnPurpose rewrites one ce4b412 job's keys the way #216, then
-// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307, then #306, then the second audit round do. Each rewrite for this job must
+// #198, then #241, then #273, then #264, then #236, then #195, then #292, then #277, then #193, then #263, then the token review, then #183, then #300, then #298, then #301, then #303, then #307, then #306, then the second audit round, then #114, #113 and #359 do. Each rewrite for this job must
 // match exactly once; a key it names that the job lacks is a failure too (bar
 // the additions changedBy264 declares), so no entry can go unused.
 func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
@@ -2154,6 +2194,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedByAuditE...)
 	all = append(all, changedBy114...)
 	all = append(all, changedBy113...)
+	all = append(all, changedBy359...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
@@ -2490,6 +2531,11 @@ func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
 			case gitInstall.MatchString(l):
 				installed = true
 			case l == unsetLine, prologue[l], pkgInstall.MatchString(l):
+			case job == "release_readiness" && strings.HasPrefix(l, "git fetch --quiet --force --prune --no-tags origin "):
+				// #359: the target branch and the remote's tags are
+				// fetched with the job token still in origin's URL, then
+				// it is dropped; git fetch runs the image's git, none of
+				// the branch's code.
 			default:
 				t.Errorf("job %q runs %q before the credential drop; only package installs may (#303)", job, l)
 			}
