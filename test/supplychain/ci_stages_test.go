@@ -526,29 +526,31 @@ func TestCIStages_APromotionToPreviewRunsOnlyTheLiveInstalls(t *testing.T) {
 }
 
 // The preview -> main promotion reuses preview's results. Exactly one cheap
-// job, `promoted`, exists so "pipelines must succeed" has a pipeline to pass.
+// job, `release_readiness` (#359, which replaced #306's `promoted`), exists so
+// "pipelines must succeed" has a pipeline to pass.
 func TestCIStages_APromotionToMainAddsNothingNew(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
 	for _, changes := range []bool{false, true} {
 		jobs := pipelineFor(t, doc, mrVars("preview", "main"), changes)
-		assertPresent(t, jobs, "promoted")
-		assertAbsent(t, jobs, "classify", "fast", "deps", "visual", "gitleaks", "private-details", "flake-check")
+		assertPresent(t, jobs, "release_readiness")
+		assertAbsent(t, jobs, "promoted", "classify", "fast", "deps", "visual", "gitleaks", "private-details", "flake-check")
 		assertAbsent(t, jobs, liveFamily...)
 		assertAbsent(t, jobs, releaseJobs...)
 		assertAbsent(t, jobs, "renovate")
 		if len(jobs) != 1 {
-			t.Errorf("a preview -> main merge request must create exactly one job, `promoted` (changes=%v); it creates %v", changes, jobNames(jobs))
+			t.Errorf("a preview -> main merge request must create exactly one job, `release_readiness` (changes=%v); it creates %v", changes, jobNames(jobs))
 		}
 	}
 }
 
 // A promotion is the move from the stage before: only dev -> preview gets the
-// live installs and no checks; only preview -> main gets `promoted`.
+// live installs and no checks; both run `release_readiness` first (#359).
 func TestCIStages_AMergeRequestFromDevIntoPreviewRunsTheLiveInstallsAndNoChecks(t *testing.T) {
 	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
 	for _, changes := range []bool{false, true} {
 		jobs := pipelineFor(t, doc, mrVars("dev", "preview"), changes)
 		assertPresent(t, jobs, liveFamily...)
+		assertPresent(t, jobs, "release_readiness")
 		for _, n := range liveFamily {
 			if j, ok := jobs[n]; ok && j.manual {
 				t.Errorf("`%s` must run automatically on dev -> preview (changes=%v), not wait for a person", n, changes)
