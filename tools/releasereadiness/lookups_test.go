@@ -402,6 +402,36 @@ func TestLookups_AuditIgnoresMergeCommitsAndAuditsBeforeTheRange(t *testing.T) {
 	}
 }
 
+func TestLookups_ARenameIntoDocsReleasesTouchesTheCodeFilesOldPath(t *testing.T) {
+	f := newFixture(t)
+	f.write("tools/x.go", "package x\n")
+	f.commit("add x")
+	f.publish("preview", "main")
+	f.git("checkout", "-q", "-b", "dev")
+	if err := os.MkdirAll(filepath.Join(f.dir, "docs", "releases"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.git("mv", "tools/x.go", "docs/releases/x.go")
+	moved := f.commit("move x into releases")
+
+	got, err := f.lookups("preview").UncoveredCommits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got {
+		if c.SHA != moved {
+			continue
+		}
+		for _, file := range c.Files {
+			if file == "tools/x.go" {
+				return
+			}
+		}
+		t.Fatalf("the rename's Files = %v, want it to include the old path tools/x.go", c.Files)
+	}
+	t.Fatalf("the commit %s moving code into docs/releases must be reported as uncovered; got %v", moved, got)
+}
+
 // ---- tag-free ---------------------------------------------------------------
 
 func TestLookups_TagFreeReadsTheRemoteNotTheLocalTags(t *testing.T) {
