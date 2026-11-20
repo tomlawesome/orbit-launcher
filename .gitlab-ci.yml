@@ -456,8 +456,9 @@ classify:
 #
 # No environment (decision C1): Orbit's pin is read from the public GitHub
 # mirror with no token (C2). The audit check's issue-closed half reads
-# issues with RELEASE_READINESS_TOKEN when the owner adds it as a masked CI/CD
-# variable; without it that half fails and says to check the issue by hand.
+# issues with RELEASE_READINESS_TOKEN when the owner adds it as a masked,
+# protected CI/CD variable (a read_api project token; docs/releasing.md);
+# without it that half fails and says to check the issue by hand.
 # Full history: the audit and record checks walk target..source and read the
 # last commit that touched the record. The target branch and the remote's
 # tags (into refs/remote-tags/origin/, which the tag checks read) are fetched

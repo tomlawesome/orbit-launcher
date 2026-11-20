@@ -120,8 +120,11 @@ Into `preview` (from `dev`):
   `docs/releases/`, `CHANGELOG.md` and `.agents/reviews/`; and each audit
   issue whose `Audited-through:` commit is in that range is closed. Reading
   issues needs a token that can read this project's issues, in the
-  `RELEASE_READINESS_TOKEN` CI/CD variable (masked) or, locally, the
-  environment with `CI_API_V4_URL` and `CI_PROJECT_ID`. Without it that half
+  `RELEASE_READINESS_TOKEN` CI/CD variable or, locally, the environment
+  with `CI_API_V4_URL` and `CI_PROJECT_ID`. Make it a project access token
+  with the Reporter role, only the `read_api` scope and an expiry date, and
+  save it masked and protected, so only pipelines on protected branches
+  (the promotions among them) receive it. Without it that half
   fails with "check by hand that audit issue #N is closed".
 - `orbit-pin`: `orbit/pin.json` names the tip of its Orbit branch, read from
   Orbit's public GitHub mirror (`ORBIT_GITHUB_REPO`, default
