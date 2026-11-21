@@ -145,11 +145,12 @@ variables:
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
-  UBUNTU_IMAGE: ubuntu:26.04@sha256:0e73b71479e7bc5f006bca872e25c3cd680dc052a0116f90d63ae363537db0dd
+  UBUNTU_IMAGE: ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
   # The live test's second leg (#183): the same install on Fedora, so a
   # distribution difference in Docker, Compose or the base tools shows up
-  # before a user finds it. fedora:44 is Docker Hub's `latest` today.
-  FEDORA_IMAGE: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+  # before a user finds it. fedora:45 is Docker Hub's `latest` (2026-11-21);
+  # the 46 tag is a pre-release, so not what a user installs.
+  FEDORA_IMAGE: fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
   # Same pins as the workflows. A commit on staticcheck's master, not a
   # release: Go 1.27 writes compiler export data version 5, and every release
   # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
