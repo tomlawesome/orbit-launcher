@@ -434,7 +434,7 @@ func TestReleaseRecord_SignoffHints(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			s := newStub()
 			s.files[recordPath] = c.record
-			s.signoff = Signoff{Signed: false, Why: c.why}
+			s.signoff = Signoff{Signed: false, Why: c.why, InFile: c.fileSide}
 			r := get(t, run(t, "preview", s), "release-record")
 			if r.OK {
 				t.Fatalf("want FAIL, got ok")
