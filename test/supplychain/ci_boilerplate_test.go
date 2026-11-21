@@ -2189,10 +2189,6 @@ echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 	},
 }
 
-// What #368 changes on purpose: each release button checks CHANGELOG.md for
-// the version it computed (the shared .changelog_check functions, defined
-// first in the script), after computing it and before the tag check, and
-// refuses with the other button's name. Applies after #264.
 // changedBy369: fast gives go test a 20-minute package limit, so test/pty
 // does not time out on a busy runner (#369).
 var changedBy369 = []struct {
@@ -2207,6 +2203,10 @@ var changedBy369 = []struct {
 	},
 }
 
+// What #368 changes on purpose: each release button checks CHANGELOG.md for
+// the version it computed (the shared .changelog_check functions, defined
+// first in the script), after computing it and before the tag check, and
+// refuses with the other button's name. Applies after #264.
 var changedBy368 = []struct {
 	jobs     []string
 	key      string
