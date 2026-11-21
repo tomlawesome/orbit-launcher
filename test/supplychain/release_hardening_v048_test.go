@@ -12,11 +12,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 const rrToken = "RELEASE_READINESS_TOKEN"
+
+// rrBinary is the built tool release_readiness runs with the token (#365):
+// built first with no token in the environment, so go's compile and link
+// children never see it.
+const rrBinary = `"$CI_PROJECT_DIR/.release-readiness.bin"`
+
+// branchCodeRe finds a script line that runs the branch's own code: go run,
+// test, build or vet, or a repo script.
+var branchCodeRe = regexp.MustCompile(`(^|[\s|&;(=])(go (run|test|build|vet)\b|(ba)?sh scripts/|\./scripts/)`)
 
 // collectStrings gathers every scalar below n.
 func collectStrings(n *yamlNode, out *[]string) {
@@ -70,7 +80,7 @@ func TestV048_365_OnlyReleaseReadinessPassesTheTokenAndOnlyToTheToolCommand(t *t
 		collectStrings(doc.root.vals[name], &strs)
 		for _, s := range strs {
 			for _, l := range strings.Split(s, "\n") {
-				if strings.Contains(l, rrToken) && !isUnsetLine(l) {
+				if strings.Contains(l, rrToken) && !isUnsetLine(l) && !strings.Contains(l, "-u "+rrToken) {
 					t.Errorf("%s references %s in %q: only release_readiness may (#365)", name, rrToken, l)
 				}
 			}
@@ -97,7 +107,7 @@ func TestV048_365_OnlyReleaseReadinessPassesTheTokenAndOnlyToTheToolCommand(t *t
 		if isUnsetLine(tl) && drop < 0 {
 			drop = i
 		}
-		if strings.Contains(tl, "go run ./tools/releasereadiness") {
+		if strings.Contains(tl, rrBinary+` -target`) {
 			tool = i
 		}
 	}
@@ -120,7 +130,7 @@ func TestV048_365_OnlyReleaseReadinessPassesTheTokenAndOnlyToTheToolCommand(t *t
 			copied = true
 		case i == tool:
 			if !strings.Contains(l, rrToken+"=") || strings.Contains(l, "export") {
-				t.Errorf("the tool command must set %s for its own process only (%s=... go run ...): %q", rrToken, rrToken, l)
+				t.Errorf("the tool command must set %s for its own process only (%s=... <binary> ...): %q", rrToken, rrToken, l)
 			}
 		default:
 			t.Errorf("after the drop only the tool command may mention %s, line %d: %q", rrToken, i, l)
@@ -131,6 +141,50 @@ func TestV048_365_OnlyReleaseReadinessPassesTheTokenAndOnlyToTheToolCommand(t *t
 	}
 	if !strings.Contains(lines[tool], rrToken) {
 		t.Errorf("the tool command must receive %s: %q", rrToken, lines[tool])
+	}
+}
+
+// Every job that runs branch code (go run, go test, go build or a repo
+// script) must have the token out of its environment first: an `unset` line
+// naming it earlier in the script (.drop_job_credentials is one), or an
+// `env -u RELEASE_READINESS_TOKEN` on that very command, continuation lines
+// included. Only release_readiness keeps it, copied to a shell variable.
+func TestV048_365_EveryJobThatRunsBranchCodeDropsTheToken(t *testing.T) {
+	doc := loadCI(t, readRepoFile(t, ".gitlab-ci.yml"))
+	checked := 0
+	for _, name := range doc.root.keys {
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		eff, err := doc.effectiveJob(name)
+		if err != nil || eff.Script == "" {
+			continue
+		}
+		lines := strings.Split(eff.Script, "\n")
+		unset := false
+		for i, l := range lines {
+			if isUnsetLine(l) && strings.Contains(l, rrToken) {
+				unset = true
+			}
+			tl := strings.TrimSpace(l)
+			if strings.HasPrefix(tl, "#") || !branchCodeRe.MatchString(l) {
+				continue
+			}
+			checked++
+			logical := l
+			for j := i - 1; j >= 0 && strings.HasSuffix(lines[j], "\\"); j-- {
+				logical = lines[j] + logical
+			}
+			for j := i; j+1 < len(lines) && strings.HasSuffix(lines[j], "\\"); j++ {
+				logical += lines[j+1]
+			}
+			if !unset && !strings.Contains(logical, "-u "+rrToken) {
+				t.Errorf("%s runs branch code with %s still set (#365), unset it first or add -u %s: %q", name, rrToken, rrToken, tl)
+			}
+		}
+	}
+	if checked < 10 {
+		t.Errorf("only %d branch-code lines found across the jobs: the matcher has stopped finding them", checked)
 	}
 }
 
@@ -284,10 +338,13 @@ func TestV048_368_ChangelogCheckRunsBeforeTheTagCheckAndNamesTheOtherButton(t *t
 			t.Fatal(err)
 		}
 		lines := strings.Split(eff.Script, "\n")
-		check, tagCheck := -1, -1
+		check, tagCheck, relEnv := -1, -1, -1
 		for i, l := range lines {
-			if check < 0 && strings.Contains(l, "CHANGELOG.md") {
-				check = i
+			if check < 0 && strings.Contains(l, `changelog_state "$version"`) {
+				check = i // the call; the function definition also names CHANGELOG.md
+			}
+			if strings.Contains(l, "release.env") && relEnv < 0 {
+				relEnv = i
 			}
 			if tagCheck < 0 && strings.Contains(l, "release-tag-check.sh") {
 				tagCheck = i
@@ -295,6 +352,9 @@ func TestV048_368_ChangelogCheckRunsBeforeTheTagCheckAndNamesTheOtherButton(t *t
 		}
 		if check < 0 || tagCheck < 0 || check > tagCheck {
 			t.Errorf("%s: want a CHANGELOG.md check before release-tag-check.sh; got lines %d and %d in:\n%s", job, check, tagCheck, eff.Script)
+		}
+		if check < 0 || relEnv < 0 || check > relEnv {
+			t.Errorf("%s: want the changelog_state call before the release.env write; got lines %d and %d", job, check, relEnv)
 		}
 		if !strings.Contains(eff.Script, other) {
 			t.Errorf("%s: the refusal text must name the other button %q", job, other)

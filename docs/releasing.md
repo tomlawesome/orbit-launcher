@@ -220,16 +220,19 @@ Tags are made by a CI button, never by hand.
    landed on `main` since. It also stops unless `CHANGELOG.md` has a
    dated `## [<version>] - YYYY-MM-DD` section with a list entry for the
    version it would cut (#368). If only the other button's version has one,
-   it says to press that button instead. If it stops, use the newest `main`
-   pipeline instead.
+   it says to press that button instead. If it stops for a tag or commit
+   reason, use the newest `main` pipeline instead. If it stops on the
+   `CHANGELOG.md` check, press the other button when the message names it;
+   otherwise fix `CHANGELOG.md` through a merge request.
 3. **release:gitlab:patch** or **release:gitlab:minor** runs by itself and
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. The release body is the
    version's `CHANGELOG.md` section; the job stops before tagging unless
    `CHANGELOG.md` has a `## [<version>] - YYYY-MM-DD` heading for it and at
    least one list entry under an `### Added`, `Changed`, `Deprecated`,
-   `Removed`, `Fixed` or `Security` heading (the rule `release_readiness`
-   applies, #364). GitLab's push mirror carries the
+   `Removed`, `Fixed` or `Security` heading (the dated heading and list entry
+   `release_readiness` also requires, #364; this check does not test that the
+   version is the newest or that Unreleased is empty). GitLab's push mirror carries the
    tag to GitHub. Tagging jobs run one at a time, so a second press
    on the same commit stops: "already tagged" after the other button, or
    "already exists on the remote" after the same button again. It stops at

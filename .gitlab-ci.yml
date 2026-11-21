@@ -306,7 +306,9 @@ variables:
 # clones and the runner always creates origin, so it fails only with no git
 # or no clone, and a job added on a git-less image then fails on its first
 # run instead of silently keeping the token in .git/config. Not for the
-# live legs (they keep their own `env -u` wrappers) and not for renovate,
+# live legs (their `env -u` wrappers and the dockerd one list the token too),
+# not for the release jobs (they need the job token to read and tag the
+# remote, so they unset only RELEASE_READINESS_TOKEN) and not for renovate,
 # which uses its token.
 .drop_job_credentials: &drop_job_credentials |
   unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN
@@ -340,7 +342,7 @@ variables:
   # credentials (#301). That keeps them out of its logs and dumps; it does
   # not hide them from the tests, which can read this whole container
   # (see .live_leg, #303).
-  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
     dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
   for _ in $(seq 1 60); do
     docker info > /dev/null 2>&1 && break
@@ -468,10 +470,13 @@ classify:
 # are dropped before the branch's own code (the tool) runs, so origin is
 # anonymous and the tool runs with -no-fetch. The drop also unsets
 # RELEASE_READINESS_TOKEN (#365), because the tool is the branch's own code;
-# the job copies the token into a shell variable before the drop and gives it
-# to the tool's process alone (`RELEASE_READINESS_TOKEN="$keep" go run ...`),
-# so go's build steps never see it, and the git commands the tool runs get a
-# narrow environment that never holds it.
+# the job copies the token into a shell variable before the drop, builds the
+# tool with no token in the environment, and gives the token to the built
+# binary's process alone (`RELEASE_READINESS_TOKEN="$keep" .../binary ...`),
+# so neither go's compile and link steps nor anything else sees it, and the git
+# commands the tool runs get a narrow environment that never holds it. The
+# binary sits at a path of its own under the project directory, away from the
+# Go cache and any artifact path.
 release_readiness:
   stage: classify
   needs: []
@@ -491,7 +496,8 @@ release_readiness:
     - git fetch --quiet --force --prune --no-tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}" "+refs/tags/*:refs/remote-tags/origin/*"
     - *drop_job_credentials
   script:
-    - RELEASE_READINESS_TOKEN="$keep" go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
+    - go build -o "$CI_PROJECT_DIR/.release-readiness.bin" ./tools/releasereadiness
+    - RELEASE_READINESS_TOKEN="$keep" "$CI_PROJECT_DIR/.release-readiness.bin" -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
 
 # The shared flake check (#310; agent-infra scripts/flake-check/). It makes
 # the flake rule in docs/flakes.md act: it fails the pipeline when a flake has
@@ -1062,6 +1068,8 @@ live-prepare:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   before_script:
     - *live_gate
+    # These jobs run the branch's own code and never need the readiness token (#365).
+    - unset RELEASE_READINESS_TOKEN
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl jq openssl
   script:
@@ -1255,7 +1263,7 @@ live-prepare:
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "the record_image artifact from ${current_from} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "the sign_evidence artifact from ${current_from} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest from ${current_from} failed verification; nothing is installed from it (#194)"; exit 1; }
         # install.sh comes from the pinned commit (#193), the manifest from
@@ -1343,7 +1351,7 @@ live-prepare:
         jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
         [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
           || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
         jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
@@ -1661,7 +1669,7 @@ live-prepare:
         echo "the update leg (#198) installs ${FIRST_VERSION:-?} ${FIRST_DIGEST:-?} (ai/orbit ${FIRST_COMMIT:-?}, ${FIRST_FROM:-?}) first, then updates to the current preview"
       fi
       # Runs beside the tests, so without the credentials (#301).
-      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
         python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
         curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
@@ -1686,7 +1694,7 @@ live-prepare:
     - |
       quarantined="$(bash scripts/ci/quarantine-skip.sh)"
       bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
         go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...
   after_script:
     # The registry login (the deploy token) goes first, pass or fail.
@@ -1713,6 +1721,8 @@ live:
     LIVE_DISTRO: ubuntu
   before_script:
     - *live_gate
+    # These jobs run the branch's own code and never need the readiness token (#365).
+    - unset RELEASE_READINESS_TOKEN
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
     - *go_tarball
@@ -1732,6 +1742,8 @@ live-fedora:
     LIVE_DISTRO: fedora
   before_script:
     - *live_gate
+    # These jobs run the branch's own code and never need the readiness token (#365).
+    - unset RELEASE_READINESS_TOKEN
     - dnf install -y -q --setopt=install_weak_deps=False ca-certificates curl git moby-engine docker-compose python3 jq openssl util-linux shadow-utils
     - docker compose version
     - *go_tarball
@@ -1878,8 +1890,10 @@ renovate:
 # share `resource_group: release`, which lets only one run at a time, and
 # each runs the check again while it holds that lock, just before
 # release-cli writes the tag; the second finds the first's tag and stops.
-# The CHANGELOG.md check the release jobs share (#364, #368), the same rule as
-# CheckChangelog in tools/releasereadiness: the version's heading must read
+# The CHANGELOG.md check the release jobs share (#364, #368). It shares with
+# CheckChangelog in tools/releasereadiness the dated heading and at least one
+# list entry, and nothing more: it does not check that the version is the
+# newest or that Unreleased is empty. The version's heading must read
 # exactly `## [X.Y.Z] - YYYY-MM-DD`, and its section (up to the next `## `
 # heading) must hold at least one list entry under ### Added, Changed,
 # Deprecated, Removed, Fixed or Security. It defines two shell functions, so
@@ -1937,6 +1951,8 @@ renovate:
   cache: []
   # RELEASE_BUMP, set by each button, is `patch` or `minor`.
   script:
+    # Branch code (go run) runs below, so the readiness token goes first (#365).
+    - unset RELEASE_READINESS_TOKEN
     - *changelog_check
     - |
       set -eu
@@ -1988,6 +2004,8 @@ renovate:
   resource_group: release
   cache: []
   script:
+    # release-tag-check.sh is the branch's own code (#365).
+    - unset RELEASE_READINESS_TOKEN
     - sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
     - *changelog_check
     # The release body is the version's CHANGELOG.md section (#359, C4),

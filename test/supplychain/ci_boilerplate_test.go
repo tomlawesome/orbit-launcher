@@ -1557,7 +1557,7 @@ install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
 		jobs: []string{"live"},
 		old:  `python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 		new: `# Runs beside the tests, so without the credentials (#301).
-env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
   python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 	},
 	{
@@ -1604,7 +1604,7 @@ nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPEND
 # credentials (#301). That keeps them out of its logs and dumps; it does
 # not hide them from the tests, which can read this whole container
 # (see .live_leg, #303).
-nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \`,
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \`,
 	},
 	{ // C1
 		jobs: []string{"live"},
@@ -2101,7 +2101,7 @@ var changedByAuditE = []struct {
   go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
 		new: `quarantined="$(bash scripts/ci/quarantine-skip.sh)"
 bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
   go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
 	},
 	{ // a merge request into preview or main from any branch but the stage
@@ -2266,6 +2266,22 @@ if [ "$state" != ok ]; then
   exit 1
 fi`,
 	},
+	{ // #365: the readiness token goes before any branch code runs
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		old:  `sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"`,
+		new: `unset RELEASE_READINESS_TOKEN
+sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"`,
+	},
+	{ // #365
+		jobs: []string{"release:patch", "release:minor"},
+		old:  "changelog_state() {",
+		new:  "unset RELEASE_READINESS_TOKEN\nchangelog_state() {",
+	},
+	{ // #365: the live jobs never need the readiness token
+		jobs: []string{"live", "live-fedora", "live-prepare"},
+		old:  "  exit 0\nfi",
+		new:  "  exit 0\nfi\nunset RELEASE_READINESS_TOKEN",
+	},
 }
 
 // The one top-level variable #183 adds: the Fedora leg's image.
@@ -2390,7 +2406,15 @@ func TestReleaseJobsShareTheirBodies(t *testing.T) {
 		if rg := e.Keys["resource_group"]; rg == nil || rg.dump() != `"release"` {
 			t.Errorf("%s has no `resource_group: release`; tagging must run one job at a time (#264)", follow)
 		}
-		if first, _, _ := strings.Cut(e.Script, "\n"); !strings.HasPrefix(first, "sh scripts/ci/release-tag-check.sh ") {
+		first := ""
+		for _, l := range strings.Split(e.Script, "\n") {
+			// The readiness token is unset first (#365); that is not the check.
+			if !strings.HasPrefix(l, "#") && !strings.HasPrefix(l, "unset ") {
+				first = l
+				break
+			}
+		}
+		if !strings.HasPrefix(first, "sh scripts/ci/release-tag-check.sh ") {
 			t.Errorf("%s does not re-run the tag check first, under its lock; first line is %q (#264)", follow, first)
 		}
 	}
