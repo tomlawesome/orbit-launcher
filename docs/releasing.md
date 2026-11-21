@@ -67,8 +67,10 @@ the promotion only when the output ends "Ready".
 
 1. The release agent opens `dev` -> `preview`; the owner approves; plain
    **Merge**. `release_readiness` runs first, then the live installs.
-   Straight after the merge the release agent opens the `preview` -> `dev`
-   back-merge.
+   An agent-opened promotion's own pipeline cannot read the token (see
+   `audit` below), so the owner presses **Run pipeline** on the merge
+   request and the agent watches that run. Straight after the merge the
+   release agent opens the `preview` -> `dev` back-merge.
 2. The owner tests the release by hand on `preview`, or decides it needs no
    manual test, and says so.
 3. The release agent checks out `preview` and runs
@@ -81,7 +83,10 @@ the promotion only when the output ends "Ready".
    Straight after, the release agent opens the `main` -> `preview`
    back-merge.
 4. The owner presses the button `release_readiness` named
-   (**release:patch** or **release:minor**) on the new `main` pipeline.
+   (**release:patch** or **release:minor**) on the new `main` pipeline. A
+   button refuses when `CHANGELOG.md` has no dated section with a list
+   entry for the version it would cut, and names the other button when that
+   one's version has one (#368).
 5. **release:gitlab:patch** or **release:gitlab:minor** creates the tag and
    its GitLab release, whose body is the version's `CHANGELOG.md` section.
    The release agent checks that the release page shows it.
@@ -124,8 +129,12 @@ Into `preview` (from `dev`):
   with `CI_API_V4_URL` and `CI_PROJECT_ID`. Make it a project access token
   with the Reporter role, only the `read_api` scope and an expiry date, and
   save it masked and protected, so only pipelines on protected branches
-  (the promotions among them) receive it. Without it that half
-  fails with "check by hand that audit issue #N is closed".
+  (the promotions among them) receive it. A promotion's pipeline gets it
+  only when Settings -> CI/CD -> Variables allows merge request pipelines
+  to access protected variables, and only when someone who can merge into
+  the target branch started it: a pipeline started by opening the merge
+  request from an account that cannot merge there runs without it.
+  Without it that half fails with "check by hand that audit issue #N is closed".
 - `orbit-pin`: `orbit/pin.json` names the tip of its Orbit branch, read from
   Orbit's public GitHub mirror (`ORBIT_GITHUB_REPO`, default
   `tomlawesome/orbit`) with no token. `live-prepare` stays the exact check:
@@ -208,15 +217,22 @@ Tags are made by a CI button, never by hand.
    0.5.0). One press is all it takes. The button picks the next version
    number. It stops if that tag already exists, if a higher tag already
    exists, if this commit already has a tag, or if newer commits have
-   landed on `main` since. If it stops, use the newest `main` pipeline
-   instead.
+   landed on `main` since. It also stops unless `CHANGELOG.md` has a
+   dated `## [<version>] - YYYY-MM-DD` section with a list entry for the
+   version it would cut (#368). If only the other button's version has one,
+   it says to press that button instead. If it stops for a tag or commit
+   reason, use the newest `main` pipeline instead. If it stops on the
+   `CHANGELOG.md` check, press the other button when the message names it;
+   otherwise fix `CHANGELOG.md` through a merge request.
 3. **release:gitlab:patch** or **release:gitlab:minor** runs by itself and
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. The release body is the
-   version's `CHANGELOG.md` section; the job stops before tagging if
-   `CHANGELOG.md` has no `## [<version>] - ` section or that section is
-   blank. It does not check the date or that the section lists entries:
-   `release_readiness` checks those on a promotion. GitLab's push mirror carries the
+   version's `CHANGELOG.md` section; the job stops before tagging unless
+   `CHANGELOG.md` has a `## [<version>] - YYYY-MM-DD` heading for it and at
+   least one list entry under an `### Added`, `Changed`, `Deprecated`,
+   `Removed`, `Fixed` or `Security` heading (the dated heading and list entry
+   `release_readiness` also requires, #364; this check does not test that the
+   version is the newest or that Unreleased is empty). GitLab's push mirror carries the
    tag to GitHub. Tagging jobs run one at a time, so a second press
    on the same commit stops: "already tagged" after the other button, or
    "already exists on the remote" after the same button again. It stops at
