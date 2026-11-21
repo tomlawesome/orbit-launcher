@@ -292,7 +292,7 @@ func TestReleaseReadiness_FetchesTheTagsBeforeTheDropAndRunsWithNoFetch(t *testi
 			fetch = i
 		case strings.HasPrefix(l, "git remote set-url origin"):
 			drop = i
-		case strings.HasPrefix(l, "go run ./tools/releasereadiness"):
+		case strings.HasPrefix(l, "go run ./tools/releasereadiness") || strings.HasPrefix(l, `RELEASE_READINESS_TOKEN="$keep" go run ./tools/releasereadiness`): // #365
 			tool = i
 			if !strings.Contains(l, "-no-fetch") {
 				t.Errorf("the tool must run with -no-fetch after the drop: %q", l)

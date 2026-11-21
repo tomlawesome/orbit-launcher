@@ -300,14 +300,16 @@ variables:
 # and GITHUB_COM_TOKEN (the renovate environment) are scoped elsewhere, so
 # they should never be here; they are named anyway, because unsetting an
 # absent name does nothing and a later scope change must not widen their
-# reach silently. The set-url line fails the job rather than skip: every user
+# reach silently. RELEASE_READINESS_TOKEN is unset too (#365): branch code
+# must never see it, and release_readiness, the one job that needs it, copies
+# it before the drop and hands it only to the tool's process. The set-url line fails the job rather than skip: every user
 # clones and the runner always creates origin, so it fails only with no git
 # or no clone, and a job added on a git-less image then fails on its first
 # run instead of silently keeping the token in .git/config. Not for the
 # live legs (they keep their own `env -u` wrappers) and not for renovate,
 # which uses its token.
 .drop_job_credentials: &drop_job_credentials |
-  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN
   git remote set-url origin "${CI_PROJECT_URL}.git"
 
 # The daemon inside the job's own container, copied from ai/orbit's
@@ -464,9 +466,12 @@ classify:
 # tags (into refs/remote-tags/origin/, which the tag checks read) are fetched
 # while the job token is still in origin's URL; then the job's credentials
 # are dropped before the branch's own code (the tool) runs, so origin is
-# anonymous and the tool runs with -no-fetch. RELEASE_READINESS_TOKEN is not
-# dropped, because the tool reads issues with it; the git commands it runs
-# get a narrow environment that never holds it.
+# anonymous and the tool runs with -no-fetch. The drop also unsets
+# RELEASE_READINESS_TOKEN (#365), because the tool is the branch's own code;
+# the job copies the token into a shell variable before the drop and gives it
+# to the tool's process alone (`RELEASE_READINESS_TOKEN="$keep" go run ...`),
+# so go's build steps never see it, and the git commands the tool runs get a
+# narrow environment that never holds it.
 release_readiness:
   stage: classify
   needs: []
@@ -482,10 +487,11 @@ release_readiness:
   variables:
     GIT_DEPTH: 0
   before_script:
+    - keep="${RELEASE_READINESS_TOKEN-}"
     - git fetch --quiet --force --prune --no-tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}" "+refs/tags/*:refs/remote-tags/origin/*"
     - *drop_job_credentials
   script:
-    - go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
+    - RELEASE_READINESS_TOKEN="$keep" go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
 
 # The shared flake check (#310; agent-infra scripts/flake-check/). It makes
 # the flake rule in docs/flakes.md act: it fails the pipeline when a flake has

@@ -1948,7 +1948,7 @@ if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
 	{
 		jobs: []string{"fast"},
 		old:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN`,
-		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN`,
+		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN`,
 	},
 	{ // the drop fails the job rather than skip (#303)
 		jobs: []string{"fast"},
@@ -2030,7 +2030,7 @@ var changedBy307 = []struct {
 }
 
 // The two lines of the .drop_job_credentials anchor (#303 C2).
-const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN
 git remote set-url origin "${CI_PROJECT_URL}.git"`
 
 // #306: each pipeline runs only what an earlier stage could not (the table is
@@ -2531,6 +2531,9 @@ func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
 			case gitInstall.MatchString(l):
 				installed = true
 			case l == unsetLine, prologue[l], pkgInstall.MatchString(l):
+			case job == "release_readiness" && l == `keep="${RELEASE_READINESS_TOKEN-}"`:
+				// #365: the token is copied into a shell variable before
+				// the drop unsets it; nothing runs, nothing is exported.
 			case job == "release_readiness" && strings.HasPrefix(l, "git fetch --quiet --force --prune --no-tags origin "):
 				// #359: the target branch and the remote's tags are
 				// fetched with the job token still in origin's URL, then
