@@ -219,10 +219,11 @@ Tags are made by a CI button, never by hand.
 3. **release:gitlab:patch** or **release:gitlab:minor** runs by itself and
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. The release body is the
-   version's `CHANGELOG.md` section; the job stops before tagging if
-   `CHANGELOG.md` has no `## [<version>] - ` section or that section is
-   blank. It does not check the date or that the section lists entries:
-   `release_readiness` checks those on a promotion. GitLab's push mirror carries the
+   version's `CHANGELOG.md` section; the job stops before tagging unless
+   `CHANGELOG.md` has a `## [<version>] - YYYY-MM-DD` heading for it and at
+   least one list entry under an `### Added`, `Changed`, `Deprecated`,
+   `Removed`, `Fixed` or `Security` heading (the rule `release_readiness`
+   applies, #364). GitLab's push mirror carries the
    tag to GitHub. Tagging jobs run one at a time, so a second press
    on the same commit stops: "already tagged" after the other button, or
    "already exists on the remote" after the same button again. It stops at

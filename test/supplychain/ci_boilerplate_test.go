@@ -2123,7 +2123,9 @@ bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
 
 // What #359 changes on purpose in the GitLab release (decision C4): the
 // release body is the version's CHANGELOG.md section, written to
-// release-notes.md before release-cli runs; no section stops the job.
+// release-notes.md before release-cli runs; no section stops the job. #364
+// part 2 later makes that stop also catch an undated heading and a section
+// with no list entry (the shared .changelog_check anchor's two functions).
 // Applies after #113.
 var changedBy359 = []struct {
 	jobs     []string
@@ -2133,10 +2135,42 @@ var changedBy359 = []struct {
 	{
 		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
 		old:  `echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
-		new: `set -eu
+		new: `changelog_state() {
+  if [ ! -f CHANGELOG.md ]; then echo nofile; return 0; fi
+  awk -v v="$1" '
+    BEGIN { st = "nosection" }
+    { sub(/[ \t\r]+$/, "") }
+    /^## / {
+      if (on) exit
+      if (index($0, "## [" v "]") == 1) {
+        on = 1
+        st = "nodate"
+        if (index($0, "## [" v "] - ") == 1 && substr($0, length("## [" v "] - ") + 1) ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) st = "nolist"
+      }
+      next
+    }
+    on && /^[ \t]*### / {
+      t = $0; sub(/^[ \t]*### +/, "", t)
+      counting = (t == "Added" || t == "Changed" || t == "Deprecated" || t == "Removed" || t == "Fixed" || t == "Security")
+      next
+    }
+    on && counting && st == "nolist" && /^[ \t]*[-*] [ \t]*[^ \t]/ { st = "ok" }
+    END { print st }
+  ' CHANGELOG.md
+}
+changelog_why() {
+  case "$2" in
+    nofile) echo "CHANGELOG.md is missing, so there is no $1 section" ;;
+    nosection) echo "CHANGELOG.md has no $1 section" ;;
+    nodate) echo "the $1 heading in CHANGELOG.md must read '## [$1] - YYYY-MM-DD', with a date" ;;
+    *) echo "the $1 section in CHANGELOG.md needs at least one list entry under ### Added, Changed, Deprecated, Removed, Fixed or Security" ;;
+  esac
+}
+set -eu
 version="${RELEASE_TAG#v}"
-if [ ! -f CHANGELOG.md ]; then
-  echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+state="$(changelog_state "$version")"
+if [ "$state" != ok ]; then
+  echo "$(changelog_why "$version" "$state"), so there is no release body for ${RELEASE_TAG}: fix it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
   exit 1
 fi
 awk -v v="$version" '
@@ -2144,10 +2178,6 @@ awk -v v="$version" '
   on && /^## / { exit }
   on { print }
 ' CHANGELOG.md > release-notes.md
-if ! grep -q '[^[:space:]]' release-notes.md; then
-  echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
-  exit 1
-fi
 cat release-notes.md
 echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 	},
