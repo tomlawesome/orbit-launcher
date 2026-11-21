@@ -85,8 +85,9 @@ the promotion only when the output ends "Ready".
 4. The owner presses the button `release_readiness` named
    (**release:patch** or **release:minor**) on the new `main` pipeline. A
    button refuses when `CHANGELOG.md` has no dated section with a list
-   entry for the version it would cut, and names the other button when that
-   one's version has one (#368).
+   entry for the version it would cut. When its version has no section at
+   all and the other button's version has one, it names the other button
+   (#368).
 5. **release:gitlab:patch** or **release:gitlab:minor** creates the tag and
    its GitLab release, whose body is the version's `CHANGELOG.md` section.
    The release agent checks that the release page shows it.
@@ -219,8 +220,9 @@ Tags are made by a CI button, never by hand.
    exists, if this commit already has a tag, or if newer commits have
    landed on `main` since. It also stops unless `CHANGELOG.md` has a
    dated `## [<version>] - YYYY-MM-DD` section with a list entry for the
-   version it would cut (#368). If only the other button's version has one,
-   it says to press that button instead. If it stops for a tag or commit
+   version it would cut (#368). If this version has no section at all and
+   the other button's version has one, it says to press that button
+   instead. If it stops for a tag or commit
    reason, use the newest `main` pipeline instead. If it stops on the
    `CHANGELOG.md` check, press the other button when the message names it;
    otherwise fix `CHANGELOG.md` through a merge request.
