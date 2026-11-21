@@ -412,6 +412,47 @@ func TestReleaseRecord_Unsigned(t *testing.T) {
 	wantFail(t, run(t, "preview", s), "release-record", "sign")
 }
 
+// A fault in the record file's own Signed-off-by: line must send the author
+// to the file, not to a commit trailer: re-committing with --trailer cannot fix
+// it. The Why strings mirror what the real lookups report for each fault.
+func TestReleaseRecord_SignoffHints(t *testing.T) {
+	const noTrailer = "the last commit touching the record has no Signed-off-by trailer"
+	soLine := "Signed-off-by: Ada Tester\n"
+	cases := []struct {
+		name     string
+		record   string
+		why      string
+		fileSide bool
+	}{
+		{"file has no Signed-off-by line", strings.Replace(goodRecord(), soLine, "", 1), "the record has no Signed-off-by line", true},
+		{"file has two Signed-off-by lines", goodRecord() + soLine, "the record has 2 Signed-off-by lines; want exactly one", true},
+		{"file line holds an email", strings.Replace(goodRecord(), "Ada Tester", "Ada Tester <ada@example.invalid>", 1), "the Signed-off-by line holds an email address: a name only, no email", true},
+		{"file name differs from the commit author", strings.Replace(goodRecord(), "Ada Tester", "Someone Else", 1), `the Signed-off-by line names "Someone Else", but the commit's author is "Ada Tester"`, true},
+		{"commit lacks the trailer, file is fine", goodRecord(), noTrailer, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newStub()
+			s.files[recordPath] = c.record
+			s.signoff = Signoff{Signed: false, Why: c.why}
+			r := get(t, run(t, "preview", s), "release-record")
+			if r.OK {
+				t.Fatalf("want FAIL, got ok")
+			}
+			if c.fileSide {
+				if strings.Contains(r.Message, "--trailer") {
+					t.Errorf("file-side fault must not suggest --trailer: %q", r.Message)
+				}
+				if !strings.Contains(r.Message, "Signed-off-by") || !strings.Contains(strings.ToLower(r.Message), "fix") {
+					t.Errorf("message must say to fix the record file's Signed-off-by line: %q", r.Message)
+				}
+			} else if !strings.Contains(r.Message, "--trailer") {
+				t.Errorf("a missing commit trailer must still give the --trailer hint: %q", r.Message)
+			}
+		})
+	}
+}
+
 func TestReleaseRecord_AnOlderGuideBlob(t *testing.T) {
 	s := newStub()
 	s.guideBlob = "blob222"
