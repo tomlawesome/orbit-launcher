@@ -411,7 +411,13 @@ func (c *checker) releaseRecord() (bool, string) {
 		if why == "" {
 			why = "the record is not signed"
 		}
-		problems = append(problems, "not signed: "+why+" (commit it with git commit --trailer \"Signed-off-by: <your name>\")")
+		// A fault in the file's own Signed-off-by line is fixed in the file;
+		// the --trailer hint is only for a commit missing its trailer.
+		hint := "commit it with git commit --trailer \"Signed-off-by: <your name>\""
+		if strings.HasPrefix(why, "the record has ") || strings.HasPrefix(why, "the Signed-off-by line ") {
+			hint = "fix the Signed-off-by line in " + path
+		}
+		problems = append(problems, "not signed: "+why+" ("+hint+")")
 	}
 
 	if blob, err := c.l.GuideBlob(); err != nil {
