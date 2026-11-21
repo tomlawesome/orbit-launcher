@@ -582,7 +582,10 @@ fast:
     # Unit tests plus the compiled binary's own runs under test/pty, merged
     # into one profile (#169): see scripts/coverage.sh. The launcher refuses
     # root (#291), so test/pty runs there as an unprivileged user (#292).
-    - scripts/coverage.sh -race
+    # -timeout 20m (#369): test/pty alone takes about 8 of go test's
+    # default 10 minutes per package, so a busy runner timed it out. 20m
+    # stays under the job's 25m, so a real hang still fails by test name.
+    - scripts/coverage.sh -race -timeout 20m
     - go run ./tools/coveragefloor coverage.out
     # The suite above runs as root, which reads a mode-0000 file, so the
     # tests that build an unreadable case skip. Run their packages again as

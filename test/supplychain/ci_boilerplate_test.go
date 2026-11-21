@@ -2193,6 +2193,20 @@ echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 // the version it computed (the shared .changelog_check functions, defined
 // first in the script), after computing it and before the tag check, and
 // refuses with the other button's name. Applies after #264.
+// changedBy369: fast gives go test a 20-minute package limit, so test/pty
+// does not time out on a busy runner (#369).
+var changedBy369 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		old:  "scripts/coverage.sh -race",
+		new:  "scripts/coverage.sh -race -timeout 20m",
+	},
+}
+
 var changedBy368 = []struct {
 	jobs     []string
 	key      string
@@ -2321,6 +2335,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy113...)
 	all = append(all, changedBy359...)
 	all = append(all, changedBy368...)
+	all = append(all, changedBy369...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
