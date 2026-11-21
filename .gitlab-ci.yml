@@ -1937,15 +1937,33 @@ renovate:
   cache: []
   # RELEASE_BUMP, set by each button, is `patch` or `minor`.
   script:
+    - *changelog_check
     - |
       set -eu
       # calculateversion reads local tags; a CI clone may not hold them all.
       git fetch --quiet --force --tags origin
+      patch_version="$(go run ./tools/calculateversion -hotfix)"
+      minor_version="$(go run ./tools/calculateversion)"
       case "$RELEASE_BUMP" in
-        patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
-        minor) version="$(go run ./tools/calculateversion)" ;;
+        patch) version="$patch_version"; other=release:minor; other_version="$minor_version" ;;
+        minor) version="$minor_version"; other=release:patch; other_version="$patch_version" ;;
         *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
       esac
+      # The button refuses a version CHANGELOG.md has no dated, listed section
+      # for (#368), before anything is checked against tags or written, and
+      # names the other button when that one's version has a section.
+      state="$(changelog_state "$version")"
+      if [ "$state" != ok ]; then
+        msg="$(changelog_why "$version" "$state")"
+        if [ "$state" != nosection ]; then
+          echo "$msg; fix it on the branch being released (docs/releasing.md)" >&2
+        elif [ "$(changelog_state "$other_version")" = ok ]; then
+          echo "$msg; press $other instead" >&2
+        else
+          echo "$msg, nor does $other's version $other_version; neither button fits until CHANGELOG.md has one (docs/releasing.md)" >&2
+        fi
+        exit 1
+      fi
       remote_tags="$(git ls-remote --tags origin)"
       tip_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
       sh scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env

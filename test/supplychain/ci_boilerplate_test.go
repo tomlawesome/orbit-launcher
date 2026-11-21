@@ -2189,6 +2189,85 @@ echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 	},
 }
 
+// What #368 changes on purpose: each release button checks CHANGELOG.md for
+// the version it computed (the shared .changelog_check functions, defined
+// first in the script), after computing it and before the tag check, and
+// refuses with the other button's name. Applies after #264.
+var changedBy368 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"release:patch", "release:minor"},
+		old: `set -eu
+# calculateversion reads local tags; a CI clone may not hold them all.`,
+		new: `changelog_state() {
+  if [ ! -f CHANGELOG.md ]; then echo nofile; return 0; fi
+  awk -v v="$1" '
+    BEGIN { st = "nosection" }
+    { sub(/[ \t\r]+$/, "") }
+    /^## / {
+      if (on) exit
+      if (index($0, "## [" v "]") == 1) {
+        on = 1
+        st = "nodate"
+        if (index($0, "## [" v "] - ") == 1 && substr($0, length("## [" v "] - ") + 1) ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) st = "nolist"
+      }
+      next
+    }
+    on && /^[ \t]*### / {
+      t = $0; sub(/^[ \t]*### +/, "", t)
+      counting = (t == "Added" || t == "Changed" || t == "Deprecated" || t == "Removed" || t == "Fixed" || t == "Security")
+      next
+    }
+    on && counting && st == "nolist" && /^[ \t]*[-*] [ \t]*[^ \t]/ { st = "ok" }
+    END { print st }
+  ' CHANGELOG.md
+}
+changelog_why() {
+  case "$2" in
+    nofile) echo "CHANGELOG.md is missing, so there is no $1 section" ;;
+    nosection) echo "CHANGELOG.md has no $1 section" ;;
+    nodate) echo "the $1 heading in CHANGELOG.md must read '## [$1] - YYYY-MM-DD', with a date" ;;
+    *) echo "the $1 section in CHANGELOG.md needs at least one list entry under ### Added, Changed, Deprecated, Removed, Fixed or Security" ;;
+  esac
+}
+set -eu
+# calculateversion reads local tags; a CI clone may not hold them all.`,
+	},
+	{
+		jobs: []string{"release:patch", "release:minor"},
+		old: `case "$RELEASE_BUMP" in
+  patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
+  minor) version="$(go run ./tools/calculateversion)" ;;
+  *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+esac`,
+		new: `patch_version="$(go run ./tools/calculateversion -hotfix)"
+minor_version="$(go run ./tools/calculateversion)"
+case "$RELEASE_BUMP" in
+  patch) version="$patch_version"; other=release:minor; other_version="$minor_version" ;;
+  minor) version="$minor_version"; other=release:patch; other_version="$patch_version" ;;
+  *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+esac
+# The button refuses a version CHANGELOG.md has no dated, listed section
+# for (#368), before anything is checked against tags or written, and
+# names the other button when that one's version has a section.
+state="$(changelog_state "$version")"
+if [ "$state" != ok ]; then
+  msg="$(changelog_why "$version" "$state")"
+  if [ "$state" != nosection ]; then
+    echo "$msg; fix it on the branch being released (docs/releasing.md)" >&2
+  elif [ "$(changelog_state "$other_version")" = ok ]; then
+    echo "$msg; press $other instead" >&2
+  else
+    echo "$msg, nor does $other's version $other_version; neither button fits until CHANGELOG.md has one (docs/releasing.md)" >&2
+  fi
+  exit 1
+fi`,
+	},
+}
+
 // The one top-level variable #183 adds: the Fedora leg's image.
 const variableAddedBy183 = "FEDORA_IMAGE"
 
@@ -2225,6 +2304,7 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy114...)
 	all = append(all, changedBy113...)
 	all = append(all, changedBy359...)
+	all = append(all, changedBy368...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {

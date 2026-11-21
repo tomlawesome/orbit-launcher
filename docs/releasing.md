@@ -83,7 +83,10 @@ the promotion only when the output ends "Ready".
    Straight after, the release agent opens the `main` -> `preview`
    back-merge.
 4. The owner presses the button `release_readiness` named
-   (**release:patch** or **release:minor**) on the new `main` pipeline.
+   (**release:patch** or **release:minor**) on the new `main` pipeline. A
+   button refuses when `CHANGELOG.md` has no dated section with a list
+   entry for the version it would cut, and names the other button when that
+   one's version has one (#368).
 5. **release:gitlab:patch** or **release:gitlab:minor** creates the tag and
    its GitLab release, whose body is the version's `CHANGELOG.md` section.
    The release agent checks that the release page shows it.
@@ -214,8 +217,11 @@ Tags are made by a CI button, never by hand.
    0.5.0). One press is all it takes. The button picks the next version
    number. It stops if that tag already exists, if a higher tag already
    exists, if this commit already has a tag, or if newer commits have
-   landed on `main` since. If it stops, use the newest `main` pipeline
-   instead.
+   landed on `main` since. It also stops unless `CHANGELOG.md` has a
+   dated `## [<version>] - YYYY-MM-DD` section with a list entry for the
+   version it would cut (#368). If only the other button's version has one,
+   it says to press that button instead. If it stops, use the newest `main`
+   pipeline instead.
 3. **release:gitlab:patch** or **release:gitlab:minor** runs by itself and
    creates the annotated tag `v<version>` and its GitLab release at that
    commit, as whoever pressed the button. The release body is the
