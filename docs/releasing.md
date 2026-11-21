@@ -67,8 +67,10 @@ the promotion only when the output ends "Ready".
 
 1. The release agent opens `dev` -> `preview`; the owner approves; plain
    **Merge**. `release_readiness` runs first, then the live installs.
-   Straight after the merge the release agent opens the `preview` -> `dev`
-   back-merge.
+   An agent-opened promotion's own pipeline cannot read the token (see
+   `audit` below), so the owner presses **Run pipeline** on the merge
+   request and the agent watches that run. Straight after the merge the
+   release agent opens the `preview` -> `dev` back-merge.
 2. The owner tests the release by hand on `preview`, or decides it needs no
    manual test, and says so.
 3. The release agent checks out `preview` and runs
@@ -124,8 +126,12 @@ Into `preview` (from `dev`):
   with `CI_API_V4_URL` and `CI_PROJECT_ID`. Make it a project access token
   with the Reporter role, only the `read_api` scope and an expiry date, and
   save it masked and protected, so only pipelines on protected branches
-  (the promotions among them) receive it. Without it that half
-  fails with "check by hand that audit issue #N is closed".
+  (the promotions among them) receive it. A promotion's pipeline gets it
+  only when Settings -> CI/CD -> Variables allows merge request pipelines
+  to access protected variables, and only when someone who can merge into
+  the target branch started it: a pipeline started by opening the merge
+  request from an account that cannot merge there runs without it.
+  Without it that half fails with "check by hand that audit issue #N is closed".
 - `orbit-pin`: `orbit/pin.json` names the tip of its Orbit branch, read from
   Orbit's public GitHub mirror (`ORBIT_GITHUB_REPO`, default
   `tomlawesome/orbit`) with no token. `live-prepare` stays the exact check:
