@@ -120,7 +120,7 @@ Into `preview` (from `dev`):
   one entry under Added, Changed, Deprecated, Removed, Fixed or Security,
   and no Unreleased section holds entries.
 - `contains-target`: `dev` contains `preview` (otherwise merge the open
-  `preview` -> `dev` back-merge first).
+  `preview` -> `dev` back-merge first; see "Back-merges" below).
 - `audit`: every non-merge commit in `preview..dev` is covered by an
   `Audited-through:` line in `.agents/reviews/*.md`, or touches only
   `docs/releases/`, `CHANGELOG.md` and `.agents/reviews/`; and each audit
@@ -153,6 +153,24 @@ Into `main` (from `preview`): `tag-free`, `changelog`, `audit` (over
   **release:minor**, that gives the `CHANGELOG.md` version, and fails when
   neither does (tags moved since the preview promotion, for example by a
   hotfix).
+
+### Back-merges
+
+A back-merge (`preview` -> `dev` after a promotion, `main` -> `preview`
+after a release) only carries merge commits. GitLab merges it as one
+merge request only while the source still contains the target's tip.
+Once the target has moved on (a batch landed on `dev` first), GitLab
+recorded the merge as a commit with one parent and no changes, as a
+rebase that drops merge commits would: the target still did not contain
+the source, and the audit check counted that commit as unaudited (#372,
+!346). !333, merged the same way while `preview` still held `dev`'s tip,
+came out with both parents.
+
+So before opening one, check `git merge-base --is-ancestor
+gitlab/<target> gitlab/<source>`. If it succeeds, open the merge request
+from the source branch itself. If it fails, merge the source into a
+branch made from the target with `git merge --no-ff gitlab/<source>`,
+push that branch, and open the merge request from it (!348).
 
 ### The signed release record
 
