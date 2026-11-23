@@ -330,14 +330,14 @@ func (l *realLookups) RecordSignoff(path string) (readiness.Signoff, error) {
 	signers := readiness.ParseRecord(src).Signers
 	switch len(signers) {
 	case 0:
-		return readiness.Signoff{Why: "the record has no Signed-off-by line"}, nil
+		return readiness.Signoff{Why: "the record has no Signed-off-by line", InFile: true}, nil
 	case 1:
 	default:
-		return readiness.Signoff{Why: fmt.Sprintf("the record has %d Signed-off-by lines; want exactly one", len(signers))}, nil
+		return readiness.Signoff{Why: fmt.Sprintf("the record has %d Signed-off-by lines; want exactly one", len(signers)), InFile: true}, nil
 	}
 	line := signers[0]
 	if strings.ContainsAny(line, "@<>") {
-		return readiness.Signoff{Why: "the Signed-off-by line holds an email address: a name only, no email"}, nil
+		return readiness.Signoff{Why: "the Signed-off-by line holds an email address: a name only, no email", InFile: true}, nil
 	}
 	out, err := l.gitOut("log", "-1", "--format=%an%x00%(trailers:key=Signed-off-by,valueonly,separator=%x01)", l.cfg.Source, "--", path)
 	if err != nil {
@@ -348,7 +348,7 @@ func (l *realLookups) RecordSignoff(path string) (readiness.Signoff, error) {
 	}
 	author, trailers, _ := strings.Cut(out, "\x00")
 	if line != author {
-		return readiness.Signoff{Why: fmt.Sprintf("the Signed-off-by line names %q, but the commit's author is %q", line, author)}, nil
+		return readiness.Signoff{Why: fmt.Sprintf("the Signed-off-by line names %q, but the commit's author is %q", line, author), InFile: true}, nil
 	}
 	for _, t := range strings.Split(trailers, "\x01") {
 		if strings.TrimSpace(t) == line {
