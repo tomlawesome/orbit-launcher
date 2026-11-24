@@ -8,7 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases before v0.4.7 are described on their GitLab release pages only.
 
-## [Unreleased]
+## [0.4.8] - 2026-11-23
+
+### Changed
+
+- The launcher's screens are drawn with bubbletea v2.1.2, a bug-fix
+  release of the terminal library they use. Nothing on the screens
+  changes. (#361)
+
+## [0.4.7] - 2026-11-20
 
 ### Added
 

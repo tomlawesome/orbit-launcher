@@ -83,7 +83,8 @@ jobs:
         run: staticcheck ./...
 
       - name: Test
-        run: scripts/coverage.sh -race
+        # -timeout 20m: see the GitLab fast job (#369).
+        run: scripts/coverage.sh -race -timeout 20m
 
       - name: Check coverage floors
         run: go run ./tools/coveragefloor coverage.out

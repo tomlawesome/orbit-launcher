@@ -89,8 +89,12 @@ const (
 	RepairPlan RepairMode = "--plan"
 	// RepairExecuteSafe runs the safe batch (slice 4 stage 1):
 	// fix-permissions, restore-transaction, restart-services,
-	// start-services, recreate-services, restore-compose-file — every action reversible, per-file backups
-	// where the action takes one, full re-diagnosis after.
+	// start-services, recreate-services, restore-compose-file and
+	// retire-smtp-lines, full re-diagnosis after. Every action but the
+	// last is reversible, with per-file backups where the action takes
+	// one; retire-smtp-lines deletes the SMTP password file without a
+	// copy, as Orbit keeps the password in its own Mail settings
+	// (Orbit repair.sh, ai/orbit#1817).
 	// Piped and detached this takes the script's documented unattended
 	// path: --safe-only is itself the automation opt-in, and the
 	// person's explicit menu choice is the consent that path expects

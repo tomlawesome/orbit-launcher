@@ -145,11 +145,12 @@ variables:
   # The live test stands up a real Orbit through orbit's install.sh, which was
   # proven on GitHub's Ubuntu runner (see live-install-test.yml's header for the
   # Debian leg that was tried and dropped).
-  UBUNTU_IMAGE: ubuntu:26.04@sha256:0e73b71479e7bc5f006bca872e25c3cd680dc052a0116f90d63ae363537db0dd
+  UBUNTU_IMAGE: ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
   # The live test's second leg (#183): the same install on Fedora, so a
   # distribution difference in Docker, Compose or the base tools shows up
-  # before a user finds it. fedora:44 is Docker Hub's `latest` today.
-  FEDORA_IMAGE: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+  # before a user finds it. fedora:45 is Docker Hub's `latest` (2026-11-21);
+  # the 46 tag is a pre-release, so not what a user installs.
+  FEDORA_IMAGE: fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
   # Same pins as the workflows. A commit on staticcheck's master, not a
   # release: Go 1.27 writes compiler export data version 5, and every release
   # to date (v0.8.1 / 2026.2.1) links an x/tools that reads at most version 4,
@@ -300,14 +301,18 @@ variables:
 # and GITHUB_COM_TOKEN (the renovate environment) are scoped elsewhere, so
 # they should never be here; they are named anyway, because unsetting an
 # absent name does nothing and a later scope change must not widen their
-# reach silently. The set-url line fails the job rather than skip: every user
+# reach silently. RELEASE_READINESS_TOKEN is unset too (#365): branch code
+# must never see it, and release_readiness, the one job that needs it, copies
+# it before the drop and hands it only to the tool's process. The set-url line fails the job rather than skip: every user
 # clones and the runner always creates origin, so it fails only with no git
 # or no clone, and a job added on a git-less image then fails on its first
 # run instead of silently keeping the token in .git/config. Not for the
-# live legs (they keep their own `env -u` wrappers) and not for renovate,
+# live legs (their `env -u` wrappers and the dockerd one list the token too),
+# not for the release jobs (they need the job token to read and tag the
+# remote, so they unset only RELEASE_READINESS_TOKEN) and not for renovate,
 # which uses its token.
 .drop_job_credentials: &drop_job_credentials |
-  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+  unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN
   git remote set-url origin "${CI_PROJECT_URL}.git"
 
 # The daemon inside the job's own container, copied from ai/orbit's
@@ -338,7 +343,7 @@ variables:
   # credentials (#301). That keeps them out of its logs and dumps; it does
   # not hide them from the tests, which can read this whole container
   # (see .live_leg, #303).
-  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+  nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
     dockerd --data-root "$docker_data_root" > /tmp/dockerd.log 2>&1 &
   for _ in $(seq 1 60); do
     docker info > /dev/null 2>&1 && break
@@ -464,9 +469,15 @@ classify:
 # tags (into refs/remote-tags/origin/, which the tag checks read) are fetched
 # while the job token is still in origin's URL; then the job's credentials
 # are dropped before the branch's own code (the tool) runs, so origin is
-# anonymous and the tool runs with -no-fetch. RELEASE_READINESS_TOKEN is not
-# dropped, because the tool reads issues with it; the git commands it runs
-# get a narrow environment that never holds it.
+# anonymous and the tool runs with -no-fetch. The drop also unsets
+# RELEASE_READINESS_TOKEN (#365), because the tool is the branch's own code;
+# the job copies the token into a shell variable before the drop, builds the
+# tool with no token in the environment, and gives the token to the built
+# binary's process alone (`RELEASE_READINESS_TOKEN="$keep" .../binary ...`),
+# so neither go's compile and link steps nor anything else sees it, and the git
+# commands the tool runs get a narrow environment that never holds it. The
+# binary sits at a path of its own under the project directory, away from the
+# Go cache and any artifact path.
 release_readiness:
   stage: classify
   needs: []
@@ -482,10 +493,12 @@ release_readiness:
   variables:
     GIT_DEPTH: 0
   before_script:
+    - keep="${RELEASE_READINESS_TOKEN-}"
     - git fetch --quiet --force --prune --no-tags origin "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}" "+refs/tags/*:refs/remote-tags/origin/*"
     - *drop_job_credentials
   script:
-    - go run ./tools/releasereadiness -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
+    - go build -o "$CI_PROJECT_DIR/.release-readiness.bin" ./tools/releasereadiness
+    - RELEASE_READINESS_TOKEN="$keep" "$CI_PROJECT_DIR/.release-readiness.bin" -target "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" -remote origin -no-fetch
 
 # The shared flake check (#310; agent-infra scripts/flake-check/). It makes
 # the flake rule in docs/flakes.md act: it fails the pipeline when a flake has
@@ -569,7 +582,10 @@ fast:
     # Unit tests plus the compiled binary's own runs under test/pty, merged
     # into one profile (#169): see scripts/coverage.sh. The launcher refuses
     # root (#291), so test/pty runs there as an unprivileged user (#292).
-    - scripts/coverage.sh -race
+    # -timeout 20m (#369): test/pty alone takes about 8 of go test's
+    # default 10 minutes per package, so a busy runner timed it out. 20m
+    # stays under the job's 25m, so a real hang still fails by test name.
+    - scripts/coverage.sh -race -timeout 20m
     - go run ./tools/coveragefloor coverage.out
     # The suite above runs as root, which reads a mode-0000 file, so the
     # tests that build an unreadable case skip. Run their packages again as
@@ -1056,6 +1072,8 @@ live-prepare:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "preview" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "dev") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != "preview"))
   before_script:
     - *live_gate
+    # These jobs run the branch's own code and never need the readiness token (#365).
+    - unset RELEASE_READINESS_TOKEN
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl jq openssl
   script:
@@ -1249,7 +1267,7 @@ live-prepare:
         jq -e . .live/orbit/release/orbit-release-manifest.json > /dev/null || { echo "the record_image artifact from ${current_from} is not a JSON release manifest"; exit 1; }
         [ -s .live/orbit/release/orbit-release-manifest.json.sig ] || { echo "the sign_evidence artifact from ${current_from} is an empty signature"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/.live/orbit/release/orbit-release-manifest.json" \
           || { echo "the preview release manifest from ${current_from} failed verification; nothing is installed from it (#194)"; exit 1; }
         # install.sh comes from the pinned commit (#193), the manifest from
@@ -1337,7 +1355,7 @@ live-prepare:
         jq -e . "$first_dir/orbit-release-manifest.json" > /dev/null || { echo "${first_from} did not return a JSON release manifest (#198)"; exit 1; }
         [ -s "$first_dir/orbit-release-manifest.json.sig" ] || { echo "${first_from} returned an empty signature (#198)"; exit 1; }
         COSIGN_PUBLIC_KEY="$CI_PROJECT_DIR/.live/orbit/cosign.pub" \
-          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+          env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_USER -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
           bash .live/orbit/scripts/ci/verify-release-manifest.sh "$CI_PROJECT_DIR/$first_dir/orbit-release-manifest.json" \
           || { echo "the earlier release manifest from ${first_from} failed verification; nothing is installed from it (#198)"; exit 1; }
         jq -e '.channel == "preview"' "$first_dir/orbit-release-manifest.json" > /dev/null \
@@ -1655,7 +1673,7 @@ live-prepare:
         echo "the update leg (#198) installs ${FIRST_VERSION:-?} ${FIRST_DIGEST:-?} (ai/orbit ${FIRST_COMMIT:-?}, ${FIRST_FROM:-?}) first, then updates to the current preview"
       fi
       # Runs beside the tests, so without the credentials (#301).
-      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+      env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
         python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &
       for _ in $(seq 1 30); do
         curl --fail --silent --output /dev/null http://127.0.0.1:8765/install.sh && break
@@ -1680,7 +1698,7 @@ live-prepare:
     - |
       quarantined="$(bash scripts/ci/quarantine-skip.sh)"
       bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+        env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
         go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...
   after_script:
     # The registry login (the deploy token) goes first, pass or fail.
@@ -1707,6 +1725,8 @@ live:
     LIVE_DISTRO: ubuntu
   before_script:
     - *live_gate
+    # These jobs run the branch's own code and never need the readiness token (#365).
+    - unset RELEASE_READINESS_TOKEN
     - *apt_prologue
     - apt-get install -y -qq --no-install-recommends ca-certificates curl git docker.io docker-compose-v2 python3 jq openssl
     - *go_tarball
@@ -1726,6 +1746,8 @@ live-fedora:
     LIVE_DISTRO: fedora
   before_script:
     - *live_gate
+    # These jobs run the branch's own code and never need the readiness token (#365).
+    - unset RELEASE_READINESS_TOKEN
     - dnf install -y -q --setopt=install_weak_deps=False ca-certificates curl git moby-engine docker-compose python3 jq openssl util-linux shadow-utils
     - docker compose version
     - *go_tarball
@@ -1872,6 +1894,50 @@ renovate:
 # share `resource_group: release`, which lets only one run at a time, and
 # each runs the check again while it holds that lock, just before
 # release-cli writes the tag; the second finds the first's tag and stops.
+# The CHANGELOG.md check the release jobs share (#364, #368). It shares with
+# CheckChangelog in tools/releasereadiness the dated heading and at least one
+# list entry, and nothing more: it does not check that the version is the
+# newest or that Unreleased is empty. The version's heading must read
+# exactly `## [X.Y.Z] - YYYY-MM-DD`, and its section (up to the next `## `
+# heading) must hold at least one list entry under ### Added, Changed,
+# Deprecated, Removed, Fixed or Security. It defines two shell functions, so
+# a job that lists it first in `script:` can call them later (POSIX sh: the
+# Go image and release-cli's Alpine image both run sh).
+# changelog_state VERSION prints ok, nofile, nosection, nodate or nolist;
+# changelog_why VERSION STATE prints the refusal text for a state.
+.changelog_check: &changelog_check |
+  changelog_state() {
+    if [ ! -f CHANGELOG.md ]; then echo nofile; return 0; fi
+    awk -v v="$1" '
+      BEGIN { st = "nosection" }
+      { sub(/[ \t\r]+$/, "") }
+      /^## / {
+        if (on) exit
+        if (index($0, "## [" v "]") == 1) {
+          on = 1
+          st = "nodate"
+          if (index($0, "## [" v "] - ") == 1 && substr($0, length("## [" v "] - ") + 1) ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) st = "nolist"
+        }
+        next
+      }
+      on && /^[ \t]*### / {
+        t = $0; sub(/^[ \t]*### +/, "", t)
+        counting = (t == "Added" || t == "Changed" || t == "Deprecated" || t == "Removed" || t == "Fixed" || t == "Security")
+        next
+      }
+      on && counting && st == "nolist" && /^[ \t]*[-*] [ \t]*[^ \t]/ { st = "ok" }
+      END { print st }
+    ' CHANGELOG.md
+  }
+  changelog_why() {
+    case "$2" in
+      nofile) echo "CHANGELOG.md is missing, so there is no $1 section" ;;
+      nosection) echo "CHANGELOG.md has no $1 section" ;;
+      nodate) echo "the $1 heading in CHANGELOG.md must read '## [$1] - YYYY-MM-DD', with a date" ;;
+      *) echo "the $1 section in CHANGELOG.md needs at least one list entry under ### Added, Changed, Deprecated, Removed, Fixed or Security" ;;
+    esac
+  }
+
 .release_version:
   stage: release
   image:
@@ -1889,15 +1955,35 @@ renovate:
   cache: []
   # RELEASE_BUMP, set by each button, is `patch` or `minor`.
   script:
+    # Branch code (go run) runs below, so the readiness token goes first (#365).
+    - unset RELEASE_READINESS_TOKEN
+    - *changelog_check
     - |
       set -eu
       # calculateversion reads local tags; a CI clone may not hold them all.
       git fetch --quiet --force --tags origin
+      patch_version="$(go run ./tools/calculateversion -hotfix)"
+      minor_version="$(go run ./tools/calculateversion)"
       case "$RELEASE_BUMP" in
-        patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
-        minor) version="$(go run ./tools/calculateversion)" ;;
+        patch) version="$patch_version"; other=release:minor; other_version="$minor_version" ;;
+        minor) version="$minor_version"; other=release:patch; other_version="$patch_version" ;;
         *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
       esac
+      # The button refuses a version CHANGELOG.md has no dated, listed section
+      # for (#368), before anything is checked against tags or written, and
+      # names the other button when that one's version has a section.
+      state="$(changelog_state "$version")"
+      if [ "$state" != ok ]; then
+        msg="$(changelog_why "$version" "$state")"
+        if [ "$state" != nosection ]; then
+          echo "$msg; fix it on the branch being released (docs/releasing.md)" >&2
+        elif [ "$(changelog_state "$other_version")" = ok ]; then
+          echo "$msg; press $other instead" >&2
+        else
+          echo "$msg, nor does $other's version $other_version; neither button fits until CHANGELOG.md has one (docs/releasing.md)" >&2
+        fi
+        exit 1
+      fi
       remote_tags="$(git ls-remote --tags origin)"
       tip_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
       sh scripts/ci/release-tag-check.sh "$version" "$remote_tags" main "$tip_sha" "$CI_COMMIT_SHA" > release.env
@@ -1922,15 +2008,20 @@ renovate:
   resource_group: release
   cache: []
   script:
+    # release-tag-check.sh is the branch's own code (#365).
+    - unset RELEASE_READINESS_TOKEN
     - sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"
+    - *changelog_check
     # The release body is the version's CHANGELOG.md section (#359, C4),
-    # its lines up to the next `## ` heading. No section, no release: the
-    # job stops before release-cli writes the tag.
+    # its lines up to the next `## ` heading. The section must be what
+    # readiness checks (#364): a dated heading and a list entry. Otherwise no
+    # release: the job stops before release-cli writes the tag.
     - |
       set -eu
       version="${RELEASE_TAG#v}"
-      if [ ! -f CHANGELOG.md ]; then
-        echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+      state="$(changelog_state "$version")"
+      if [ "$state" != ok ]; then
+        echo "$(changelog_why "$version" "$state"), so there is no release body for ${RELEASE_TAG}: fix it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
         exit 1
       fi
       awk -v v="$version" '
@@ -1938,10 +2029,6 @@ renovate:
         on && /^## / { exit }
         on { print }
       ' CHANGELOG.md > release-notes.md
-      if ! grep -q '[^[:space:]]' release-notes.md; then
-        echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
-        exit 1
-      fi
       cat release-notes.md
     - echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"
   release:
