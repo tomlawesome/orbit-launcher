@@ -161,7 +161,7 @@ variables:
   STATICCHECK_VERSION: 452d5bb86b45416c35891262f6a11dbd6a970117
   # The `deps` job's two tools.
   # renovate: datasource=go depName=golang.org/x/vuln
-  GOVULNCHECK_VERSION: v1.9.0
+  GOVULNCHECK_VERSION: v1.10.0
   # renovate: datasource=go depName=github.com/google/go-licenses/v2
   GO_LICENSES_VERSION: v2.0.1
   # Every *_VERSION pin carries a `# renovate:` line, read by renovate.json's

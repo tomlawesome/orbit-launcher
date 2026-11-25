@@ -35,3 +35,7 @@ delete the heading.
 ## TestScreenWait_FindsTextSplitAcrossRedraws (test/internal/vtscreen)
 
 - 2026-11-21 · 382d7c7 · pipeline 5097 / fast job 60918 · `timeout's last screen = "", want the half-drawn host`: the virtual terminal had not drawn the first write within the test's 300 ms wait; the package passed in the retry 61046 on the same code
+
+## TestGroupB_W1_TwoSecondLimitHolds (internal/deploy)
+
+- 2026-11-25 · 958dff3 · pipeline 5409 / fast job 65212 · `the probe took 3.792750676s, want it to give up at about 2 s`, in the non-root rerun (`scripts/ci/nonroot-tests.sh`); retry 65332 passed
