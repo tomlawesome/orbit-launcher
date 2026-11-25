@@ -72,6 +72,9 @@ type Commit struct {
 type Signoff struct {
 	Signed bool
 	Why    string
+	// InFile says the fault is in the record file's own Signed-off-by
+	// line, so the fix is in the file, not in the commit's trailer.
+	InFile bool
 }
 
 // Lookups is everything the checks read from outside the repository text.
@@ -411,7 +414,13 @@ func (c *checker) releaseRecord() (bool, string) {
 		if why == "" {
 			why = "the record is not signed"
 		}
-		problems = append(problems, "not signed: "+why+" (commit it with git commit --trailer \"Signed-off-by: <your name>\")")
+		// A fault in the file's own Signed-off-by line is fixed in the file;
+		// the --trailer hint is only for a commit missing its trailer.
+		hint := "commit it with git commit --trailer \"Signed-off-by: <your name>\""
+		if so.InFile {
+			hint = "fix the Signed-off-by line in " + path
+		}
+		problems = append(problems, "not signed: "+why+" ("+hint+")")
 	}
 
 	if blob, err := c.l.GuideBlob(); err != nil {

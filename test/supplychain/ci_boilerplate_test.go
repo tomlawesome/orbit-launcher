@@ -1557,7 +1557,7 @@ install -d -m 0700 -o orbit-ci -g orbit-ci /home/orbit-ci/.docker`,
 		jobs: []string{"live"},
 		old:  `python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 		new: `# Runs beside the tests, so without the credentials (#301).
-env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
   python3 -m http.server --bind 127.0.0.1 --directory .live/install-script 8765 > /tmp/install-script-server.log 2>&1 &`,
 	},
 	{
@@ -1604,7 +1604,7 @@ nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPEND
 # credentials (#301). That keeps them out of its logs and dumps; it does
 # not hide them from the tests, which can read this whole container
 # (see .live_leg, #303).
-nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \`,
+nohup env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \`,
 	},
 	{ // C1
 		jobs: []string{"live"},
@@ -1948,7 +1948,7 @@ if [ "${ORBIT_CHANNEL:-}" = "preview" ]; then
 	{
 		jobs: []string{"fast"},
 		old:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN`,
-		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN`,
+		new:  `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN`,
 	},
 	{ // the drop fails the job rather than skip (#303)
 		jobs: []string{"fast"},
@@ -2030,7 +2030,7 @@ var changedBy307 = []struct {
 }
 
 // The two lines of the .drop_job_credentials anchor (#303 C2).
-const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN
+const dropJobCredentials303 = `unset CI_JOB_TOKEN CI_BUILD_TOKEN CI_REGISTRY_PASSWORD CI_DEPENDENCY_PROXY_PASSWORD CI_REPOSITORY_URL ORBIT_REGISTRY_USER ORBIT_REGISTRY_TOKEN RENOVATE_TOKEN GITHUB_COM_TOKEN ORBIT_READ_TOKEN RELEASE_READINESS_TOKEN
 git remote set-url origin "${CI_PROJECT_URL}.git"`
 
 // #306: each pipeline runs only what an earlier stage could not (the table is
@@ -2101,7 +2101,7 @@ var changedByAuditE = []struct {
   go test -tags live -count=1 -v -timeout 30m ./test/live/...`,
 		new: `quarantined="$(bash scripts/ci/quarantine-skip.sh)"
 bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
-  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN \
+  env -u CI_JOB_TOKEN -u CI_BUILD_TOKEN -u CI_REGISTRY_PASSWORD -u CI_DEPENDENCY_PROXY_PASSWORD -u CI_REPOSITORY_URL -u ORBIT_REGISTRY_TOKEN -u ORBIT_READ_TOKEN -u RELEASE_READINESS_TOKEN \
   go test -tags live -count=1 -v -timeout 30m ${quarantined:+-skip "$quarantined"} ./test/live/...`,
 	},
 	{ // a merge request into preview or main from any branch but the stage
@@ -2123,7 +2123,9 @@ bash scripts/ci/run-unprivileged.sh --user orbit-ci -- \
 
 // What #359 changes on purpose in the GitLab release (decision C4): the
 // release body is the version's CHANGELOG.md section, written to
-// release-notes.md before release-cli runs; no section stops the job.
+// release-notes.md before release-cli runs; no section stops the job. #364
+// part 2 later makes that stop also catch an undated heading and a section
+// with no list entry (the shared .changelog_check anchor's two functions).
 // Applies after #113.
 var changedBy359 = []struct {
 	jobs     []string
@@ -2133,10 +2135,42 @@ var changedBy359 = []struct {
 	{
 		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
 		old:  `echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
-		new: `set -eu
+		new: `changelog_state() {
+  if [ ! -f CHANGELOG.md ]; then echo nofile; return 0; fi
+  awk -v v="$1" '
+    BEGIN { st = "nosection" }
+    { sub(/[ \t\r]+$/, "") }
+    /^## / {
+      if (on) exit
+      if (index($0, "## [" v "]") == 1) {
+        on = 1
+        st = "nodate"
+        if (index($0, "## [" v "] - ") == 1 && substr($0, length("## [" v "] - ") + 1) ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) st = "nolist"
+      }
+      next
+    }
+    on && /^[ \t]*### / {
+      t = $0; sub(/^[ \t]*### +/, "", t)
+      counting = (t == "Added" || t == "Changed" || t == "Deprecated" || t == "Removed" || t == "Fixed" || t == "Security")
+      next
+    }
+    on && counting && st == "nolist" && /^[ \t]*[-*] [ \t]*[^ \t]/ { st = "ok" }
+    END { print st }
+  ' CHANGELOG.md
+}
+changelog_why() {
+  case "$2" in
+    nofile) echo "CHANGELOG.md is missing, so there is no $1 section" ;;
+    nosection) echo "CHANGELOG.md has no $1 section" ;;
+    nodate) echo "the $1 heading in CHANGELOG.md must read '## [$1] - YYYY-MM-DD', with a date" ;;
+    *) echo "the $1 section in CHANGELOG.md needs at least one list entry under ### Added, Changed, Deprecated, Removed, Fixed or Security" ;;
+  esac
+}
+set -eu
 version="${RELEASE_TAG#v}"
-if [ ! -f CHANGELOG.md ]; then
-  echo "CHANGELOG.md is missing, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
+state="$(changelog_state "$version")"
+if [ "$state" != ok ]; then
+  echo "$(changelog_why "$version" "$state"), so there is no release body for ${RELEASE_TAG}: fix it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
   exit 1
 fi
 awk -v v="$version" '
@@ -2144,10 +2178,6 @@ awk -v v="$version" '
   on && /^## / { exit }
   on { print }
 ' CHANGELOG.md > release-notes.md
-if ! grep -q '[^[:space:]]' release-notes.md; then
-  echo "CHANGELOG.md has no '## [${version}] - YYYY-MM-DD' section with entries, so there is no release body for ${RELEASE_TAG}: add it on the branch being released (dev for a promotion, the hotfix branch for a hotfix; docs/releasing.md) and merge again" >&2
-  exit 1
-fi
 cat release-notes.md
 echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 	},
@@ -2156,6 +2186,115 @@ echo "tagging $CI_COMMIT_SHA as $RELEASE_TAG"`,
 		key:  "release",
 		old:  `"description": "orbit-launcher $RELEASE_TAG, a source revision for Orbit to pin.\n\nThis repo publishes no binaries (#171): Orbit builds, signs and ships\nthe launcher alongside itself."`,
 		new:  `"description": "./release-notes.md"`,
+	},
+}
+
+// changedBy369: fast gives go test a 20-minute package limit, so test/pty
+// does not time out on a busy runner (#369).
+var changedBy369 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"fast"},
+		old:  "scripts/coverage.sh -race",
+		new:  "scripts/coverage.sh -race -timeout 20m",
+	},
+}
+
+// What #368 changes on purpose: each release button checks CHANGELOG.md for
+// the version it computed (the shared .changelog_check functions, defined
+// first in the script), after computing it and before the tag check, and
+// refuses with the other button's name. Applies after #264.
+var changedBy368 = []struct {
+	jobs     []string
+	key      string
+	old, new string
+}{
+	{
+		jobs: []string{"release:patch", "release:minor"},
+		old: `set -eu
+# calculateversion reads local tags; a CI clone may not hold them all.`,
+		new: `changelog_state() {
+  if [ ! -f CHANGELOG.md ]; then echo nofile; return 0; fi
+  awk -v v="$1" '
+    BEGIN { st = "nosection" }
+    { sub(/[ \t\r]+$/, "") }
+    /^## / {
+      if (on) exit
+      if (index($0, "## [" v "]") == 1) {
+        on = 1
+        st = "nodate"
+        if (index($0, "## [" v "] - ") == 1 && substr($0, length("## [" v "] - ") + 1) ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) st = "nolist"
+      }
+      next
+    }
+    on && /^[ \t]*### / {
+      t = $0; sub(/^[ \t]*### +/, "", t)
+      counting = (t == "Added" || t == "Changed" || t == "Deprecated" || t == "Removed" || t == "Fixed" || t == "Security")
+      next
+    }
+    on && counting && st == "nolist" && /^[ \t]*[-*] [ \t]*[^ \t]/ { st = "ok" }
+    END { print st }
+  ' CHANGELOG.md
+}
+changelog_why() {
+  case "$2" in
+    nofile) echo "CHANGELOG.md is missing, so there is no $1 section" ;;
+    nosection) echo "CHANGELOG.md has no $1 section" ;;
+    nodate) echo "the $1 heading in CHANGELOG.md must read '## [$1] - YYYY-MM-DD', with a date" ;;
+    *) echo "the $1 section in CHANGELOG.md needs at least one list entry under ### Added, Changed, Deprecated, Removed, Fixed or Security" ;;
+  esac
+}
+set -eu
+# calculateversion reads local tags; a CI clone may not hold them all.`,
+	},
+	{
+		jobs: []string{"release:patch", "release:minor"},
+		old: `case "$RELEASE_BUMP" in
+  patch) version="$(go run ./tools/calculateversion -hotfix)" ;;
+  minor) version="$(go run ./tools/calculateversion)" ;;
+  *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+esac`,
+		new: `patch_version="$(go run ./tools/calculateversion -hotfix)"
+minor_version="$(go run ./tools/calculateversion)"
+case "$RELEASE_BUMP" in
+  patch) version="$patch_version"; other=release:minor; other_version="$minor_version" ;;
+  minor) version="$minor_version"; other=release:patch; other_version="$patch_version" ;;
+  *) echo "RELEASE_BUMP is '$RELEASE_BUMP', not patch or minor" >&2; exit 1 ;;
+esac
+# The button refuses a version CHANGELOG.md has no dated, listed section
+# for (#368), before anything is checked against tags or written, and
+# names the other button when that one's version has a section.
+state="$(changelog_state "$version")"
+if [ "$state" != ok ]; then
+  msg="$(changelog_why "$version" "$state")"
+  if [ "$state" != nosection ]; then
+    echo "$msg; fix it on the branch being released (docs/releasing.md)" >&2
+  elif [ "$(changelog_state "$other_version")" = ok ]; then
+    echo "$msg; press $other instead" >&2
+  else
+    echo "$msg, nor does $other's version $other_version; neither button fits until CHANGELOG.md has one (docs/releasing.md)" >&2
+  fi
+  exit 1
+fi`,
+	},
+	{ // #365: the readiness token goes before any branch code runs
+		jobs: []string{"release:gitlab:patch", "release:gitlab:minor"},
+		old:  `sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"`,
+		new: `unset RELEASE_READINESS_TOKEN
+sh scripts/ci/release-tag-check.sh "${RELEASE_TAG#v}" "$(git ls-remote --tags origin)" main "$(git ls-remote origin refs/heads/main | cut -f1)" "$CI_COMMIT_SHA"`,
+	},
+	{ // #365
+		jobs: []string{"release:patch", "release:minor"},
+		old:  "changelog_state() {",
+		new:  "unset RELEASE_READINESS_TOKEN\nchangelog_state() {",
+	},
+	{ // #365: the live jobs never need the readiness token
+		jobs: []string{"live", "live-fedora", "live-prepare"},
+		old:  "  exit 0\nfi",
+		new:  "  exit 0\nfi\nunset RELEASE_READINESS_TOKEN",
 	},
 }
 
@@ -2195,6 +2334,8 @@ func applyChangedOnPurpose(t *testing.T, job string, keys map[string]string) {
 	all = append(all, changedBy114...)
 	all = append(all, changedBy113...)
 	all = append(all, changedBy359...)
+	all = append(all, changedBy368...)
+	all = append(all, changedBy369...)
 	for _, r := range all {
 		applies := false
 		for _, j := range r.jobs {
@@ -2280,7 +2421,15 @@ func TestReleaseJobsShareTheirBodies(t *testing.T) {
 		if rg := e.Keys["resource_group"]; rg == nil || rg.dump() != `"release"` {
 			t.Errorf("%s has no `resource_group: release`; tagging must run one job at a time (#264)", follow)
 		}
-		if first, _, _ := strings.Cut(e.Script, "\n"); !strings.HasPrefix(first, "sh scripts/ci/release-tag-check.sh ") {
+		first := ""
+		for _, l := range strings.Split(e.Script, "\n") {
+			// The readiness token is unset first (#365); that is not the check.
+			if !strings.HasPrefix(l, "#") && !strings.HasPrefix(l, "unset ") {
+				first = l
+				break
+			}
+		}
+		if !strings.HasPrefix(first, "sh scripts/ci/release-tag-check.sh ") {
 			t.Errorf("%s does not re-run the tag check first, under its lock; first line is %q (#264)", follow, first)
 		}
 	}
@@ -2531,6 +2680,9 @@ func TestDropJobCredentialsRunsWhereGitExists(t *testing.T) {
 			case gitInstall.MatchString(l):
 				installed = true
 			case l == unsetLine, prologue[l], pkgInstall.MatchString(l):
+			case job == "release_readiness" && l == `keep="${RELEASE_READINESS_TOKEN-}"`:
+				// #365: the token is copied into a shell variable before
+				// the drop unsets it; nothing runs, nothing is exported.
 			case job == "release_readiness" && strings.HasPrefix(l, "git fetch --quiet --force --prune --no-tags origin "):
 				// #359: the target branch and the remote's tags are
 				// fetched with the job token still in origin's URL, then

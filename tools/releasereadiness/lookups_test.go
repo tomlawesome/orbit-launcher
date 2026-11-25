@@ -135,6 +135,12 @@ func TestLookups_SignOff(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// #364: a fault in the file's own line is flagged as one, so the
+			// hint sends the author to the file, not to --trailer.
+			inFile := map[string]bool{"line differs from the author": true, "email in the line": true, "no line": true, "two lines": true}[c.name]
+			if got.InFile != inFile {
+				t.Errorf("InFile = %v, want %v (why: %q)", got.InFile, inFile, got.Why)
+			}
 			if got.Signed != c.signed {
 				t.Errorf("Signed = %v, want %v (why: %q)", got.Signed, c.signed, got.Why)
 			}
