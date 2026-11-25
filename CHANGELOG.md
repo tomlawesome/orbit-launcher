@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases before v0.4.7 are described on their GitLab release pages only.
 
+## [Unreleased]
+
+### Changed
+
+- The launcher's screens are styled with lipgloss v2.1.1, the library that
+  sets their colours and layout, and its text helper ansi v0.11.10. Nothing
+  on the screens changes.
+
 ## [0.4.8] - 2026-11-23
 
 ### Changed
