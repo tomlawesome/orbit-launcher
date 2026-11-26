@@ -60,13 +60,19 @@ func MaintenanceCommand(targetDir string, start bool, notice, until string) (*ex
 	return detachedCommand(context.Background(), targetDir, "bash", args...), nil
 }
 
-// HasMaintenanceScripts reports whether both maintenance scripts exist
-// in targetDir/scripts (Lstat only; trust is judged by MaintenanceCommand).
-func HasMaintenanceScripts(targetDir string) bool {
-	for _, s := range []string{startMaintenanceScript, endMaintenanceScript} {
-		if _, err := os.Lstat(filepath.Join(targetDir, scriptsDir, s)); err != nil { //nolint:gosec // G703: existence check only
-			return false
-		}
+// MaintenanceScripts reports which maintenance scripts exist in
+// targetDir/scripts: start-maintenance.sh and end-maintenance.sh (Lstat
+// only; trust is judged by MaintenanceCommand).
+func MaintenanceScripts(targetDir string) (start, end bool) {
+	has := func(name string) bool {
+		_, err := os.Lstat(filepath.Join(targetDir, scriptsDir, name)) //nolint:gosec // G703: existence check only
+		return err == nil
 	}
-	return true
+	return has(startMaintenanceScript), has(endMaintenanceScript)
+}
+
+// HasMaintenanceScripts reports whether both maintenance scripts exist.
+func HasMaintenanceScripts(targetDir string) bool {
+	start, end := MaintenanceScripts(targetDir)
+	return start && end
 }

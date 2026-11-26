@@ -26,6 +26,8 @@ import (
 // and end-maintenance.sh the way Repair runs repair.sh and reads the one
 // `maintenance …` outcome line plus the exit code, never prose.
 
+const maintLinesKept = 40
+
 const (
 	defaultMaintenanceNotice = "Orbit is closed for maintenance and will be back soon."
 	maxMaintenanceNotice     = 500
@@ -79,7 +81,11 @@ type MaintenanceModel struct {
 	stderrTail []string
 	runErr     error
 	result     engine.MaintenanceOutcome
-	signalQuit bool
+	canClose   bool // start-maintenance.sh is present
+	canReopen  bool // end-maintenance.sh is present
+	// exitMismatch: the line said success but the exit code did not.
+	exitMismatch bool
+	signalQuit   bool
 
 	zone     *time.Location
 	zoneName string
@@ -115,18 +121,30 @@ var maintStream = streamWrap{
 // newer Orbit".
 func NewMaintenanceModel(d *deploy.Deployment, targetDir, version string) MaintenanceModel {
 	m := MaintenanceModel{d: d, targetDir: targetDir, version: version, zone: time.Local, zoneName: serverZoneName()}
-	m.menu = newMenu(maintChooseRows...)
+	m.canClose, m.canReopen = deploy.MaintenanceScripts(targetDir)
+	m.menu = newMenu(m.chooseRows()...)
 	switch {
 	case d == nil:
 		m.state, m.menu = maintNotFound, newMenu(deadEndRows...)
-	case !deploy.HasMaintenanceScripts(targetDir):
+	case !m.canClose && !m.canReopen:
 		m.state, m.menu = maintNewer, newMenu(maintOKRows...)
 	}
 	return m
 }
 
+// chooseRows offers each action only when its script is present.
+func (m MaintenanceModel) chooseRows() []string {
+	var rows []string
+	if m.canClose {
+		rows = append(rows, "Close Orbit for maintenance")
+	}
+	if m.canReopen {
+		rows = append(rows, "Reopen Orbit")
+	}
+	return append(rows, "Cancel")
+}
+
 var (
-	maintChooseRows  = []string{"Close Orbit for maintenance", "Reopen Orbit", "Cancel"}
 	maintConfirmRows = []string{"Close Orbit", "Cancel"}
 	maintReopenRows  = []string{"Reopen Orbit", "Cancel"}
 	maintOKRows      = []string{"Menu", "Exit"}
@@ -193,6 +211,9 @@ func (m MaintenanceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if raw, ok := msg.msg.(engine.RawLineMsg); ok {
 			m.lines = append(m.lines, raw.Text)
+			if len(m.lines) > maintLinesKept {
+				m.lines = append([]string(nil), m.lines[len(m.lines)-maintLinesKept:]...)
+			}
 		}
 		if done, ok := msg.msg.(engine.DoneMsg); ok {
 			return m.finish(done)
@@ -237,6 +258,7 @@ func (m MaintenanceModel) finish(done engine.DoneMsg) (tea.Model, tea.Cmd) {
 		exit = engine.MaintenanceExitFailed
 	}
 	m.result = engine.ResolveMaintenance(m.lines, exit)
+	m.exitMismatch = exit != 0 && !m.failedResultOf(engine.ResolveMaintenance(m.lines, 0))
 	m.state, m.runErr = maintDone, nil
 	m.menu = newMenu(maintOKRows...)
 	if m.failedResult() {
@@ -260,8 +282,10 @@ func (m MaintenanceModel) failed(err error) MaintenanceModel {
 	return m
 }
 
-func (m MaintenanceModel) failedResult() bool {
-	switch m.result.Result {
+func (m MaintenanceModel) failedResult() bool { return m.failedResultOf(m.result) }
+
+func (m MaintenanceModel) failedResultOf(r engine.MaintenanceOutcome) bool {
+	switch r.Result {
 	case "started", "already-active", "ended", "not-active":
 		return false
 	}
@@ -321,7 +345,7 @@ func (m MaintenanceModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m MaintenanceModel) back() (tea.Model, tea.Cmd) {
 	switch m.state {
 	case maintNotice, maintReopen:
-		return m.goTo(maintChoose, maintChooseRows), nil
+		return m.goTo(maintChoose, m.chooseRows()), nil
 	case maintWhen:
 		return m.goTo(maintNotice, nil), nil
 	case maintConfirm:
@@ -418,8 +442,8 @@ func defaultPrepareMaintenance(_ context.Context, targetDir string, start bool, 
 // ---- time ----
 
 var (
-	lengthPattern = regexp.MustCompile(`^(?:[0-9]{1,5}[dhm])+$`)
-	unitPattern   = regexp.MustCompile(`([0-9]{1,5})([dhm])`)
+	// Each unit at most once, in d, h, m order.
+	lengthPattern = regexp.MustCompile(`^(?:([0-9]{1,5})d)?(?:([0-9]{1,5})h)?(?:([0-9]{1,5})m)?$`)
 	clockPattern  = regexp.MustCompile(`^([0-9]{1,2}):([0-9]{2})$`)
 )
 
@@ -430,14 +454,20 @@ func parseMaintenanceEnd(input string, now time.Time, loc *time.Location) (time.
 	if s == "" {
 		return time.Time{}, true
 	}
-	if lengthPattern.MatchString(s) {
+	if parts := lengthPattern.FindStringSubmatch(s); parts != nil {
 		var d time.Duration
-		for _, part := range unitPattern.FindAllStringSubmatch(s, -1) {
-			n, _ := strconv.Atoi(part[1])
-			unit := map[string]time.Duration{"d": 24 * time.Hour, "h": time.Hour, "m": time.Minute}[part[2]]
+		for i, unit := range []time.Duration{24 * time.Hour, time.Hour, time.Minute} {
+			if parts[i+1] == "" {
+				continue
+			}
+			n, _ := strconv.Atoi(parts[i+1])
+			// Each part is at most 99999 units, so this cannot overflow.
 			d += time.Duration(n) * unit
+			if d > maxMaintenanceLength {
+				return time.Time{}, false
+			}
 		}
-		if d < time.Minute || d > maxMaintenanceLength {
+		if d < time.Minute {
 			return time.Time{}, false
 		}
 		return now.Add(d), true
@@ -550,9 +580,13 @@ func (m MaintenanceModel) view() string {
 	switch m.state {
 	case maintNewer:
 		writeHeader(&b, mark, "Maintenance needs a newer Orbit")
-		prose(style.MutedText, "This Orbit release doesn't ship its maintenance commands yet. Update brings them. Until then this reopens Orbit from the deployment folder:")
-		fmt.Fprintln(&b)
-		writeCommandBox(&b, commandBox("bash scripts/end-maintenance.sh", m.width))
+		if m.canReopen {
+			prose(style.MutedText, "This Orbit release doesn't ship its maintenance commands yet. Update brings them. Until then this reopens Orbit from the deployment folder:")
+			fmt.Fprintln(&b)
+			writeCommandBox(&b, commandBox("bash scripts/end-maintenance.sh", m.width))
+		} else {
+			prose(style.MutedText, "This Orbit release doesn't ship its maintenance commands yet. Update brings them.")
+		}
 		fmt.Fprintln(&b)
 		writeStackedMenu(&b, maintOKRows, 0)
 	case maintChoose:
@@ -655,7 +689,10 @@ func (m MaintenanceModel) writeOutcome(b *strings.Builder, limit, edge int) {
 		}
 		switch r.Reason {
 		case "", "database-unavailable":
-			if r.Reported {
+			switch {
+			case m.exitMismatch:
+				prose(style.MutedText, "Orbit's report and its exit status disagree, so this isn't treated as done.")
+			case r.Reported:
 				prose(style.MutedText, maintenanceDBHint)
 			}
 		case "notice-invalid":

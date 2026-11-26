@@ -325,6 +325,12 @@ func TestSplashMaintenance242_OtherAnswersPreselectAsBefore(t *testing.T) {
 // 192.0.2.5:8080), and, when withScripts, both maintenance scripts.
 func maintDeployment(t *testing.T, withScripts bool) (string, *deploy.Deployment) {
 	t.Helper()
+	return maintDeploymentWith(t, withScripts, withScripts)
+}
+
+// maintDeploymentWith stages the start and/or end script independently.
+func maintDeploymentWith(t *testing.T, start, end bool) (string, *deploy.Deployment) {
+	t.Helper()
 	t.Setenv("ORBIT_BIND_ADDRESS", "")
 	t.Setenv("ORBIT_PORT", "")
 	dir := t.TempDir()
@@ -333,11 +339,11 @@ func maintDeployment(t *testing.T, withScripts bool) (string, *deploy.Deployment
 	}
 	testutil.WriteEnvOrbit(t, filepath.Join(dir, deploy.EnvFile), "ORBIT_BIND_ADDRESS=192.0.2.5", "ORBIT_PORT=8080")
 	var files []testutil.File
-	if withScripts {
-		files = []testutil.File{
-			{Path: "scripts/start-maintenance.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o700},
-			{Path: "scripts/end-maintenance.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o700},
-		}
+	if start {
+		files = append(files, testutil.File{Path: "scripts/start-maintenance.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o700})
+	}
+	if end {
+		files = append(files, testutil.File{Path: "scripts/end-maintenance.sh", Body: "#!/usr/bin/env bash\n", Mode: 0o700})
 	}
 	testutil.StageTree(t, dir, 0o755, files...)
 	d, err := deploy.Detect(dir)
@@ -589,9 +595,11 @@ func TestMaintenanceModel_AnOrbitWithoutTheScriptsNeedsAnUpdate(t *testing.T) {
 	m := NewMaintenanceModel(d, dir, "v9.9.9")
 	m.prepareMaintenance = fakeMaintenance(&calls, startedLine)
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30})
+	// No script is present, so no command is printed (#242: never offer
+	// a command for a script that is not there).
 	has(t, m, "Maintenance needs a newer Orbit",
-		"This Orbit release doesn't ship its maintenance commands yet. Update brings them. Until then this reopens Orbit from the deployment folder:",
-		"bash scripts/end-maintenance.sh")
+		"This Orbit release doesn't ship its maintenance commands yet. Update brings them.")
+	lacks(t, m, "bash scripts/", "Until then this reopens Orbit")
 	if got := maintRows(screen(m)); !slices.Equal(got, []string{"Menu", "Exit"}) {
 		t.Fatalf("rows = %q, want Menu, Exit", got)
 	}
