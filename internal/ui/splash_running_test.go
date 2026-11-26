@@ -557,7 +557,7 @@ func TestSplashRunning_FootIsUnchangedByAMismatch(t *testing.T) {
 // The worst case at 80x26: degraded with the drawer open, the three
 // running-mismatch rows, one row per missing service (the empty Docker
 // answer, #341) and the update notice. The default profile expects three
-// services, a 24-row centre block with Configure's menu row (#286), the
+// services, a 25-row centre block with the Configure (#286) and Maintenance (#242) menu rows, the
 // gap before Remove kept; the full profile five, which would be 26 rows
 // against the 25-row body, so the gap before Remove yields and the block
 // is 25 rows, filling the body exactly (#286). Every row is a fact or a
@@ -569,7 +569,7 @@ func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 		block   int
 		gap     bool
 	}{
-		{"default profile", nil, 24, true},
+		{"default profile", nil, 25, true},
 		{"full profile", []string{"COMPOSE_PROFILES=full"}, 25, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -603,7 +603,12 @@ func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 			if exit >= 25 {
 				t.Errorf("Exit is on row %d, want it inside the 25-row body above the foot:\n%s", exit, s)
 			}
-			if gap := lineIndex(s, "Remove")-lineIndex(s, "Repair") == 2; gap != tc.gap {
+			if !tc.gap {
+				if !strings.Contains(s, noticeOneRow242) || strings.Contains(s, "re-run Orbit's installer") {
+					t.Errorf("the notice should be the one row %q:\n%s", noticeOneRow242, s)
+				}
+			}
+			if gap := lineIndex(s, "Remove")-lineIndex(s, "Maintenance") == 2; gap != tc.gap {
 				t.Errorf("a blank row before Remove is %v, want %v:\n%s", gap, tc.gap, s)
 			}
 		})

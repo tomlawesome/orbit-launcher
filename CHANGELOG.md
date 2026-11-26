@@ -10,6 +10,16 @@ Releases before v0.4.7 are described on their GitLab release pages only.
 
 ## [Unreleased]
 
+### Added
+
+- A **Maintenance** row in the menu closes Orbit for maintenance or reopens
+  it from the launcher, so getting back into a closed instance no longer
+  depends on a hand-run script or a working sign-in. Closing takes a
+  notice and an optional end time (a length like 45m or a clock time like
+  22:30, server time) and confirms first; the result shows Orbit's own
+  outcome, including "Maintenance was not active". It needs an Orbit
+  release that ships the maintenance scripts. (#242)
+
 ### Changed
 
 - The launcher's screens are styled with lipgloss v2.1.1, the library that
