@@ -418,11 +418,32 @@ func typed(t *testing.T, m MaintenanceModel, text string) MaintenanceModel {
 func has(t *testing.T, m tea.Model, subs ...string) {
 	t.Helper()
 	s := screen(m)
+	flat := flatten(s)
 	for _, sub := range subs {
-		if !strings.Contains(s, sub) {
+		// Prose wraps at the screen's width, so a sentence is found
+		// with the line breaks and padding taken out.
+		if !strings.Contains(s, sub) && !strings.Contains(flat, flatten(sub)) {
 			t.Errorf("screen lacks %q:\n%s", sub, s)
 		}
 	}
+}
+
+// flatten joins a screen's lines, each trimmed of padding and the sky,
+// into one line with single spaces.
+func flatten(s string) string {
+	sky := func(f string) bool { return len([]rune(f)) == 1 && strings.Contains(".·✦●", f) }
+	var words []string
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		for len(f) > 0 && sky(f[0]) {
+			f = f[1:]
+		}
+		for len(f) > 0 && sky(f[len(f)-1]) {
+			f = f[:len(f)-1]
+		}
+		words = append(words, f...)
+	}
+	return strings.Join(words, " ")
 }
 
 func lacks(t *testing.T, m tea.Model, subs ...string) {
@@ -869,7 +890,7 @@ func TestMaintenanceModel_StartPassesNoticeAndUTCUntil(t *testing.T) {
 		{"clock time, summer time converted to UTC", "Back soon", "22:30", maintCall{true, "Back soon", "2025-07-01T21:30:00Z"}},
 		{"clock time rolling to tomorrow", "Back soon", "09:00", maintCall{true, "Back soon", "2025-07-02T08:00:00Z"}},
 		{"no end time: no until", "Back soon", "", maintCall{true, "Back soon", ""}},
-		{"empty notice: the default text", "", "2h", maintCall{true, defaultMaintenanceNotice, "2025-07-01T14:05:00Z"}},
+		{"empty notice: the default text", "", "2h", maintCall{true, defaultMaintenanceNotice, "2025-07-01T15:05:00Z"}},
 		{"notice with shell characters kept whole", "it's `$(x)` & \"y\"", "", maintCall{true, "it's `$(x)` & \"y\"", ""}},
 	}
 	for _, c := range cases {
@@ -1183,9 +1204,7 @@ func TestAppModel_MaintenanceRowOpensTheFlowAndEscComesBack(t *testing.T) {
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool { return bytes.Contains(out, []byte("Maintenance")) },
 		teatest.WithDuration(2*time.Second))
 
-	for i := 0; i < 3; i++ { // from Update (preselected for a live deployment) to Maintenance
-		tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
-	}
+	tm.Send(tea.KeyPressMsg{Code: '5', Text: "5"}) // the fifth row: Maintenance
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("Close Orbit for maintenance"))
