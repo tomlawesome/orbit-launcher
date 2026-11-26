@@ -78,6 +78,7 @@ type MaintenanceModel struct {
 	healthKnown bool
 
 	lines      []string
+	outcome    string // the first outcome line, kept outside the line cap
 	stderrTail []string
 	runErr     error
 	result     engine.MaintenanceOutcome
@@ -210,6 +211,9 @@ func (m MaintenanceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if raw, ok := msg.msg.(engine.RawLineMsg); ok {
+			if _, ok := engine.ParseMaintenanceOutcome(raw.Text); ok && m.outcome == "" {
+				m.outcome = raw.Text
+			}
 			m.lines = append(m.lines, raw.Text)
 			if len(m.lines) > maintLinesKept {
 				m.lines = append([]string(nil), m.lines[len(m.lines)-maintLinesKept:]...)
@@ -257,8 +261,12 @@ func (m MaintenanceModel) finish(done engine.DoneMsg) (tea.Model, tea.Cmd) {
 	if done.Err != nil && exit == 0 {
 		exit = engine.MaintenanceExitFailed
 	}
-	m.result = engine.ResolveMaintenance(m.lines, exit)
-	m.exitMismatch = exit != 0 && !m.failedResultOf(engine.ResolveMaintenance(m.lines, 0))
+	lines := m.lines
+	if m.outcome != "" {
+		lines = []string{m.outcome}
+	}
+	m.result = engine.ResolveMaintenance(lines, exit)
+	m.exitMismatch = exit != 0 && !m.failedResultOf(engine.ResolveMaintenance(lines, 0))
 	m.state, m.runErr = maintDone, nil
 	m.menu = newMenu(maintOKRows...)
 	if m.failedResult() {
@@ -406,7 +414,7 @@ func (m MaintenanceModel) submit() (tea.Model, tea.Cmd) {
 func (m MaintenanceModel) run(start bool) (tea.Model, tea.Cmd) {
 	m.start = start
 	m.state, m.menu = maintWorking, menu{}
-	m.lines, m.stderrTail, m.runErr = nil, nil, nil
+	m.lines, m.outcome, m.stderrTail, m.runErr = nil, "", nil, nil
 	prepare := m.prepareMaintenance
 	if prepare == nil {
 		prepare = defaultPrepareMaintenance

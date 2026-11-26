@@ -75,3 +75,18 @@ func TestMaintenanceModel_NewerScreenOnlyPrintsACommandForAScriptThatExists(t *t
 	m, _ = updateAs(t, m, tea.WindowSizeMsg{Width: 80, Height: 30})
 	lacks(t, m, "bash scripts/")
 }
+
+// The 40-line cap must not lose the outcome line: a script that prints it
+// early and then keeps talking still reports what Orbit said.
+func TestMaintenanceModel_OutcomeLineSurvivesTheLineCap(t *testing.T) {
+	m, _, _ := newMaint(t, startedLine)
+	m.state, m.start = maintWorking, true
+	m, _ = updateAs(t, m, maintStreamMsg{msg: engine.RawLineMsg{Text: "maintenance action=start result=started until=none"}})
+	for i := 0; i < 100; i++ {
+		m, _ = updateAs(t, m, maintStreamMsg{msg: engine.RawLineMsg{Text: fmt.Sprintf("line %d", i)}})
+	}
+	m, _ = updateAs(t, m, maintStreamMsg{msg: engine.DoneMsg{ExitCode: 0}})
+	if m.result.Result != "started" {
+		t.Fatalf("result %q reason %q, want started", m.result.Result, m.result.Reason)
+	}
+}
