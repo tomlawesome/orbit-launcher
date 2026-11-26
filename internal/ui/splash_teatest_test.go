@@ -39,8 +39,8 @@ func TestSplashModel_TeaTest_NavigateAndSelectRemove(t *testing.T) {
 		return bytes.Contains(out, []byte("Install"))
 	}, teatest.WithDuration(2*time.Second))
 
-	// Down x4 from Install lands on Remove (Install, Update, Configure, Repair, Remove).
-	for i := 0; i < 4; i++ {
+	// Down x5 from Install lands on Remove (Install, Update, Configure, Repair, Maintenance, Remove).
+	for i := 0; i < 5; i++ {
 		tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})

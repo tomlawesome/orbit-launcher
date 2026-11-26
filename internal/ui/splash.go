@@ -86,6 +86,7 @@ var MainMenu = []MenuItem{
 	{Label: "Update"},
 	{Label: "Configure"},
 	{Label: "Repair"},
+	{Label: "Maintenance"},
 	{Label: "Remove", Gap: true},
 	{Label: "Exit"},
 }
@@ -101,11 +102,12 @@ func mainMenu() menu {
 
 // Menu indices used by the state-based preselection.
 const (
-	menuInstall   = 0
-	menuUpdate    = 1
-	menuConfigure = 2
-	menuRepair    = 3
-	menuExit      = 5
+	menuInstall     = 0
+	menuUpdate      = 1
+	menuConfigure   = 2
+	menuRepair      = 3
+	menuMaintenance = 4
+	menuExit        = 6
 )
 
 // tickInterval is the UI tick, the starfield's own interval.
@@ -472,9 +474,13 @@ func (m SplashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// wrong: say so, and leave the caret alone.
 			m.state = stateCantTell
 		case msg.reason == deploy.HealthMaintenance:
-			// Closed to users on purpose (#302): preselects Update like
-			// alive, and moves no caret the person already placed.
+			// Closed to users on purpose (#302): preselects the
+			// Maintenance row (#242), where it is reopened, and moves no
+			// caret the person already placed.
 			m.state = stateMaintenance
+			if !m.userNavigated && !restsOnExit(m.mismatch) {
+				m.menu.sel = menuMaintenance
+			}
 		default:
 			m.state = stateAlive
 		}

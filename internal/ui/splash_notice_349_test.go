@@ -122,7 +122,7 @@ func TestSplashNotice349_GapYieldStillHolds(t *testing.T) {
 		block int
 		gap   bool
 	}{
-		{"worst case, default profile", 24, true},
+		{"worst case, default profile", 25, true},
 		{"worst case, full profile", 25, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestSplashNotice349_GapYieldStillHolds(t *testing.T) {
 			if exit >= 25 {
 				t.Errorf("Exit is on row %d, want it inside the 25-row body:\n%s", exit, s)
 			}
-			if gap := lineIndex(s, "Remove")-lineIndex(s, "Repair") == 2; gap != tc.gap {
+			if gap := lineIndex(s, "Remove")-lineIndex(s, "Maintenance") == 2; gap != tc.gap {
 				t.Errorf("a blank row before Remove is %v, want %v:\n%s", gap, tc.gap, s)
 			}
 		})

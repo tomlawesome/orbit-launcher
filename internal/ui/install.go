@@ -170,17 +170,18 @@ type InstallModel struct {
 // engineRun and RepairModel embed it, Install and Update hold it and
 // hand it to their run, and AppModel passes it down whole.
 type engineRunSeams struct {
-	prepareEngine  prepareEngineFunc
-	prepareInstall prepareInstallFunc
-	runHandoff     runHandoffFunc
-	detect         detectFunc
-	now            nowFunc
-	prepareConfig  prepareConfigFunc
-	startConfig    startConfigFunc
-	adoptConfig    adoptConfigFunc
-	recheckConfig  recheckConfigFunc
-	prepareRepair  prepareRepairFunc
-	prepareRotate  prepareRotateFunc
+	prepareEngine      prepareEngineFunc
+	prepareInstall     prepareInstallFunc
+	runHandoff         runHandoffFunc
+	detect             detectFunc
+	now                nowFunc
+	prepareConfig      prepareConfigFunc
+	startConfig        startConfigFunc
+	adoptConfig        adoptConfigFunc
+	recheckConfig      recheckConfigFunc
+	prepareRepair      prepareRepairFunc
+	prepareRotate      prepareRotateFunc
+	prepareMaintenance prepareMaintenanceFunc
 	// checkIssuer checks an OIDC_ISSUER answer against the provider's
 	// discovery document (#314); nil is deploy.CheckOidcIssuer.
 	checkIssuer func(ctx context.Context, answer string) deploy.IssuerCheck

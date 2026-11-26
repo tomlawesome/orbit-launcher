@@ -22,6 +22,7 @@ const (
 	appStateUpdate
 	appStateConfigure
 	appStateSuccess
+	appStateMaintenance
 )
 
 // AppModel is the root model: it starts at the splash screen and, once a
@@ -35,6 +36,7 @@ type AppModel struct {
 	splash        SplashModel
 	remove        RemoveModel
 	repair        RepairModel
+	maintenance   MaintenanceModel
 	install       InstallModel
 	// collected is the guided configuration this launcher session has
 	// collected (collectedConfig): it outlives one Install flow, so
@@ -424,6 +426,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.configure.Update(msg)
 		m.configure = updated.(ConfigureModel)
 		return m.watchOutcome(m.configure.Outcome(), cmd)
+	case appStateMaintenance:
+		updated, cmd := m.maintenance.Update(msg)
+		m.maintenance = updated.(MaintenanceModel)
+		return m.watchOutcome(m.maintenance.Outcome(), cmd)
 	case appStateSuccess:
 		updated, cmd := m.success.Update(msg)
 		m.success = updated.(SuccessModel)
@@ -568,6 +574,16 @@ func (m AppModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sizeCmd, m.remove.Init())
 	case "Repair":
 		return m.startRepair()
+	case "Maintenance":
+		dir := m.resolvedTargetDir()
+		deployment, err := deploy.Detect(dir)
+		m.maintenance = NewMaintenanceModel(deployment, dir, m.version)
+		m.maintenance.detectErr = err
+		m.maintenance.engineRunSeams = m.flowSeams
+		m.maintenance.send = m.flowSend
+		m.maintenance.probe = m.healthProbe
+		m.state = appStateMaintenance
+		return m, tea.Batch(sizeCmd, m.maintenance.Init())
 	case "Install":
 		m.install = NewInstallModel(m.resolvedTargetDir(), m.version)
 		if m.collected == nil {
@@ -647,6 +663,8 @@ func (m AppModel) screen() tea.View {
 		return m.update.View()
 	case appStateConfigure:
 		return m.configure.View()
+	case appStateMaintenance:
+		return m.maintenance.View()
 	case appStateSuccess:
 		return m.success.View()
 	}

@@ -507,7 +507,7 @@ func TestMenuGrammar_AppEnterAfterADigitActs(t *testing.T) {
 		{'1', appStateInstall},
 		{'2', appStateUpdate},
 		{'3', appStateConfigure},
-		{'5', appStateRemove},
+		{'6', appStateRemove},
 	}
 	for _, f := range flows {
 		t.Run(string(f.digit), func(t *testing.T) {
@@ -520,9 +520,9 @@ func TestMenuGrammar_AppEnterAfterADigitActs(t *testing.T) {
 		})
 	}
 	t.Run("Exit", func(t *testing.T) {
-		m, cmd := updateAs(t, leaveApp(t), runeKey('6'))
+		m, cmd := updateAs(t, leaveApp(t), runeKey('7'))
 		if isQuit(cmd) {
-			t.Fatal("6 quit the launcher; it only moves the caret to Exit")
+			t.Fatal("7 quit the launcher; it only moves the caret to Exit")
 		}
 		if _, cmd := updateAs(t, m, key(tea.KeyEnter)); !isQuit(cmd) {
 			t.Fatal("Enter on Exit did not quit")

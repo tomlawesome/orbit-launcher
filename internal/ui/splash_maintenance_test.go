@@ -138,19 +138,21 @@ func TestSplashMaintenance_NoChevronAndNoDrawer(t *testing.T) {
 	}
 }
 
-func TestSplashMaintenance_PreselectsUpdateLikeAlive(t *testing.T) {
+// A closed deployment preselects the Maintenance row (#242), where it is
+// reopened; an alive one still preselects Update.
+func TestSplashMaintenance_PreselectsTheMaintenanceRow(t *testing.T) {
 	m := maintenanceSplash(t)
-	if m.menu.sel != menuUpdate {
-		t.Errorf("selected = %d, want Update", m.menu.sel)
+	if m.menu.sel != menuMaintenance {
+		t.Errorf("selected = %d, want Maintenance (%d)", m.menu.sel, menuMaintenance)
 	}
 	if m.userNavigated {
 		t.Error("userNavigated set by a probe result")
 	}
 	alive := degradedWith(t, deploy.HealthResponding)
-	if m.menu.sel != alive.menu.sel {
-		t.Errorf("selected = %d, alive selects %d", m.menu.sel, alive.menu.sel)
+	if alive.menu.sel != menuUpdate {
+		t.Errorf("alive selects %d, want Update", alive.menu.sel)
 	}
-	assertCaretOn(t, screen(m), "Update")
+	assertCaretOn(t, screen(m), "Maintenance")
 }
 
 func TestSplashMaintenance_ResultDoesNotMoveACaretTheUserPlaced(t *testing.T) {

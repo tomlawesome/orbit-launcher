@@ -21,7 +21,7 @@
 
 <br />
 
-<img src="docs/images/launcher-menu.png" alt="The launcher's opening screen: a starfield, the Orbit mark, and the menu: Install, Update, Configure, Repair, Remove and Exit" width="92%" />
+<img src="docs/images/launcher-menu.png" alt="The launcher's opening screen: a starfield, the Orbit mark, and the menu: Install, Update, Configure, Repair, Maintenance, Remove and Exit" width="92%" />
 
 <br /><br />
 
@@ -94,7 +94,7 @@ profile names are those of Orbit's plain installer, not the launcher's.
 
 After that, export a recovery bundle, as Installing Orbit explains.
 
-## Update and Repair
+## Update, Repair and Maintenance
 
 Run the install line again from the Orbit folder and choose:
 
@@ -106,6 +106,14 @@ Run the install line again from the Orbit folder and choose:
   and shows what a fix would do. It changes nothing until you agree, and
   offers only the actions the plan proposes. It cannot yet start services
   that failed to start: issue #256 in the launcher's GitLab project.
+- **Maintenance** closes Orbit to everyone but administrators, or reopens
+  it, by running the deployment's own `scripts/start-maintenance.sh` and
+  `scripts/end-maintenance.sh`. Closing asks for a notice for the
+  maintenance page and, if you like, when Orbit will be back (a length like
+  `45m` or `2h`, or a clock time like `22:30` in the server's time zone), then
+  confirms before it starts. Reopening works even when you can't sign in. It
+  needs an Orbit release that ships those scripts; an older one points you
+  to Update.
 
 ## What Remove deletes
 
