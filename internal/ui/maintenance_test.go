@@ -508,48 +508,34 @@ func pump(t *testing.T, m MaintenanceModel, cmd tea.Cmd, s *sink, done func(Main
 // more will change.
 func pumpFor(t *testing.T, m MaintenanceModel, cmd tea.Cmd, s *sink, done func(MaintenanceModel, bool) bool, window time.Duration) (MaintenanceModel, bool) {
 	t.Helper()
-	quit := false
-	var over <-chan time.Time
+	// The one command driver (helpers_test.go) does the running; the
+	// watcher only notes a quit passing through.
+	var w maintWatch
 	if window > 0 {
-		over = time.After(window)
-		done = func(MaintenanceModel, bool) bool { return false }
+		w = driveQuiet(t, maintWatch{MaintenanceModel: m}, cmd, window, s)
+	} else {
+		w = driveUntil(t, maintWatch{MaintenanceModel: m}, cmd, func(tm tea.Model) bool {
+			cur := tm.(maintWatch)
+			return done(cur.MaintenanceModel, cur.quit)
+		}, s)
 	}
-	run := func(c tea.Cmd) {
-		if c != nil {
-			go func() {
-				if msg := c(); msg != nil {
-					s.Send(msg)
-				}
-			}()
-		}
+	return w.MaintenanceModel, w.quit
+}
+
+// maintWatch is a MaintenanceModel that remembers a tea.Quit sent to it.
+type maintWatch struct {
+	MaintenanceModel
+	quit bool
+}
+
+func (w maintWatch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.QuitMsg); ok {
+		w.quit = true
+		return w, nil
 	}
-	run(cmd)
-	deadline := time.After(10 * time.Second)
-	for !done(m, quit) {
-		select {
-		case msg := <-s.msgs:
-			switch msg := msg.(type) {
-			case tea.BatchMsg:
-				for _, c := range msg {
-					run(c)
-				}
-			case tickMsg:
-			default:
-				if msg == tea.Quit() {
-					quit = true
-					continue
-				}
-				var more tea.Cmd
-				m, more = updateAs(t, m, msg)
-				run(more)
-			}
-		case <-over:
-			return m, quit
-		case <-deadline:
-			t.Fatalf("never reached the expected state; the screen:\n%s", screen(m))
-		}
-	}
-	return m, quit
+	updated, cmd := w.MaintenanceModel.Update(msg)
+	w.MaintenanceModel = updated.(MaintenanceModel)
+	return w, cmd
 }
 
 func untilScreen(sub string) func(MaintenanceModel, bool) bool {
