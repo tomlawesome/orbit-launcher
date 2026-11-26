@@ -161,13 +161,16 @@ Aligned with orbit's own web identity (orbit issue #307, "starchart" theme):
   state (`on`/`off`); Enter on it flips it in place. Its consequence, while
   off, is one faint line under the table. Mock-up:
   `design/340-scanner/round-1/` (direction A).
-- **The gap before Remove is the one row the splash gives up** (2026-11-13,
-  #286): when the settled block would be taller than the body, that blank
-  row yields, and nothing else does. Every other row is a fact (#316,
-  #341) or a boundary (mark and wordmark, facts and menu); the gap is a
-  grouping. It fires only in the full-profile worst case at 80x26: the open
-  drawer with five missing services, the running-mismatch rows and the
-  update notice, with Configure's sixth menu row.
+- **The splash gives up two rows, in order** (2026-11-13, #286; second row
+  2026-11-26, #242): when the settled block would be taller than the body,
+  first the blank row before Remove yields, then the update notice's advice
+  line, which folds into one row, `update available: v9.9.9 · the command is
+  under Update`. Nothing else does. Every other row is a fact (#316, #341) or
+  a boundary (mark and wordmark, facts and menu); these two are groupings. The
+  gap alone yielded in the full-profile worst case at 80x26 (open drawer with
+  five missing services, running-mismatch rows, update notice, Configure's
+  sixth menu row); Maintenance's seventh row (#242) is why the notice's
+  advice line now yields as well.
 - **No keybind hints, ever.** No navigation instructions anywhere; the
   screen teaches itself.
 - **The foot is one centred faint line per screen**: splash carries

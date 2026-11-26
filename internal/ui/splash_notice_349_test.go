@@ -96,6 +96,9 @@ func TestSplashNotice349_NoCommandAndPointsToUpdate(t *testing.T) {
 	}
 }
 
+// noticeOneRow242 is the notice when the block is too tall for two rows.
+const noticeOneRow242 = "update available: v9.9.9 · the command is under Update"
+
 func TestSplashNotice349_SecondRowReadsExactly(t *testing.T) {
 	for name, m := range noticeStates349(t) {
 		t.Run(name, func(t *testing.T) {
@@ -104,6 +107,16 @@ func TestSplashNotice349_SecondRowReadsExactly(t *testing.T) {
 			rows := rowsOf(s)
 			if i < 0 || i+1 >= len(rows) {
 				t.Fatalf("no notice rows:\n%s", s)
+			}
+			if name == "worst case, full profile" || name == "worst case with folder row, full profile" {
+				// Under pressure (#242) the advice line folds into the notice's row.
+				if got := strings.TrimSpace(rows[i]); got != noticeOneRow242 {
+					t.Errorf("the notice's one row is %q, want %q", got, noticeOneRow242)
+				}
+				if strings.Contains(s, "re-run Orbit's installer") {
+					t.Errorf("the advice line is still drawn:\n%s", s)
+				}
+				return
 			}
 			if got := strings.TrimSpace(rows[i+1]); got != noticeSecondRow349 {
 				t.Errorf("the notice's second row is %q, want %q", got, noticeSecondRow349)
@@ -137,6 +150,11 @@ func TestSplashNotice349_GapYieldStillHolds(t *testing.T) {
 			}
 			if exit >= 25 {
 				t.Errorf("Exit is on row %d, want it inside the 25-row body:\n%s", exit, s)
+			}
+			if !tc.gap {
+				if !strings.Contains(s, noticeOneRow242) || strings.Contains(s, "re-run Orbit's installer") {
+					t.Errorf("the notice should be the one row %q:\n%s", noticeOneRow242, s)
+				}
 			}
 			if gap := lineIndex(s, "Remove")-lineIndex(s, "Maintenance") == 2; gap != tc.gap {
 				t.Errorf("a blank row before Remove is %v, want %v:\n%s", gap, tc.gap, s)

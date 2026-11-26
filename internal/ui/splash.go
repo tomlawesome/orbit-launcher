@@ -705,10 +705,10 @@ func (m SplashModel) view() string {
 // wordmark, identity tight beneath it, optional update notice, blank,
 // then the menu in the centred grammar.
 func (m SplashModel) centreBlockLines() []string {
-	lines := append(m.identityLines(), "")
-	gap := m.menuGapKept()
+	f := m.fit()
+	lines := append(m.identityLines(f.noticeTwoRows), "")
 	for i, item := range MainMenu {
-		if item.Gap && gap {
+		if item.Gap && f.gap {
 			lines = append(lines, "")
 		}
 		lines = append(lines, menuRow(item.Label, i == m.menu.sel && !m.onStatusRow))
@@ -716,23 +716,36 @@ func (m SplashModel) centreBlockLines() []string {
 	return lines
 }
 
-// menuGapKept says whether the menu keeps its blank row before Remove.
-// It is the one row the splash gives up, and only when the settled block
-// would otherwise be taller than the body (#286: the full-profile worst
-// case at 80x26, the open drawer with five missing services, the
-// running-mismatch rows and the update notice). Every other row is a
-// fact or a boundary; this one is a grouping.
-func (m SplashModel) menuGapKept() bool {
+// splashFit says which rows the settled block keeps.
+type splashFit struct {
+	gap           bool // the blank row before Remove
+	noticeTwoRows bool // the update notice's advice line
+}
+
+// fit decides what yields when the settled block would be taller than the
+// body. Two rows give up, in order: the gap before Remove (#286), then
+// the update notice's advice line, which folds into the notice's own row
+// (Maintenance's seventh menu row, #242, is why a second row yields). Every
+// other row is a fact or a boundary; these are groupings.
+func (m SplashModel) fit() splashFit {
+	f := splashFit{gap: true, noticeTwoRows: true}
 	bodyHeight := m.height - 1
 	if bodyHeight <= 0 {
-		return true
+		return f
 	}
-	return len(m.identityLines())+1+menuLineCount(true) <= bodyHeight
+	over := len(m.identityLines(true)) + 1 + menuLineCount(true) - bodyHeight
+	if over >= 1 {
+		f.gap = false
+	}
+	if over >= 2 && m.updateNotice != "" {
+		f.noticeTwoRows = false
+	}
+	return f
 }
 
 // identityLines are the settled centre block's rows above the menu:
 // mark, blank, wordmark, then the identity block.
-func (m SplashModel) identityLines() []string {
+func (m SplashModel) identityLines(noticeTwoRows bool) []string {
 	var lines []string
 
 	lines = append(lines, m.markStyle().Render(style.SymbolMark))
@@ -772,8 +785,13 @@ func (m SplashModel) identityLines() []string {
 	// running check found, if anything (#316).
 	lines = append(lines, m.folderLines()...)
 	if m.updateNotice != "" {
-		lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
-		lines = append(lines, style.MutedText.Render("re-run Orbit's installer to get it"+style.Separator+"the command is under Update"))
+		if noticeTwoRows {
+			lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice))
+			lines = append(lines, style.MutedText.Render("re-run Orbit's installer to get it"+style.Separator+"the command is under Update"))
+		} else {
+			lines = append(lines, style.WarmText.Render("update available: "+m.updateNotice)+
+				style.MutedText.Render(style.Separator+"the command is under Update"))
+		}
 	}
 	return lines
 }
@@ -887,7 +905,7 @@ func (m SplashModel) viewIntro() string {
 		if settledTop < bodyHeight {
 			lines[settledTop] = m.markStyle().Render(style.SymbolMark)
 		}
-		gap := m.menuGapKept()
+		gap := m.fit().gap
 		identity := settledLines[3 : len(settledLines)-menuLineCount(gap)-1]
 		for i, l := range identity {
 			if r := settledTop + 3 + i; r < bodyHeight {

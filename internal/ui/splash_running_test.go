@@ -603,6 +603,11 @@ func TestSplashRunning_WorstCaseFitsTwentySixRows(t *testing.T) {
 			if exit >= 25 {
 				t.Errorf("Exit is on row %d, want it inside the 25-row body above the foot:\n%s", exit, s)
 			}
+			if !tc.gap {
+				if !strings.Contains(s, noticeOneRow242) || strings.Contains(s, "re-run Orbit's installer") {
+					t.Errorf("the notice should be the one row %q:\n%s", noticeOneRow242, s)
+				}
+			}
 			if gap := lineIndex(s, "Remove")-lineIndex(s, "Maintenance") == 2; gap != tc.gap {
 				t.Errorf("a blank row before Remove is %v, want %v:\n%s", gap, tc.gap, s)
 			}
