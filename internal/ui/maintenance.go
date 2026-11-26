@@ -100,11 +100,7 @@ type MaintenanceModel struct {
 }
 
 type (
-	maintHealthMsg struct{ reason deploy.HealthReason }
-	maintReadyMsg  struct {
-		stream *engine.Stream
-		err    error
-	}
+	maintHealthMsg      struct{ reason deploy.HealthReason }
 	maintStreamMsg      struct{ msg any }
 	maintStreamEndedMsg struct {
 		stream *engine.Stream
