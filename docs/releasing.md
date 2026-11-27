@@ -57,14 +57,17 @@ here so the two versions match.
 (up to the next heading) as the steps a release record lists, so change them
 only together with the record's template.
 
+If the menu changed in this release, the README picture is retaken in the
+last batch before the audit, not in the release record (which may touch only
+`CHANGELOG.md` and `docs/releases/`): `scripts/readme-screenshot.sh vX.Y.Z`
+(needs ttyd 1.7.7, Go and Playwright's Chromium) writes
+`docs/images/launcher-menu.png` (#373) showing the version about to be
+released.
+
 Before step 1, on `dev`, the release agent: on a `release/vX.Y.Z` branch
 into `dev` (only `CHANGELOG.md` and `docs/releases/`), renames
 `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - YYYY-MM-DD` and commits
-the signed release record (below). In the same branch it retakes the README
-menu picture with `scripts/readme-screenshot.sh vX.Y.Z` (needs ttyd 1.7.7, Go
-and Playwright's Chromium; it writes `docs/images/launcher-menu.png`, #373) and
-commits it, so the picture shows the released version. Once that has
-merged, it fetches
+the signed release record (below). Once that has merged, it fetches
 (`git fetch --tags gitlab dev preview main`), checks out `dev` and runs
 `go run ./tools/releasereadiness -target preview -remote gitlab`. It opens
 the promotion only when the output ends "Ready".
