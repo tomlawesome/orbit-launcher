@@ -61,6 +61,12 @@ export async function startTtyd(
     cwd,
     env: hermeticEnv(),
   });
-  await waitForPort(port);
+  try {
+    await waitForPort(port);
+  } catch (err) {
+    // The caller never gets the handle, so its afterAll cannot kill it.
+    ttyd.kill();
+    throw err;
+  }
   return ttyd;
 }

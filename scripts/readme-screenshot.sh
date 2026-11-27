@@ -6,7 +6,10 @@
 # Builds the launcher with the release flags (scripts/release-ldflags.sh), runs
 # it under ttyd in headless Chromium via the Playwright spec
 # test/visual/tests/readme-screenshot.spec.ts, and writes a 1940x1120 PNG. Run
-# it in the release record so the picture shows the released version. It needs
+# it in the last batch before the release audit, with the version about to be
+# released, never in the release record (docs/releasing.md). The Revision it
+# embeds is this checkout's, not the shipped build's; the menu shows only the
+# version. It needs
 # ttyd 1.7.7 (the version .gitlab-ci.yml pins), Go, and Node with Chromium
 # installed for Playwright.
 set -euo pipefail
