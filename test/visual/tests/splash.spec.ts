@@ -1,26 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { spawn, execFileSync, ChildProcess } from "node:child_process";
+import { execFileSync, ChildProcess } from "node:child_process";
 import path from "node:path";
-import net from "node:net";
 import fs from "node:fs";
 import os from "node:os";
+import { findFreePort, startTtyd } from "../lib/terminal";
 
 const repoRoot = path.resolve(__dirname, "../../..");
-
-function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, () => {
-      const address = srv.address();
-      if (address && typeof address === "object") {
-        const port = address.port;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close(() => reject(new Error("could not allocate a port")));
-      }
-    });
-  });
-}
 
 function buildBinary(): string {
   const binPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orbit-launcher-visual-")), "orbit-launcher");
@@ -42,49 +27,9 @@ test.beforeAll(async () => {
   fs.mkdirSync(folder, { recursive: true });
   port = await findFreePort();
 
-  ttyd = spawn("ttyd", ["-p", String(port), "-W", binPath], {
-    stdio: "pipe",
-    cwd: folder,
-    // The starfield otherwise advances every 120ms — a moving background
-    // would make every screenshot comparison flaky by construction. See
-    // internal/ui.NewSplashModelNoAnimation.
-    // NO_UPDATE_CHECK: an "update available" banner popping in mid-test
-    // (or not) would make every screenshot comparison flaky by
-    // construction, same reason as the animation freeze above.
-    // NO_HEALTH_PROBE: the splash would otherwise probe any .env-orbit
-    // deployment it detects near the working directory — same hermeticity
-    // rule as the update check.
-    env: {
-      ...process.env,
-      ORBIT_LAUNCHER_NO_ANIMATION: "1",
-      ORBIT_LAUNCHER_NO_UPDATE_CHECK: "1",
-      ORBIT_LAUNCHER_NO_HEALTH_PROBE: "1",
-      // NO_VOLUME_CHECK: Install's stale-database-volume pre-flight asks
-      // the local Docker daemon what exists, so on any machine that has
-      // ever run Orbit it would legitimately interrupt the flow — same
-      // hermeticity rule as the two above.
-      ORBIT_LAUNCHER_NO_VOLUME_CHECK: "1",
-      // NO_RUNNING_CHECK: the running check asks the local Docker daemon
-      // what runs under the deployment's project, so a container left by
-      // an earlier run, or started from another folder, would add rows to
-      // the screenshot — same hermeticity rule as the three above.
-      ORBIT_LAUNCHER_NO_RUNNING_CHECK: "1",
-    },
-  });
-
-  // ttyd has no "ready" signal on stdout we can reliably parse across
-  // versions; poll the port instead of guessing a fixed sleep.
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const up = await new Promise<boolean>((resolve) => {
-      const sock = net.createConnection(port, "127.0.0.1");
-      sock.once("connect", () => { sock.end(); resolve(true); });
-      sock.once("error", () => resolve(false));
-    });
-    if (up) return;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`ttyd did not start listening on port ${port} in time`);
+  // The hermetic environment (animation, update check, health probe, volume
+  // and running checks all off) is in lib/terminal.ts, with the reasons.
+  ttyd = await startTtyd(port, binPath, folder);
 });
 
 test.afterAll(() => {
