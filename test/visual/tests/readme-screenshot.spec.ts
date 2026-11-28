@@ -14,8 +14,12 @@ test.skip(!process.env.ORBIT_README_SCREENSHOT, "run it through scripts/readme-s
 // A fixed, empty folder: the screen shows the folder it acts on.
 const folder = "/tmp/orbit-readme";
 
-// 980x560 CSS pixels at scale 2, clipped to 970x560: a 1940x1120 PNG.
-test.use({ viewport: { width: 980, height: 560 }, deviceScaleFactor: 2 });
+// A 1960x1120 window at scale 1 with a 32px font, clipped to 1940x1120: the
+// same 100x30 terminal and 1940x1120 PNG as a 980x560 window at scale 2 with a
+// 16px font. Playwright's scale-2 emulation is not used because headless
+// Chromium then draws xterm.js at twice the size, so only a quarter of the
+// screen lands in the picture.
+test.use({ viewport: { width: 1960, height: 1120 }, deviceScaleFactor: 1 });
 
 let ttyd: ChildProcess;
 let port: number;
@@ -26,9 +30,9 @@ test.beforeAll(async () => {
   fs.rmSync(folder, { recursive: true, force: true });
   fs.mkdirSync(folder, { recursive: true });
   port = await findFreePort();
-  // 100x30 terminal: fontSize 16 in a 980x560 window.
+  // 100x30 terminal: fontSize 32 in a 1960x1120 window.
   ttyd = await startTtyd(port, bin, folder, [
-    "-t", "fontSize=16",
+    "-t", "fontSize=32",
     "-t", 'theme={"background":"#05070d"}',
   ]);
 });
@@ -44,7 +48,7 @@ test("retake the README menu picture", async ({ page }) => {
   await expect(page.locator(".xterm-screen")).toBeVisible();
 
   // Wait until the screen stops changing: two captures in a row alike.
-  const clip = { x: 0, y: 0, width: 970, height: 560 };
+  const clip = { x: 0, y: 0, width: 1940, height: 1120 };
   let prev = await page.screenshot({ clip });
   const deadline = Date.now() + 15_000;
   for (;;) {
